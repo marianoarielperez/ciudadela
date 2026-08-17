@@ -11,5 +11,7 @@ services:
       MARIADB_PASSWORD: sigev_dev
     volumes:
       - sigev_db:/var/lib/mysql
+      # Crea sigev_shadow en la primera inicialización de un volumen vacío:
+      - ./docker/mariadb-init:/docker-entrypoint-initdb.d:ro
 volumes:
   sigev_db:
