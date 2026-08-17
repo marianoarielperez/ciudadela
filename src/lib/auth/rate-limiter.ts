@@ -2,7 +2,9 @@
 // constantes exportadas para que un test los fije y un typo no los afloje.
 export const DEFAULT_LIMIT = 5
 export const DEFAULT_WINDOW_MS = 15 * 60_000
-/** Techo de claves vivas antes de podar: acota la memoria del proceso. */
+/** Cantidad de claves a partir de la cual se dispara la poda. No es un tope
+ *  duro: el barrido solo borra claves vencidas, así que si hay más de estas
+ *  vivas dentro de la ventana, el Map las conserva. */
 export const DEFAULT_MAX_KEYS = 10_000
 
 type Options = {
@@ -21,7 +23,9 @@ export function createRateLimiter({
   const hits = new Map<string, number[]>()
 
   // Sin poda, quien rota claves (emails inventados) hace crecer el Map sin techo.
-  // Barremos solo al pasarnos de maxKeys: es O(n) y ocurre muy de vez en cuando.
+  // Barremos solo al pasar maxKeys: es O(n) y ocurre muy de vez en cuando.
+  // Se borran únicamente las claves vencidas; las que siguen dentro de la
+  // ventana se conservan, aunque queden por encima de maxKeys.
   function sweep(t: number) {
     for (const [key, stamps] of hits) {
       const newest = stamps[stamps.length - 1]

@@ -27,10 +27,13 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
   const email = String(formData.get("email") ?? "").toLowerCase().trim()
   const password = String(formData.get("password") ?? "")
   const h = await headers()
-  // Detrás de Cloudflare, x-real-ip es la IP del edge de CF (la fija Nginx desde
-  // $remote_addr): la del visitante viene en CF-Connecting-IP. Sin este orden
-  // todos los intentos comparten clave y el limiter por IP no distingue a nadie.
-  const ip = h.get("cf-connecting-ip") ?? h.get("x-real-ip") ?? "unknown"
+  // Solo X-Real-IP: Nginx resuelve la IP real del visitante con el módulo realip
+  // (ver Task 15 del plan) y la sobrescribe en esta cabecera. NO leer
+  // CF-Connecting-IP acá: al origen se le puede pegar directo salteando
+  // Cloudflare, y esa cabecera llega tal cual la manda el cliente. Rotándola por
+  // request, un atacante se regalaría un presupuesto nuevo del limiter en cada
+  // intento y escribiría la IP que quisiera en audit_log.
+  const ip = h.get("x-real-ip") ?? "unknown"
   const limiterKey = `${email}|${ip}`
 
   // 20 intentos / 15 min por IP: corta el barrido de muchas cuentas desde un
@@ -60,10 +63,16 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
       // veces en la ventana; el presupuesto por IP se mantiene a propósito.
       loginLimiter.reset(limiterKey)
       // La auditoría del login vive acá (y no en events.signIn de auth.ts) porque
-      // es el único punto donde tenemos la IP del visitante.
-      const user = await prisma.user.findUnique({ where: { email }, select: { id: true } })
-      if (user) {
-        await audit({ userId: user.id, action: "login", entity: "user", entityId: user.id, ip })
+      // es el único punto donde tenemos la IP del visitante. Va en try/catch: si
+      // la consulta falla, el NEXT_REDIRECT nunca se relanzaría y un login válido
+      // terminaría en un 500.
+      try {
+        const user = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+        if (user) {
+          await audit({ userId: user.id, action: "login", entity: "user", entityId: user.id, ip })
+        }
+      } catch (e) {
+        console.error("[login] post-login audit failed", e)
       }
     }
     throw err // NEXT_REDIRECT debe propagarse
