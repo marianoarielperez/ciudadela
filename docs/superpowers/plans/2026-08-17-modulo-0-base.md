@@ -35,6 +35,31 @@
 7. **Deploy temprano**: primer deploy con el scaffold apenas builde; el resto se redespliega con `deploy.sh`.
 8. Acceso del VPS al repo: **deploy key SSH** read-only.
 
+## Desviaciones adjudicadas durante la ejecución
+
+Lo que la implementación resolvió distinto de lo escrito acá. El plan queda como
+está (es el registro de lo acordado); esta lista es la verdad vigente del código.
+
+1. **Next.js 16.3.1**, no 15: es lo que instala `create-next-app` hoy. Se verificó
+   la compatibilidad de peers con `next-auth@5.0.0-beta.32` y **ambos quedaron
+   pineados exactos** (sin `^`) para que un `npm ci` no mueva el par por su cuenta.
+2. **`src/proxy.ts` reemplaza a `middleware.ts`**: Next 16 renombró el archivo de
+   middleware. La config partida (`auth.config.ts` sin Prisma ni bcrypt) sigue igual.
+3. **Prisma 7**: usa el adapter `@prisma/adapter-mariadb` (driver `mariadb`, no el
+   engine binario), el cliente se genera en **`src/generated/`** (no en
+   `node_modules/.prisma`) y el seed se declara en **`prisma.config.ts`**
+   (`migrations.seed`), que en Prisma 7 pisa a `package.json#prisma.seed`.
+   El comando sigue siendo `npx prisma db seed`.
+4. **Color**: `--primary` es **`#0079BC`**, no `#2E9BDF`. El celeste de marca no
+   llega a 4.5:1 contra blanco; queda como color **decorativo** (logo, acentos) y
+   el token accesible es el que se usa para texto y botones.
+5. **IP real del visitante vía `CF-Connecting-IP`**: detrás de Cloudflare,
+   `X-Real-IP` trae la IP del edge de CF, no la del vecino. La server action del
+   login lee `CF-Connecting-IP` primero y cae a `X-Real-IP` (ver Task 15).
+6. **Limiter doble**: al techo por par `email|ip` (5/15 min, lo acordado) se le
+   sumó uno **por IP sola** (20/15 min). Sin él, barrer 100 cuentas con 4 intentos
+   cada una desde un mismo origen no gatilla ningún bloqueo.
+
 ## Estructura de archivos del módulo
 
 ```
@@ -1261,6 +1286,7 @@ DATABASE_URL="mysql://sigev:<DBPASS>@localhost:3306/sigev"
 AUTH_SECRET="<openssl rand -base64 32>"
 AUTH_URL=https://sigev.redaccion.ar
 SEED_SUPERADMIN_PASSWORD="<elegir>"
+# "true" SOLO en staging - en produccion DEBE ser "false" (el seed lo rechaza)
 SEED_TEST_USERS="true"
 SEED_TEST_PASSWORD="<elegir>"
 UPLOADS_DIR=/var/sigev/uploads
@@ -1285,6 +1311,11 @@ pm2 status sigev && curl -sI http://127.0.0.1:3006 | head -5
 ```
 
 Expected: proceso `online`, respuesta `HTTP/1.1 200 OK`.
+
+> `npx prisma db seed` sigue siendo el comando correcto con Prisma 7: el seed se
+> declara en `prisma.config.ts` (`migrations.seed: "tsx prisma/seed.ts"`). Corre
+> con `tsx`, que es **devDependency**: el `npm ci` de arriba tiene que ser a secas,
+> sin `--omit=dev` y sin `NODE_ENV=production` (mismo motivo documentado en `deploy.sh`).
 
 ### Task 15: Nginx + DNS + verificación HTTPS
 
@@ -1329,6 +1360,12 @@ ln -s /etc/nginx/sites-available/sigev.redaccion.ar /etc/nginx/sites-enabled/ &&
 ```
 
 (`nginx -t` primero SIEMPRE; jamás `restart`. `X-Forwarded-Proto https` es obligatorio para las cookies de Auth.js.)
+
+> **Sobre la IP real:** detrás de Cloudflare, `$remote_addr` es la IP del edge de
+> CF, así que el `X-Real-IP` que fija este bloque **no** identifica al visitante.
+> No hace falta mantener `set_real_ip_from` con los rangos de Cloudflare en Nginx:
+> la app ya lee `CF-Connecting-IP` (que CF agrega en cada request) y solo cae a
+> `X-Real-IP` si no está. Eso es lo que alimenta al rate limiter y a la auditoría.
 
 - [ ] **Step 2: DNS** — en Cloudflare, verificar que `sigev.redaccion.ar` resuelva (hay wildcard); si no, crear registro A → `167.86.71.102` con proxy naranja.
 
@@ -1394,6 +1431,8 @@ mysql -e "DROP DATABASE sigev_restore_test;" && rm /tmp/restore_test.sql
 - [ ] **CA-2**: `admin.prueba` y `socio.prueba` ven paneles distintos, y cada uno rebota en el panel ajeno (Task 9 Step 3 en local, Task 15 Step 3 en staging).
 - [ ] **CA-3**: `ufw` activo sin cortar servicios: `ufw status` = active y `sir`/`cbinfra`/`hydro`/`atenea` responden (Task 11 Step 2).
 - [ ] **CA-4**: Backup nocturno verificado restaurando un dump (Task 17) + cron instalado (Task 16 Step 5).
-- [ ] Extra: `npm test` verde, `audit_log` registra login y login_failed, `pm2 save` persistido (reboot-safe).
+- [ ] Extra: `npm test` verde (**29 tests** en 5 archivos tras los arreglos de la
+  revisión final), `audit_log` registra `login`, `login_failed` y `login_blocked`
+  —los tres con la IP del visitante—, `pm2 save` persistido (reboot-safe).
 
 Al cerrar: commit final de cualquier ajuste, push, y recién ahí arranca el Módulo 1 (padrón).
