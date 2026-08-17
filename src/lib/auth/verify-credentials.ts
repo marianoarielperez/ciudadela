@@ -12,6 +12,12 @@ const credentialsSchema = z.object({
 
 type Db = Pick<PrismaClient, "user">
 
+// Hash bcrypt cost 12 de una frase fija, precalculado y pegado como literal:
+// generarlo en tiempo de import costaría ~300 ms de arranque. Solo se usa para
+// gastar el mismo tiempo cuando NO hay contra qué comparar, de modo que la
+// latencia no revele si un email existe o si la cuenta está desactivada.
+const DUMMY_HASH = "$2b$12$XHfiAzolMFmdVT8v4PxyjuE0zE.lYU0I3W.1mn8IuVLg6LFDwN1QS"
+
 export function makeVerifyCredentials(db: Db) {
   return async function verifyCredentials(email: unknown, password: unknown): Promise<AuthUser | null> {
     const parsed = credentialsSchema.safeParse({ email, password })
@@ -21,7 +27,10 @@ export function makeVerifyCredentials(db: Db) {
       where: { email: parsed.data.email.toLowerCase().trim() },
       include: { roles: { include: { role: true } } },
     })
-    if (!user || !user.active) return null
+    if (!user || !user.active) {
+      await bcrypt.compare(parsed.data.password, DUMMY_HASH)
+      return null
+    }
 
     const ok = await bcrypt.compare(parsed.data.password, user.passwordHash)
     if (!ok) return null
