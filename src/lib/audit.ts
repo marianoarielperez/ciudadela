@@ -21,7 +21,8 @@ export function makeAudit(db: Db) {
           action: entry.action,
           entity: entry.entity,
           entityId: entry.entityId === undefined ? undefined : String(entry.entityId),
-          detail: entry.detail as Prisma.InputJsonValue | undefined,
+          // Prisma rechaza un null pelado en columnas Json?: hay que omitirlo.
+          detail: (entry.detail ?? undefined) as Prisma.InputJsonValue | undefined,
           ip: entry.ip ?? undefined,
         },
       })

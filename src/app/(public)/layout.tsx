@@ -18,7 +18,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             <span className="font-semibold leading-tight">
               Asociación Vecinal
               <br />
-              Barrio Ciudadela
+              del Barrio Ciudadela
             </span>
           </Link>
           <Link href="/ingresar" className="text-sm font-medium text-primary underline">

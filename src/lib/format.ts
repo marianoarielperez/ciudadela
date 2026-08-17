@@ -15,6 +15,7 @@ export function formatARS(amount: number): string {
     currency: "ARS",
     minimumFractionDigits: 2,
   }).format(amount)
-  // Intl usa espacio no separable tras "$"; normalizamos a espacio común
-  return s.replace(/\u00A0/g, " ")
+  // Intl usa espacio no separable tras "$": U+00A0, o U+202F segun la version
+  // de ICU del runtime. Normalizamos los dos a espacio comun.
+  return s.replace(/[\u00A0\u202F]/g, " ")
 }

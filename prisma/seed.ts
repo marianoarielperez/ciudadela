@@ -34,6 +34,11 @@ async function main() {
   await upsertUser("marianoaperez@yahoo.com.ar", "Mariano Perez", superPass, ["superadmin", "admin"])
 
   if (process.env.SEED_TEST_USERS === "true") {
+    // Las cuentas de prueba tienen contraseña conocida: en producción serían
+    // una puerta abierta. Preferimos romper el deploy antes que crearlas.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("SEED_TEST_USERS=true está prohibido en producción")
+    }
     const testPass = process.env.SEED_TEST_PASSWORD
     if (!testPass) throw new Error("SEED_TEST_USERS=true pero falta SEED_TEST_PASSWORD")
     await upsertUser("admin.prueba@sigev.local", "Admin de Prueba", testPass, ["admin"])

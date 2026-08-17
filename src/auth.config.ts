@@ -16,7 +16,8 @@ export const authConfig = {
       return token
     },
     session({ session, token }) {
-      session.user.id = token.id ?? ""
+      // Solo si vino en el token: un "" silencioso se propaga como id válido.
+      if (token.id) session.user.id = token.id
       session.user.roles = token.roles ?? []
       return session
     },

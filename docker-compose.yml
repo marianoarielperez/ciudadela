@@ -3,7 +3,9 @@ services:
     image: mariadb:10.11
     container_name: sigev-db
     ports:
-      - "3306:3306"
+      # Solo loopback: sin el prefijo, Docker publica el puerto en todas las
+      # interfaces y la base de desarrollo queda expuesta a la red local.
+      - "127.0.0.1:3306:3306"
     environment:
       MARIADB_ROOT_PASSWORD: devroot
       MARIADB_DATABASE: sigev

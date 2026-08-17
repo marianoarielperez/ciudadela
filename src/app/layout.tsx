@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Asociación Vecinal Barrio Ciudadela",
+  title: "Asociación Vecinal del Barrio Ciudadela",
   description:
     "Sitio institucional y sistema de gestión de socios de la Asociación Vecinal del Barrio Ciudadela — Comodoro Rivadavia, Chubut.",
 };
