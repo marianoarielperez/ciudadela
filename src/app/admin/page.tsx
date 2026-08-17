@@ -1,0 +1,41 @@
+import { auth } from "@/auth"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
+export const metadata = { title: "Panel de administración — SIGeV" }
+
+const sections = [
+  { title: "Solicitudes", description: "Altas de socios pendientes de revisión y aprobación." },
+  { title: "Socios", description: "Padrón, fichas y estado de cada socio." },
+  { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
+  { title: "Noticias", description: "Novedades y comunicados del sitio público." },
+  { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
+]
+
+export default async function AdminHomePage() {
+  const session = await auth()
+  return (
+    <div className="space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-bold">Hola, {session?.user.name ?? "administrador/a"}</h1>
+        <p className="text-muted-foreground">
+          Estas son las secciones del panel. Se van a ir habilitando a medida que avancemos.
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {sections.map((section) => (
+          <Card key={section.title}>
+            <CardHeader>
+              <CardTitle>{section.title}</CardTitle>
+              <CardDescription>{section.description}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium">
+                Próximamente
+              </span>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
