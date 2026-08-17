@@ -1,0 +1,15 @@
+services:
+  db:
+    image: mariadb:10.11
+    container_name: sigev-db
+    ports:
+      - "3306:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: devroot
+      MARIADB_DATABASE: sigev
+      MARIADB_USER: sigev
+      MARIADB_PASSWORD: sigev_dev
+    volumes:
+      - sigev_db:/var/lib/mysql
+volumes:
+  sigev_db:
