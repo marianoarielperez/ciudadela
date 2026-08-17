@@ -55,9 +55,12 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  /* Brand celeste #2E9BDF */
-  --primary: oklch(0.6607 0.1386 241.59);
-  --primary-foreground: oklch(1 0 0);
+  /* Institutional brand celeste is #2E9BDF (see CLAUDE.md). Against white it only
+     reaches 3.06:1, so it is reserved for large text and decorative surfaces
+     (WCAG AA-large, 3:1). --primary below is the AA-compliant interactive variant:
+     #0079BC gives 4.71:1 against white, for buttons, links and focus states. */
+  --primary: #0079BC;
+  --primary-foreground: #FFFFFF;
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -91,9 +94,10 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  /* Brand celeste #2E9BDF */
-  --primary: oklch(0.6607 0.1386 241.59);
-  --primary-foreground: oklch(1 0 0);
+  /* AA-compliant interactive celeste (4.71:1 on white). Brand #2E9BDF stays
+     reserved for large text / decorative surfaces. */
+  --primary: #0079BC;
+  --primary-foreground: #FFFFFF;
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
