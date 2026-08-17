@@ -27,6 +27,8 @@ recibos/
 # Sistema
 .DS_Store
 Thumbs.db
+# Archivos de bloqueo de Office (ej. datos/~$padron_socios.xlsx)
+~$*
 *.log
 *.pem
 npm-debug.log*
