@@ -2,7 +2,7 @@
 # Deploy de SIGeV en el VPS. Uso: bash deploy.sh
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/root/dev/sigev}"
+APP_DIR="${APP_DIR:-/root/dev/ciudadela}"
 cd "$APP_DIR"
 
 git pull --ff-only
