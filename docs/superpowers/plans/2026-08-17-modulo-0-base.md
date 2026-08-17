@@ -1162,7 +1162,7 @@ git commit -m "feat: add database seed with superadmin and test users"
 # Deploy de SIGeV en el VPS. Uso: bash deploy.sh
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/sigev}"
+APP_DIR="${APP_DIR:-/root/dev/sigev}"
 cd "$APP_DIR"
 
 git pull --ff-only
@@ -1278,13 +1278,13 @@ ssh-keygen -t ed25519 -C "sigev-deploy" -f ~/.ssh/sigev_deploy -N "" && cat ~/.s
 - [ ] **Step 3: Config SSH + clone**:
 
 ```bash
-printf "Host github.com-sigev\n  HostName github.com\n  IdentityFile ~/.ssh/sigev_deploy\n  IdentitiesOnly yes\n" >> ~/.ssh/config && git clone git@github.com-sigev:marianoarielperez/ciudadela.git /opt/sigev
+printf "Host github.com-sigev\n  HostName github.com\n  IdentityFile ~/.ssh/sigev_deploy\n  IdentitiesOnly yes\n" >> ~/.ssh/config && git clone git@github.com-sigev:marianoarielperez/ciudadela.git /root/dev/sigev
 ```
 
 - [ ] **Step 4: Crear `.env` del servidor** (reemplazá `<DBPASS>` por la contraseña del Task 12 y elegí contraseñas reales de 8+ para los seeds):
 
 ```bash
-cat > /opt/sigev/.env <<'EOF'
+cat > /root/dev/sigev/.env <<'EOF'
 DATABASE_URL="mysql://sigev:<DBPASS>@localhost:3306/sigev"
 AUTH_SECRET="<openssl rand -base64 32>"
 AUTH_URL=https://sigev.redaccion.ar
@@ -1294,7 +1294,7 @@ SEED_TEST_USERS="true"
 SEED_TEST_PASSWORD="<elegir>"
 UPLOADS_DIR=/var/sigev/uploads
 EOF
-chmod 600 /opt/sigev/.env
+chmod 600 /root/dev/sigev/.env
 ```
 
 Generá el secret con `openssl rand -base64 32` y pegalo. (MP/Brevo/Turnstile se agregan en los módulos 2-3; `prisma migrate deploy` no necesita `SHADOW_DATABASE_URL`.)
@@ -1304,7 +1304,7 @@ Generá el secret con `openssl rand -base64 32` y pegalo. (MP/Brevo/Turnstile se
 - [ ] **Step 1: Build y arranque**:
 
 ```bash
-cd /opt/sigev && npm ci && npx prisma migrate deploy && npx prisma db seed && npm run build && pm2 start npm --name sigev -- start && pm2 save
+cd /root/dev/sigev && npm ci && npx prisma migrate deploy && npx prisma db seed && npm run build && pm2 start npm --name sigev -- start && pm2 save
 ```
 
 - [ ] **Step 2: Verificar**:
@@ -1450,13 +1450,13 @@ rclone mkdir gdrive:sigev-backups && echo "prueba $(date)" > /tmp/rclone-test.tx
 - [ ] **Step 5: Primera corrida manual + cron**:
 
 ```bash
-chmod +x /opt/sigev/scripts/backup.sh && /opt/sigev/scripts/backup.sh && rclone ls gdrive:sigev-backups
+chmod +x /root/dev/sigev/scripts/backup.sh && /root/dev/sigev/scripts/backup.sh && rclone ls gdrive:sigev-backups
 ```
 
 Expected: 4 archivos `.gpg` (sigev, cbinfra, sir_database, files) locales y en Drive.
 
 ```bash
-( crontab -l 2>/dev/null; echo "0 4 * * * /opt/sigev/scripts/backup.sh >> /var/log/sigev-backup.log 2>&1" ) | crontab - && crontab -l
+( crontab -l 2>/dev/null; echo "0 4 * * * /root/dev/sigev/scripts/backup.sh >> /var/log/sigev-backup.log 2>&1" ) | crontab - && crontab -l
 ```
 
 ### Task 17: Verificación de restore (CA del módulo)
