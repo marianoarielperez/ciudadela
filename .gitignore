@@ -1,0 +1,24 @@
+# Dependencias y build
+node_modules/
+.next/
+out/
+dist/
+
+# Entorno y secretos
+.env
+.env*.local
+.env.production
+
+# Archivos subidos por usuarios (DNIs, facturas) y recibos
+uploads/
+recibos/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
