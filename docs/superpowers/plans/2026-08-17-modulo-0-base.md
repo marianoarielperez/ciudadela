@@ -53,9 +53,12 @@ está (es el registro de lo acordado); esta lista es la verdad vigente del códi
 4. **Color**: `--primary` es **`#0079BC`**, no `#2E9BDF`. El celeste de marca no
    llega a 4.5:1 contra blanco; queda como color **decorativo** (logo, acentos) y
    el token accesible es el que se usa para texto y botones.
-5. **IP real del visitante vía `CF-Connecting-IP`**: detrás de Cloudflare,
-   `X-Real-IP` trae la IP del edge de CF, no la del vecino. La server action del
-   login lee `CF-Connecting-IP` primero y cae a `X-Real-IP` (ver Task 15).
+5. **IP real del visitante: la resuelve Nginx**. Detrás de Cloudflare,
+   `$remote_addr` es el edge de CF, así que el Task 15 suma `set_real_ip_from`
+   con las redes de Cloudflare + `real_ip_header CF-Connecting-IP`, y limpia la
+   cabecera del cliente antes del `proxy_pass`. La app lee **solo `X-Real-IP`**:
+   leer `CF-Connecting-IP` app-side sería confiar en un valor que cualquiera
+   puede inventar pegándole directo al origen.
 6. **Limiter doble**: al techo por par `email|ip` (5/15 min, lo acordado) se le
    sumó uno **por IP sola** (20/15 min). Sin él, barrer 100 cuentas con 4 intentos
    cada una desde un mismo origen no gatilla ningún bloqueo.
@@ -1342,9 +1345,40 @@ server {
 
     client_max_body_size 15M;
 
+    # Cloudflare real IP (https://www.cloudflare.com/ips/)
+    # Sin esto, $remote_addr es el edge de CF y TODOS los visitantes comparten
+    # IP: el rate limiter del login no distingue a nadie. Revisar la lista cada
+    # tanto en esa URL (cambia muy de vez en cuando).
+    set_real_ip_from 173.245.48.0/20;
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    set_real_ip_from 141.101.64.0/18;
+    set_real_ip_from 108.162.192.0/18;
+    set_real_ip_from 190.93.240.0/20;
+    set_real_ip_from 188.114.96.0/20;
+    set_real_ip_from 197.234.240.0/22;
+    set_real_ip_from 198.41.128.0/17;
+    set_real_ip_from 162.158.0.0/15;
+    set_real_ip_from 104.16.0.0/13;
+    set_real_ip_from 104.24.0.0/14;
+    set_real_ip_from 172.64.0.0/13;
+    set_real_ip_from 131.0.72.0/22;
+    set_real_ip_from 2400:cb00::/32;
+    set_real_ip_from 2606:4700::/32;
+    set_real_ip_from 2803:f800::/32;
+    set_real_ip_from 2405:b500::/32;
+    set_real_ip_from 2405:8100::/32;
+    set_real_ip_from 2a06:98c0::/29;
+    set_real_ip_from 2c0f:f248::/32;
+    real_ip_header CF-Connecting-IP;
+
     location / {
         proxy_pass http://127.0.0.1:3006;
         proxy_http_version 1.1;
+        # Descartamos la cabecera que mande el cliente: solo vale la que resolvió
+        # el módulo realip a partir de las redes de Cloudflare de arriba.
+        proxy_set_header CF-Connecting-IP "";
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -1361,11 +1395,29 @@ ln -s /etc/nginx/sites-available/sigev.redaccion.ar /etc/nginx/sites-enabled/ &&
 
 (`nginx -t` primero SIEMPRE; jamás `restart`. `X-Forwarded-Proto https` es obligatorio para las cookies de Auth.js.)
 
-> **Sobre la IP real:** detrás de Cloudflare, `$remote_addr` es la IP del edge de
-> CF, así que el `X-Real-IP` que fija este bloque **no** identifica al visitante.
-> No hace falta mantener `set_real_ip_from` con los rangos de Cloudflare en Nginx:
-> la app ya lee `CF-Connecting-IP` (que CF agrega en cada request) y solo cae a
-> `X-Real-IP` si no está. Eso es lo que alimenta al rate limiter y a la auditoría.
+> **Sobre la IP real — la resuelve Nginx, no la app.** Detrás de Cloudflare
+> `$remote_addr` es el edge de CF, así que sin el bloque `set_real_ip_from` +
+> `real_ip_header CF-Connecting-IP` de arriba todos los visitantes comparten IP y
+> el rate limiter del login queda inservible. Con él, el módulo realip reescribe
+> `$remote_addr` con la IP real **solo si la request viene de una red de
+> Cloudflare**, y de ahí sale el `X-Real-IP` que recibe la app.
+>
+> La app lee **únicamente `X-Real-IP`**, que este bloque sobrescribe siempre. Es a
+> propósito: el puerto 443 del origen está abierto al mundo y la IP del VPS está
+> documentada, así que cualquiera puede pegarle directo salteando Cloudflare. Si
+> la app leyera `CF-Connecting-IP`, esa request llegaría con el valor que el
+> atacante quiera —rotándolo por request se regala un presupuesto nuevo del
+> limiter en cada intento y escribe IPs falsas en `audit_log`—. Por eso además el
+> `location /` limpia la cabecera antes del `proxy_pass`.
+>
+> El módulo realip viene compilado en el paquete `nginx` de Ubuntu 22.04 (1.18):
+> no hay que instalar ni compilar nada.
+
+- [ ] **Step 1b: HSTS** — se habilita **desde el dashboard de Cloudflare** (SSL/TLS
+  → Edge Certificates → HSTS), no por Nginx ni por Next, y recién **al cerrar la
+  Fase B** (con el dominio productivo sirviendo HTTPS estable): activarlo antes,
+  o sobre un dominio que todavía se toca, deja a los visitantes clavados con un
+  `max-age` que no se puede revertir del lado del servidor.
 
 - [ ] **Step 2: DNS** — en Cloudflare, verificar que `sigev.redaccion.ar` resuelva (hay wildcard); si no, crear registro A → `167.86.71.102` con proxy naranja.
 
