@@ -43,11 +43,22 @@ export function makeTokens(db: TokenDb) {
     peek(raw: string, purpose: TokenPurpose, now = new Date()): Promise<ActionToken | null> {
       return find(raw, purpose, now);
     },
+    // Un token de un solo uso tiene que consumirse una sola vez incluso con dos POST
+    // simultáneos (doble clic, reintento del cliente de correo). Leer y después
+    // escribir deja una ventana en la que los dos pasan la validación y los dos
+    // proceden. La marca de uso va con un UPDATE condicional: la condición
+    // `usedAt: null` la evalúa la base, así que gana exactamente uno y el otro ve
+    // cero filas afectadas. La firma no cambia: el segundo recibe null, igual que
+    // si el token ya estuviera usado.
     async consume(raw: string, purpose: TokenPurpose, now = new Date()): Promise<ActionToken | null> {
       const t = await find(raw, purpose, now);
       if (!t) return null;
-      await db.actionToken.update({ where: { id: t.id }, data: { usedAt: now } });
-      return t;
+      const { count } = await db.actionToken.updateMany({
+        where: { id: t.id, usedAt: null },
+        data: { usedAt: now },
+      });
+      if (count !== 1) return null;
+      return { ...t, usedAt: now };
     },
   };
 }

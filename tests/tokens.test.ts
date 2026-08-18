@@ -23,12 +23,21 @@ function makeFakeDb() {
         rows.push(row);
         return row;
       },
-      findUnique: async ({ where }: { where: { tokenHash: string } }) =>
-        rows.find((r) => r.tokenHash === where.tokenHash) ?? null,
-      update: async ({ where, data }: { where: { id: number }; data: Partial<Row> }) => {
-        const row = rows.find((r) => r.id === where.id)!;
+      findUnique: async ({ where }: { where: { tokenHash: string } }) => {
+        // Cede el turno antes de responder: sin esto dos `consume` concurrentes se
+        // serializarían solos y el test de carrera no probaría nada.
+        await Promise.resolve();
+        return rows.find((r) => r.tokenHash === where.tokenHash) ?? null;
+      },
+      // Imita el UPDATE ... WHERE condicional: el filtro lo evalúa el "motor", no el
+      // llamador, y el cuerpo corre sin ceder el turno (como una sentencia atómica).
+      updateMany: async ({
+        where, data,
+      }: { where: { id: number; usedAt: null }; data: Partial<Row> }) => {
+        const row = rows.find((r) => r.id === where.id && r.usedAt === where.usedAt);
+        if (!row) return { count: 0 };
         Object.assign(row, data);
-        return row;
+        return { count: 1 };
       },
     },
   };
@@ -42,6 +51,15 @@ describe("tokens", () => {
   beforeEach(() => {
     db = makeFakeDb();
     svc = makeTokens(db as never);
+  });
+
+  // Los demás tests usan TOKEN_TTL a los dos lados de la comparación, así que pasarían
+  // igual si alguien cambiara los 30 minutos del recupero por 30 días. Los literales se
+  // fijan acá: es la garantía de seguridad más fácil de romper con un dedazo.
+  it("pins the TTL literals", () => {
+    expect(TOKEN_TTL.email_verification).toBe(604_800_000); // 7 días
+    expect(TOKEN_TTL.password_invitation).toBe(604_800_000); // 7 días
+    expect(TOKEN_TTL.password_reset).toBe(1_800_000); // 30 minutos
   });
 
   it("issues a raw token and stores only its hash", async () => {
@@ -58,6 +76,32 @@ describe("tokens", () => {
     expect(first?.userId).toBe(3);
     const second = await svc.consume(raw, "password_reset", now);
     expect(second).toBeNull();
+  });
+
+  it("issues a different token every time", async () => {
+    const a = await svc.issue({ purpose: "email_verification", memberId: 1, now });
+    const b = await svc.issue({ purpose: "email_verification", memberId: 1, now });
+    expect(a).not.toBe(b);
+    expect(db.rows[0].tokenHash).not.toBe(db.rows[1].tokenHash);
+  });
+
+  // Dos POST simultáneos (doble clic, reintento del cliente de correo) pueden pasar
+  // los dos la validación si consume lee y después escribe. Acá los dos `find`
+  // resuelven antes de que cualquiera marque el token: solo uno tiene que ganar.
+  it("consume is atomic: only one of two concurrent calls wins", async () => {
+    const raw = await svc.issue({ purpose: "password_reset", userId: 9, now });
+    const results = await Promise.all([
+      svc.consume(raw, "password_reset", now),
+      svc.consume(raw, "password_reset", now),
+    ]);
+    expect(results.filter((r) => r !== null)).toHaveLength(1);
+    expect(results.filter((r) => r === null)).toHaveLength(1);
+    expect(db.rows[0].usedAt).toEqual(now);
+  });
+
+  it("returns null for a token that was never issued", async () => {
+    expect(await svc.consume("no-existe", "password_reset", now)).toBeNull();
+    expect(await svc.peek("no-existe", "password_reset", now)).toBeNull();
   });
 
   it("rejects wrong purpose and expired tokens", async () => {
