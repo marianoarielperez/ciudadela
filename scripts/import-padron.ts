@@ -66,6 +66,18 @@ class PadronDataError extends Error {
 
 type CellScalar = string | number | boolean | Date | null;
 
+// Destino de un hipervínculo mailto:, o null si el link es de otro tipo (o no hay).
+// El `?asunto=` que a veces agrega Outlook no forma parte de la dirección.
+function mailtoTarget(hyperlink: string): string | null {
+  if (!/^mailto:/i.test(hyperlink)) return null;
+  const address = hyperlink.slice("mailto:".length).split("?")[0];
+  try {
+    return decodeURIComponent(address).trim();
+  } catch {
+    return address.trim();
+  }
+}
+
 // ExcelJS devuelve un union amplio de formas de celda. Las contemplamos todas de
 // forma explícita: para una carga fundacional, caer a `String(v)` escribiría
 // "[object Object]" en el padrón y nadie se enteraría.
@@ -93,7 +105,26 @@ function normalizeCell(v: ExcelJS.CellValue, ref: string): CellScalar {
     if ("richText" in v) return v.richText.map((r) => r.text).join("");
     // Hipervínculo: {text, hyperlink}. Es la forma que Excel genera al autolinkear
     // emails, y `text` puede ser string o, a su vez, texto enriquecido.
-    if ("text" in v) return normalizeCell(v.text as ExcelJS.CellValue, ref);
+    if ("text" in v) {
+      const shown = normalizeCell(v.text as ExcelJS.CellValue, ref);
+      // Si alguien edita el texto de la celda DESPUÉS de que Excel la autolinkeó, el
+      // texto visible y el destino del mailto: quedan distintos y no hay forma de
+      // saber cuál es el email bueno. Quedarse con el texto (o con el link) elegiría
+      // a ciegas, así que abortamos nombrando la celda.
+      const link = "hyperlink" in v ? String((v as ExcelJS.CellHyperlinkValue).hyperlink ?? "") : "";
+      const target = mailtoTarget(link);
+      if (target !== null) {
+        const shownText = (typeof shown === "string" ? shown : String(shown ?? "")).trim();
+        if (target.toLowerCase() !== shownText.toLowerCase()) {
+          throw new PadronDataError(
+            `celda ${ref}: el texto visible ("${shownText}") no coincide con el destino del hipervínculo ` +
+              `("${target}") — no hay forma de saber cuál es el correcto: borrá el hipervínculo (clic derecho → ` +
+              `Quitar hipervínculo) dejando el texto bueno, o corregí el texto para que coincida`,
+          );
+        }
+      }
+      return shown;
+    }
   }
   throw new PadronDataError(
     `celda ${ref}: tipo de valor de Excel no soportado (${JSON.stringify(v)}) — pegá el valor como texto plano`,
@@ -207,12 +238,26 @@ async function main() {
     const cell = (name: HeaderName) => row.getCell(columns.get(name)!);
     const c = (name: HeaderName) => readCell(cell(name));
     const d = (name: HeaderName) => asDate(c(name), name, cell(name).address);
-    if (c("numero_socio") === null) return; // fila vacía
+    const rawNumero = c("numero_socio");
+    if (rawNumero === null) return; // fila vacía
 
-    const numeroSocio = Number(c("numero_socio"));
+    // Validamos el TIPO antes de convertir, no el resultado de la conversión. `Number()`
+    // acepta cosas que no son un número de socio y que después pasan el chequeo de entero
+    // positivo: un booleano TRUE se vuelve 1 (socio fantasma pisando al primero del libro)
+    // y una celda formateada como fecha se vuelve un timestamp de milisegundos (~1,7e12)
+    // que cuelga el cálculo de huecos, que itera de 1 hasta el máximo.
+    if (typeof rawNumero !== "number" && !(typeof rawNumero === "string" && /^\s*\d+\s*$/.test(rawNumero))) {
+      throw new PadronDataError(
+        `fila ${rowNumber}: numero_socio inválido (${JSON.stringify(rawNumero)}, tipo ${
+          rawNumero instanceof Date ? "fecha" : typeof rawNumero
+        }) — la celda tiene que ser un número (o texto con solo dígitos); ` +
+          `si se ve como fecha o como TRUE/FALSE, formateá la columna como número y volvé a escribir el valor`,
+      );
+    }
+    const numeroSocio = Number(rawNumero);
     if (!Number.isInteger(numeroSocio) || numeroSocio <= 0) {
       throw new PadronDataError(
-        `fila ${rowNumber}: numero_socio inválido (${JSON.stringify(c("numero_socio"))}) — tiene que ser un entero positivo`,
+        `fila ${rowNumber}: numero_socio inválido (${JSON.stringify(rawNumero)}) — tiene que ser un entero positivo`,
       );
     }
     const ingreso = d("fecha_ingreso");
@@ -244,6 +289,18 @@ async function main() {
     });
   });
 
+  // Sin filas de datos no hay nada que importar, y todo lo que sigue asume al menos
+  // una: el `reduce` de la fecha mínima usa `mapped[0]` como semilla (TypeError) y
+  // `Math.max(...numbers)` devuelve -Infinity. Cortamos acá, con el motivo real:
+  // casi siempre es un archivo con el encabezado pero sin datos debajo.
+  if (parsed.length === 0) {
+    throw new PadronDataError(
+      `la hoja "${SHEET_NAME}" de padron_socios.xlsx no tiene ninguna fila de datos ` +
+        `(solo el encabezado, o todas las filas con numero_socio vacío) — ` +
+        `revisá que el archivo sea el padrón completo y no una copia vaciada`,
+    );
+  }
+
   // Dos filas con el mismo número de socio serían dos personas peleando por la
   // misma ficha del libro: la clave de idempotencia es (libro, numero_socio).
   const rowsByNumber = new Map<number, number[]>();
@@ -262,7 +319,19 @@ async function main() {
     );
   }
 
-  const mapped = parsed.map((p) => mapPadronRow(p.raw));
+  // `mapPadronRow` lo importa también la app, así que lanza `Error` pelado — pero sus
+  // dos rechazos (categoria_socio desconocida, activo que no es Si/No) son errores del
+  // Excel, y son justo los primeros que produce alguien tipeando. Sin esto el handler
+  // final los clasificaría como problema de infraestructura y mandaría al operador a
+  // revisar MariaDB. De paso les agregamos la fila, que el mensaje original no trae.
+  const mapped = parsed.map((p) => {
+    try {
+      return mapPadronRow(p.raw);
+    } catch (err) {
+      if (err instanceof PadronDataError) throw err;
+      throw new PadronDataError(`fila ${p.rowNumber}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
   const warnings = mapped.flatMap((m) => m.warnings);
 
   const minJoined = mapped.reduce((min, m) => (m.member.joinedAt < min ? m.member.joinedAt : min), mapped[0].member.joinedAt);
@@ -326,9 +395,17 @@ async function main() {
 
   // Conteos leídos de la base (no de los contadores del loop): es lo que hay que
   // mirar para confirmar que cada socio quedó con su membresía y su admisión.
+  // Los dos conteos que se comparan abajo tienen que cubrir el MISMO universo: los
+  // socios de este libro. Contar todas las admisiones sin filtrar hoy da igual porque
+  // hay un solo libro, pero cuando el re-empadronamiento estatutario abra el Libro 2
+  // los socios re-empadronados sumarían admisiones que este libro no tiene y la alerta
+  // gritaría para siempre sin que haya nada roto — y una alerta que grita en falso se
+  // termina ignorando, justo la que detecta un socio sin asiento de admisión.
   const dbMembers = await prisma.member.count();
   const dbMemberships = await prisma.membership.count({ where: { bookId: book.id } });
-  const dbAdmissions = await prisma.movement.count({ where: { type: "admission" } });
+  const dbAdmissions = await prisma.movement.count({
+    where: { type: "admission", member: { memberships: { some: { bookId: book.id } } } },
+  });
 
   const lines = [
     `Padron import — ${new Date().toISOString()}`,
@@ -343,7 +420,7 @@ async function main() {
     `modo: ${updateExisting ? `${UPDATE_FLAG} (los existentes se pisan con el Excel)` : "solo alta (por defecto)"}`,
     `creados: ${progress.created} | actualizados: ${progress.updated} | sin cambios: ${progress.unchanged}`,
     `memberships creadas: ${progress.memberships} | movements de admision creados: ${progress.movements}`,
-    `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission: ${dbAdmissions}`,
+    `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission libro ${book.number}: ${dbAdmissions}`,
     ...(updateExisting
       ? []
       : [
@@ -358,7 +435,7 @@ async function main() {
   }
   if (dbMemberships !== dbAdmissions) {
     lines.push(
-      `ATENCION: hay ${dbMemberships} memberships y ${dbAdmissions} movimientos de admision — algun socio quedo sin asiento`,
+      `ATENCION: el libro ${book.number} tiene ${dbMemberships} memberships y ${dbAdmissions} movimientos de admision — algun socio quedo sin asiento`,
     );
   }
   const report = lines.join("\n");
