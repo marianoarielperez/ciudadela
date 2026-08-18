@@ -8,6 +8,10 @@
 // borraría ese trabajo sin decir nada. El script vive en el VPS y cualquiera lo
 // puede ejecutar por error, así que el modo destructivo es opt-in explícito:
 // --update-existing pisa los datos de los socios existentes con los del Excel.
+//
+// Esta es la carga fundacional del Libro de Socios: todo el sistema se construye
+// encima. Ante cualquier ambigüedad el script ABORTA en vez de adivinar; nunca
+// escribe un dato inventado ni descarta uno en silencio.
 // `tsx` no carga `.env` por su cuenta: sin esto el singleton de Prisma no ve
 // DATABASE_URL. Tiene que ser el primer import del archivo.
 import "dotenv/config";
@@ -21,6 +25,26 @@ import { mapPadronRow, type RawPadronRow } from "../src/lib/padron/mapping";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
 const LOCK = join(process.cwd(), "datos", "~$padron_socios.xlsx");
+const REPORT = join(process.cwd(), "padron-import-report.txt");
+
+// La hoja se busca por nombre: si alguien agrega una hoja auxiliar adelante,
+// importar "la primera" cargaría cualquier cosa.
+const SHEET_NAME = "socios";
+
+// Totales de control del Libro N° 1 tal como está el papel. Son constantes (y no
+// literales sueltos) porque el reporte los imprime Y la validación los compara:
+// tocar uno solo dejaría el reporte diciendo "esperado N" mientras valida otra cosa.
+const EXPECTED_ROWS = 283;
+const EXPECTED_ACTIVE = 160;
+const EXPECTED_WITHDRAWN = EXPECTED_ROWS - EXPECTED_ACTIVE;
+// Números de socio que el libro nunca usó (fichas anuladas o nunca asignadas).
+// Se compara el CONJUNTO, no la cantidad: si se completara el 21 y desapareciera
+// otro, el total seguiría dando 22 y el cambio pasaría inadvertido.
+const EXPECTED_GAPS = [
+  21, 71, 72, 73, 93, 94, 95, 97, 125, 132, 147, 199, 208, 214, 221, 222, 223, 224,
+  238, 245, 254, 263,
+] as const;
+
 const EXPECTED_HEADERS = [
   "numero_socio", "apellido_nombre", "dni", "calle", "altura", "barrio",
   "nacionalidad", "fecha_nacimiento", "estado_civil", "ocupacion", "telefono",
@@ -28,38 +52,113 @@ const EXPECTED_HEADERS = [
   "deuda_tesoreria", "fecha_egreso", "motivo_baja",
 ] as const;
 
-// ExcelJS cell values can be strings, numbers, Dates, or objects
-// (hyperlinks {text,hyperlink}, rich text {richText:[...]}).
-function cellValue(v: ExcelJS.CellValue): string | number | Date | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "string" || typeof v === "number" || v instanceof Date) return v;
-  if (typeof v === "object") {
-    if ("text" in v && typeof v.text === "string") return v.text;
-    if ("richText" in v) return v.richText.map((r) => r.text).join("");
-    if ("result" in v) return cellValue(v.result as ExcelJS.CellValue);
+type HeaderName = (typeof EXPECTED_HEADERS)[number];
+
+// Un error de datos se arregla editando el Excel; uno de infraestructura, levantando
+// la base. Para el operador se ven igual si no los distinguimos, así que los
+// marcamos con una clase propia y el handler final los reporta distinto.
+class PadronDataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PadronDataError";
   }
-  return String(v);
 }
-const asStr = (v: ReturnType<typeof cellValue>): string | null =>
-  v === null ? null : v instanceof Date ? v.toISOString() : String(v);
-const asDate = (v: ReturnType<typeof cellValue>): Date | null => (v instanceof Date ? v : null);
+
+type CellScalar = string | number | boolean | Date | null;
+
+// ExcelJS devuelve un union amplio de formas de celda. Las contemplamos todas de
+// forma explícita: para una carga fundacional, caer a `String(v)` escribiría
+// "[object Object]" en el padrón y nadie se enteraría.
+function normalizeCell(v: ExcelJS.CellValue, ref: string): CellScalar {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+  if (v instanceof Date) return v;
+  if (typeof v === "object") {
+    // Celda de error de Excel: {error: '#N/A'}.
+    if ("error" in v) {
+      throw new PadronDataError(
+        `celda ${ref}: contiene el error de Excel ${String(v.error)} — corregí la fórmula o pegá el valor a mano`,
+      );
+    }
+    // Fórmula: el resultado cacheado puede faltar (archivo guardado sin recalcular).
+    if ("formula" in v || "sharedFormula" in v) {
+      const result = (v as ExcelJS.CellFormulaValue).result;
+      if (result === undefined) {
+        throw new PadronDataError(
+          `celda ${ref}: fórmula sin resultado cacheado — abrí el archivo en Excel, recalculá y guardá (o pegá el valor)`,
+        );
+      }
+      return normalizeCell(result as ExcelJS.CellValue, ref);
+    }
+    if ("richText" in v) return v.richText.map((r) => r.text).join("");
+    // Hipervínculo: {text, hyperlink}. Es la forma que Excel genera al autolinkear
+    // emails, y `text` puede ser string o, a su vez, texto enriquecido.
+    if ("text" in v) return normalizeCell(v.text as ExcelJS.CellValue, ref);
+  }
+  throw new PadronDataError(
+    `celda ${ref}: tipo de valor de Excel no soportado (${JSON.stringify(v)}) — pegá el valor como texto plano`,
+  );
+}
+
+const readCell = (cell: ExcelJS.Cell): CellScalar => normalizeCell(cell.value, cell.address);
+
+// Los booleanos de Excel (TRUE/FALSE) se traducen a los literales "si"/"no" del
+// padrón: `String(true)` daría "true", que no matchea el "si" que espera el mapeo
+// y dejaría, por ejemplo, autoDebit en false sin ningún aviso.
+const asStr = (v: CellScalar): string | null =>
+  v === null
+    ? null
+    : typeof v === "boolean"
+      ? v ? "si" : "no"
+      : v instanceof Date
+        ? v.toISOString()
+        : String(v);
+
+// Distingue "celda vacía" (dato que todavía no se cargó) de "celda con el tipo
+// equivocado" (una fecha guardada como texto o como serial numérico crudo). El
+// segundo caso antes se perdía en silencio y el único rastro era el aviso genérico
+// "baja sin fecha_egreso", que atribuye mal la causa.
+function asDate(v: CellScalar, field: HeaderName, ref: string): Date | null {
+  if (v === null) return null;
+  if (v instanceof Date) return v;
+  // "" y "-" son la forma de escribir "vacío" a mano en este padrón.
+  if (typeof v === "string" && (v.trim() === "" || v.trim() === "-")) return null;
+  throw new PadronDataError(
+    `celda ${ref} (${field}): se esperaba una fecha y vino ${typeof v} ${JSON.stringify(v)} — ` +
+      `formateá la columna como fecha en Excel y volvé a guardar`,
+  );
+}
 
 // El archivo ya cambió de forma una vez (se insertó una columna en el medio):
 // resolvemos cada columna por NOMBRE de encabezado, nunca por posición fija.
 function resolveColumns(headerRow: ExcelJS.Row): Map<string, number> {
   const found = new Map<string, number>();
   const seen: string[] = [];
+  const duplicated = new Set<string>();
   headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-    const name = (asStr(cellValue(cell.value)) ?? "").trim();
+    const name = (asStr(readCell(cell)) ?? "").trim();
     if (name === "") return;
     seen.push(name);
-    if (!found.has(name)) found.set(name, colNumber);
+    if (found.has(name)) duplicated.add(name);
+    else found.set(name, colNumber);
   });
+
+  // Con dos columnas del mismo nombre no hay forma de saber cuál es la buena:
+  // quedarse con la primera puede importar una columna vieja sin decir nada.
+  if (duplicated.size > 0) {
+    throw new PadronDataError(
+      [
+        "El encabezado de padron_socios.xlsx tiene columnas duplicadas.",
+        `  duplicadas : ${[...duplicated].join(", ")}`,
+        `  encontrado : ${seen.join(", ")}`,
+      ].join("\n"),
+    );
+  }
 
   const missing = EXPECTED_HEADERS.filter((h) => !found.has(h));
   const unexpected = seen.filter((h) => !(EXPECTED_HEADERS as readonly string[]).includes(h));
   if (missing.length > 0 || unexpected.length > 0) {
-    throw new Error(
+    throw new PadronDataError(
       [
         "El encabezado de padron_socios.xlsx no coincide con el esperado.",
         `  encontrado : ${seen.join(", ")}`,
@@ -74,53 +173,96 @@ function resolveColumns(headerRow: ExcelJS.Row): Map<string, number> {
 
 const UPDATE_FLAG = "--update-existing";
 
+// Si el proceso muere en medio del loop, el reporte nunca se escribe: este contador
+// vive afuera para que el handler de error pueda decir hasta dónde llegó.
+const progress = { created: 0, updated: 0, unchanged: 0, memberships: 0, movements: 0 };
+
 async function main() {
   const updateExisting = process.argv.slice(2).includes(UPDATE_FLAG);
   const unknownArgs = process.argv.slice(2).filter((a) => a !== UPDATE_FLAG);
   if (unknownArgs.length > 0) {
-    throw new Error(`Argumento desconocido: ${unknownArgs.join(", ")}. Único flag válido: ${UPDATE_FLAG}`);
+    throw new PadronDataError(
+      `Argumento desconocido: ${unknownArgs.join(", ")}. Único flag válido: ${UPDATE_FLAG}`,
+    );
   }
 
   if (existsSync(LOCK)) {
-    throw new Error("padron_socios.xlsx está abierto en Excel (lock ~$). Cerralo y reintentá.");
+    throw new PadronDataError("padron_socios.xlsx está abierto en Excel (lock ~$). Cerralo y reintentá.");
   }
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(FILE);
-  const ws = wb.worksheets[0];
+  const ws = wb.getWorksheet(SHEET_NAME);
+  if (!ws) {
+    throw new PadronDataError(
+      `padron_socios.xlsx no tiene una hoja llamada "${SHEET_NAME}" ` +
+        `(hojas presentes: ${wb.worksheets.map((w) => w.name).join(", ") || "ninguna"})`,
+    );
+  }
 
   const columns = resolveColumns(ws.getRow(1));
 
-  const rows: RawPadronRow[] = [];
+  const parsed: { rowNumber: number; raw: RawPadronRow }[] = [];
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    const c = (name: (typeof EXPECTED_HEADERS)[number]) => cellValue(row.getCell(columns.get(name)!).value);
+    const cell = (name: HeaderName) => row.getCell(columns.get(name)!);
+    const c = (name: HeaderName) => readCell(cell(name));
+    const d = (name: HeaderName) => asDate(c(name), name, cell(name).address);
     if (c("numero_socio") === null) return; // fila vacía
-    const ingreso = asDate(c("fecha_ingreso"));
-    if (!ingreso) throw new Error(`fila ${rowNumber}: fecha_ingreso inválida`);
-    rows.push({
-      numero_socio: Number(c("numero_socio")),
-      apellido_nombre: asStr(c("apellido_nombre")) ?? "",
-      dni: asStr(c("dni")),
-      calle: asStr(c("calle")),
-      altura: asStr(c("altura")),
-      barrio: asStr(c("barrio")),
-      nacionalidad: asStr(c("nacionalidad")),
-      fecha_nacimiento: asDate(c("fecha_nacimiento")),
-      estado_civil: asStr(c("estado_civil")),
-      ocupacion: asStr(c("ocupacion")),
-      telefono: asStr(c("telefono")),
-      email: asStr(c("email")),
-      debito_automatico: asStr(c("debito_automatico")),
-      fecha_ingreso: ingreso,
-      categoria_socio: asStr(c("categoria_socio")) ?? "",
-      activo: asStr(c("activo")) ?? "",
-      deuda_tesoreria: asStr(c("deuda_tesoreria")),
-      fecha_egreso: asDate(c("fecha_egreso")),
-      motivo_baja: asStr(c("motivo_baja")),
+
+    const numeroSocio = Number(c("numero_socio"));
+    if (!Number.isInteger(numeroSocio) || numeroSocio <= 0) {
+      throw new PadronDataError(
+        `fila ${rowNumber}: numero_socio inválido (${JSON.stringify(c("numero_socio"))}) — tiene que ser un entero positivo`,
+      );
+    }
+    const ingreso = d("fecha_ingreso");
+    if (!ingreso) throw new PadronDataError(`fila ${rowNumber}: fecha_ingreso vacía`);
+
+    parsed.push({
+      rowNumber,
+      raw: {
+        numero_socio: numeroSocio,
+        apellido_nombre: asStr(c("apellido_nombre")) ?? "",
+        dni: asStr(c("dni")),
+        calle: asStr(c("calle")),
+        altura: asStr(c("altura")),
+        barrio: asStr(c("barrio")),
+        nacionalidad: asStr(c("nacionalidad")),
+        fecha_nacimiento: d("fecha_nacimiento"),
+        estado_civil: asStr(c("estado_civil")),
+        ocupacion: asStr(c("ocupacion")),
+        telefono: asStr(c("telefono")),
+        email: asStr(c("email")),
+        debito_automatico: asStr(c("debito_automatico")),
+        fecha_ingreso: ingreso,
+        categoria_socio: asStr(c("categoria_socio")) ?? "",
+        activo: asStr(c("activo")) ?? "",
+        deuda_tesoreria: asStr(c("deuda_tesoreria")),
+        fecha_egreso: d("fecha_egreso"),
+        motivo_baja: asStr(c("motivo_baja")),
+      },
     });
   });
 
-  const mapped = rows.map(mapPadronRow);
+  // Dos filas con el mismo número de socio serían dos personas peleando por la
+  // misma ficha del libro: la clave de idempotencia es (libro, numero_socio).
+  const rowsByNumber = new Map<number, number[]>();
+  for (const p of parsed) {
+    const list = rowsByNumber.get(p.raw.numero_socio) ?? [];
+    list.push(p.rowNumber);
+    rowsByNumber.set(p.raw.numero_socio, list);
+  }
+  const duplicatedNumbers = [...rowsByNumber.entries()].filter(([, rowNumbers]) => rowNumbers.length > 1);
+  if (duplicatedNumbers.length > 0) {
+    throw new PadronDataError(
+      [
+        "padron_socios.xlsx tiene numero_socio duplicados:",
+        ...duplicatedNumbers.map(([n, rowNumbers]) => `  socio ${n}: filas ${rowNumbers.join(", ")}`),
+      ].join("\n"),
+    );
+  }
+
+  const mapped = parsed.map((p) => mapPadronRow(p.raw));
   const warnings = mapped.flatMap((m) => m.warnings);
 
   const minJoined = mapped.reduce((min, m) => (m.member.joinedAt < min ? m.member.joinedAt : min), mapped[0].member.joinedAt);
@@ -130,9 +272,6 @@ async function main() {
     update: {},
   });
 
-  let created = 0;
-  let updated = 0;
-  let unchanged = 0;
   for (const m of mapped) {
     const existing = await prisma.membership.findUnique({
       where: { bookId_memberNumber: { bookId: book.id, memberNumber: m.memberNumber } },
@@ -141,23 +280,33 @@ async function main() {
       // Sin el flag no escribimos nada sobre un socio ya cargado: las correcciones
       // hechas desde el panel valen más que los nulos del Excel.
       if (!updateExisting) {
-        unchanged++;
+        progress.unchanged++;
         continue;
       }
       await prisma.member.update({ where: { id: existing.memberId }, data: m.member });
-      updated++;
+      progress.updated++;
     } else {
-      const member = await prisma.member.create({ data: m.member });
-      await prisma.membership.create({
-        data: { memberId: member.id, bookId: book.id, memberNumber: m.memberNumber },
+      // Las tres escrituras van en una transacción. Si no, un corte entre la segunda
+      // y la tercera dejaría al socio sin asiento de admisión PARA SIEMPRE: la clave
+      // de idempotencia es (libro, numero_socio), así que la re-corrida lo saltearía
+      // y nunca repararía el movimiento faltante. Y un corte entre la primera y la
+      // segunda dejaría un Member huérfano que, para los socios sin DNI (MariaDB
+      // permite repetir NULL en un UNIQUE), la re-corrida duplicaría en silencio.
+      await prisma.$transaction(async (tx) => {
+        const member = await tx.member.create({ data: m.member });
+        await tx.membership.create({
+          data: { memberId: member.id, bookId: book.id, memberNumber: m.memberNumber },
+        });
+        await tx.movement.create({
+          data: {
+            memberId: member.id, type: "admission", date: m.member.joinedAt,
+            newCategory: m.member.category, detail: "import Libro 1 (acta física no digitalizada)",
+          },
+        });
       });
-      await prisma.movement.create({
-        data: {
-          memberId: member.id, type: "admission", date: m.member.joinedAt,
-          newCategory: m.member.category, detail: "import Libro 1 (acta física no digitalizada)",
-        },
-      });
-      created++;
+      progress.created++;
+      progress.memberships++;
+      progress.movements++;
     }
   }
 
@@ -169,32 +318,83 @@ async function main() {
   const gaps: number[] = [];
   for (let i = 1; i <= maxN; i++) if (!numbers.has(i)) gaps.push(i);
 
+  const gapSet = new Set(gaps);
+  const expectedGapSet = new Set<number>(EXPECTED_GAPS);
+  const newGaps = gaps.filter((g) => !expectedGapSet.has(g));
+  const filledGaps = EXPECTED_GAPS.filter((g) => !gapSet.has(g));
+  const gapsOk = newGaps.length === 0 && filledGaps.length === 0;
+
+  // Conteos leídos de la base (no de los contadores del loop): es lo que hay que
+  // mirar para confirmar que cada socio quedó con su membresía y su admisión.
+  const dbMembers = await prisma.member.count();
+  const dbMemberships = await prisma.membership.count({ where: { bookId: book.id } });
+  const dbAdmissions = await prisma.movement.count({ where: { type: "admission" } });
+
   const lines = [
     `Padron import — ${new Date().toISOString()}`,
-    `filas: ${total} (esperado 283) | vigentes: ${vigentes} (esperado 160) | bajas: ${bajas} (esperado 123)`,
-    `numeracion: 1..${maxN} | huecos (${gaps.length}, esperado 22): ${gaps.join(", ")}`,
+    `filas: ${total} (esperado ${EXPECTED_ROWS}) | vigentes: ${vigentes} (esperado ${EXPECTED_ACTIVE}) | bajas: ${bajas} (esperado ${EXPECTED_WITHDRAWN})`,
+    `numeracion: 1..${maxN} | huecos (${gaps.length}, esperado ${EXPECTED_GAPS.length}): ${gaps.join(", ")}`,
+    ...(gapsOk
+      ? []
+      : [
+          newGaps.length > 0 ? `  huecos NUEVOS (no esperados): ${newGaps.join(", ")}` : null,
+          filledGaps.length > 0 ? `  huecos que se completaron: ${filledGaps.join(", ")}` : null,
+        ].filter((l): l is string => l !== null)),
     `modo: ${updateExisting ? `${UPDATE_FLAG} (los existentes se pisan con el Excel)` : "solo alta (por defecto)"}`,
-    `creados: ${created} | actualizados: ${updated} | sin cambios: ${unchanged}`,
+    `creados: ${progress.created} | actualizados: ${progress.updated} | sin cambios: ${progress.unchanged}`,
+    `memberships creadas: ${progress.memberships} | movements de admision creados: ${progress.movements}`,
+    `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission: ${dbAdmissions}`,
     ...(updateExisting
       ? []
       : [
-          `los ${unchanged} socios ya existentes NO se tocaron (se conservan los datos cargados desde el panel).`,
+          `los ${progress.unchanged} socios ya existentes NO se tocaron (se conservan los datos cargados desde el panel).`,
           `  para pisarlos con los datos del Excel: npx tsx scripts/import-padron.ts ${UPDATE_FLAG}`,
         ]),
     `avisos (${warnings.length}):`,
     ...warnings.map((w) => `  - ${w}`),
   ];
-  if (total !== 283 || vigentes !== 160 || gaps.length !== 22) {
+  if (total !== EXPECTED_ROWS || vigentes !== EXPECTED_ACTIVE || !gapsOk) {
     lines.push("ATENCION: TOTALES DISTINTOS DE LOS ESPERADOS — revisar antes de continuar");
+  }
+  if (dbMemberships !== dbAdmissions) {
+    lines.push(
+      `ATENCION: hay ${dbMemberships} memberships y ${dbAdmissions} movimientos de admision — algun socio quedo sin asiento`,
+    );
   }
   const report = lines.join("\n");
   console.log(report);
-  writeFileSync(join(process.cwd(), "padron-import-report.txt"), report + "\n", "utf8");
+  writeFileSync(REPORT, report + "\n", "utf8");
 
   await audit({
     action: "padron_import", entity: "book", entityId: book.id,
-    detail: { total, vigentes, bajas, created, updated, unchanged, updateExisting, warnings: warnings.length },
+    detail: {
+      total, vigentes, bajas, created: progress.created, updated: progress.updated,
+      unchanged: progress.unchanged, memberships: progress.memberships, movements: progress.movements,
+      updateExisting, warnings: warnings.length,
+    },
   });
 }
 
-main().finally(() => prisma.$disconnect());
+main()
+  .catch((err: unknown) => {
+    process.exitCode = 1;
+    const isDataError = err instanceof PadronDataError;
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("");
+    console.error(
+      isDataError
+        ? "IMPORT ABORTADO — ERROR DE DATOS O DE USO: revisá datos/padron_socios.xlsx (o los argumentos del comando); la base no es el problema"
+        : "IMPORT ABORTADO — ERROR DE INFRAESTRUCTURA: el Excel no es el problema (base, red o entorno)",
+    );
+    for (const line of message.split("\n")) console.error(`  ${line}`);
+    if (!isDataError) {
+      console.error("  Revisá que MariaDB esté levantada (docker compose up -d) y que DATABASE_URL apunte a ella.");
+      if (err instanceof Error && err.stack) console.error(err.stack);
+    }
+    console.error(
+      `  progreso antes de abortar: creados ${progress.created}, actualizados ${progress.updated}, ` +
+        `sin cambios ${progress.unchanged} (memberships ${progress.memberships}, movements ${progress.movements})`,
+    );
+    console.error("  El script es idempotente: corregí la causa y volvé a correrlo (los socios ya cargados se saltean).");
+  })
+  .finally(() => prisma.$disconnect());
