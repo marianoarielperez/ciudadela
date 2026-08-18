@@ -29,6 +29,16 @@ describe("member rules", () => {
     expect(canReadmit({ status: "active", reentryBlocked: false }).ok).toBe(false);
   });
 
+  // El flag `reentryBlocked` no es la única fuente de verdad: una fila con motivo
+  // de expulsión y el flag caído (import, arreglo manual, edición futura) tiene
+  // que seguir bloqueada. La prohibición estatutaria es absoluta (REG-04).
+  it("readmission blocked by an expulsion reason even if the flag is off (REG-04)", () => {
+    const expelled = canReadmit({ status: "withdrawn", reentryBlocked: false, withdrawalReason: "expulsion" });
+    expect(expelled.ok).toBe(false);
+    if (!expelled.ok) expect(expelled.error).toContain("expulsión");
+    expect(canReadmit({ status: "withdrawn", reentryBlocked: false, withdrawalReason: "arrears" }).ok).toBe(true);
+  });
+
   it("arrears debt flag (REG-16 placeholder)", () => {
     expect(hasArrearsDebt({ withdrawalReason: "arrears", debtAtWithdrawal: true })).toBe(true);
     expect(hasArrearsDebt({ withdrawalReason: "death", debtAtWithdrawal: false })).toBe(false);

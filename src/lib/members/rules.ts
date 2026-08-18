@@ -26,9 +26,19 @@ export function canSuspend(m: { status: MemberStatus }): RuleResult {
   return { ok: true };
 }
 
-export function canReadmit(m: { status: MemberStatus; reentryBlocked: boolean }): RuleResult {
+// Defensa en profundidad: la prohibición de reingreso del expulsado es absoluta
+// y sin excepción, así que no puede colgar de un solo flag. `reentryBlocked` lo
+// escribe hoy únicamente la baja por expulsión, pero una fila que llegue del
+// import, de un arreglo de datos a mano o de una edición futura con el motivo de
+// expulsión y el flag en `false` reabriría la puerta en silencio. Cualquiera de
+// las dos señales alcanza para bloquear.
+export function canReadmit(m: {
+  status: MemberStatus;
+  reentryBlocked: boolean;
+  withdrawalReason?: WithdrawalReason | null;
+}): RuleResult {
   if (m.status !== "withdrawn") return { ok: false, error: "Solo un socio dado de baja puede reingresar." };
-  if (m.reentryBlocked) {
+  if (m.reentryBlocked || m.withdrawalReason === "expulsion") {
     return { ok: false, error: "Baja por expulsión: el reingreso está prohibido por estatuto (Art. 5 inc. 2)." };
   }
   return { ok: true };
