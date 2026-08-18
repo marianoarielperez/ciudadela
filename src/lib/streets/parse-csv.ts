@@ -22,3 +22,27 @@ export function parseCsv(content: string): string[][] {
   }
   return rows;
 }
+
+export type StreetRow = { id: number; loadOrder: number; name: string };
+
+// Plain non-negative integer, no sign, no decimal point, no exponent.
+// Deliberately stricter than Number(): `Number("")` is 0 and passes
+// Number.isInteger, so a blank cell would import silently as id 0.
+const INTEGER = /^\d+$/;
+
+// Validates one data row of calles_inicial.csv. Returns null for anything
+// malformed so the caller can report and skip it.
+export function parseStreetRow(row: readonly string[]): StreetRow | null {
+  const idRaw = (row[0] ?? "").trim();
+  const orderRaw = (row[1] ?? "").trim();
+  const name = (row[2] ?? "").trim();
+
+  if (!INTEGER.test(idRaw) || !INTEGER.test(orderRaw) || name === "") return null;
+
+  const id = Number(idRaw);
+  // id 0 is exactly the value the old blank-cell bug produced; no real street
+  // uses it, so reject it rather than persist a suspicious primary key.
+  if (id === 0) return null;
+
+  return { id, loadOrder: Number(orderRaw), name };
+}

@@ -6,7 +6,7 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { prisma } from "../src/lib/prisma";
-import { parseCsv } from "../src/lib/streets/parse-csv";
+import { parseCsv, parseStreetRow } from "../src/lib/streets/parse-csv";
 import { normalizeStreetName } from "../src/lib/streets/normalize";
 
 async function main() {
@@ -16,13 +16,13 @@ async function main() {
     throw new Error(`Unexpected header: ${header.join(",")}`);
   }
   let upserted = 0;
-  for (const [idRaw, orderRaw, name] of rows) {
-    const id = Number(idRaw);
-    const loadOrder = Number(orderRaw);
-    if (!Number.isInteger(id) || !Number.isInteger(loadOrder) || !name) {
-      console.warn(`skipping malformed row: ${[idRaw, orderRaw, name].join(",")}`);
+  for (const row of rows) {
+    const parsed = parseStreetRow(row);
+    if (!parsed) {
+      console.warn(`skipping malformed row: ${row.join(",")}`);
       continue;
     }
+    const { id, loadOrder, name } = parsed;
     await prisma.street.upsert({
       where: { id },
       create: { id, loadOrder, name, normalizedName: normalizeStreetName(name) },
