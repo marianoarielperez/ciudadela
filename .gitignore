@@ -49,3 +49,6 @@ next-env.d.ts
 .vercel
 
 /src/generated/prisma
+
+# Reporte generado por scripts/import-padron.ts
+padron-import-report.txt
