@@ -11,17 +11,20 @@ datasource db {
 }
 
 model User {
-  id           Int        @id @default(autoincrement())
-  email        String     @unique @db.VarChar(191)
-  passwordHash String     @map("password_hash") @db.VarChar(60)
-  name         String?    @db.VarChar(120)
-  active       Boolean    @default(true)
-  lastLoginAt  DateTime?  @map("last_login_at")
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
-  roles        UserRole[]
-  auditLogs    AuditLog[]
-  member       Member?
+  id               Int           @id @default(autoincrement())
+  email            String        @unique @db.VarChar(191)
+  passwordHash     String        @map("password_hash") @db.VarChar(60)
+  name             String?       @db.VarChar(120)
+  active           Boolean       @default(true)
+  lastLoginAt      DateTime?     @map("last_login_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  roles            UserRole[]
+  auditLogs        AuditLog[]
+  member           Member?
+  minutesCreated   Minute[]
+  movementsCreated Movement[]
+  actionTokens     ActionToken[]
 
   @@map("users")
 }
@@ -205,7 +208,9 @@ model Book {
   openedAt        DateTime     @map("opened_at")
   closedAt        DateTime?    @map("closed_at")
   openingMinuteId Int?         @map("opening_minute_id")
+  openingMinute   Minute?      @relation("BookOpeningMinute", fields: [openingMinuteId], references: [id], onDelete: SetNull)
   closingMinuteId Int?         @map("closing_minute_id")
+  closingMinute   Minute?      @relation("BookClosingMinute", fields: [closingMinuteId], references: [id], onDelete: SetNull)
   memberships     Membership[]
 
   @@map("books")
@@ -231,8 +236,11 @@ model Minute {
   date        DateTime
   description String?    @db.VarChar(500)
   createdById Int?       @map("created_by_id")
+  createdBy   User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime   @default(now()) @map("created_at")
   movements   Movement[]
+  booksOpened Book[]     @relation("BookOpeningMinute")
+  booksClosed Book[]     @relation("BookClosingMinute")
 
   @@unique([type, number])
   @@map("minutes")
@@ -251,6 +259,7 @@ model Movement {
   reason           WithdrawalReason?
   detail           String?           @db.VarChar(300)
   createdById      Int?              @map("created_by_id")
+  createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt        DateTime          @default(now()) @map("created_at")
 
   @@index([memberId])
@@ -293,6 +302,7 @@ model ActionToken {
   memberId  Int?         @map("member_id")
   member    Member?      @relation(fields: [memberId], references: [id])
   userId    Int?         @map("user_id")
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime     @map("expires_at")
   usedAt    DateTime?    @map("used_at")
   createdAt DateTime     @default(now()) @map("created_at")
