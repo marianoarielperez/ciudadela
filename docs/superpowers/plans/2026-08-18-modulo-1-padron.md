@@ -35,11 +35,11 @@
 | 5 | `src/lib/forms.ts` |
 | 6 | `src/lib/tokens.ts` |
 | 7 | `src/lib/email/{transport,templates,index}.ts` |
-| 8 | `src/lib/members/{rules,service}.ts` |
+| 8 | `src/lib/members/{rules,service}.ts` (+ tests de ambos) |
 | 9 | `src/app/admin/socios/page.tsx` (+ shadcn components) |
 | 10 | `src/app/admin/socios/[id]/page.tsx` |
 | 11 | `src/app/admin/actas/**`, `src/components/admin/minute-picker.tsx` |
-| 12 | `src/app/admin/socios/nuevo/**`, `src/app/admin/socios/[id]/(acciones)/**` |
+| 12 | `src/app/admin/socios/nuevo/**`, `src/app/admin/socios/[id]/actions.ts`, `src/app/admin/socios/[id]/[accion]/page.tsx` |
 | 13 | `src/app/admin/socios/carga/[numero]/**`, `src/components/admin/street-autocomplete.tsx` |
 | 14 | `src/app/(public)/verificar/[token]/`, `src/app/(public)/acceso/[token]/` |
 | 15 | `src/app/(public)/ingresar/recuperar/`, `src/app/(public)/ingresar/restablecer/[token]/` |
@@ -1508,7 +1508,7 @@ export function hasArrearsDebt(m: { withdrawalReason: WithdrawalReason | null; d
 Run: `npx vitest run tests/member-rules.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Implementar el service (sin test unitario: orquestación fina sobre Prisma; se verifica en Task 12 y en la verificación final)**
+- [ ] **Step 5: Implementar el service**
 
 ```ts
 // src/lib/members/service.ts
@@ -1675,15 +1675,146 @@ export function makeMemberService(db: PrismaClient) {
 export const memberService = makeMemberService(prisma);
 ```
 
-- [ ] **Step 6: Typecheck + suite completa**
+- [ ] **Step 6: Tests del service con fake de Prisma**
+
+Escribir `tests/member-service.test.ts`. El fake implementa `$transaction(cb)` ejecutando el callback contra el mismo objeto (sin transacción real), lo que alcanza para verificar QUÉ escribe cada acción.
+
+```ts
+// tests/member-service.test.ts
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+
+import { makeMemberService } from "@/lib/members/service";
+
+const MINUTE = { id: 10, type: "board", number: 3, date: new Date("2026-08-20T12:00:00Z") };
+
+function makeFakeDb(member: Record<string, unknown>, config: { elections?: boolean } = {}) {
+  const state = {
+    member: { id: 1, status: "active", category: "adherent", reentryBlocked: false,
+      debtAtWithdrawal: false, withdrawalReason: null, joinedAt: new Date("2019-09-01T12:00:00Z"), ...member },
+    movements: [] as Record<string, unknown>[],
+    memberships: [] as Record<string, unknown>[],
+    updates: [] as Record<string, unknown>[],
+  };
+  const db = {
+    $transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(db),
+    configuration: { findUnique: async () => ({ value: config.elections ?? false }) },
+    book: { findFirst: async () => ({ id: 1, status: "open" }) },
+    minute: { findUniqueOrThrow: async () => MINUTE },
+    membership: {
+      aggregate: async () => ({ _max: { memberNumber: 305 } }),
+      create: async ({ data }: { data: Record<string, unknown> }) => { state.memberships.push(data); return data; },
+    },
+    movement: { create: async ({ data }: { data: Record<string, unknown> }) => { state.movements.push(data); return data; } },
+    member: {
+      findUniqueOrThrow: async () => state.member,
+      create: async ({ data }: { data: Record<string, unknown> }) => ({ id: 99, ...data }),
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        state.updates.push(data);
+        Object.assign(state.member, data);
+        return state.member;
+      },
+    },
+  };
+  return { db, state };
+}
+
+describe("memberService.admit", () => {
+  it("assigns the next member number and uses the minute date as joinedAt (REG-11)", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    const member = await svc.admit({ fullName: "Perez Ana", category: "active", minuteId: 10, actorId: 2 });
+    expect(member.joinedAt).toEqual(MINUTE.date);
+    expect(state.memberships[0]).toMatchObject({ memberNumber: 306 });
+    expect(state.movements[0]).toMatchObject({ type: "admission", minuteId: 10, newCategory: "active", createdById: 2 });
+  });
+});
+
+describe("memberService.withdraw", () => {
+  it("records the reason, the minute date as leftAt and a movement", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toMatchObject({ status: "withdrawn", withdrawalReason: "arrears", leftAt: MINUTE.date });
+    expect(state.movements[0]).toMatchObject({ type: "withdrawal", reason: "arrears", minuteId: 10 });
+  });
+
+  it("expulsion blocks any future reentry (REG-04)", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "expulsion", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toMatchObject({ reentryBlocked: true });
+  });
+
+  it("refuses to withdraw an already withdrawn member", async () => {
+    const { db } = makeFakeDb({ status: "withdrawn" });
+    const svc = makeMemberService(db as never);
+    await expect(svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 })).rejects.toThrow(/ya está dado de baja/);
+  });
+});
+
+describe("memberService.changeCategory", () => {
+  it("changes category without touching joinedAt (REG-07)", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toEqual({ category: "active" });
+    expect(state.updates[0]).not.toHaveProperty("joinedAt");
+    expect(state.movements[0]).toMatchObject({ type: "category_change", previousCategory: "adherent", newCategory: "active" });
+  });
+
+  it("is blocked while an election is ongoing (REG-07)", async () => {
+    const { db } = makeFakeDb({}, { elections: true });
+    const svc = makeMemberService(db as never);
+    await expect(svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 })).rejects.toThrow(/elecciones/);
+  });
+});
+
+describe("memberService.suspend / endSuspension", () => {
+  it("stores the suspension window and clears it when lifted", async () => {
+    const from = new Date("2026-09-01T12:00:00Z");
+    const to = new Date("2026-10-01T12:00:00Z");
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.suspend({ memberId: 1, from, to, minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toMatchObject({ status: "suspended", suspendedFrom: from, suspendedTo: to });
+    await svc.endSuspension({ memberId: 1, minuteId: 10, actorId: 2 });
+    expect(state.updates[1]).toMatchObject({ status: "active", suspendedFrom: null, suspendedTo: null });
+    expect(state.movements.map((m) => m.type)).toEqual(["suspension", "suspension_end"]);
+  });
+});
+
+describe("memberService.readmit", () => {
+  it("reactivates and keeps the debt flag for the M4 calculation (REG-16)", async () => {
+    const { db, state } = makeFakeDb({ status: "withdrawn", withdrawalReason: "arrears", debtAtWithdrawal: true });
+    const svc = makeMemberService(db as never);
+    await svc.readmit({ memberId: 1, category: "active", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toMatchObject({ status: "active", category: "active", withdrawalReason: null, leftAt: null });
+    expect(state.updates[0]).not.toHaveProperty("debtAtWithdrawal");
+    expect(state.movements[0]).toMatchObject({ type: "readmission" });
+  });
+
+  it("refuses to readmit an expelled member (REG-04)", async () => {
+    const { db } = makeFakeDb({ status: "withdrawn", reentryBlocked: true });
+    const svc = makeMemberService(db as never);
+    await expect(svc.readmit({ memberId: 1, category: "active", minuteId: 10, actorId: 2 })).rejects.toThrow(/expulsión/);
+  });
+});
+```
+
+Run: `npx vitest run tests/member-service.test.ts`
+Expected: PASS (10 tests). Si alguno falla, el bug está en el service, no en el test.
+
+- [ ] **Step 7: Typecheck + suite completa**
 
 Run: `npx tsc --noEmit && npm test`
 Expected: 0 errores; toda la suite PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib/members tests/member-rules.test.ts
+git add src/lib/members tests/member-rules.test.ts tests/member-service.test.ts
 git commit -m "feat: statutory member rules and transactional movement service"
 ```
 
@@ -2516,7 +2647,9 @@ git commit -m "feat: minutes CRUD and reusable minute picker"
 ### Task 12: Alta manual + acciones societarias (baja, categoría, suspensión, reingreso)
 
 **Files:**
-- Create: `src/app/admin/socios/nuevo/page.tsx`, `src/app/admin/socios/nuevo/admit-form.tsx`, `src/app/admin/socios/nuevo/actions.ts`, `src/app/admin/socios/[id]/action-form.tsx`, `src/app/admin/socios/[id]/actions.ts`, `src/app/admin/socios/[id]/baja/page.tsx`, `src/app/admin/socios/[id]/categoria/page.tsx`, `src/app/admin/socios/[id]/suspension/page.tsx`, `src/app/admin/socios/[id]/reingreso/page.tsx`
+- Create: `src/app/admin/socios/nuevo/page.tsx`, `src/app/admin/socios/nuevo/admit-form.tsx`, `src/app/admin/socios/nuevo/actions.ts`, `src/app/admin/socios/[id]/action-form.tsx`, `src/app/admin/socios/[id]/actions.ts`, `src/app/admin/socios/[id]/[accion]/page.tsx`
+
+**Decisión de diseño (Mariano, 18/08/2026):** las cuatro acciones (baja, categoría, suspensión, reingreso) NO tienen una página cada una: viven en una sola ruta paramétrica `[accion]` con un mapa de configuración. Evita cuatro archivos casi idénticos.
 
 **Interfaces:**
 - Consumes: `memberService` (Task 8), `minuteSelectionSchema`/`resolveMinuteId` (Task 11), `MinutePicker` (Task 11), `parseForm` (Task 5), labels (Task 9), `hasArrearsDebt` (Task 8), `audit`, `auth`.
@@ -2710,82 +2843,153 @@ export function ActionForm(props: {
 }
 ```
 
-Helper compartido para cargar el socio y las actas recientes (usado por las 4 páginas):
+Una sola ruta paramétrica cubre las cuatro acciones. Los campos propios de cada una se eligen con un `switch` sobre el slug; el resto (cargar socio, cargar actas, layout, `ActionForm`) se escribe una vez.
 
 ```tsx
-// dentro de cada page.tsx (patrón repetido; async RSC):
-const { id } = await props.params;
-const member = await prisma.member.findUnique({ where: { id: Number(id) } });
-if (!member) notFound();
-const minutes = (await prisma.minute.findMany({ orderBy: [{ date: "desc" }], take: 30 }))
-  .map((m) => ({ id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}` }));
-```
-
-```tsx
-// src/app/admin/socios/[id]/baja/page.tsx
+// src/app/admin/socios/[id]/[accion]/page.tsx
+// One parametric route for every statutory action: /admin/socios/7/baja,
+// /categoria, /suspension, /reingreso. Each slug picks its server action,
+// its copy and its extra fields; everything else is shared.
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
-import { MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
-import { ActionForm } from "../action-form";
-import { withdrawAction } from "../actions";
+import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
+import { hasArrearsDebt } from "@/lib/members/rules";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { ActionForm } from "../action-form";
+import {
+  changeCategoryAction, endSuspensionAction, readmitAction, suspendAction, withdrawAction,
+} from "../actions";
 
 export const dynamic = "force-dynamic";
 
-export default async function BajaPage(props: { params: Promise<{ id: string }> }) {
-  const { id } = await props.params;
+const SLUGS = ["baja", "categoria", "suspension", "reingreso"] as const;
+type Slug = (typeof SLUGS)[number];
+
+type MemberRow = NonNullable<Awaited<ReturnType<typeof prisma.member.findUnique>>>;
+
+type Screen = {
+  title: string;
+  notice?: ReactNode;
+  action: Parameters<typeof ActionForm>[0]["action"];
+  submitLabel: string;
+  fields: ReactNode;
+};
+
+function selectField(name: string, label: string, options: [string, string][], defaultValue?: string) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={name}>{label}</Label>
+      <select id={name} name={name} defaultValue={defaultValue}
+        className="h-9 w-full rounded-md border px-2 text-sm" required>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function detailField() {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="detail">Detalle (opcional)</Label>
+      <Input id="detail" name="detail" maxLength={300} />
+    </div>
+  );
+}
+
+function screenFor(slug: Slug, member: MemberRow): Screen {
+  switch (slug) {
+    case "baja":
+      return {
+        title: `Dar de baja a ${member.fullName}`,
+        notice: "La baja queda asentada con acta, en el historial y en auditoría. No borra datos.",
+        action: withdrawAction,
+        submitLabel: "Registrar baja",
+        fields: (
+          <>
+            {selectField("reason", "Motivo (catálogo REG-18)", Object.entries(REASON_LABELS))}
+            {detailField()}
+          </>
+        ),
+      };
+    case "categoria":
+      return {
+        title: `Cambiar categoría de ${member.fullName}`,
+        notice: `Categoría actual: ${CATEGORY_LABELS[member.category]}. El cambio no interrumpe la antigüedad (Art. 5° ter).`,
+        action: changeCategoryAction,
+        submitLabel: "Cambiar categoría",
+        fields: selectField(
+          "newCategory", "Nueva categoría",
+          Object.entries(CATEGORY_LABELS).filter(([v]) => v !== member.category),
+        ),
+      };
+    case "suspension":
+      return member.status === "suspended"
+        ? {
+            title: `Levantar la suspensión de ${member.fullName}`,
+            notice: `Suspendido desde ${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "—"} hasta ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "—"}.`,
+            action: endSuspensionAction,
+            submitLabel: "Levantar suspensión",
+            fields: null,
+          }
+        : {
+            title: `Suspender a ${member.fullName}`,
+            notice: "La suspensión no puede exceder 180 días (Art. 10 inc. b).",
+            action: suspendAction,
+            submitLabel: "Suspender",
+            fields: (
+              <>
+                <div className="space-y-1">
+                  <Label htmlFor="from">Desde</Label>
+                  <Input id="from" name="from" type="date" required />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="to">Hasta</Label>
+                  <Input id="to" name="to" type="date" required />
+                </div>
+                {detailField()}
+              </>
+            ),
+          };
+    case "reingreso":
+      return {
+        title: `Reingreso de ${member.fullName}`,
+        notice: hasArrearsDebt(member) ? (
+          <span className="block rounded-md border border-destructive/40 bg-destructive/5 p-3 text-destructive">
+            Cesante por mora con deuda: para reingresar debe saldar la totalidad de la deuda a valores
+            vigentes (Art. 9 inc. c). El cálculo del monto estará disponible con el Módulo 4 — registrá
+            el cobro en tesorería papel antes de confirmar.
+          </span>
+        ) : undefined,
+        action: readmitAction,
+        submitLabel: "Registrar reingreso",
+        fields: selectField("category", "Categoría de reingreso", Object.entries(CATEGORY_LABELS), member.category),
+      };
+  }
+}
+
+export default async function AccionPage(props: { params: Promise<{ id: string; accion: string }> }) {
+  const { id, accion } = await props.params;
+  if (!SLUGS.includes(accion as Slug)) notFound();
   const member = await prisma.member.findUnique({ where: { id: Number(id) } });
   if (!member) notFound();
   const minutes = (await prisma.minute.findMany({ orderBy: [{ date: "desc" }], take: 30 }))
     .map((m) => ({ id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}` }));
+  const screen = screenFor(accion as Slug, member);
+
   return (
     <div className="space-y-4 p-6">
-      <h1 className="text-2xl font-semibold">Dar de baja a {member.fullName}</h1>
-      <p className="text-sm text-muted-foreground">La baja queda asentada con acta, en el historial y en auditoría. No borra datos.</p>
-      <ActionForm action={withdrawAction} memberId={member.id} minutes={minutes} submitLabel="Registrar baja">
-        <div className="space-y-1">
-          <Label htmlFor="reason">Motivo (catálogo REG-18)</Label>
-          <select id="reason" name="reason" className="h-9 w-full rounded-md border px-2 text-sm" required>
-            {Object.entries(REASON_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="detail">Detalle (opcional)</Label>
-          <input id="detail" name="detail" maxLength={300} className="h-9 w-full rounded-md border px-2 text-sm" />
-        </div>
+      <h1 className="text-2xl font-semibold">{screen.title}</h1>
+      {screen.notice && <div className="text-sm text-muted-foreground">{screen.notice}</div>}
+      <ActionForm action={screen.action} memberId={member.id} minutes={minutes} submitLabel={screen.submitLabel}>
+        {screen.fields}
       </ActionForm>
     </div>
   );
 }
 ```
-
-```tsx
-// src/app/admin/socios/[id]/categoria/page.tsx — misma estructura que baja/page.tsx, con:
-// - título "Cambiar categoría de {member.fullName}" y subtítulo con la categoría actual
-// - <ActionForm action={changeCategoryAction} ... submitLabel="Cambiar categoría">
-// - select name="newCategory" con CATEGORY_LABELS excluyendo member.category
-```
-
-```tsx
-// src/app/admin/socios/[id]/suspension/page.tsx — misma estructura; si member.status === "suspended"
-// renderiza <ActionForm action={endSuspensionAction} ... submitLabel="Levantar suspensión"> sin campos extra;
-// si no, <ActionForm action={suspendAction} ... submitLabel="Suspender"> con:
-// - input type="date" name="from" (Label "Desde") y name="to" (Label "Hasta"), ambos required
-// - input name="detail" opcional
-```
-
-```tsx
-// src/app/admin/socios/[id]/reingreso/page.tsx — misma estructura; además:
-// - si hasArrearsDebt(member): mostrar un aviso destacado:
-//   "Cesante por mora con deuda: para reingresar debe saldar la totalidad de la deuda a valores
-//    vigentes (Art. 9 inc. c). El cálculo del monto estará disponible con el Módulo 4 — registrá
-//    el cobro en tesorería papel antes de confirmar."
-// - <ActionForm action={readmitAction} ... submitLabel="Registrar reingreso"> con
-//   select name="category" (CATEGORY_LABELS completo, default member.category)
-```
-
-Escribir los tres archivos comentados arriba COMPLETOS siguiendo exactamente el patrón de `baja/page.tsx` (los comentarios indican solo las diferencias).
 
 ```tsx
 // src/app/admin/socios/nuevo/admit-form.tsx
