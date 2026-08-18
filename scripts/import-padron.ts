@@ -1,5 +1,13 @@
 // Idempotent import of datos/padron_socios.xlsx into Book 1.
-// Run: npx tsx scripts/import-padron.ts
+// Run: npx tsx scripts/import-padron.ts [--update-existing]
+//
+// Por defecto SOLO crea los socios que faltan: los que ya están en la base no se
+// tocan. Es a propósito. Una vez que la Comisión empiece a completar las fichas a
+// mano desde el panel (DNI, domicilio, email, teléfono, fecha de nacimiento — todos
+// campos que el Excel tiene vacíos), re-correr el script con sobrescritura les
+// borraría ese trabajo sin decir nada. El script vive en el VPS y cualquiera lo
+// puede ejecutar por error, así que el modo destructivo es opt-in explícito:
+// --update-existing pisa los datos de los socios existentes con los del Excel.
 // `tsx` no carga `.env` por su cuenta: sin esto el singleton de Prisma no ve
 // DATABASE_URL. Tiene que ser el primer import del archivo.
 import "dotenv/config";
@@ -64,7 +72,15 @@ function resolveColumns(headerRow: ExcelJS.Row): Map<string, number> {
   return found;
 }
 
+const UPDATE_FLAG = "--update-existing";
+
 async function main() {
+  const updateExisting = process.argv.slice(2).includes(UPDATE_FLAG);
+  const unknownArgs = process.argv.slice(2).filter((a) => a !== UPDATE_FLAG);
+  if (unknownArgs.length > 0) {
+    throw new Error(`Argumento desconocido: ${unknownArgs.join(", ")}. Único flag válido: ${UPDATE_FLAG}`);
+  }
+
   if (existsSync(LOCK)) {
     throw new Error("padron_socios.xlsx está abierto en Excel (lock ~$). Cerralo y reintentá.");
   }
@@ -116,11 +132,18 @@ async function main() {
 
   let created = 0;
   let updated = 0;
+  let unchanged = 0;
   for (const m of mapped) {
     const existing = await prisma.membership.findUnique({
       where: { bookId_memberNumber: { bookId: book.id, memberNumber: m.memberNumber } },
     });
     if (existing) {
+      // Sin el flag no escribimos nada sobre un socio ya cargado: las correcciones
+      // hechas desde el panel valen más que los nulos del Excel.
+      if (!updateExisting) {
+        unchanged++;
+        continue;
+      }
       await prisma.member.update({ where: { id: existing.memberId }, data: m.member });
       updated++;
     } else {
@@ -150,7 +173,14 @@ async function main() {
     `Padron import — ${new Date().toISOString()}`,
     `filas: ${total} (esperado 283) | vigentes: ${vigentes} (esperado 160) | bajas: ${bajas} (esperado 123)`,
     `numeracion: 1..${maxN} | huecos (${gaps.length}, esperado 22): ${gaps.join(", ")}`,
-    `creados: ${created} | actualizados: ${updated}`,
+    `modo: ${updateExisting ? `${UPDATE_FLAG} (los existentes se pisan con el Excel)` : "solo alta (por defecto)"}`,
+    `creados: ${created} | actualizados: ${updated} | sin cambios: ${unchanged}`,
+    ...(updateExisting
+      ? []
+      : [
+          `los ${unchanged} socios ya existentes NO se tocaron (se conservan los datos cargados desde el panel).`,
+          `  para pisarlos con los datos del Excel: npx tsx scripts/import-padron.ts ${UPDATE_FLAG}`,
+        ]),
     `avisos (${warnings.length}):`,
     ...warnings.map((w) => `  - ${w}`),
   ];
@@ -163,7 +193,7 @@ async function main() {
 
   await audit({
     action: "padron_import", entity: "book", entityId: book.id,
-    detail: { total, vigentes, bajas, created, updated, warnings: warnings.length },
+    detail: { total, vigentes, bajas, created, updated, unchanged, updateExisting, warnings: warnings.length },
   });
 }
 
