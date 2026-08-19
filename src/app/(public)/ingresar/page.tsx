@@ -21,6 +21,14 @@ export default async function IngresarPage(props: {
           Tu contraseña quedó creada. Ingresá con tu email y la contraseña que elegiste.
         </p>
       )}
+      {/* Y el recupero (/ingresar/restablecer) termina acá por el mismo motivo:
+          sin el aviso, la pantalla de login pelada no confirma que el cambio se
+          guardó y el socio no sabe con cuál de las dos contraseñas entrar. */}
+      {cuenta === "restablecida" && (
+        <p className="mb-4 rounded border border-primary/40 bg-primary/10 p-3 text-sm" role="status">
+          Tu contraseña quedó actualizada. Ingresá con la nueva.
+        </p>
+      )}
       <LoginForm />
     </main>
   )

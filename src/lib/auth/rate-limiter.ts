@@ -130,14 +130,15 @@ export const verificationActorLimiter = createRateLimiter({
 export const PUBLIC_TOKEN_LIMIT = 30
 export const PUBLIC_TOKEN_WINDOW_MS = 60 * 60_000
 
-/** Canje de enlaces en /verificar y /acceso, por IP. Son rutas públicas y
- *  anónimas: no hay sesión que racionar, así que la única clave posible es el
- *  origen.
+/** Canje de enlaces en /verificar, /acceso y /ingresar/restablecer, por IP. Son
+ *  rutas públicas y anónimas: no hay sesión que racionar, así que la única
+ *  clave posible es el origen.
  *
  *  El presupuesto es holgado a propósito y no pretende frenar la adivinación de
  *  tokens —son 256 bits de `randomBytes`, no se enumeran—: lo que raciona es el
- *  martilleo del alta de contraseña, que cuesta un bcrypt de costo 12 (~300 ms
- *  de CPU) por intento. Un socio legítimo hace dos POST en todo el circuito, y
+ *  martilleo del alta y del restablecimiento de contraseña, que cuestan un
+ *  bcrypt de costo 12 (~300 ms de CPU) por intento. Un socio legítimo hace uno
+ *  o dos POST en todo el circuito, y
  *  el techo tiene que dejar pasar a varios vecinos detrás del mismo CGNAT de una
  *  operadora móvil, que es el caso común en Comodoro. Sólo lo consultan los POST:
  *  el GET de las páginas sólo hace `peek` (una lectura por índice) y limitarlo
@@ -145,4 +146,37 @@ export const PUBLIC_TOKEN_WINDOW_MS = 60 * 60_000
 export const publicTokenLimiter = createRateLimiter({
   limit: PUBLIC_TOKEN_LIMIT,
   windowMs: PUBLIC_TOKEN_WINDOW_MS,
+})
+
+export const PASSWORD_RESET_WINDOW_MS = 60 * 60_000
+export const PASSWORD_RESET_IP_LIMIT = 10
+export const PASSWORD_RESET_EMAIL_LIMIT = 3
+
+/** Pedidos de recupero de contraseña, por IP.
+ *
+ *  Este NO es un canje como el de `publicTokenLimiter`: es un formulario
+ *  anónimo que dispara un correo hacia afuera, así que lo que raciona es el
+ *  mailbombing y el barrido de direcciones, no la CPU. Presupuesto propio y no
+ *  el del login (`ipLimiter`): compartirlo significaría que un chaparrón de
+ *  pedidos de recupero deja sin INGRESAR a todos los vecinos detrás del mismo
+ *  CGNAT de una operadora móvil —el caso común en Comodoro— y al revés. Diez por
+ *  hora y por origen: un vecino olvidadizo hace dos o tres, y diez recuperos
+ *  distintos en una hora desde una misma IP en una asociación de ~300 socios no
+ *  es tráfico legítimo. */
+export const passwordResetIpLimiter = createRateLimiter({
+  limit: PASSWORD_RESET_IP_LIMIT,
+  windowMs: PASSWORD_RESET_WINDOW_MS,
+})
+
+/** Y por dirección pedida: el techo por IP no protege a una casilla concreta si
+ *  el atacante rota de origen. Tres por hora es lo que hace falta para no
+ *  convertir el formulario público en un botón de inundar el buzón de un socio.
+ *
+ *  Se consulta y se registra SIEMPRE con la dirección tal como la tipearon,
+ *  exista o no una cuenta con ella: si sólo contáramos los pedidos que terminan
+ *  en envío, el cuarto intento contestaría distinto según la cuenta exista, que
+ *  es exactamente lo que este formulario no puede revelar. */
+export const passwordResetEmailLimiter = createRateLimiter({
+  limit: PASSWORD_RESET_EMAIL_LIMIT,
+  windowMs: PASSWORD_RESET_WINDOW_MS,
 })

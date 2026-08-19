@@ -57,6 +57,19 @@ export function makeTokens(db: TokenDb) {
       });
       return count;
     },
+    // La misma regla —un solo enlace vivo— pero por CUENTA. El recupero de
+    // contraseña no cuelga de la ficha sino del `userId`: lo pide el titular de
+    // la casilla de la cuenta, existe también para las cuentas de gestión (que
+    // no tienen ficha) y sigue a la cuenta aunque cambie el email de la ficha.
+    // Por eso no alcanza con `revokeForMember`. Sólo borra los NO usados: los
+    // consumidos quedan como rastro.
+    async revokeForUser(userId: number, purposes: TokenPurpose[]): Promise<number> {
+      if (purposes.length === 0) return 0;
+      const { count } = await db.actionToken.deleteMany({
+        where: { userId, purpose: { in: purposes }, usedAt: null },
+      });
+      return count;
+    },
     // Un token de un solo uso tiene que consumirse una sola vez incluso con dos POST
     // simultáneos (doble clic, reintento del cliente de correo). Leer y después
     // escribir deja una ventana en la que los dos pasan la validación y los dos
