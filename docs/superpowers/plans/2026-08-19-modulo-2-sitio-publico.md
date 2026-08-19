@@ -3579,10 +3579,21 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
+  experimental: {
+    // El default de Next son 1 MB y la portada de una noticia puede pesar
+    // hasta MAX_COVER_BYTES (5 MB): sin esto el body parser corta ANTES de
+    // que saveNewsCover pueda devolver su mensaje en castellano. Agregado en
+    // la Task 6; NO quitar al tocar este archivo.
+    serverActions: { bodySizeLimit: "5mb" },
+  },
 };
 
 export default nextConfig;
 ```
+
+IMPORTANTE: el bloque `experimental.serverActions` ya existe en el archivo desde
+la Task 6. Al reescribir `next.config.ts` acá, **conservalo tal cual** — quitarlo
+rompe la subida de portadas de más de 1 MB.
 
 - [ ] **Step 2: Verificar contra el build real**
 
