@@ -46,6 +46,27 @@ describe("syncFormResetToState", () => {
     expect(el.checked).toBe(true);
   });
 
+  it("re-tilda un GRUPO de checkboxes con el mismo name desde una lista CSV", () => {
+    // Caso real: el calendario de salones manda los días como varios inputs
+    // `weekdays`. La action rechaza por solapamiento, el reset los apaga a
+    // todos, y sin esto el operador tiene que volver a tildarlos uno por uno.
+    const dias = [1, 2, 3, 4, 5].map((d) => checkbox("weekdays", false, String(d)));
+    syncFormResetToState(fakeRoot(dias), { weekdays: "2,4" });
+    expect(dias.map((d) => d.checked)).toEqual([false, true, false, true, false]);
+  });
+
+  it("destilda el día que salió de la lista CSV", () => {
+    const dias = [2, 4].map((d) => checkbox("weekdays", true, String(d)));
+    syncFormResetToState(fakeRoot(dias), { weekdays: "4" });
+    expect(dias.map((d) => d.checked)).toEqual([false, true]);
+  });
+
+  it("una lista CSV vacía deja todo el grupo destildado", () => {
+    const dias = [1, 2].map((d) => checkbox("weekdays", true, String(d)));
+    syncFormResetToState(fakeRoot(dias), { weekdays: "" });
+    expect(dias.map((d) => d.checked)).toEqual([false, false]);
+  });
+
   it("sigue re-afirmando selects y radios", () => {
     const select: Control = { tag: "select", name: "category", value: "active" };
     const si: Control = { tag: "input", type: "radio", name: "kind", value: "board", checked: false };

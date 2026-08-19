@@ -21,7 +21,11 @@ import { useEffect, type RefObject } from "react";
 // Con el checkbox pasa lo mismo y el daño es del mismo tipo: en noticias, el
 // operador tilda "Quitar la portada actual", la acción rechaza por slug
 // repetido, el reset destilda el checkbox sin avisar y al reintentar la
-// portada sigue ahí. Nadie le dice que su decisión se perdió.
+// portada sigue ahí. Nadie le dice que su decisión se perdió. Con el GRUPO de
+// checkboxes de los días del calendario de salones es peor todavía: el rechazo
+// por solapamiento es el caso frecuente, y volver a tildar cinco días a mano
+// después de cada intento es la clase de fricción que termina en un horario
+// cargado mal.
 //
 // El hook re-afirma en el DOM lo que dice el estado después de cada render, que
 // es cuando el reset ya ocurrió.
@@ -43,15 +47,31 @@ export function syncFormResetToState(root: HTMLElement, values: Record<string, s
     const wanted = values[el.name];
     if (wanted !== undefined && el.value !== wanted) el.value = wanted;
   }
-  // Radios y checkboxes comparten la regla: marcado si y solo si el estado dice
-  // exactamente el `value` de ese control. Para un checkbox suelto eso alcanza
-  // ("on" tildado, "" destildado, igual que lo que manda el navegador); un
-  // grupo de checkboxes con el mismo `name` no entra en un Record<string,
-  // string> y por eso no lo contemplamos.
-  for (const el of root.querySelectorAll<HTMLInputElement>("input[type=radio], input[type=checkbox]")) {
+  // Radios: marcado si y solo si el estado dice exactamente el `value` de ese
+  // control (de un grupo de radios sale un valor solo).
+  for (const el of root.querySelectorAll<HTMLInputElement>("input[type=radio]")) {
     const wanted = values[el.name];
     if (wanted !== undefined && el.checked !== (el.value === wanted)) {
       el.checked = el.value === wanted;
     }
+  }
+  // Checkboxes: pertenencia a una lista separada por comas. Generaliza la regla
+  // de los radios sin salirse del Record<string, string>, y por eso cubre los
+  // dos casos con un solo camino:
+  //
+  //   - Checkbox suelto: "on" lo tilda y "" lo destilda, que es exactamente lo
+  //     que manda el navegador y lo que ya esperaba `removeCover` en noticias.
+  //   - GRUPO con el mismo `name` —los días de la semana del calendario de
+  //     salones— entra como "2,4" y cada input se re-tilda si su value está en
+  //     la lista. Sin esto, el reset le borraba al operador los días tildados
+  //     cada vez que la action rechazaba por solapamiento.
+  //
+  // Límite conocido: un `value` con una coma adentro no se puede representar.
+  // Hoy todos son "on" o un dígito del 1 al 7.
+  for (const el of root.querySelectorAll<HTMLInputElement>("input[type=checkbox]")) {
+    const wanted = values[el.name];
+    if (wanted === undefined) continue;
+    const shouldCheck = wanted.split(",").includes(el.value);
+    if (el.checked !== shouldCheck) el.checked = shouldCheck;
   }
 }

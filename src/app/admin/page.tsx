@@ -14,6 +14,12 @@ const sections: { title: string; description: string; href?: string; cta?: strin
     href: "/admin/actas",
     cta: "Ver las actas",
   },
+  {
+    title: "Actividades",
+    description: "Calendario de los salones Histórico y Vidriado.",
+    href: "/admin/actividades",
+    cta: "Ver el calendario",
+  },
   { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
   { title: "Noticias", description: "Novedades y comunicados del sitio público.", href: "/admin/noticias", cta: "Gestionar noticias" },
   { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
