@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { padronWhere, parsePadronFilters } from "@/lib/members/query";
+import { describe, expect, it, vi } from "vitest";
+import { fetchPadron, padronWhere, parsePadronFilters } from "@/lib/members/query";
 
 describe("parsePadronFilters", () => {
   it("keeps only known values", () => {
@@ -20,5 +20,20 @@ describe("padronWhere", () => {
   it("maps email filter", () => {
     expect(JSON.stringify(padronWhere({ email: "verificado" }))).toContain("verified");
     expect(JSON.stringify(padronWhere({ email: "sin" }))).toContain("none");
+  });
+});
+
+describe("fetchPadron", () => {
+  // El export a Excel (Task 16) necesita el nombre de la calle de catálogo, no
+  // sólo el streetId: si esta relación se deja de traer, `member.street` vuelve
+  // a ser `undefined` y el domicilio de los socios del barrio se exporta vacío
+  // en silencio.
+  it("includes the catalog street relation on member", async () => {
+    const findMany = vi.fn(async () => []);
+    const db = { membership: { findMany } } as never;
+    await fetchPadron(db, {});
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ include: { member: { include: { street: true } } } }),
+    );
   });
 });

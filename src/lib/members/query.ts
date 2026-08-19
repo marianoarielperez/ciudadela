@@ -1,5 +1,7 @@
 // Shared padron query: listing page and Excel export use the same filters.
-import type { Member, MemberCategory, MemberStatus, Prisma, PrismaClient } from "@/generated/prisma/client";
+import type {
+  Member, MemberCategory, MemberStatus, Prisma, PrismaClient, Street,
+} from "@/generated/prisma/client";
 
 export type PadronFilters = {
   q?: string;
@@ -56,11 +58,21 @@ export function padronWhere(f: PadronFilters): Prisma.MembershipWhereInput {
   return where;
 }
 
-export async function fetchPadron(db: PrismaClient, f: PadronFilters) {
+// El domicilio de un socio del barrio vive en el catálogo de calles
+// (member.streetId -> Street), no como texto en el propio Member: el listado
+// no lo necesita para mostrar la tabla, pero la exportación a Excel sí
+// (Task 16), así que la relación se trae siempre acá — un solo lugar del que
+// cuelgan listado y export, en vez de dos queries que puedan divergir.
+export type PadronRow = { memberNumber: number; member: Member & { street: Street | null } };
+
+export async function fetchPadron(db: PrismaClient, f: PadronFilters): Promise<PadronRow[]> {
   const rows = await db.membership.findMany({
     where: padronWhere(f),
-    include: { member: true },
+    include: { member: { include: { street: true } } },
     orderBy: { memberNumber: "asc" },
   });
-  return rows.map((r) => ({ memberNumber: r.memberNumber, member: r.member as Member }));
+  return rows.map((r) => ({
+    memberNumber: r.memberNumber,
+    member: r.member as Member & { street: Street | null },
+  }));
 }
