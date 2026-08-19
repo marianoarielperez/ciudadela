@@ -42,22 +42,28 @@ export default async function HomePage() {
               </Link>
             ) : (
               <>
-                {/* No es un <button disabled>: no hay acción que ejecutar, es un
-                    cartel. Tampoco lleva aria-disabled: un <span> tiene rol
-                    `generic` y no hay nada que deshabilitar — el párrafo de al
-                    lado explica la situación. `text-secondary-foreground` y no
-                    `text-muted-foreground` porque este último sobre `bg-muted`
-                    da 4.18:1 y el cartel igual tiene que leerse. */}
-                <span className="cursor-not-allowed rounded-md bg-muted px-6 py-3 text-base font-semibold text-secondary-foreground">
-                  ASOCIATE
-                </span>
-                {/* Superficie opaca, no un negro translúcido: la explicación es
-                    lo que el vecino necesita leer y su contraste no puede
+                {/* Lo accionable acá es la información, no el control: el aviso
+                    va primero y se lleva el peso visual del bloque. Superficie
+                    opaca (no un negro translúcido): su contraste no puede
                     depender de qué pixel de la foto le toque atrás. */}
-                <p className="max-w-md rounded-md bg-background/95 px-3 py-2 text-sm text-foreground">
-                  Las asociaciones están suspendidas temporalmente. Para más información acercate a
-                  la sede vecinal.
-                </p>
+                <div className="max-w-md rounded-md bg-background px-4 py-2.5 text-left text-foreground shadow-lg">
+                  <p className="text-sm">
+                    Las asociaciones están suspendidas temporalmente. Para más información acercate
+                    a la sede vecinal:
+                  </p>
+                  <p className="mt-1 text-sm font-semibold">{SITE.address}</p>
+                </div>
+                {/* Estado inerte con tratamiento fantasma (sin relleno, borde
+                    fino punteado, texto atenuado) para que se lea como no
+                    disponible a simple vista, sin depender del cursor. No es un
+                    <button disabled>: no hay acción que ejecutar, es una
+                    etiqueta — se mantiene visible para que el vecino sepa que
+                    el camino existe y va a volver. El sufijo `sr-only` da a un
+                    lector de pantalla el estado que la atenuación da a la vista. */}
+                <span className="cursor-not-allowed rounded-md border border-dashed border-white/45 px-5 py-1.5 text-sm font-medium tracking-wide text-white/70">
+                  ASOCIATE
+                  <span className="sr-only"> (no disponible por ahora)</span>
+                </span>
               </>
             )}
             {/* REEMPADRONATE: oculto hasta que exista un proceso (Módulo 6). */}
