@@ -23,7 +23,7 @@ import { portalInvite } from "@/lib/email/templates";
 import {
   buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
 } from "@/lib/members/card-edit";
-import { MemberEmailConflictError, memberWriter } from "@/lib/members/write";
+import { MemberWriteError, memberWriter } from "@/lib/members/write";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
@@ -70,10 +70,26 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   try {
     ({ revokedTokens: revoked, accountEmailUpdated } = await memberWriter.updateMember(member.id, patch));
   } catch (e) {
-    // La dirección nueva ya es la de otra cuenta de acceso. El mensaje se lo
-    // escribe la capa que conoce la regla; acá sólo se muestra. No se guardó
-    // nada: la transacción entera volvió atrás.
-    if (e instanceof MemberEmailConflictError) return { error: e.message };
+    // Los dos rechazos de `memberWriter` —la dirección nueva ya es la de otra
+    // cuenta de acceso, o la edición dejaría sin email a una ficha que ya tiene
+    // cuenta— llegan acá con su mensaje ya escrito por la capa que conoce la
+    // regla; acá sólo se muestra. No se guardó nada: la transacción entera
+    // volvió atrás.
+    //
+    // Y se asientan igual. Que no haya habido escritura no los vuelve
+    // irrelevantes: un intento de mover la identidad de acceso de un socio a la
+    // casilla de otra cuenta es justo lo que la asociación tiene que poder
+    // reconstruir después (el padrón es el registro que se presenta ante la
+    // IGJ). Va el MOTIVO y los nombres de los campos que traía la edición,
+    // nunca valores: ni la dirección tipeada ni un solo dato del titular de la
+    // otra cuenta —que además esta capa no conoce— (Ley 25.326).
+    if (e instanceof MemberWriteError) {
+      await audit({
+        userId: actor.actorId, action: "member_update_rejected", entity: "member",
+        entityId: member.id, detail: { reason: e.reason, fields: changed }, ip: await clientIp(),
+      });
+      return { error: e.message };
+    }
     if (typeof e === "object" && e !== null && "code" in e && e.code === "P2002") {
       return { error: "Ya existe otro socio con ese DNI." };
     }
@@ -134,7 +150,9 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
   const ip = await clientIp();
   // Un enlace vivo por socio: el reenvío invalida el anterior. Si no, "no me
   // llegó" deja varios enlaces válidos en paralelo durante 7 días, cada uno
-  // capaz de crear la contraseña de la cuenta.
+  // capaz de crear la contraseña de la cuenta. Revocar al emitir es legítimo
+  // ACÁ y no en el recupero porque este envío está detrás de `requireAdmin`:
+  // es la regla del encabezado de `@/lib/tokens`, no una excepción.
   await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES);
   // `target.kind` decide los tres: el propósito del token, la plantilla y el
   // asiento de Notification. Con el email todavía sin confirmar va la

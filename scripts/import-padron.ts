@@ -8,6 +8,10 @@
 // borraría ese trabajo sin decir nada. El script vive en el VPS y cualquiera lo
 // puede ejecutar por error, así que el modo destructivo es opt-in explícito:
 // --update-existing pisa los datos de los socios existentes con los del Excel.
+// Con una excepción, que el reporte cuenta fila por fila: no se saltea ninguna
+// invariante de `memberWriter`, así que las filas cuyo email choque con otra
+// cuenta de acceso —o que dejarían sin email a un socio que ya tiene cuenta— NO
+// se escriben (ver el bloque del loop).
 //
 // Esta es la carga fundacional del Libro de Socios: todo el sistema se construye
 // encima. Ante cualquier ambigüedad el script ABORTA en vez de adivinar; nunca
@@ -22,7 +26,7 @@ import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/prisma";
 import { audit } from "../src/lib/audit";
 import { mapPadronRow, type RawPadronRow } from "../src/lib/padron/mapping";
-import { MemberEmailConflictError, memberWriter } from "../src/lib/members/write";
+import { MemberEmailConflictError, MemberEmailRequiredError, memberWriter } from "../src/lib/members/write";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
 const LOCK = join(process.cwd(), "datos", "~$padron_socios.xlsx");
@@ -207,7 +211,9 @@ const UPDATE_FLAG = "--update-existing";
 
 // Si el proceso muere en medio del loop, el reporte nunca se escribe: este contador
 // vive afuera para que el handler de error pueda decir hasta dónde llegó.
-const progress = { created: 0, updated: 0, unchanged: 0, conflicts: 0, memberships: 0, movements: 0 };
+const progress = {
+  created: 0, updated: 0, unchanged: 0, conflicts: 0, missingEmail: 0, memberships: 0, movements: 0,
+};
 
 async function main() {
   const updateExisting = process.argv.slice(2).includes(UPDATE_FLAG);
@@ -358,22 +364,43 @@ async function main() {
       // baja asentada), los enlaces de verificación/invitación vivos de ese socio
       // dejan de estar autorizados y hay que revocarlos en la misma transacción,
       // y si el socio ya tiene cuenta de acceso hay que llevarle la dirección
-      // nueva también a la cuenta.
+      // nueva también a la cuenta. Las invariantes de la cuenta viven allá, del
+      // lado del dueño del dato: el import las HEREDA, incluidos sus dos
+      // rechazos, y por eso no puede producirlas en masa sin enterarse.
       try {
         await memberWriter.updateMember(existing.memberId, m.member);
         progress.updated++;
       } catch (err) {
-        // El Excel le pone a este socio una dirección que ya es la de otra
-        // cuenta de acceso. Es un dato a corregir, no una falla del import: se
-        // saltea esta fila (no se escribió nada de ella) y se sigue, porque
-        // abortar dejaría el resto del padrón sin actualizar por un email mal
-        // tipeado en una celda.
-        if (!(err instanceof MemberEmailConflictError)) throw err;
-        warnings.push(
-          `socio ${m.memberNumber}: el email del Excel ya pertenece a otra cuenta de acceso — ` +
-            `la fila NO se actualizó, corregí la dirección y volvé a correr el import`,
-        );
-        progress.conflicts++;
+        // Los dos rechazos de `memberWriter` son datos a corregir, no fallas del
+        // import: se saltea la fila (no se escribió nada de ella) y se sigue,
+        // porque abortar dejaría el resto del padrón sin actualizar por una sola
+        // celda. Lo que NO se puede es saltearla en silencio: cada una queda en
+        // `warnings`, con su contador propio en el reporte y en la auditoría, así
+        // que la población afectada se lee de una corrida.
+        if (err instanceof MemberEmailConflictError) {
+          // El Excel le pone a este socio una dirección que ya es la de otra
+          // cuenta de acceso.
+          warnings.push(
+            `socio ${m.memberNumber}: el email del Excel ya pertenece a otra cuenta de acceso — ` +
+              `la fila NO se actualizó, corregí la dirección y volvé a correr el import`,
+          );
+          progress.conflicts++;
+        } else if (err instanceof MemberEmailRequiredError) {
+          // El caso masivo: el Excel del padrón viene casi sin datos personales,
+          // así que una corrida con --update-existing le borra el email a todas
+          // las fichas completadas desde el panel. En las que ya tienen cuenta de
+          // acceso eso dejaría la cuenta apuntando a la casilla vieja —la amenaza
+          // que cierra `syncAccountEmail`— multiplicada por cuantos socios haya.
+          // El writer las rechaza una por una y acá se cuentan: el import no se
+          // aborta entero (el resto del padrón sí se actualiza) pero ninguna de
+          // estas filas pasa, y el reporte dice cuáles fueron.
+          warnings.push(
+            `socio ${m.memberNumber}: el Excel no trae email y el socio ya tiene cuenta de acceso — ` +
+              `la fila NO se actualizó (dejarlo sin email le dejaría a la cuenta la dirección vieja); ` +
+              `cargá la dirección en el Excel o editá la ficha desde el panel`,
+          );
+          progress.missingEmail++;
+        } else throw err;
       }
     } else {
       // Las tres escrituras van en una transacción. Si no, un corte entre la segunda
@@ -440,7 +467,8 @@ async function main() {
         ].filter((l): l is string => l !== null)),
     `modo: ${updateExisting ? `${UPDATE_FLAG} (los existentes se pisan con el Excel)` : "solo alta (por defecto)"}`,
     `creados: ${progress.created} | actualizados: ${progress.updated} | sin cambios: ${progress.unchanged}`
-      + (progress.conflicts > 0 ? ` | NO actualizados por email en conflicto: ${progress.conflicts}` : ""),
+      + (progress.conflicts > 0 ? ` | NO actualizados por email en conflicto: ${progress.conflicts}` : "")
+      + (progress.missingEmail > 0 ? ` | NO actualizados por quedar sin email teniendo cuenta: ${progress.missingEmail}` : ""),
     `memberships creadas: ${progress.memberships} | movements de admision creados: ${progress.movements}`,
     `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission libro ${book.number}: ${dbAdmissions}`,
     ...(updateExisting
@@ -469,6 +497,7 @@ async function main() {
     detail: {
       total, vigentes, bajas, created: progress.created, updated: progress.updated,
       unchanged: progress.unchanged, conflicts: progress.conflicts,
+      missingEmail: progress.missingEmail,
       memberships: progress.memberships, movements: progress.movements,
       updateExisting, warnings: warnings.length,
     },
@@ -493,7 +522,8 @@ main()
     }
     console.error(
       `  progreso antes de abortar: creados ${progress.created}, actualizados ${progress.updated}, ` +
-        `sin cambios ${progress.unchanged} (memberships ${progress.memberships}, movements ${progress.movements})`,
+        `sin cambios ${progress.unchanged}, salteados ${progress.conflicts + progress.missingEmail} ` +
+        `(memberships ${progress.memberships}, movements ${progress.movements})`,
     );
     console.error("  El script es idempotente: corregí la causa y volvé a correrlo (los socios ya cargados se saltean).");
   })

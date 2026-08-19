@@ -62,23 +62,50 @@ export async function revokeStaleMemberTokens(
   return makeTokens(tx).revokeForMember(memberId, MEMBER_EMAIL_TOKEN_PURPOSES);
 }
 
-/** Mensaje para el OPERADOR del panel (es-AR). No nombra ni describe a la otra
- *  cuenta: quién es el titular de esa casilla no es asunto de esta pantalla, y
- *  el mensaje termina copiado en un mail o leído en voz alta en el mostrador. */
+/** Mensajes para el OPERADOR del panel (es-AR). Ninguno nombra ni describe a la
+ *  otra cuenta: quién es el titular de esa casilla no es asunto de esta
+ *  pantalla, y el mensaje termina copiado en un mail o leído en voz alta en el
+ *  mostrador. */
 export const MEMBER_WRITE_ERRORS = {
   emailConflict:
     "Ese email ya está asociado a otra cuenta de acceso del sistema, así que no se puede " +
     "asignar a esta ficha. No se guardó ningún cambio: revisá que la dirección esté bien " +
     "escrita o cargale otra al socio.",
+  emailRequired:
+    "Este socio ya tiene cuenta de acceso al portal y esa dirección es con la que ingresa, " +
+    "así que no se puede dejar la ficha sin email. No se guardó ningún cambio: cargale la " +
+    "dirección nueva. Si lo que querés es sacarle el acceso, eso es una baja.",
 } as const;
 
+/** Base de los dos rechazos que puede levantar `updateMember`.
+ *
+ *  Los dos abortan la escritura ENTERA (la transacción hace rollback) y los dos
+ *  traen en `message` un texto de cara al operador. `reason` es la etiqueta
+ *  estable para la auditoría y para el import, que necesitan distinguirlos sin
+ *  mirar el texto. */
+export abstract class MemberWriteError extends Error {
+  abstract readonly reason: "email_conflict" | "email_required";
+}
+
 /** La edición pedía moverle a la cuenta del socio una dirección que ya es la de
- *  OTRA cuenta. Aborta la escritura entera (la transacción hace rollback): la
- *  ficha no se guarda a medias con la cuenta apuntando a otro lado. */
-export class MemberEmailConflictError extends Error {
+ *  OTRA cuenta. Aborta la escritura entera: la ficha no se guarda a medias con
+ *  la cuenta apuntando a otro lado. */
+export class MemberEmailConflictError extends MemberWriteError {
+  readonly reason = "email_conflict" as const;
   constructor() {
     super(MEMBER_WRITE_ERRORS.emailConflict);
     this.name = "MemberEmailConflictError";
+  }
+}
+
+/** La edición dejaba sin email a una ficha que YA tiene cuenta de acceso.
+ *  Aborta, por el mismo motivo y con el mismo mecanismo que el conflicto: ver el
+ *  comentario de `syncAccountEmail`. */
+export class MemberEmailRequiredError extends MemberWriteError {
+  readonly reason = "email_required" as const;
+  constructor() {
+    super(MEMBER_WRITE_ERRORS.emailRequired);
+    this.name = "MemberEmailRequiredError";
   }
 }
 
@@ -105,16 +132,14 @@ function isUniqueViolation(e: unknown): boolean {
  *  llamador: cambiar la dirección de acceso de un socio es un hecho propio, no
  *  un campo más de la ficha).
  *
- *  Dos casos en los que NO escribe:
- *  - **La ficha no tiene cuenta** (`userId === null`): no hay nada que mover, y
- *    que la ficha lleve una dirección que ya es de otra cuenta es un conflicto
- *    que se resuelve recién al canjear la invitación (`ACCESS_ERRORS.conflict`).
- *  - **La ficha se quedó SIN dirección**: `User.email` es la identidad con la
- *    que se ingresa y la columna es única y no nula, así que no hay ningún valor
- *    con el cual reemplazarla. La cuenta conserva la anterior; lo que sí se hace
- *    es revocarle los enlaces de recupero vivos, porque el padrón ya no declara
- *    esa casilla como del socio. Borrar el email de una ficha con cuenta creada
- *    NO es, entonces, la forma de sacarle el acceso a nadie: eso es una baja. */
+ *  Un solo caso en el que NO escribe y no aborta: **la ficha no tiene cuenta**
+ *  (`userId === null`). No hay nada que mover, y que la ficha lleve una
+ *  dirección que ya es de otra cuenta es un conflicto que se resuelve recién al
+ *  canjear la invitación (`ACCESS_ERRORS.conflict`).
+ *
+ *  Y dos en los que ABORTA la edición entera, con un mensaje para el operador:
+ *  la dirección nueva ya es de otra cuenta (ver la guarda de colisión más
+ *  abajo), y la ficha se quedaría SIN dirección. */
 async function syncAccountEmail(
   tx: Pick<PrismaClient, "actionToken" | "user">,
   before: Pick<Member, "email">,
@@ -124,16 +149,31 @@ async function syncAccountEmail(
   const userId = after.userId;
   if (userId === null) return false;
 
+  // El login busca la cuenta en minúsculas (`verify-credentials`), igual que
+  // `memberAccess.createPassword`.
+  const email = after.email?.toLowerCase().trim();
+
+  // GUARDA DE FICHA SIN EMAIL. `User.email` es la identidad con la que se
+  // ingresa: es única y no nula, así que borrar el email de la ficha no tiene
+  // ningún valor con el cual reemplazarla en la cuenta. Dejar que la edición
+  // pase igual —la cuenta conservando la dirección anterior— sería dejar en pie
+  // exactamente la amenaza que este módulo viene a cerrar: quien controle la
+  // casilla vieja se emite un recupero cuando quiera, aunque el padrón ya no
+  // declare esa casilla como del socio, y revocar los enlaces vivos no alcanza
+  // porque el atacante pide uno nuevo. Y el camino del operador es natural ("ese
+  // mail ya no es de él y no sabemos el nuevo" → borra el campo), así que la
+  // divergencia se produciría en silencio y sin rastro.
+  //
+  // Por eso se aborta, con el mismo mecanismo que el conflicto: excepción,
+  // rollback y mensaje. Sacarle el acceso a un socio no es borrarle el email:
+  // eso es una baja (`memberService.withdraw`, que deshabilita la cuenta).
+  if (!email) throw new MemberEmailRequiredError();
+
   // Un enlace de recupero emitido hacia la casilla anterior deja de estar
   // autorizado por el mismo motivo por el que se revocan los de la ficha. Va
   // antes del posible conflicto sólo por claridad: si hay conflicto, la
   // transacción entera vuelve atrás y esta revocación tampoco ocurre.
   await makeTokens(tx).revokeForUser(userId, ["password_reset"]);
-
-  // El login busca la cuenta en minúsculas (`verify-credentials`), igual que
-  // `memberAccess.createPassword`.
-  const email = after.email?.toLowerCase().trim();
-  if (!email) return false;
 
   const account = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
   if (!account || sameAddress(account.email, email)) return false;
@@ -173,8 +213,10 @@ export function makeMemberWriter(db: WriterDb) {
      *  protegida y la cara, no: el email cambiado con los enlaces viejos vivos es
      *  exactamente la situación que la revocación viene a evitar.)
      *
-     *  Lanza `MemberEmailConflictError` si la dirección nueva ya es la de otra
-     *  cuenta de acceso; la transacción vuelve atrás entera.
+     *  Lanza un `MemberWriteError` —`MemberEmailConflictError` si la dirección
+     *  nueva ya es la de otra cuenta de acceso, `MemberEmailRequiredError` si la
+     *  edición dejaría sin email a una ficha que ya tiene cuenta— y en los dos
+     *  casos la transacción vuelve atrás entera.
      *
      *  Qué campos se pueden escribir es problema del llamador: la lista blanca
      *  estatutaria del modo carga es `Patch` en `@/lib/members/card-edit`. Lo que

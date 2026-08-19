@@ -7,6 +7,8 @@ import {
   makeMemberWriter,
   MEMBER_WRITE_ERRORS,
   MemberEmailConflictError,
+  MemberEmailRequiredError,
+  MemberWriteError,
   memberTokensLostAuthorization,
 } from "@/lib/members/write";
 
@@ -266,16 +268,55 @@ describe("memberWriter.updateMember — dirección de la cuenta de acceso", () =
   });
 
   // `User.email` es la identidad con la que se ingresa, única y no nula: no hay
-  // con qué reemplazarla. Borrar el email de la ficha NO es la forma de sacarle
-  // el acceso a nadie (eso es una baja), pero sí le saca los enlaces vivos.
-  it("keeps the account address when the card is left without one", async () => {
+  // con qué reemplazarla. Dejar pasar la edición con la cuenta conservando la
+  // dirección vieja sería dejar en pie la amenaza que este módulo cierra —quien
+  // tenga el buzón viejo se emite un recupero cuando quiera—, y por un camino
+  // de operador natural: borrar el campo en vez de reemplazarlo. Se aborta.
+  it("aborts the whole edit when the card of a member with an account is left without email", async () => {
     const { db, state } = makeFakeDb(withAccount);
     const writer = makeMemberWriter(db as never);
-    const { accountEmailUpdated } = await writer.updateMember(1, { email: null });
+
+    await expect(writer.updateMember(1, { email: null })).rejects.toBeInstanceOf(
+      MemberEmailRequiredError,
+    );
+    // Nada quedó escrito: ni la ficha, ni la cuenta.
+    expect(state.member.email).toBe("vecino@example.com");
+    expect(state.users.find((u) => u.id === 50)?.email).toBe("vecino@example.com");
+    // Y los enlaces siguen todos vivos (la transacción volvió atrás): el
+    // rollback tiene que alcanzar también a la revocación.
+    expect(state.tokens).toHaveLength(5);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+
+  it("explains to the operator why the card cannot be left without email", async () => {
+    const { db } = makeFakeDb(withAccount);
+    const writer = makeMemberWriter(db as never);
+    const err = await writer
+      .updateMember(1, { email: null })
+      .then(() => null, (e: unknown) => e as MemberWriteError);
+
+    expect(err?.message).toBe(MEMBER_WRITE_ERRORS.emailRequired);
+    // El operador tiene que salir sabiendo tres cosas: que no se guardó nada,
+    // por qué (la cuenta de acceso) y cuál es la salida si lo que quiere es
+    // sacarle el acceso.
+    expect(err?.message).toContain("cuenta de acceso");
+    expect(err?.message).toContain("No se guardó ningún cambio");
+    expect(err?.message).toContain("baja");
+    // Y la etiqueta estable que consumen la auditoría y el import.
+    expect(err?.reason).toBe("email_required");
+  });
+
+  // La ficha SIN cuenta puede quedarse sin email (es el estado normal del
+  // padrón importado): ahí no hay ninguna identidad de acceso que quede
+  // divergiendo, así que no se aborta y sólo se revocan los enlaces de ficha.
+  it("still lets a member without an account be left without email", async () => {
+    const { db, state } = makeFakeDb({}); // userId: null
+    const writer = makeMemberWriter(db as never);
+    const { revokedTokens, accountEmailUpdated } = await writer.updateMember(1, { email: null });
 
     expect(accountEmailUpdated).toBe(false);
-    expect(state.users.find((u) => u.id === 50)?.email).toBe("vecino@example.com");
-    expect(state.tokens.some((t) => t.id === 3)).toBe(false);
+    expect(state.member.email).toBeNull();
+    expect(revokedTokens).toBe(2);
   });
 
   // La guarda de colisión: sin ella, propagar abriría un agujero peor que el que
@@ -310,6 +351,10 @@ describe("memberWriter.updateMember — dirección de la cuenta de acceso", () =
     // otra cuenta, ni siquiera su dirección.
     expect(err?.message).not.toContain("otro.socio@example.com");
     expect(err?.message).not.toContain("@");
+    // Los dos rechazos comparten base y traen su etiqueta estable: es lo que la
+    // auditoría asienta y lo que el import usa para contarlos por separado.
+    expect(err).toBeInstanceOf(MemberWriteError);
+    expect((err as MemberEmailConflictError).reason).toBe("email_conflict");
   });
 
   // La lectura de la guarda y la escritura no son atómicas entre sí: si un alta

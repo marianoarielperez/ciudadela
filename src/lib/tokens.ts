@@ -1,5 +1,31 @@
 // Single-use action tokens (email verification, password invitation/reset).
 // Only the sha256 hash is stored; the raw token travels once, inside the email link.
+//
+// ── REGLA DEL PROYECTO: cuándo se revoca AL EMITIR ────────────────────────────
+//
+//   Revocar al emitir sólo donde quien emite ya está autenticado o ya demostró
+//   tener el buzón.
+//
+// Los dos circuitos de este archivo se ven distintos y NO son dos reglas
+// contradictorias: son dos consecuencias de esa única regla.
+//
+// - Enlaces de FICHA (`revokeForMember`, verificación e invitación): se emiten
+//   desde `sendVerificationAction` —detrás de `requireAdmin` y de dos
+//   limitadores— y desde `memberAccess.verifyEmail`, que la dispara quien acaba
+//   de canjear un token que sólo estaba en ese buzón. Un tercero anónimo no
+//   puede provocar la emisión, así que revocar ahí no es un arma y sí evita que
+//   "no me llegó" deje varios enlaces de 7 días vivos en paralelo.
+//
+// - Enlace de RECUPERO (`revokeForUser`): se emite desde un formulario público y
+//   anónimo (`/ingresar/recuperar`, sin captcha hasta M3). Ahí revocar al emitir
+//   sí es un arma: cualquiera que conozca la dirección le mata al socio el
+//   enlace que ya tiene en el buzón. Por eso NO se revoca al emitir y la
+//   invariante "un solo enlace vivo" se sostiene un paso más adelante, en el
+//   CANJE (`passwordReset.reset` → `revokeForUser`): el primero que se usa
+//   cierra la puerta de los que sigan vivos.
+//
+// El costo de esa diferencia está acotado por el TTL: 7 días los de ficha,
+// 30 minutos los de recupero.
 import { createHash, randomBytes } from "node:crypto";
 import type { ActionToken, PrismaClient, TokenPurpose } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -48,8 +74,16 @@ export function makeTokens(db: TokenDb) {
     // sirviendo para verificar —y para crear la contraseña de— una cuenta cuyo
     // domicilio electrónico ahora es otro: con un dedazo en la dirección, quien
     // tenga el buzón viejo se queda con la cuenta. Por eso el cambio de email
-    // revoca, y por eso un envío nuevo revoca el anterior (un solo enlace vivo
-    // por socio). Sólo se borran los NO usados: los consumidos son rastro.
+    // revoca.
+    //
+    // Acá SÍ se revoca también al emitir (un envío nuevo invalida el anterior),
+    // y eso no contradice al recupero: es la regla del encabezado de este
+    // archivo aplicada a un circuito donde quien emite ya está autenticado
+    // (`sendVerificationAction`, detrás de `requireAdmin`) o ya demostró tener el
+    // buzón (`memberAccess.verifyEmail`). Que valga acá y no allá es una
+    // consecuencia de la regla, no una excepción a ella.
+    //
+    // Sólo se borran los NO usados: los consumidos son rastro.
     async revokeForMember(memberId: number, purposes: TokenPurpose[]): Promise<number> {
       if (purposes.length === 0) return 0;
       const { count } = await db.actionToken.deleteMany({
@@ -62,13 +96,16 @@ export function makeTokens(db: TokenDb) {
     // la casilla de la cuenta y existe también para las cuentas de gestión, que
     // no tienen ficha), así que `revokeForMember` no lo alcanza.
     //
-    // Ojo con dónde se llama: NO se usa al emitir. Revocar al emitir le permite
-    // a cualquiera que conozca la dirección matarle al socio el enlace que ya
-    // recibió (ver el comentario largo en `auth/password-reset.ts:request`). Los
-    // dos usos legítimos son posteriores al hecho: el canje exitoso —que cierra
-    // los enlaces paralelos que quedaran vivos— y el cambio de la dirección de
-    // la cuenta desde el panel, que le saca autorización a todo enlace emitido
-    // hacia la casilla anterior (`members/write.ts`).
+    // Ojo con dónde se llama: NO se usa al emitir. El recupero se pide desde un
+    // formulario público y anónimo, o sea del lado de la regla del encabezado
+    // donde revocar al emitir es un arma: cualquiera que conozca la dirección le
+    // mataría al socio el enlace que ya recibió (ver también el comentario de
+    // `auth/password-reset.ts:request`). Los dos usos legítimos son posteriores
+    // al hecho: el canje exitoso —que cierra los enlaces paralelos que quedaran
+    // vivos, y es donde vive la invariante "un solo enlace vivo" de este
+    // circuito— y el cambio de la dirección de la cuenta desde el panel, que le
+    // saca autorización a todo enlace emitido hacia la casilla anterior
+    // (`members/write.ts`).
     // Sólo borra los NO usados: los consumidos quedan como rastro.
     async revokeForUser(userId: number, purposes: TokenPurpose[]): Promise<number> {
       if (purposes.length === 0) return 0;

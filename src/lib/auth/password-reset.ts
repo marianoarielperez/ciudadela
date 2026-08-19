@@ -63,10 +63,12 @@ export function makePasswordReset(db: ResetDb) {
 
         const tokens = makeTokens(tx);
         // Emitir NO revoca los enlaces vivos anteriores de la cuenta, y es
-        // deliberado: revocar acá convertía cada pedido en un arma. Cualquiera
-        // que conociera la dirección de un socio —sin cuenta, sin captcha—
-        // apretaba "olvidé mi contraseña" y le mataba el enlace que el socio ya
-        // tenía en el buzón; el socio pedía otro y se lo volvían a matar.
+        // deliberado: este formulario es público y anónimo, o sea el lado de la
+        // regla del proyecto (ver el encabezado de `tokens.ts`) donde revocar al
+        // emitir es un arma. Cualquiera que conociera la dirección de un socio
+        // —sin cuenta, sin captcha— apretaba "olvidé mi contraseña" y le mataba
+        // el enlace que el socio ya tenía en el buzón; el socio pedía otro y se
+        // lo volvían a matar.
         //
         // La salida obvia —reenviar el enlace vivo en vez de emitir uno nuevo—
         // acá NO es implementable: de un token guardamos SÓLO el sha256 (ver
@@ -75,13 +77,22 @@ export function makePasswordReset(db: ResetDb) {
         // reenviarlo cambiaría un problema de disponibilidad por una toma de
         // cuenta masiva ante cualquier lectura de la tabla o cualquier backup.
         //
-        // Que convivan varios enlaces vivos es aceptable y está acotado: los
-        // tres van SIEMPRE a la misma casilla (la de la cuenta, no la que se
-        // tipeó en el formulario), viven media hora, y cuántos puede haber a la
-        // vez lo fija el techo por dirección (`PASSWORD_RESET_EMAIL_LIMIT`).
-        // Quien no tiene el buzón no ve ninguno. Y el canje exitoso revoca todos
-        // los que sigan vivos (ver `reset`), así que después de un
-        // restablecimiento no queda ninguno.
+        // Hay una tercera salida que tampoco exige releer el token y que sí
+        // sostiene las dos propiedades a la vez: NO emitir mientras haya un
+        // `password_reset` vivo y sin usar de esta cuenta (el enlace que el
+        // tercero provocó igual llegó al buzón del socio, así que ya lo tiene).
+        // No se eligió por su propia contra: el socio que borró ese correo
+        // creyéndolo spam se queda sin pedir hasta media hora. O sea que la
+        // convivencia de varios enlaces es una decisión de producto entre dos
+        // opciones viables, no la única posible.
+        //
+        // Que convivan varios enlaces vivos es aceptable y está acotado: todos
+        // van SIEMPRE a la misma casilla (la de la cuenta, no la que se tipeó en
+        // el formulario), viven media hora, y cuántos puede haber a la vez lo
+        // fija el techo por dirección (`PASSWORD_RESET_EMAIL_LIMIT`). Quien no
+        // tiene el buzón no ve ninguno. Y el canje exitoso revoca todos los que
+        // sigan vivos (ver `reset`), así que después de un restablecimiento no
+        // queda ninguno.
         const token = await tokens.issue({ purpose: "password_reset", userId: user.id, now });
         return { userId: user.id, token };
       });
