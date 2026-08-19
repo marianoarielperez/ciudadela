@@ -2,7 +2,14 @@ import type { DefaultSession } from "next-auth"
 
 declare module "next-auth" {
   interface Session {
-    user: { id: string; roles: string[] } & DefaultSession["user"]
+    // `authAt`: MILISEGUNDOS epoch del momento en que se abrió la sesión (lo fija
+    // el callback `jwt` al entrar, con `Date.now()`, sin truncar). `null` en las
+    // sesiones emitidas antes de que el claim existiera. La precisión de
+    // milisegundos no es cosmética: con segundos, una sesión abierta en el mismo
+    // segundo que un cambio de contraseña quedaba válida para siempre (la
+    // comparación contra `passwordChangedAt` nunca la marcaba como vieja). No
+    // volver a truncar esto al segundo. Ver `@/lib/auth/session-freshness`.
+    user: { id: string; roles: string[]; authAt: number | null } & DefaultSession["user"]
   }
   interface User {
     roles?: string[]
@@ -15,5 +22,6 @@ declare module "@auth/core/jwt" {
   interface JWT {
     id?: string
     roles?: string[]
+    authAt?: number
   }
 }

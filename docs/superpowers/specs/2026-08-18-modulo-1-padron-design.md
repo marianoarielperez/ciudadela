@@ -11,8 +11,8 @@ permitir completar las fichas a mano rápido, registrar movimientos societarios 
 y dejar los cimientos de email transaccional y acceso de socios.
 
 **El padrón definitivo tiene 283 registros y 22 huecos** (los 20 de REG-35 más **132 y 263**,
-duplicados eliminados por Mariano el 18/08/2026). Vigentes: 161 (56 Activos + 105 Adherentes).
-Bajas: 122 (114 por mora con deuda, 8 fallecidos/domicilio sin deuda). Los docs 02/04/07 se
+duplicados eliminados por Mariano el 18/08/2026). Vigentes: 160 (55 Activos + 105 Adherentes).
+Bajas: 123 (114 por mora con deuda, 9 fallecidos/domicilio). Los docs 02/04/07 se
 actualizan con estos números como parte de este módulo.
 
 ## 2. Alcance

@@ -1,5 +1,5 @@
-import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { requireMember } from "@/lib/auth/require-member"
 
 export const metadata = { title: "Mi cuenta — Vecinal Ciudadela" }
 
@@ -10,11 +10,16 @@ const sections = [
 ]
 
 export default async function MiHomePage() {
-  const session = await auth()
+  // El layout no protege a la página: Next renderiza los dos en paralelo, así
+  // que el `redirect` del layout no impide que el código de la página corra.
+  // Cada pantalla (y cada server action) de socio se autoriza a sí misma; lo que
+  // se muestra sale de la ficha viva, no del token.
+  const actor = await requireMember()
+  if (!actor.ok) return null // el layout ya explica por qué
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-2xl font-bold">Hola, {session?.user.name ?? "vecino/a"}</h1>
+        <h1 className="text-2xl font-bold">Hola, {actor.fullName}</h1>
         <p className="text-muted-foreground">
           Acá vas a poder ver tus datos y el estado de tu cuota. Todavía estamos terminando esta
           parte.

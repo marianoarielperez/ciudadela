@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useActionState } from "react"
 
 import { loginAction, type LoginState } from "./actions"
@@ -27,6 +28,15 @@ export function LoginForm() {
       <Button type="submit" className="w-full" disabled={pending}>
         {pending ? "Ingresando…" : "Ingresar"}
       </Button>
+      {/* La salida del socio que olvidó la contraseña: es la que el panel le
+          promete al admin cuando se niega a reinvitar a una ficha que ya tiene
+          cuenta ("tiene que pedir el restablecimiento desde la pantalla de
+          ingreso", ver verificationTarget en @/lib/members/card-edit). */}
+      <p className="text-center text-sm">
+        <Link href="/ingresar/recuperar" className="text-primary hover:underline">
+          ¿Olvidaste tu contraseña?
+        </Link>
+      </p>
     </form>
   )
 }

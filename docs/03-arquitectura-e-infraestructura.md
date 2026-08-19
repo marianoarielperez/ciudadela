@@ -43,14 +43,15 @@ con comandos preparados):
 | Entorno | URL | Certificado | Credenciales MP |
 |---|---|---|---|
 | Staging | `sigev.redaccion.ar` | Cloudflare Origin wildcard `*.redaccion.ar` (ya instalado, válido hasta 2041) | TEST (sandbox) |
-| Producción | `vecinalciudadela.com.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas |
+| Producción | `vecinalciudadela.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas |
 
-- Registrar `vecinalciudadela.com.ar` en NIC.ar **con el CUIT de la vecinal** (no personal).
+- Registrar `vecinalciudadela.ar` en NIC.ar **con el CUIT de la vecinal** (no personal).
 - DNS en Cloudflare (plan free), registro A → 167.86.71.102, proxy activo.
 - Email saliente: Cloudflare Email Routing para recepción + **Brevo SMTP** para envío,
-  remitente `notificaciones@vecinalciudadela.com.ar`. Configurar SPF, DKIM y DMARC
-  (crítico: estos correos tienen valor de notificación fehaciente, no pueden caer en spam).
-  Mismo patrón ya aplicado en cbinfraestructura.ar y 7777.ar.
+  remitente `notificaciones@vecinalciudadela.ar`. Dominio ya autenticado en Brevo
+  con SPF, DKIM y DMARC configurados (crítico: estos correos tienen valor de
+  notificación fehaciente, no pueden caer en spam). Mismo patrón ya aplicado en
+  cbinfraestructura.ar y 7777.ar.
 - El plan free de Brevo (300 emails/día) sobra para ~70-300 socios.
 
 ## Despliegue

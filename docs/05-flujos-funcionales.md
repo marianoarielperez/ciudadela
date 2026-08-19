@@ -153,7 +153,7 @@ Precondición: proceso en `primera_instancia` o `segunda_instancia`.
   nombre enmascarado "¿Sos M****** P.?" para confirmar. Si no matchea, mensaje
   genérico "No encontramos una coincidencia" (sin revelar si el DNI existe).
   Rate limit estricto (p. ej. 5 intentos/15 min por IP) + Turnstile.
-- Nota operativa: esto requiere que los DNI de los 107 adherentes estén cargados
+- Nota operativa: esto requiere que los DNI de los 105 adherentes estén cargados
   ANTES de abrir el proceso (modo carga de fichas). El proceso no puede activarse
   si hay adherentes vigentes sin DNI (validación al activar, con listado de faltantes).
 

@@ -11,16 +11,26 @@ datasource db {
 }
 
 model User {
-  id           Int        @id @default(autoincrement())
-  email        String     @unique @db.VarChar(191)
-  passwordHash String     @map("password_hash") @db.VarChar(60)
-  name         String?    @db.VarChar(120)
-  active       Boolean    @default(true)
-  lastLoginAt  DateTime?  @map("last_login_at")
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
-  roles        UserRole[]
-  auditLogs    AuditLog[]
+  id               Int           @id @default(autoincrement())
+  email            String        @unique @db.VarChar(191)
+  passwordHash     String        @map("password_hash") @db.VarChar(60)
+  // Sello del ÚLTIMO cambio de contraseña de esta cuenta. No es informativo:
+  // lo comparan `require-admin` y `require-member` contra el momento en que se
+  // emitió la sesión (`session.user.authAt`) para cerrar las sesiones que le
+  // son anteriores. Nulo = no se escribió ninguna contraseña desde que existe
+  // esta columna (filas previas a la migración), y entonces no invalida nada.
+  passwordChangedAt DateTime?    @map("password_changed_at")
+  name             String?       @db.VarChar(120)
+  active           Boolean       @default(true)
+  lastLoginAt      DateTime?     @map("last_login_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  roles            UserRole[]
+  auditLogs        AuditLog[]
+  member           Member?
+  minutesCreated   Minute[]
+  movementsCreated Movement[]
+  actionTokens     ActionToken[]
 
   @@map("users")
 }
@@ -66,4 +76,242 @@ model AuditLog {
   @@index([userId])
   @@index([entity, entityId])
   @@map("audit_log")
+}
+
+// ── Módulo 1: padrón (Libro 1) ────────────────────────────────
+
+enum MemberCategory {
+  active
+  adherent
+  collaborator
+  cadet
+  honorary
+  lifetime
+}
+
+enum MemberStatus {
+  active
+  suspended
+  withdrawn
+}
+
+enum EmailStatus {
+  none
+  declared
+  verified
+  bounced
+}
+
+enum WithdrawalReason {
+  death
+  resignation
+  arrears
+  moved_away
+  not_reregistered
+  expulsion
+  duplicate_annulment
+  other
+}
+
+enum MovementType {
+  admission
+  withdrawal
+  category_change
+  readmission
+  suspension
+  suspension_end
+  book_migration
+}
+
+enum MinuteType {
+  board
+  assembly
+}
+
+enum BookStatus {
+  open
+  closed
+}
+
+enum TokenPurpose {
+  email_verification
+  password_invitation
+  password_reset
+}
+
+enum NotificationType {
+  email_verification
+  password_invitation
+  application_result
+  reregistration_first
+  reregistration_second
+  withdrawal_declared
+  fee_reminder
+  arrears_alert
+  receipt
+  generic
+}
+
+enum NotificationVia {
+  email
+  board
+}
+
+enum NotificationStatus {
+  sent
+  delivered
+  bounced
+  posted_board
+  completed_board
+}
+
+model Member {
+  id               Int               @id @default(autoincrement())
+  fullName         String            @map("full_name") @db.VarChar(160)
+  dni              String?           @unique @db.VarChar(12)
+  birthDate        DateTime?         @map("birth_date")
+  civilStatus      String?           @map("civil_status") @db.VarChar(40)
+  nationality      String?           @db.VarChar(60)
+  occupation       String?           @db.VarChar(80)
+  phone            String?           @db.VarChar(40)
+  streetId         Int?              @map("street_id")
+  street           Street?           @relation(fields: [streetId], references: [id])
+  streetText       String?           @map("street_text") @db.VarChar(120)
+  streetNumber     String?           @map("street_number") @db.VarChar(10)
+  neighborhood     String?           @db.VarChar(60)
+  email            String?           @db.VarChar(191)
+  emailStatus      EmailStatus       @default(none) @map("email_status")
+  emailVerifiedAt  DateTime?         @map("email_verified_at")
+  category         MemberCategory
+  status           MemberStatus
+  withdrawalReason WithdrawalReason? @map("withdrawal_reason")
+  joinedAt         DateTime          @map("joined_at")
+  leftAt           DateTime?         @map("left_at")
+  debtAtWithdrawal Boolean           @default(false) @map("debt_at_withdrawal")
+  autoDebit        Boolean           @default(false) @map("auto_debit")
+  reentryBlocked   Boolean           @default(false) @map("reentry_blocked")
+  rejectedUntil    DateTime?         @map("rejected_until")
+  suspendedFrom    DateTime?         @map("suspended_from")
+  suspendedTo      DateTime?         @map("suspended_to")
+  userId           Int?              @unique @map("user_id")
+  user             User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  memberships      Membership[]
+  movements        Movement[]
+  notifications    Notification[]
+  tokens           ActionToken[]
+
+  @@index([fullName])
+  @@index([status, category])
+  @@map("members")
+}
+
+model Book {
+  id              Int          @id @default(autoincrement())
+  number          Int          @unique
+  status          BookStatus
+  openedAt        DateTime     @map("opened_at")
+  closedAt        DateTime?    @map("closed_at")
+  openingMinuteId Int?         @map("opening_minute_id")
+  openingMinute   Minute?      @relation("BookOpeningMinute", fields: [openingMinuteId], references: [id], onDelete: SetNull)
+  closingMinuteId Int?         @map("closing_minute_id")
+  closingMinute   Minute?      @relation("BookClosingMinute", fields: [closingMinuteId], references: [id], onDelete: SetNull)
+  memberships     Membership[]
+
+  @@map("books")
+}
+
+model Membership {
+  id           Int    @id @default(autoincrement())
+  memberId     Int    @map("member_id")
+  member       Member @relation(fields: [memberId], references: [id])
+  bookId       Int    @map("book_id")
+  book         Book   @relation(fields: [bookId], references: [id])
+  memberNumber Int    @map("member_number")
+
+  @@unique([bookId, memberNumber])
+  @@unique([memberId, bookId])
+  @@map("memberships")
+}
+
+model Minute {
+  id          Int        @id @default(autoincrement())
+  type        MinuteType
+  number      Int
+  date        DateTime
+  description String?    @db.VarChar(500)
+  createdById Int?       @map("created_by_id")
+  createdBy   User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  movements   Movement[]
+  booksOpened Book[]     @relation("BookOpeningMinute")
+  booksClosed Book[]     @relation("BookClosingMinute")
+
+  @@unique([type, number])
+  @@map("minutes")
+}
+
+model Movement {
+  id               Int               @id @default(autoincrement())
+  memberId         Int               @map("member_id")
+  member           Member            @relation(fields: [memberId], references: [id])
+  type             MovementType
+  date             DateTime
+  minuteId         Int?              @map("minute_id")
+  minute           Minute?           @relation(fields: [minuteId], references: [id])
+  previousCategory MemberCategory?   @map("previous_category")
+  newCategory      MemberCategory?   @map("new_category")
+  reason           WithdrawalReason?
+  detail           String?           @db.VarChar(300)
+  createdById      Int?              @map("created_by_id")
+  createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now()) @map("created_at")
+
+  @@index([memberId])
+  @@map("movements")
+}
+
+model Street {
+  id             Int      @id
+  loadOrder      Int      @map("load_order")
+  name           String   @db.VarChar(80)
+  normalizedName String   @map("normalized_name") @db.VarChar(80)
+  members        Member[]
+
+  @@index([normalizedName])
+  @@index([loadOrder])
+  @@map("streets")
+}
+
+model Notification {
+  id             BigInt             @id @default(autoincrement())
+  memberId       Int?               @map("member_id")
+  member         Member?            @relation(fields: [memberId], references: [id])
+  type           NotificationType
+  via            NotificationVia
+  status         NotificationStatus
+  sentAt         DateTime           @default(now()) @map("sent_at")
+  brevoMessageId String?            @map("brevo_message_id") @db.VarChar(128)
+  boardFrom      DateTime?          @map("board_from")
+  boardTo        DateTime?          @map("board_to")
+  payloadSummary String?            @map("payload_summary") @db.VarChar(300)
+
+  @@index([memberId])
+  @@map("notifications")
+}
+
+model ActionToken {
+  id        Int          @id @default(autoincrement())
+  purpose   TokenPurpose
+  tokenHash String       @unique @map("token_hash") @db.Char(64)
+  memberId  Int?         @map("member_id")
+  member    Member?      @relation(fields: [memberId], references: [id])
+  userId    Int?         @map("user_id")
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime     @map("expires_at")
+  usedAt    DateTime?    @map("used_at")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@map("action_tokens")
 }

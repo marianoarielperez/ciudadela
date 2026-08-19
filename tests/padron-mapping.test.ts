@@ -1,0 +1,77 @@
+import { describe, expect, it } from "vitest";
+import { civilDateUtc, excelDateToCivilUtc } from "@/lib/dates";
+import { mapPadronRow, mapWithdrawalReason, type RawPadronRow } from "@/lib/padron/mapping";
+
+const base: RawPadronRow = {
+  numero_socio: 14, apellido_nombre: "Perez Mariano", dni: 30111222,
+  calle: "Los Andes", altura: 26, barrio: "Ciudadela", nacionalidad: null,
+  fecha_nacimiento: new Date(Date.UTC(1983, 11, 10)), estado_civil: "Soltero",
+  ocupacion: "Periodista", telefono: null, email: "m@yahoo.com.ar",
+  debito_automatico: "Si", fecha_ingreso: new Date(Date.UTC(2019, 8, 1)),
+  categoria_socio: "Activo", activo: "Si", deuda_tesoreria: null,
+  fecha_egreso: null, motivo_baja: "-",
+};
+
+describe("dates", () => {
+  it("civilDateUtc is noon UTC", () => {
+    expect(civilDateUtc(2019, 9, 1).toISOString()).toBe("2019-09-01T12:00:00.000Z");
+  });
+  it("excelDateToCivilUtc keeps the civil day", () => {
+    expect(excelDateToCivilUtc(new Date(Date.UTC(2019, 8, 1))).toISOString()).toBe("2019-09-01T12:00:00.000Z");
+  });
+});
+
+describe("mapWithdrawalReason", () => {
+  it("maps the known catalog", () => {
+    expect(mapWithdrawalReason("Mora").reason).toBe("arrears");
+    expect(mapWithdrawalReason("Fallecido").reason).toBe("death");
+    expect(mapWithdrawalReason("Fallecida").reason).toBe("death");
+    expect(mapWithdrawalReason("Domiciliada en Gasoducto").reason).toBe("moved_away");
+    expect(mapWithdrawalReason("Anulada por domicilio El Bolsón.").reason).toBe("moved_away");
+    expect(mapWithdrawalReason("-").reason).toBeNull();
+    expect(mapWithdrawalReason(null).reason).toBeNull();
+  });
+  it("falls back to other with warning", () => {
+    const r = mapWithdrawalReason("texto raro");
+    expect(r.reason).toBe("other");
+    expect(r.warning).toContain("texto raro");
+  });
+});
+
+describe("mapPadronRow", () => {
+  it("maps a vigente with email and auto debit", () => {
+    const m = mapPadronRow(base);
+    expect(m.memberNumber).toBe(14);
+    expect(m.member.status).toBe("active");
+    expect(m.member.category).toBe("active");
+    expect(m.member.dni).toBe("30111222");
+    expect(m.member.emailStatus).toBe("declared");
+    expect(m.member.autoDebit).toBe(true);
+    expect(m.member.joinedAt.toISOString()).toBe("2019-09-01T12:00:00.000Z");
+    expect(m.member.streetText).toBe("Los Andes");
+    expect(m.member.streetNumber).toBe("26");
+    expect(m.warnings).toEqual([]);
+  });
+  it("maps a baja por mora con deuda", () => {
+    const m = mapPadronRow({ ...base, activo: "No", deuda_tesoreria: "Si",
+      motivo_baja: "Mora", fecha_egreso: new Date(Date.UTC(2025, 7, 31)),
+      email: null, debito_automatico: "No", categoria_socio: "Adherente" });
+    expect(m.member.status).toBe("withdrawn");
+    expect(m.member.category).toBe("adherent");
+    expect(m.member.withdrawalReason).toBe("arrears");
+    expect(m.member.debtAtWithdrawal).toBe(true);
+    expect(m.member.leftAt?.toISOString()).toBe("2025-08-31T12:00:00.000Z");
+    expect(m.member.emailStatus).toBe("none");
+  });
+  it("warns on missing dni and on baja without fecha_egreso", () => {
+    const m = mapPadronRow({ ...base, dni: null, activo: "No", motivo_baja: "Fallecido", fecha_egreso: null });
+    expect(m.member.dni).toBeNull();
+    expect(m.member.leftAt).toBeNull();
+    expect(m.warnings.some((w) => w.includes("sin DNI"))).toBe(true);
+    expect(m.warnings.some((w) => w.includes("sin fecha_egreso"))).toBe(true);
+  });
+  it("throws on unknown category or activo flag", () => {
+    expect(() => mapPadronRow({ ...base, categoria_socio: "Vitalicio" })).toThrow();
+    expect(() => mapPadronRow({ ...base, activo: "quizas" })).toThrow();
+  });
+});

@@ -46,12 +46,14 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
   en bloques copiables y Mariano los ejecuta a mano (SSH puerto 2222, root).
 - El despliegue es git-based: push a GitHub (repo privado) → pull en el VPS → build → PM2 restart.
 - Staging: `sigev.redaccion.ar` con credenciales **de prueba** de MP.
-  Producción: `vecinalciudadela.com.ar` con credenciales productivas.
+  Producción: `vecinalciudadela.ar` con credenciales productivas.
 
 ## Datos incluidos
 
-- `datos/padron_socios.xlsx` — esqueleto del Libro N° 1 (285 filas, casi sin datos personales;
-  se completan a mano desde fichas papel vía el panel). Ver notas en `docs/04-modelo-de-datos.md`.
+- `datos/padron_socios.xlsx` — padrón definitivo del Libro N° 1 (283 filas,
+  numeración 1-305 con 22 huecos; DNIs completos salvo socios 287/288, ~36 emails
+  cargados). Importado por `scripts/import-padron.ts`; el resto de la ficha se
+  completa a mano desde el panel. Ver `docs/04-modelo-de-datos.md`.
 - `datos/calles_inicial.csv` — 40 calles catastrales del barrio para el autocompletado
   (campos: id_calle, orden_carga, nombre_calle). Ojo: nombres sin tilde y con comas
   tipo "Pizarro , Francisco" → normalizar para búsqueda.
@@ -63,14 +65,14 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
 ```
 DATABASE_URL="mysql://sigev:***@localhost:3306/sigev"
 AUTH_SECRET=***
-AUTH_URL=https://sigev.redaccion.ar        # prod: https://vecinalciudadela.com.ar
+AUTH_URL=https://sigev.redaccion.ar        # prod: https://vecinalciudadela.ar
 MP_ACCESS_TOKEN=***                        # staging: credenciales TEST
 MP_WEBHOOK_SECRET=***                      # para validar x-Signature
 BREVO_SMTP_HOST=smtp-relay.brevo.com
 BREVO_SMTP_PORT=587
 BREVO_SMTP_USER=***
 BREVO_SMTP_KEY=***
-MAIL_FROM="Vecinal Ciudadela <notificaciones@vecinalciudadela.com.ar>"
+MAIL_FROM="Vecinal Ciudadela <notificaciones@vecinalciudadela.ar>"
 UPLOADS_DIR=/var/sigev/uploads             # dev: ./uploads (gitignored)
 TURNSTILE_SITE_KEY=***
 TURNSTILE_SECRET_KEY=***

@@ -18,8 +18,8 @@ panel de administración para la Comisión Directiva (CD) y panel de autogestió
 
 ## Contexto y números
 
-- Padrón actual (Libro N° 1): 285 fichas históricas, **163 socios vigentes**
-  (56 activos + 107 adherentes). Tras el re-empadronamiento se esperan **~70 socios**.
+- Padrón actual (Libro N° 1): 283 fichas históricas, **160 socios vigentes**
+  (55 activos + 105 adherentes). Tras el re-empadronamiento se esperan **~70 socios**.
 - Cuotas actuales: Activo $6.000/mes (obligatoria), Adherente $3.000/mes (voluntaria),
   Colaborador $3.000/mes (obligatoria). Los montos NO se hardcodean: viven en los
   Planes de suscripción de Mercado Pago y la CD los actualiza desde el panel de MP.

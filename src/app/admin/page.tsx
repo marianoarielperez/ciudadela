@@ -1,11 +1,19 @@
+import Link from "next/link"
+
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export const metadata = { title: "Panel de administración — SIGeV" }
 
-const sections = [
+const sections: { title: string; description: string; href?: string; cta?: string }[] = [
   { title: "Solicitudes", description: "Altas de socios pendientes de revisión y aprobación." },
-  { title: "Socios", description: "Padrón, fichas y estado de cada socio." },
+  { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios", cta: "Ver el padrón" },
+  {
+    title: "Actas",
+    description: "Actas de Comisión Directiva y Asamblea donde se asientan los movimientos.",
+    href: "/admin/actas",
+    cta: "Ver las actas",
+  },
   { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
   { title: "Noticias", description: "Novedades y comunicados del sitio público." },
   { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
@@ -29,9 +37,18 @@ export default async function AdminHomePage() {
               <CardDescription>{section.description}</CardDescription>
             </CardHeader>
             <CardContent>
-              <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium">
-                Próximamente
-              </span>
+              {section.href ? (
+                <Link
+                  href={section.href}
+                  className="inline-block rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:underline"
+                >
+                  {section.cta ?? "Abrir"}
+                </Link>
+              ) : (
+                <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium">
+                  Próximamente
+                </span>
+              )}
             </CardContent>
           </Card>
         ))}

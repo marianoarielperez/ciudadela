@@ -32,10 +32,16 @@ de Datos Personales** (Argentina).
 ## Aplicación
 
 - Contraseñas: bcrypt (cost 12), política mínima 8 caracteres, rate limit de login
-  (5 intentos/15 min por cuenta e IP), sesiones JWT con expiración, recupero por
-  token de un solo uso (30 min).
+  (5 intentos/15 min por cuenta e IP), recupero por token de un solo uso (30 min).
+- Sesiones: JWT de Auth.js con 8 h de inactividad. Cambiar la contraseña, dar de
+  baja al socio o revocarle un rol cierran las sesiones abiertas de esa cuenta;
+  además hay un techo absoluto de **7 días** de sesión aunque se siga usando
+  (ver `docs/04-modelo-de-datos.md`, entidad Usuario/Rol).
 - Formularios públicos: Cloudflare Turnstile + rate limiting por IP (especialmente
-  el endpoint DNI+apellido: 5 intentos/15 min).
+  el endpoint DNI+apellido: 5 intentos/15 min). **Turnstile queda diferido al
+  Módulo 3** (se integra junto con el wizard de ASOCIATE); hasta entonces los
+  formularios públicos de los módulos ya construidos solo están protegidos por
+  los limitadores de intentos.
 - Webhooks: validación `x-Signature` (MP) y token/secret (Brevo); idempotencia.
 - Cabeceras: CSP, HSTS (vía Cloudflare + Next), `X-Frame-Options` salvo el embed
   del mapa.

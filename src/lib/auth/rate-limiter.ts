@@ -33,20 +33,60 @@ export function createRateLimiter({
     }
   }
 
+  // Deja en el Map sólo los intentos que siguen dentro de la ventana.
+  function recentOf(key: string, t: number): number[] {
+    const stamps = hits.get(key)
+    if (stamps === undefined) return []
+    const recent = stamps.filter((ts) => t - ts < windowMs)
+    if (recent.length === 0) hits.delete(key)
+    else hits.set(key, recent)
+    return recent
+  }
+
+  /** ¿Queda cupo? NO registra el intento. Existe para consultar varios
+   *  limitadores y recién registrar cuando TODOS dieron cupo: con `check` a
+   *  secas, el primero en evaluarse le cobra el intento a su clave aunque el
+   *  segundo termine rechazando, y el operador se queda sin cupo por envíos que
+   *  nunca salieron. */
+  function allows(key: string): boolean {
+    return recentOf(key, now()).length < limit
+  }
+
+  /** Registra un intento. Se llama con el cupo ya verificado con `allows`. */
+  function record(key: string) {
+    const t = now()
+    if (hits.size > maxKeys) sweep(t)
+    const recent = recentOf(key, t)
+    recent.push(t)
+    hits.set(key, recent)
+  }
+
+  /** Devuelve el último intento registrado de la clave. Para el caso en que se
+   *  reservó cupo y la operación no llegó a ocurrir (el SMTP falló): no se
+   *  acreditó ninguna Notification ni quedó ningún enlace vivo, así que no hay
+   *  nada que racionar y tres errores de configuración no pueden dejar al socio
+   *  sin reintentos por una hora. */
+  function refund(key: string) {
+    const stamps = hits.get(key)
+    if (stamps === undefined || stamps.length === 0) return
+    stamps.pop()
+    if (stamps.length === 0) hits.delete(key)
+  }
+
   return {
+    /** El presupuesto configurado. Introspección para tests y diagnóstico: deja
+     *  que un test pinee la configuración del singleton, no sólo la constante. */
+    limit,
+    windowMs,
     /** true = intento permitido (y registrado); false = bloqueado */
     check(key: string): boolean {
-      const t = now()
-      if (hits.size > maxKeys) sweep(t)
-      const recent = (hits.get(key) ?? []).filter((ts) => t - ts < windowMs)
-      if (recent.length >= limit) {
-        hits.set(key, recent)
-        return false
-      }
-      recent.push(t)
-      hits.set(key, recent)
+      if (!allows(key)) return false
+      record(key)
       return true
     },
+    allows,
+    record,
+    refund,
     reset(key: string) {
       hits.delete(key)
     },
@@ -66,3 +106,86 @@ export const loginLimiter = createRateLimiter()
 /** Por IP sola: frena el barrido de muchas cuentas desde un mismo origen,
  *  que nunca llegaría a 5 intentos en ningún par email|ip. */
 export const ipLimiter = createRateLimiter({ limit: 20 })
+
+export const VERIFICATION_WINDOW_MS = 60 * 60_000
+export const VERIFICATION_MEMBER_LIMIT = 3
+export const VERIFICATION_ACTOR_LIMIT = 20
+
+/** Envío de verificación + invitación de acceso desde el panel, por socio.
+ *  Cada envío acredita una notificación fehaciente (Art. 5° quater) y deja un
+ *  enlace vivo: apretar 20 veces "no me llegó" no puede escribir 20 asientos del
+ *  mismo hecho. La ventana es larga a propósito; el reintento legítimo es raro. */
+export const verificationMemberLimiter = createRateLimiter({
+  limit: VERIFICATION_MEMBER_LIMIT,
+  windowMs: VERIFICATION_WINDOW_MS,
+})
+
+/** Y por admin: frena el barrido de muchos socios desde una misma sesión, que
+ *  nunca llegaría a 3 en ningún socio concreto. */
+export const verificationActorLimiter = createRateLimiter({
+  limit: VERIFICATION_ACTOR_LIMIT,
+  windowMs: VERIFICATION_WINDOW_MS,
+})
+
+export const PUBLIC_TOKEN_LIMIT = 30
+export const PUBLIC_TOKEN_WINDOW_MS = 60 * 60_000
+
+/** Canje de enlaces en /verificar, /acceso y /ingresar/restablecer, por IP. Son
+ *  rutas públicas y anónimas: no hay sesión que racionar, así que la única
+ *  clave posible es el origen.
+ *
+ *  El presupuesto es holgado a propósito y no pretende frenar la adivinación de
+ *  tokens —son 256 bits de `randomBytes`, no se enumeran—: lo que raciona es el
+ *  martilleo del alta y del restablecimiento de contraseña, que cuestan un
+ *  bcrypt de costo 12 (~300 ms de CPU) por intento. Un socio legítimo hace uno
+ *  o dos POST en todo el circuito, y
+ *  el techo tiene que dejar pasar a varios vecinos detrás del mismo CGNAT de una
+ *  operadora móvil, que es el caso común en Comodoro. Sólo lo consultan los POST:
+ *  el GET de las páginas sólo hace `peek` (una lectura por índice) y limitarlo
+ *  castigaría al que refresca. */
+export const publicTokenLimiter = createRateLimiter({
+  limit: PUBLIC_TOKEN_LIMIT,
+  windowMs: PUBLIC_TOKEN_WINDOW_MS,
+})
+
+export const PASSWORD_RESET_WINDOW_MS = 60 * 60_000
+export const PASSWORD_RESET_IP_LIMIT = 10
+export const PASSWORD_RESET_EMAIL_LIMIT = 5
+
+/** Pedidos de recupero de contraseña, por IP.
+ *
+ *  Este NO es un canje como el de `publicTokenLimiter`: es un formulario
+ *  anónimo que dispara un correo hacia afuera, así que lo que raciona es el
+ *  mailbombing y el barrido de direcciones, no la CPU. Presupuesto propio y no
+ *  el del login (`ipLimiter`): compartirlo significaría que un chaparrón de
+ *  pedidos de recupero deja sin INGRESAR a todos los vecinos detrás del mismo
+ *  CGNAT de una operadora móvil —el caso común en Comodoro— y al revés. Diez por
+ *  hora y por origen: un vecino olvidadizo hace dos o tres, y diez recuperos
+ *  distintos en una hora desde una misma IP en una asociación de ~300 socios no
+ *  es tráfico legítimo. */
+export const passwordResetIpLimiter = createRateLimiter({
+  limit: PASSWORD_RESET_IP_LIMIT,
+  windowMs: PASSWORD_RESET_WINDOW_MS,
+})
+
+/** Y por dirección pedida: el techo por IP no protege a una casilla concreta si
+ *  el atacante rota de origen. Lo que raciona es la inundación del buzón de un
+ *  socio desde el formulario público.
+ *
+ *  Cinco por hora y no tres: este techo es lo único que le puede gastar los
+ *  pedidos a un socio que no pidió nada (Turnstile sigue diferido al M3), así
+ *  que conviene que sobre. Es además el que fija cuántos enlaces de recupero
+ *  pueden convivir vivos para una misma cuenta, porque emitir ya no revoca el
+ *  anterior (ver `auth/password-reset.ts:request`): con media hora de TTL, como
+ *  mucho cinco, todos hacia la misma casilla.
+ *
+ *  Se consulta y se registra SIEMPRE, exista o no una cuenta con esa dirección:
+ *  si sólo contáramos los pedidos que terminan en envío, el intento que se pasa
+ *  del techo contestaría distinto según la cuenta exista, que es exactamente lo
+ *  que este formulario no puede revelar. La clave es la dirección NORMALIZADA
+ *  (minúsculas, sin espacios: la normaliza la action antes de consultar), si no
+ *  alternar mayúsculas alcanzaría para saltarse el techo. */
+export const passwordResetEmailLimiter = createRateLimiter({
+  limit: PASSWORD_RESET_EMAIL_LIMIT,
+  windowMs: PASSWORD_RESET_WINDOW_MS,
+})
