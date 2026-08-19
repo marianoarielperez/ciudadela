@@ -43,6 +43,30 @@ describe("sanitizeNewsBody", () => {
       "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
     );
   });
+  it("descarta hrefs protocol-relative pero conserva los links internos", () => {
+    expect(sanitizeNewsBody('<a href="//evil.example/x">x</a>')).toBe('<a rel="noopener noreferrer">x</a>');
+    expect(sanitizeNewsBody('<a href="/noticias/1">x</a>')).toBe(
+      '<a href="/noticias/1" rel="noopener noreferrer">x</a>',
+    );
+    expect(sanitizeNewsBody('<a href="#seccion">x</a>')).toBe('<a href="#seccion" rel="noopener noreferrer">x</a>');
+  });
+  it("pisa el rel hostil y descarta target", () => {
+    expect(sanitizeNewsBody('<a href="https://ok.com" rel="opener" target="_blank">x</a>')).toBe(
+      '<a href="https://ok.com" rel="noopener noreferrer">x</a>',
+    );
+  });
+  it("descarta el esquema ofuscado con entidades HTML", () => {
+    expect(sanitizeNewsBody('<a href="java&#115;cript:alert(1)">x</a>')).toBe('<a rel="noopener noreferrer">x</a>');
+  });
+  it("es idempotente: re-editar una noticia no cambia el cuerpo", () => {
+    const html =
+      '<h2>Título</h2><p><strong>Hola</strong> <a href="https://example.com">link</a> y <a href="/noticias/1">interno</a></p><ul><li>uno</li></ul>';
+    const once = sanitizeNewsBody(html);
+    expect(sanitizeNewsBody(once)).toBe(once);
+    expect(once).toBe(
+      '<h2>Título</h2><p><strong>Hola</strong> <a href="https://example.com" rel="noopener noreferrer">link</a> y <a href="/noticias/1" rel="noopener noreferrer">interno</a></p><ul><li>uno</li></ul>',
+    );
+  });
 });
 
 describe("newsBodyIsEmpty", () => {

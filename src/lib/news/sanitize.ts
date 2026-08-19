@@ -8,6 +8,10 @@ const OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: ["p", "br", "strong", "em", "u", "a", "ul", "ol", "li", "h2", "h3"],
   allowedAttributes: { a: ["href", "rel"] },
   allowedSchemes: ["http", "https"],
+  // Sin esto, sanitize-html deja pasar "//host/x": no es XSS, pero es un
+  // esquema que nadie eligió permitir y el editor nunca genera. Los links
+  // internos ("/noticias/1", "#seccion") siguen funcionando.
+  allowProtocolRelative: false,
   // rel fijo: las noticias pueden linkear afuera y no queremos window.opener.
   transformTags: { a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer" }) },
 };
