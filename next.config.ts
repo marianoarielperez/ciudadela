@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
+  experimental: {
+    // El default de Next es 1 MB y la portada de una noticia puede pesar
+    // hasta MAX_COVER_BYTES (5 MB): sin esto el body parser corta ANTES de
+    // que saveNewsCover pueda devolver su mensaje en castellano.
+    serverActions: { bodySizeLimit: "5mb" },
+  },
 };
 
 export default nextConfig;

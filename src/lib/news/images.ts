@@ -51,6 +51,12 @@ export async function saveNewsCover(
     return { ok: false, error: "La imagen no puede superar los 5 MB." };
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
+  // Se chequea dos veces a propósito: `file.size` lo declara el caller y un
+  // File sintético puede mentir, así que el límite real se aplica sobre los
+  // bytes que efectivamente vamos a escribir en disco.
+  if (bytes.length > MAX_COVER_BYTES) {
+    return { ok: false, error: "La imagen no puede superar los 5 MB." };
+  }
   const ext = sniffImageExt(bytes);
   if (!ext) return { ok: false, error: "Formato no soportado: subí una imagen JPG, PNG o WebP." };
   const fileName = `${crypto.randomUUID()}.${ext}`;

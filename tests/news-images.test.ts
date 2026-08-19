@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isValidNewsImageName, newsImageUrl, sniffImageExt } from "@/lib/news/images";
 
@@ -101,5 +102,18 @@ describe("sniffImageExt", () => {
 describe("newsImageUrl", () => {
   it("arma la URL del route handler", () => {
     expect(newsImageUrl("a.jpg")).toBe("/api/imagenes/noticias/a.jpg");
+  });
+  it("escapa un nombre corrupto en vez de romper la URL", () => {
+    expect(newsImageUrl(`${UUID}.jpg?x=1`)).toBe(`/api/imagenes/noticias/${UUID}.jpg%3Fx%3D1`);
+    expect(newsImageUrl(`${UUID}.jpg#frag`)).toBe(`/api/imagenes/noticias/${UUID}.jpg%23frag`);
+  });
+
+  // image-url.ts existe separado de images.ts justamente para ser puro: en la
+  // task siguiente lo importa un client component, y cualquier import de node:
+  // rompe el build. Hasta ahora eso lo sostenía sólo un comentario.
+  it("image-url.ts no importa nada de node: lo consumen client components", () => {
+    const src = readFileSync(new URL("../src/lib/news/image-url.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/from\s+["']node:/);
+    expect(src).not.toMatch(/require\(["']node:/);
   });
 });

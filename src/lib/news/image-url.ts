@@ -14,5 +14,8 @@ export function isValidNewsImageName(name: string): boolean {
 }
 
 export function newsImageUrl(fileName: string): string {
-  return `/api/imagenes/noticias/${fileName}`;
+  // La función es pública: si alguna vez recibe un nombre con `?` o `#` (o
+  // cualquier cosa que no pase isValidNewsImageName), escaparlo evita que el
+  // resto se lea como query string o fragmento y la URL quede rota.
+  return `/api/imagenes/noticias/${encodeURIComponent(fileName)}`;
 }
