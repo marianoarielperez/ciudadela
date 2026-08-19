@@ -17,9 +17,19 @@ export default async function HomePage() {
   const [asociateActive, latest] = await Promise.all([getAsociateActive(), getLatestNews(3)]);
   return (
     <main>
-      {/* Hero: overlay en degradé pesado abajo (donde va el texto) para que el
-          blanco tenga contraste real contra cualquier zona de la foto — el
-          cielo claro del ángulo superior arruinaría un overlay parejo. */}
+      {/* Hero: la foto tiene pixeles casi blancos (techos, chapa) en TODA su
+          altura, así que el contraste del texto no puede depender de qué zona
+          le toque atrás. El overlay se define en píxeles desde el borde
+          inferior — no en porcentajes de la altura del hero — porque el bloque
+          de texto mide lo mismo en cualquier viewport: así el mismo degradé
+          sirve en mobile (donde el título ocupa dos líneas y sube hasta ~290 px
+          del piso) y en desktop, sin variantes responsive.
+          Calibrado contra el peor pixel posible (un techo blanco puro): a la
+          altura del título el overlay compone ~0,60 de negro, o sea que 255
+          cae a ~100 y el blanco da ~5,8:1 — piso garantizado, no promedio.
+          Arriba de los 420 px el overlay ya no existe: la foto queda intacta
+          justo donde tiene información (las manzanas, las calles, los árboles)
+          y el hero se sigue leyendo como una foto aérea del barrio. */}
       <section className="relative">
         <Image
           src={heroImg}
@@ -27,11 +37,18 @@ export default async function HomePage() {
           placeholder="blur"
           priority
           sizes="100vw"
-          className="h-[45vh] min-h-72 w-full object-cover sm:h-[55vh]"
+          className="h-[52vh] min-h-[26rem] w-full object-cover sm:h-[55vh]"
         />
-        <div className="absolute inset-0 flex flex-col items-center justify-end bg-gradient-to-t from-black/90 from-20% via-black/65 via-55% to-transparent to-90% px-4 pb-8 text-center text-white">
-          <h1 className="text-2xl font-bold drop-shadow sm:text-4xl">{SITE.name}</h1>
-          <p className="mt-1 text-sm drop-shadow sm:text-base">{SITE.city}</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-end bg-[linear-gradient(to_top,rgb(0_0_0/0.86)_0px,rgb(0_0_0/0.60)_230px,rgb(0_0_0/0.55)_300px,rgb(0_0_0/0)_420px)] px-4 pb-8 text-center text-white">
+          {/* text-shadow real (no el filter `drop-shadow` de Tailwind, que es
+              10 % y 6 % de negro y no mueve la aguja): suma contraste justo
+              donde está el glifo, sin oscurecer un pixel más de la foto. */}
+          <h1 className="text-2xl font-bold [text-shadow:0_1px_3px_rgb(0_0_0/0.55)] sm:text-4xl">
+            {SITE.name}
+          </h1>
+          <p className="mt-1 text-sm [text-shadow:0_1px_3px_rgb(0_0_0/0.55)] sm:text-base">
+            {SITE.city}
+          </p>
           <div className="mt-4 flex flex-col items-center gap-3">
             {asociateActive ? (
               <Link
