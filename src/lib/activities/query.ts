@@ -47,8 +47,11 @@ export function makeActivityQueries(db: Db) {
     },
     async allForAdmin(year?: number): Promise<ActivitySlot[]> {
       const rows = await db.activity.findMany({
-        where: year ? { year } : undefined,
-        orderBy: [{ year: "desc" }, { room: "asc" }, { startTime: "asc" }],
+        // Guard explícito contra `undefined`: `year ? …` trataría el año 0 como
+        // "sin filtro". El `id` final desempata: sin él, dos actividades con el
+        // mismo año, salón y horario salen en orden indefinido en el listado.
+        where: year === undefined ? undefined : { year },
+        orderBy: [{ year: "desc" }, { room: "asc" }, { startTime: "asc" }, { id: "asc" }],
       });
       return rows.map(toSlot);
     },

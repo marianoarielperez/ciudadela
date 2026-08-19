@@ -99,12 +99,25 @@ describe("makeActivityQueries", () => {
     expect(rows[0].active).toBe(false);
     const args = argsFor("findMany");
     expect(args.where).toEqual({ year: 2026 });
-    expect(args.orderBy).toEqual([{ year: "desc" }, { room: "asc" }, { startTime: "asc" }]);
+    // El `id` final desempata: sin él, dos actividades con mismo año, salón y
+    // horario salen en orden indefinido y el listado del panel baila.
+    expect(args.orderBy).toEqual([
+      { year: "desc" },
+      { room: "asc" },
+      { startTime: "asc" },
+      { id: "asc" },
+    ]);
   });
 
   it("allForAdmin: sin año no manda where (trae todos los años)", async () => {
     const { db, argsFor } = fakeDb([row()]);
     await makeActivityQueries(db).allForAdmin();
     expect(argsFor("findMany").where).toBeUndefined();
+  });
+
+  it("allForAdmin: el año 0 filtra por 0, no se confunde con 'sin año'", async () => {
+    const { db, argsFor } = fakeDb([row({ year: 0 })]);
+    await makeActivityQueries(db).allForAdmin(0);
+    expect(argsFor("findMany").where).toEqual({ year: 0 });
   });
 });
