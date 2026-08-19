@@ -862,13 +862,13 @@ async function main() {
 
   const lines = [
     `Padron import — ${new Date().toISOString()}`,
-    `filas: ${total} (esperado 283) | vigentes: ${vigentes} (esperado 161) | bajas: ${bajas} (esperado 122)`,
+    `filas: ${total} (esperado 283) | vigentes: ${vigentes} (esperado 160) | bajas: ${bajas} (esperado 123)`,
     `numeracion: 1..${maxN} | huecos (${gaps.length}, esperado 22): ${gaps.join(", ")}`,
     `creados: ${created} | actualizados: ${updated}`,
     `avisos (${warnings.length}):`,
     ...warnings.map((w) => `  - ${w}`),
   ];
-  if (total !== 283 || vigentes !== 161 || gaps.length !== 22) {
+  if (total !== 283 || vigentes !== 160 || gaps.length !== 22) {
     lines.push("ATENCION: TOTALES DISTINTOS DE LOS ESPERADOS — revisar antes de continuar");
   }
   const report = lines.join("\n");
@@ -893,7 +893,7 @@ padron-import-report.txt
 - [ ] **Step 3: Correr el import y verificar totales**
 
 Run: `npx tsx scripts/import-padron.ts`
-Expected en el reporte: `filas: 283 ... vigentes: 161 ... bajas: 122`, `huecos (22, esperado 22): 21, 71, 72, 73, 93, 94, 95, 97, 125, 132, 147, 199, 208, 214, 221, 222, 223, 224, 238, 245, 254, 263`, `creados: 283 | actualizados: 0`, y el aviso del socio 287 sin DNI.
+Expected en el reporte: `filas: 283 ... vigentes: 160 ... bajas: 123`, `huecos (22, esperado 22): 21, 71, 72, 73, 93, 94, 95, 97, 125, 132, 147, 199, 208, 214, 221, 222, 223, 224, 238, 245, 254, 263`, `creados: 283 | actualizados: 0`, y el aviso del socio 287 sin DNI.
 
 - [ ] **Step 4: Verificar idempotencia**
 
@@ -2091,7 +2091,7 @@ En `src/app/admin/page.tsx`, cambiar la entrada `Socios` del array `sections` pa
 - [ ] **Step 5: Verificar en el navegador**
 
 Run: `npm run dev` y abrir `http://localhost:3000/admin/socios` logueado como admin.
-Expected: tabla con 283 socios ordenados por número, filtros funcionando (ej. `?status=active` → 161 filas). El link "Exportar Excel" devolverá 404 hasta la Task 16 — esperado.
+Expected: tabla con 283 socios ordenados por número, filtros funcionando (ej. `?status=active` → 160 filas). El link "Exportar Excel" devolverá 404 hasta la Task 16 — esperado.
 
 - [ ] **Step 6: Commit**
 
@@ -3837,7 +3837,7 @@ Nota: el domicilio exporta `streetText`/`streetNumber`; para socios con `streetI
 
 - [ ] **Step 2: Verificar**
 
-Con sesión admin, abrir `/admin/socios?status=active` → "Exportar Excel". Expected: descarga con 161 filas + encabezado; abrirlo en Excel y chequear tildes (Ñiripil, Agüero) y fechas DD/MM/AAAA. Sin sesión (incógnito): 403.
+Con sesión admin, abrir `/admin/socios?status=active` → "Exportar Excel". Expected: descarga con 160 filas + encabezado; abrirlo en Excel y chequear tildes (Ñiripil, Agüero) y fechas DD/MM/AAAA. Sin sesión (incógnito): 403.
 
 - [ ] **Step 3: Suite + commit**
 
@@ -3859,7 +3859,7 @@ git commit -m "feat: filtered padron excel export"
 
 Localizar el texto de REG-35 y reemplazar la parte de numeración por:
 
-> numeración 1-305 con **22 huecos**: 12 anulados por duplicidad (21, 71, 72, 73, 93, 94, 95, 97, 125, 147, 238, 254), 8 fichas extraviadas que se desestiman (199, 208, 214, 221, 222, 223, 224, 245) y 2 duplicados eliminados en la carga definitiva del 18/08/2026 (132, 263) — estos números simplemente no existen en el libro. Total: **283 registros** (161 vigentes: 56 activos + 105 adherentes; 122 bajas).
+> numeración 1-305 con **22 huecos**: 12 anulados por duplicidad (21, 71, 72, 73, 93, 94, 95, 97, 125, 147, 238, 254), 8 fichas extraviadas que se desestiman (199, 208, 214, 221, 222, 223, 224, 245) y 2 duplicados eliminados en la carga definitiva del 18/08/2026 (132, 263) — estos números simplemente no existen en el libro. Total: **283 registros** (160 vigentes: 55 activos + 105 adherentes; 123 bajas).
 
 - [ ] **Step 2: docs/04 — entidad Socio e importación**
 
