@@ -159,9 +159,11 @@ Proceso completo en `05-flujos-funcionales.md`. Reglas duras:
 ## Numeración y libros
 
 - REG-35. Libro N° 1 = padrón histórico importado de `datos/padron_socios.xlsx`
-  (numeración 1-305 con 20 huecos: 12 anulados por duplicidad
-  [21, 71, 72, 73, 93, 94, 95, 97, 125, 147, 238, 254] y 8 fichas extraviadas sin
-  completar que se desestiman [199, 208, 214, 221, 222, 223, 224, 245] — estos
-  números simplemente no existen en el libro).
+  (numeración 1-305 con **22 huecos**: 12 anulados por duplicidad
+  [21, 71, 72, 73, 93, 94, 95, 97, 125, 147, 238, 254], 8 fichas extraviadas que
+  se desestiman [199, 208, 214, 221, 222, 223, 224, 245] y 2 duplicados eliminados
+  en la carga definitiva del 18/08/2026 [132, 263] — estos números simplemente no
+  existen en el libro). Total: **283 registros** (160 vigentes: 55 activos +
+  105 adherentes; 123 bajas).
 - REG-36. Cada libro registra: número de libro, acta/fecha de apertura, acta/fecha
   de cierre. El libro cerrado queda en modo solo-lectura y consultable.

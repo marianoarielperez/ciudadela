@@ -35,7 +35,13 @@ Identidad única de la persona a través de todos los libros.
   `estado` (`vigente` | `suspendido` | `baja`), `motivo_baja` (catálogo REG-18),
   `fecha_ingreso` (fecha del acta de alta original — NUNCA se pisa en cambios de
   libro ni de categoría), `fecha_egreso`
-- Flags: `bloqueado_reingreso` (expulsados, REG-04), `rechazo_hasta` (REG-05)
+- Flags: `bloqueado_reingreso` (expulsados, REG-04), `rechazo_hasta` (REG-05),
+  `deuda_tesoreria_baja` (boolean, `debt_at_withdrawal` en el schema): tenía deuda
+  de tesorería al momento de la baja (columna `deuda_tesoreria` del padrón). Lo usa
+  el Módulo 3 para bloquear el re-ingreso web de cesantes por mora con deuda; el
+  Módulo 4 lo reemplaza por la cuenta corriente real una vez que exista.
+  `debito_automatico` (boolean, `auto_debit` en el schema): candidato a vincular
+  una suscripción MP preexistente (columna `debito_automatico` del padrón, ver 06).
 - `usuario_id` (FK Usuario, nullable)
 
 ### Libro
@@ -138,6 +144,20 @@ Identidad única de la persona a través de todos los libros.
 - `Usuario`: `email` (UNIQUE), `password_hash` (bcrypt), `socio_id` (nullable),
   `activo`, `ultimo_login`
 - Roles: `superadmin` | `admin` | `socio` — tabla N:N, acumulables.
+- **Una cuenta de acceso por dirección de email** (decisión de producto, tomada
+  durante el Módulo 1): como `email` es la identidad de login y es único, si dos
+  socios comparten casilla (típico un matrimonio u otro hogar), solo el primero
+  que la usa para crear cuenta tiene portal propio. El segundo sigue siendo socio
+  pleno igual —recibe las notificaciones en esa misma casilla, paga en la sede y
+  vota— y al intentar verificar su email o canjear una invitación ve un mensaje
+  que le explica la situación sin revelar de quién es la cuenta existente. Si en
+  el futuro esto genera fricción, permitir que una cuenta gestione varios socios
+  es una migración chica (agregar la relación N:N que hoy es 1:1 vía `socio_id`).
+- **Invalidación de sesiones**: cambiar la contraseña, dar de baja al socio o
+  revocarle un rol cierran las sesiones abiertas de esa cuenta (comparando el
+  sello de apertura del JWT contra `password_changed_at`); además hay un techo
+  absoluto de **7 días** de sesión, independiente de la actividad. Ver
+  `docs/08-seguridad-y-privacidad.md`.
 
 ### Noticia
 - `titulo`, `slug`, `cuerpo` (markdown o rich text simple), `imagen_path` (nullable),
@@ -171,15 +191,21 @@ Identidad única de la persona a través de todos los libros.
 
 Script `scripts/import-padron.ts` que lee `datos/padron_socios.xlsx`:
 
-1. Crea Libro 1 (abierto) y las 285 membresías con su `numero_socio` original.
-   Los 20 números ausentes (REG-35) no se crean: son huecos legítimos del libro.
+1. Crea Libro 1 (abierto) y las 283 membresías con su `numero_socio` original.
+   Los 22 números ausentes (REG-35) no se crean: son huecos legítimos del libro.
 2. Crea cada Socio con lo que haya: `apellido_nombre`, `categoria_socio`,
    `fecha_ingreso`, `estado` (`activo`='Si' → vigente; 'No' → baja), `fecha_egreso`,
    `motivo_baja` mapeado al catálogo (`Mora`→`cesantia_mora`, `Fallecido/a`→
    `fallecimiento`, domicilios fuera del barrio→`cesantia_mudanza`, `-`→null).
-3. Los DNI/domicilios/emails faltantes quedan null: se completan a mano desde el
-   panel admin (pantalla de edición de socio pensada para carga rápida desde ficha,
-   con navegación siguiente/anterior por número de socio).
+   `fecha_ingreso` se toma tal cual figura en el libro y es la fecha oficial a
+   todos los efectos: decisión del cliente **no recapturarla** desde las fichas
+   de papel, aunque difiera de la fecha real de ingreso de algún socio antiguo.
+3. Los domicilios/teléfonos/estado civil faltantes quedan null: se completan a
+   mano desde el panel admin (pantalla de edición de socio pensada para carga
+   rápida desde ficha, con navegación siguiente/anterior por número de socio).
+   Estado real del archivo (18/08/2026): 283 filas con DNI casi completo (faltan
+   los de los socios 287 y 288) y ~36 emails cargados; el resto de la ficha se
+   completa desde el panel.
 4. El campo `debito_automatico`='Si' del Excel marca candidatos a vincular
    suscripciones MP preexistentes (ver `06-integracion-mercadopago.md`).
 5. El import es idempotente (re-ejecutable sin duplicar) y genera reporte de

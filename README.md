@@ -21,7 +21,7 @@ sigev/
 │   ├── 07-plan-de-etapas.md      ← Módulos 0-6 con criterios de aceptación
 │   └── 08-seguridad-y-privacidad.md
 ├── datos/
-│   ├── padron_socios.xlsx        ← Libro N° 1 (esqueleto, 285 filas)
+│   ├── padron_socios.xlsx        ← Libro N° 1 (padrón definitivo, 283 filas)
 │   └── calles_inicial.csv        ← 40 calles catastrales del barrio
 └── assets/
     ├── logo.png                  ← Logo institucional (celeste #2E9BDF)
@@ -40,4 +40,4 @@ sigev/
 Estatuto reformado aprobado por Asamblea Extraordinaria del 15/08/2026, en trámite
 ante la IGJ del Chubut. El sistema se desarrolla y prueba en staging
 (`sigev.redaccion.ar`, Mercado Pago en modo prueba); el lanzamiento público en
-`vecinalciudadela.com.ar` se hace al oficializarse la reforma.
+`vecinalciudadela.ar` se hace al oficializarse la reforma.
