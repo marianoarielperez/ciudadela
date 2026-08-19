@@ -22,6 +22,7 @@ import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/prisma";
 import { audit } from "../src/lib/audit";
 import { mapPadronRow, type RawPadronRow } from "../src/lib/padron/mapping";
+import { memberWriter } from "../src/lib/members/write";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
 const LOCK = join(process.cwd(), "datos", "~$padron_socios.xlsx");
@@ -352,7 +353,11 @@ async function main() {
         progress.unchanged++;
         continue;
       }
-      await prisma.member.update({ where: { id: existing.memberId }, data: m.member });
+      // Pasa por `memberWriter` y no por `prisma.member.update` a secas: si el
+      // Excel trae otra dirección de correo (o la borra, o la fila viene con la
+      // baja asentada), los enlaces de verificación/invitación vivos de ese socio
+      // dejan de estar autorizados y hay que revocarlos en la misma transacción.
+      await memberWriter.updateMember(existing.memberId, m.member);
       progress.updated++;
     } else {
       // Las tres escrituras van en una transacción. Si no, un corte entre la segunda

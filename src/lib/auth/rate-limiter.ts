@@ -33,20 +33,60 @@ export function createRateLimiter({
     }
   }
 
+  // Deja en el Map sólo los intentos que siguen dentro de la ventana.
+  function recentOf(key: string, t: number): number[] {
+    const stamps = hits.get(key)
+    if (stamps === undefined) return []
+    const recent = stamps.filter((ts) => t - ts < windowMs)
+    if (recent.length === 0) hits.delete(key)
+    else hits.set(key, recent)
+    return recent
+  }
+
+  /** ¿Queda cupo? NO registra el intento. Existe para consultar varios
+   *  limitadores y recién registrar cuando TODOS dieron cupo: con `check` a
+   *  secas, el primero en evaluarse le cobra el intento a su clave aunque el
+   *  segundo termine rechazando, y el operador se queda sin cupo por envíos que
+   *  nunca salieron. */
+  function allows(key: string): boolean {
+    return recentOf(key, now()).length < limit
+  }
+
+  /** Registra un intento. Se llama con el cupo ya verificado con `allows`. */
+  function record(key: string) {
+    const t = now()
+    if (hits.size > maxKeys) sweep(t)
+    const recent = recentOf(key, t)
+    recent.push(t)
+    hits.set(key, recent)
+  }
+
+  /** Devuelve el último intento registrado de la clave. Para el caso en que se
+   *  reservó cupo y la operación no llegó a ocurrir (el SMTP falló): no se
+   *  acreditó ninguna Notification ni quedó ningún enlace vivo, así que no hay
+   *  nada que racionar y tres errores de configuración no pueden dejar al socio
+   *  sin reintentos por una hora. */
+  function refund(key: string) {
+    const stamps = hits.get(key)
+    if (stamps === undefined || stamps.length === 0) return
+    stamps.pop()
+    if (stamps.length === 0) hits.delete(key)
+  }
+
   return {
+    /** El presupuesto configurado. Introspección para tests y diagnóstico: deja
+     *  que un test pinee la configuración del singleton, no sólo la constante. */
+    limit,
+    windowMs,
     /** true = intento permitido (y registrado); false = bloqueado */
     check(key: string): boolean {
-      const t = now()
-      if (hits.size > maxKeys) sweep(t)
-      const recent = (hits.get(key) ?? []).filter((ts) => t - ts < windowMs)
-      if (recent.length >= limit) {
-        hits.set(key, recent)
-        return false
-      }
-      recent.push(t)
-      hits.set(key, recent)
+      if (!allows(key)) return false
+      record(key)
       return true
     },
+    allows,
+    record,
+    refund,
     reset(key: string) {
       hits.delete(key)
     },
@@ -67,12 +107,22 @@ export const loginLimiter = createRateLimiter()
  *  que nunca llegaría a 5 intentos en ningún par email|ip. */
 export const ipLimiter = createRateLimiter({ limit: 20 })
 
+export const VERIFICATION_WINDOW_MS = 60 * 60_000
+export const VERIFICATION_MEMBER_LIMIT = 3
+export const VERIFICATION_ACTOR_LIMIT = 20
+
 /** Envío de verificación + invitación de acceso desde el panel, por socio.
  *  Cada envío acredita una notificación fehaciente (Art. 5° quater) y deja un
  *  enlace vivo: apretar 20 veces "no me llegó" no puede escribir 20 asientos del
  *  mismo hecho. La ventana es larga a propósito; el reintento legítimo es raro. */
-export const verificationMemberLimiter = createRateLimiter({ limit: 3, windowMs: 60 * 60_000 })
+export const verificationMemberLimiter = createRateLimiter({
+  limit: VERIFICATION_MEMBER_LIMIT,
+  windowMs: VERIFICATION_WINDOW_MS,
+})
 
 /** Y por admin: frena el barrido de muchos socios desde una misma sesión, que
  *  nunca llegaría a 3 en ningún socio concreto. */
-export const verificationActorLimiter = createRateLimiter({ limit: 20, windowMs: 60 * 60_000 })
+export const verificationActorLimiter = createRateLimiter({
+  limit: VERIFICATION_ACTOR_LIMIT,
+  windowMs: VERIFICATION_WINDOW_MS,
+})

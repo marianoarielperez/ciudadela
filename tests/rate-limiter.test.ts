@@ -5,6 +5,9 @@ import {
   DEFAULT_MAX_KEYS,
   DEFAULT_WINDOW_MS,
   ipLimiter,
+  VERIFICATION_ACTOR_LIMIT,
+  VERIFICATION_MEMBER_LIMIT,
+  VERIFICATION_WINDOW_MS,
   verificationActorLimiter,
   verificationMemberLimiter,
 } from "@/lib/auth/rate-limiter"
@@ -89,6 +92,54 @@ describe("createRateLimiter", () => {
   })
 })
 
+// `allows` + `record` existen para consultar dos limitadores y recién registrar
+// cuando los dos dieron cupo; `refund` devuelve la reserva cuando la operación no
+// llegó a ocurrir. Sin ellos, el orden de evaluación le cobra el intento a la
+// primera clave aunque la segunda rechace.
+describe("allows / record / refund", () => {
+  it("allows does not consume budget", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({ limit: 1, windowMs: 1000, now: clock.now })
+    expect(rl.allows("k")).toBe(true)
+    expect(rl.allows("k")).toBe(true) // consultar diez veces no gasta nada
+    expect(rl.check("k")).toBe(true)
+    expect(rl.allows("k")).toBe(false)
+  })
+
+  it("allows does not create an entry for an unseen key", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({ limit: 1, windowMs: 1000, now: clock.now })
+    rl.allows("nunca-vista")
+    expect(rl.size()).toBe(0) // si no, consultar claves rotadas es el mismo DoS que la poda evita
+  })
+
+  it("record consumes budget and refund gives it back", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({ limit: 2, windowMs: 1000, now: clock.now })
+    rl.record("k")
+    rl.record("k")
+    expect(rl.allows("k")).toBe(false)
+    rl.refund("k")
+    expect(rl.allows("k")).toBe(true)
+    rl.refund("k")
+    rl.refund("k") // de más: no puede regalar cupo por encima del techo
+    expect(rl.size()).toBe(0)
+    for (let i = 0; i < 2; i++) expect(rl.check("k")).toBe(true)
+    expect(rl.check("k")).toBe(false)
+  })
+
+  it("frees the window from the recorded attempt, not from the refund", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({ limit: 1, windowMs: 1000, now: clock.now })
+    rl.record("k")
+    clock.advance(500)
+    rl.record("k")
+    rl.refund("k") // el segundo intento no ocurrió: queda el sello del primero
+    clock.advance(501) // 1001 desde el primero
+    expect(rl.allows("k")).toBe(true)
+  })
+})
+
 // Un solo origen que barre muchas cuentas nunca llega a 5 intentos por par
 // email|ip: el techo por IP es el que corta el barrido.
 describe("ipLimiter", () => {
@@ -114,17 +165,106 @@ describe("ipLimiter", () => {
 // deja un enlace vivo: el "apretá de nuevo que no me llegó" no puede escribir 20
 // asientos del mismo hecho.
 describe("verification limiters", () => {
-  it("stops the 4th send to the same member", () => {
+  // Los singletons corren con el reloj real: adentro de un test no se puede
+  // adelantar una hora. Así que se pinea la configuración del singleton —no sólo
+  // la constante: `verificationMemberLimiter.limit` es lo que el limitador
+  // aplica— y el comportamiento se ejercita con uno equivalente y reloj propio.
+  it("pins the budget and the window of the exported singletons", () => {
+    expect(VERIFICATION_MEMBER_LIMIT).toBe(3)
+    expect(VERIFICATION_ACTOR_LIMIT).toBe(20)
+    expect(VERIFICATION_WINDOW_MS).toBe(60 * 60_000)
+    expect(verificationMemberLimiter.limit).toBe(3)
+    expect(verificationMemberLimiter.windowMs).toBe(60 * 60_000)
+    expect(verificationActorLimiter.limit).toBe(20)
+    expect(verificationActorLimiter.windowMs).toBe(60 * 60_000)
+  })
+
+  it("stops the 4th send to the same member until the whole window has passed", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({
+      limit: verificationMemberLimiter.limit,
+      windowMs: verificationMemberLimiter.windowMs,
+      now: clock.now,
+    })
     const key = "member:4242"
-    for (let i = 0; i < 3; i++) expect(verificationMemberLimiter.check(key)).toBe(true)
-    expect(verificationMemberLimiter.check(key)).toBe(false)
+    for (let i = 0; i < 3; i++) expect(rl.check(key)).toBe(true)
+    expect(rl.check(key)).toBe(false)
     // El tope es por socio: otro socio arranca con el cupo entero.
-    expect(verificationMemberLimiter.check("member:4243")).toBe(true)
+    expect(rl.check("member:4243")).toBe(true)
+    clock.advance(verificationMemberLimiter.windowMs - 1)
+    expect(rl.check(key)).toBe(false) // un milisegundo menos de la ventana NO alcanza
+    clock.advance(2)
+    expect(rl.check(key)).toBe(true)
   })
 
   it("stops the 21st send from the same admin across members", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({
+      limit: verificationActorLimiter.limit,
+      windowMs: verificationActorLimiter.windowMs,
+      now: clock.now,
+    })
     const key = "actor:99"
-    for (let i = 0; i < 20; i++) expect(verificationActorLimiter.check(key)).toBe(true)
-    expect(verificationActorLimiter.check(key)).toBe(false)
+    for (let i = 0; i < 20; i++) expect(rl.check(key)).toBe(true)
+    expect(rl.check(key)).toBe(false)
+    clock.advance(verificationActorLimiter.windowMs + 1)
+    expect(rl.check(key)).toBe(true)
+  })
+
+  // El escenario real del panel: 21 clicks sobre el mismo socio. Si el cupo del
+  // admin se cobrara antes de mirar el del socio, el operador quedaría bloqueado
+  // una hora para TODOS los socios habiendo salido 3 correos.
+  it("a click blocked by the member cap does not consume the admin budget", () => {
+    const clock = clockAt(0)
+    const perMember = createRateLimiter({ limit: 3, windowMs: VERIFICATION_WINDOW_MS, now: clock.now })
+    const perActor = createRateLimiter({ limit: 20, windowMs: VERIFICATION_WINDOW_MS, now: clock.now })
+    const memberKey = "member:7"
+    const actorKey = "actor:1"
+    let sent = 0
+    for (let i = 0; i < 21; i++) {
+      // El mismo orden que `sendVerificationAction`: consultar los dos cupos y
+      // registrar en los dos sólo si ninguno rechaza.
+      if (!perMember.allows(memberKey)) continue
+      if (!perActor.allows(actorKey)) continue
+      perMember.record(memberKey)
+      perActor.record(actorKey)
+      sent++
+    }
+    expect(sent).toBe(3)
+    // Y al admin le quedan 17 envíos para el resto de la jornada de carga.
+    expect(perActor.allows(actorKey)).toBe(true)
+    for (let i = 0; i < 17; i++) expect(perActor.check(`actor:1`)).toBe(true)
+    expect(perActor.check(actorKey)).toBe(false)
+  })
+
+  // Un fallo del SMTP no acredita Notification ni deja enlace vivo: no hay nada
+  // que racionar, y tres errores de configuración no pueden dejar al socio sin
+  // reintentos por una hora.
+  it("a failed send gives the budget back", () => {
+    const clock = clockAt(0)
+    const perMember = createRateLimiter({ limit: 3, windowMs: VERIFICATION_WINDOW_MS, now: clock.now })
+    const key = "member:7"
+    for (let i = 0; i < 5; i++) {
+      expect(perMember.allows(key)).toBe(true)
+      perMember.record(key)
+      perMember.refund(key) // el envío falló
+    }
+    expect(perMember.allows(key)).toBe(true)
+  })
+})
+
+// El singleton se usa como lo usa la action, con su reloj real: alcanza para
+// verificar que está cableado. La clave se limpia para no ensuciar a nadie.
+describe("verificationMemberLimiter singleton", () => {
+  it("blocks the 4th attempt on the same key", () => {
+    const key = "member:test-singleton"
+    try {
+      for (let i = 0; i < 3; i++) expect(verificationMemberLimiter.check(key)).toBe(true)
+      expect(verificationMemberLimiter.check(key)).toBe(false)
+    } finally {
+      verificationMemberLimiter.reset(key)
+    }
+    expect(verificationMemberLimiter.check(key)).toBe(true)
+    verificationMemberLimiter.reset(key)
   })
 })

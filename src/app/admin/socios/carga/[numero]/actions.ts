@@ -23,6 +23,7 @@ import { verificationEmail } from "@/lib/email/templates";
 import {
   buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
 } from "@/lib/members/card-edit";
+import { memberWriter } from "@/lib/members/write";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
@@ -51,7 +52,7 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
     if (!street) return { error: "La calle elegida no existe en el catálogo." };
   }
 
-  const { patch, emailChanged } = buildPatch(member, d, birth.value);
+  const { patch } = buildPatch(member, d, birth.value);
 
   const changed = changedFields(member, patch);
   // Ctrl+S es la forma normal de guardar en esta pantalla y se aprieta de más.
@@ -59,23 +60,19 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   // corresponde a ningún cambio y ensuciaría el rastro que sí importa.
   if (changed.length === 0) return { saved: true, unchanged: true };
 
+  // El guardado va por `memberWriter`: el update y la revocación de los tokens
+  // que el cambio de dirección invalida corren en UNA transacción, y la regla
+  // vive del lado del dueño del dato (ver `@/lib/members/write`), no acá — donde
+  // el próximo camino de edición tendría que acordarse de repetirla.
+  let revoked = 0;
   try {
-    await prisma.member.update({ where: { id: member.id }, data: patch });
+    ({ revokedTokens: revoked } = await memberWriter.updateMember(member.id, patch));
   } catch (e) {
     if (typeof e === "object" && e !== null && "code" in e && e.code === "P2002") {
       return { error: "Ya existe otro socio con ese DNI." };
     }
     throw e;
   }
-
-  // Los tokens vivos se emitieron para la dirección VIEJA: si el email cambió o
-  // se borró, un enlace que quedó en ese buzón verificaría —y en el alta de
-  // contraseña, tomaría— la cuenta de un socio cuyo domicilio electrónico ahora
-  // es otro. Es el mismo caso del dedazo ("vecino@gmial.com"). Van después del
-  // update: si el guardado falla, el email no cambió y no hay nada que revocar.
-  const revoked = emailChanged
-    ? await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES)
-    : 0;
 
   // La auditoría con IP la escribe la action: es la única capa que ve las
   // cabeceras. Sólo los NOMBRES de los campos tocados, nunca los valores: el
@@ -104,14 +101,24 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
 
   // El límite va después de las guardas de datos (un error de estado no consume
   // cupo) y antes de emitir: lo que se está racionando es el envío real y el
-  // asiento de Notification que lo acredita. Primero el del admin, que es el más
-  // amplio, para no gastarle el cupo al socio cuando el barrido ya está frenado.
-  if (!verificationActorLimiter.check(`actor:${actor.actorId}`)) {
-    return { error: "Enviaste demasiadas verificaciones seguidas. Esperá un rato antes de seguir." };
-  }
-  if (!verificationMemberLimiter.check(`member:${member.id}`)) {
+  // asiento de Notification que lo acredita.
+  //
+  // Se consultan los DOS cupos sin registrar nada y recién después se registra
+  // en los dos. Con `check` a secas, el primero en evaluarse cobraba el intento
+  // aunque el segundo rechazara: 21 clicks sobre el mismo socio dejaban al admin
+  // bloqueado una hora para TODOS los socios habiendo salido 3 correos. Registrar
+  // acá y no después del envío conserva la reserva (dos clicks simultáneos no
+  // pueden pasar los dos por el mismo cupo); si el SMTP falla, se devuelve.
+  const memberKey = `member:${member.id}`;
+  const actorKey = `actor:${actor.actorId}`;
+  if (!verificationMemberLimiter.allows(memberKey)) {
     return { error: "Ya se le enviaron varios correos de verificación a este socio en la última hora. Esperá antes de reintentar." };
   }
+  if (!verificationActorLimiter.allows(actorKey)) {
+    return { error: "Enviaste demasiadas verificaciones seguidas. Esperá un rato antes de seguir." };
+  }
+  verificationMemberLimiter.record(memberKey);
+  verificationActorLimiter.record(actorKey);
 
   const ip = await clientIp();
   // Un enlace vivo por socio: el reenvío invalida el anterior. Si no, "no me
@@ -138,6 +145,12 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
     // El token ya emitido se quema: un enlace de verificación vivo que nadie
     // recibió es superficie de ataque sin ninguna contrapartida.
     await prisma.actionToken.deleteMany({ where: { tokenHash: hashToken(raw) } });
+    // Y el cupo reservado se devuelve: no se acreditó ninguna Notification ni
+    // quedó ningún enlace vivo, así que no hay nada que racionar. Sin esto, tres
+    // errores de configuración del SMTP dejaban al socio sin reintentos por una
+    // hora sin que hubiera salido un solo correo.
+    verificationMemberLimiter.refund(memberKey);
+    verificationActorLimiter.refund(actorKey);
     // Ni el log ni el detalle de auditoría llevan el objeto de error: los errores
     // de nodemailer traen `envelope`, `rejected` y el `response` del SMTP, o sea
     // el email del socio en claro, y el log de PM2 no está cubierto por los

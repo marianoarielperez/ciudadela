@@ -18,13 +18,26 @@ type FakeConfig = {
   failMovementCreate?: boolean;
 };
 
+type FakeToken = { id: number; memberId: number; purpose: string; usedAt: Date | null };
+
+// Los enlaces que ya viven cuando llega la acción societaria: la baja tiene que
+// matar los del socio y ninguna otra acción tiene que tocarlos.
+const LIVE_TOKENS: FakeToken[] = [
+  { id: 1, memberId: 1, purpose: "email_verification", usedAt: null },
+  { id: 2, memberId: 1, purpose: "password_invitation", usedAt: null },
+  { id: 3, memberId: 1, purpose: "password_reset", usedAt: null }, // va atado a la cuenta, no a la ficha
+  { id: 4, memberId: 1, purpose: "email_verification", usedAt: new Date("2026-01-02T00:00:00Z") }, // ya usado: es rastro
+  { id: 5, memberId: 2, purpose: "email_verification", usedAt: null }, // de otro socio
+];
+
 function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
   const state = {
     member: { id: 1, status: "active", category: "adherent", reentryBlocked: false,
-      debtAtWithdrawal: false, withdrawalReason: null, joinedAt: JOINED_AT, ...member },
+      debtAtWithdrawal: false, withdrawalReason: null, email: null, joinedAt: JOINED_AT, ...member },
     movements: [] as Record<string, unknown>[],
     memberships: [] as Record<string, unknown>[],
     updates: [] as Record<string, unknown>[],
+    tokens: LIVE_TOKENS.map((t) => ({ ...t })),
   };
   const openBooks = config.openBooks ?? [{ id: 1, number: 1, status: "open" }];
   const db = {
@@ -39,6 +52,7 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         movements: [...state.movements],
         memberships: [...state.memberships],
         updates: [...state.updates],
+        tokens: state.tokens.map((t) => ({ ...t })),
       };
       try {
         return await cb(db);
@@ -47,10 +61,27 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         state.movements = snapshot.movements;
         state.memberships = snapshot.memberships;
         state.updates = snapshot.updates;
+        state.tokens = snapshot.tokens;
         throw err;
       }
     }),
     configuration: { findUnique: async () => ({ value: config.elections ?? false }) },
+    // Imita el filtro del motor con los tres predicados, como en tests/tokens.test.ts:
+    // si la revocación se llamara con un `where` incompleto tiene que notarse acá.
+    actionToken: {
+      deleteMany: async ({
+        where,
+      }: { where: { memberId?: number; purpose?: { in: string[] }; usedAt?: null } }) => {
+        const doomed = state.tokens.filter(
+          (t) =>
+            (where.memberId === undefined || t.memberId === where.memberId) &&
+            (where.purpose === undefined || where.purpose.in.includes(t.purpose)) &&
+            (where.usedAt === undefined || t.usedAt === where.usedAt),
+        );
+        state.tokens = state.tokens.filter((t) => !doomed.includes(t));
+        return { count: doomed.length };
+      },
+    },
     book: { findMany: async () => openBooks },
     minute: { findUniqueOrThrow: async () => MINUTE },
     membership: {
@@ -131,6 +162,50 @@ describe("memberService.withdraw", () => {
     const { db } = makeFakeDb({ status: "withdrawn" });
     const svc = makeMemberService(db as never);
     await expect(svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 })).rejects.toThrow(/ya está dado de baja/);
+  });
+
+  // Una invitación emitida mientras el socio estaba vigente sigue sirviendo 7
+  // días: en /verificar + /acceso le abre el alta de contraseña a quien tenga
+  // ese buzón, que en una baja por fallecimiento suele ser un familiar.
+  it("revokes the live email tokens of the member it withdraws", async () => {
+    const { db, state } = makeFakeDb({ email: "vecino@example.com" });
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 });
+    expect(state.tokens.map((t) => t.id).sort()).toEqual([3, 4, 5]);
+  });
+
+  it("keeps the withdrawn member's tokens when the movement cannot be written", async () => {
+    const { db, state } = makeFakeDb({ email: "vecino@example.com" }, { failMovementCreate: true });
+    const svc = makeMemberService(db as never);
+    await expect(svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 }))
+      .rejects.toThrow(/movement insert failed/);
+    expect(state.member.status).toBe("active");
+    expect(state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+// La suspensión es temporal y no le saca al socio el domicilio electrónico: el
+// envío a un suspendido está habilitado (`verificationTarget`), así que matarle
+// el enlace que ya recibió sería incoherente. El resto de las acciones no toca
+// el email ni deja de reconocerlo como socio.
+describe("statutory actions other than withdrawal keep the live tokens", () => {
+  it("suspension, end of suspension, category change and readmission revoke nothing", async () => {
+    const from = new Date("2026-09-01T12:00:00Z");
+    const to = new Date("2026-10-01T12:00:00Z");
+    const { db, state } = makeFakeDb({ email: "vecino@example.com" });
+    const svc = makeMemberService(db as never);
+
+    await svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 });
+    await svc.suspend({ memberId: 1, from, to, minuteId: 10, actorId: 2 });
+    await svc.endSuspension({ memberId: 1, minuteId: 10, actorId: 2 });
+    expect(state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("admission of a brand new member revokes nothing", async () => {
+    const { db, state } = makeFakeDb({ email: "vecino@example.com" });
+    const svc = makeMemberService(db as never);
+    await svc.admit({ fullName: "Perez Ana", category: "active", minuteId: 10, actorId: 2 });
+    expect(state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
   });
 });
 

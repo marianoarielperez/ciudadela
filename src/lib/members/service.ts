@@ -4,10 +4,11 @@
 import type { Book, MemberCategory, PrismaClient, WithdrawalReason } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "./rules";
+import { revokeStaleMemberTokens } from "./write";
 
 // El cliente que `$transaction` le pasa al callback: mismo API menos los
 // métodos de control de sesión (`$transaction`, `$connect`, …).
-type Tx = Pick<PrismaClient, "book" | "member" | "membership" | "minute" | "movement">;
+type Tx = Pick<PrismaClient, "actionToken" | "book" | "member" | "membership" | "minute" | "movement">;
 
 // Exportada: las server actions la consultan para poder rechazar el cambio de
 // categoría ANTES de crear el acta (ver el comentario sobre el acta huérfana en
@@ -89,6 +90,14 @@ export function makeMemberService(db: PrismaClient) {
             suspendedFrom: null, suspendedTo: null,
           },
         });
+        // Una baja no puede dejar enlaces vivos: la verificación que salió la
+        // semana pasada sigue sirviendo 7 días y en /verificar + /acceso le abre
+        // el alta de contraseña a quien tenga ese buzón, que en una baja por
+        // fallecimiento suele ser el familiar que la declaró. La guarda del
+        // envío (`verificationTarget`) no alcanza: acá el correo ya salió.
+        // Va en la MISMA transacción que el update y el movimiento: un rollback
+        // que deje al socio vigente tiene que dejarle también sus enlaces.
+        await revokeStaleMemberTokens(tx, member.id, member, updated);
         await tx.movement.create({
           data: {
             memberId: member.id, type: "withdrawal", date: minute.date, minuteId: minute.id,
@@ -126,6 +135,10 @@ export function makeMemberService(db: PrismaClient) {
         const check = canSuspend(member);
         if (!check.ok) throw new Error(check.error);
         const minute = await tx.minute.findUniqueOrThrow({ where: { id: input.minuteId } });
+        // A diferencia de la baja, la suspensión NO revoca los tokens vivos: es
+        // temporal y no le saca al socio el domicilio electrónico —es justo
+        // cuando más falta hace poder notificarlo fehacientemente—, y el envío a
+        // un suspendido está expresamente habilitado en `verificationTarget`.
         const updated = await tx.member.update({
           where: { id: member.id },
           data: { status: "suspended", suspendedFrom: input.from, suspendedTo: input.to },
