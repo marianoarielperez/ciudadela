@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { minuteSelectionSchema, resolveMinuteId } from "@/lib/members/minute-form";
+import {
+  createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
+} from "@/lib/members/minute-form";
 
 describe("minuteSelectionSchema", () => {
   it("accepts an existing minute id", () => {
@@ -80,5 +82,61 @@ describe("resolveMinuteId", () => {
     await expect(resolveMinuteId(db as never, { minuteId: 404 }, 1)).rejects.toThrow(
       /El acta seleccionada no existe/,
     );
+  });
+});
+
+describe("createsNewMinute", () => {
+  it("is false when reusing an existing minute", () => {
+    expect(createsNewMinute({ minuteId: 7 })).toBe(false);
+  });
+  it("is true when the form carries a new minute", () => {
+    expect(createsNewMinute({
+      minuteNew: "1", minuteType: "board", minuteNumber: 12,
+      minuteDate: "2026-08-20", minuteDescription: undefined,
+    })).toBe(true);
+  });
+});
+
+describe("discardUnusedMinute", () => {
+  function makeDb(counts: { movements: number; books: number }) {
+    const deleted: number[] = [];
+    const db = {
+      movement: { count: async () => counts.movements },
+      book: { count: async () => counts.books },
+      minute: {
+        delete: async ({ where }: { where: { id: number } }) => {
+          deleted.push(where.id);
+          return { id: where.id };
+        },
+      },
+    };
+    return { db, deleted };
+  }
+
+  it("deletes a minute nobody used", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([42]);
+  });
+
+  it("keeps a minute that already has a movement", async () => {
+    const { db, deleted } = makeDb({ movements: 1, books: 0 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  it("keeps a minute that opens or closes a book", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  it("never throws: the caller already has a real error to report", async () => {
+    const db = {
+      movement: { count: async () => { throw new Error("db down"); } },
+      book: { count: async () => 0 },
+      minute: { delete: async () => ({ id: 1 }) },
+    };
+    await expect(discardUnusedMinute(db as never, 42)).resolves.toBeUndefined();
   });
 });

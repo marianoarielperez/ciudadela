@@ -1,9 +1,10 @@
 "use client";
 // Reusable "existing minute or new minute" block. Emits the field names
 // expected by minuteSelectionSchema (src/lib/members/minute-form.ts).
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 
 export type MinuteOption = { id: number; label: string };
 
@@ -16,9 +17,13 @@ export function MinutePicker({ minutes }: { minutes: MinuteOption[] }) {
   const [draft, setDraft] = useState({ type: "board", number: "", date: "", description: "" });
   const set = (k: keyof typeof draft) => (e: { target: { value: string } }) =>
     setDraft((v) => ({ ...v, [k]: e.target.value }));
+  // Estar controlados no alcanza para los <select> ni para los radios: el reset
+  // de React 19 los devuelve a la opción por defecto y React no los corrige.
+  const rootRef = useRef<HTMLFieldSetElement>(null);
+  useFormResetSync(rootRef, { minuteMode: mode, minuteId, minuteType: draft.type });
 
   return (
-    <fieldset className="space-y-3 rounded-md border p-3">
+    <fieldset ref={rootRef} className="space-y-3 rounded-md border p-3">
       <legend className="px-1 text-sm font-medium">Acta</legend>
       <div className="flex gap-4 text-sm">
         <label className="flex items-center gap-1">

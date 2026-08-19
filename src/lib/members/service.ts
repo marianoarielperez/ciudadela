@@ -9,7 +9,11 @@ import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "./rules"
 // métodos de control de sesión (`$transaction`, `$connect`, …).
 type Tx = Pick<PrismaClient, "book" | "member" | "membership" | "minute" | "movement">;
 
-async function electionsOngoing(db: PrismaClient): Promise<boolean> {
+// Exportada: las server actions la consultan para poder rechazar el cambio de
+// categoría ANTES de crear el acta (ver el comentario sobre el acta huérfana en
+// src/app/admin/socios/[id]/actions.ts) y para no ofrecer el formulario cuando ya
+// se sabe que el cambio está bloqueado.
+export async function electionsOngoing(db: Pick<PrismaClient, "configuration">): Promise<boolean> {
   const row = await db.configuration.findUnique({ where: { key: "elecciones_en_curso" } });
   return row?.value === true;
 }
@@ -18,7 +22,10 @@ async function electionsOngoing(db: PrismaClient): Promise<boolean> {
 // parcial en MySQL). Con cero libros abiertos no se puede numerar un alta; con
 // dos, tomar el primero elegiría en silencio en qué libro asienta el socio.
 // Las dos situaciones son un error de datos que un admin tiene que resolver.
-async function requireOpenBook(tx: Tx): Promise<Book> {
+// Exportada por el mismo motivo que `electionsOngoing`: el alta manual la corre
+// antes de crear el acta de admisión, reusando estos mensajes en vez de
+// duplicarlos en la capa de formulario.
+export async function requireOpenBook(tx: Pick<Tx, "book">): Promise<Book> {
   const open = await tx.book.findMany({ where: { status: "open" }, orderBy: { number: "asc" }, take: 2 });
   if (open.length === 0) {
     throw new Error("No hay ningún libro abierto: no se puede registrar el alta hasta abrir uno.");

@@ -1,6 +1,7 @@
 "use client";
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { createMinuteAction } from "../actions";
+import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,9 +14,14 @@ export function MinuteForm() {
   const [values, setValues] = useState({ type: "board", number: "", date: "", description: "" });
   const set = (k: keyof typeof values) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [k]: e.target.value }));
+  const formRef = useRef<HTMLFormElement>(null);
+  // Estar controlado no alcanza para el <select> de tipo: el reset de React 19
+  // lo devuelve a "Comisión Directiva" y React no lo corrige. Con el rechazo
+  // por número repetido —el frecuente acá— el acta cambiaba de tipo sola.
+  useFormResetSync(formRef, values);
 
   return (
-    <form action={formAction} className="max-w-md space-y-4">
+    <form ref={formRef} action={formAction} className="max-w-md space-y-4">
       <div className="space-y-1">
         <Label htmlFor="type">Tipo</Label>
         <select
