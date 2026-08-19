@@ -37,7 +37,9 @@ export function SiteNav() {
             <Link
               href={href}
               aria-current={pathname === href ? "page" : undefined}
-              className={`block py-2 text-base font-medium hover:text-primary sm:py-1 sm:text-sm ${pathname === href ? "text-primary" : ""}`}
+              // py-2.5 sobre text-base (24px de línea) = 44px de alto, el mismo
+              // mínimo táctil que el botón "Menú". En sm+ vuelve a py-1.
+              className={`block py-2.5 text-base font-medium hover:text-primary sm:py-1 sm:text-sm ${pathname === href ? "text-primary" : ""}`}
               onClick={() => setOpen(false)}
             >
               {label}
@@ -47,7 +49,7 @@ export function SiteNav() {
         <li className="sm:hidden">
           <Link
             href="/ingresar"
-            className="block py-2 text-base font-medium text-primary underline"
+            className="block py-2.5 text-base font-medium text-primary underline"
             onClick={() => setOpen(false)}
           >
             Ingresar

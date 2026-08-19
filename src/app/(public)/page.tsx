@@ -43,13 +43,12 @@ export default async function HomePage() {
             ) : (
               <>
                 {/* No es un <button disabled>: no hay acción que ejecutar, es un
-                    cartel. `text-secondary-foreground` y no `text-muted-foreground`
-                    porque este último sobre `bg-muted` da 4.18:1 y el texto de un
-                    botón deshabilitado igual tiene que leerse. */}
-                <span
-                  aria-disabled="true"
-                  className="cursor-not-allowed rounded-md bg-muted px-6 py-3 text-base font-semibold text-secondary-foreground"
-                >
+                    cartel. Tampoco lleva aria-disabled: un <span> tiene rol
+                    `generic` y no hay nada que deshabilitar — el párrafo de al
+                    lado explica la situación. `text-secondary-foreground` y no
+                    `text-muted-foreground` porque este último sobre `bg-muted`
+                    da 4.18:1 y el cartel igual tiene que leerse. */}
+                <span className="cursor-not-allowed rounded-md bg-muted px-6 py-3 text-base font-semibold text-secondary-foreground">
                   ASOCIATE
                 </span>
                 {/* Superficie opaca, no un negro translúcido: la explicación es
