@@ -9,7 +9,8 @@ import { newsPlainText } from "@/lib/news/sanitize";
 export const NEWS_PAGE_SIZE = 10;
 
 // Tags de caché del sitio público. Las actions del ABM invalidan con
-// revalidateTag(CACHE_TAGS.news) etc.
+// updateTag(CACHE_TAGS.news) etc. — en Next 16.3.1 revalidateTag pide un
+// segundo argumento de perfil y no se puede llamar desde una server action.
 export const CACHE_TAGS = { news: "news", activities: "activities", config: "config" } as const;
 
 export type PublicNewsCard = {
@@ -56,26 +57,35 @@ function toCard(n: NewsRow): PublicNewsCard {
   };
 }
 
+export const MAX_LATEST_NEWS = 50;
+
 export function makeNewsQueries(db: Db) {
   const publishedInclude = { author: { select: { name: true } } };
+  // Invariante del sitio público: una noticia publicada sin fecha no se puede
+  // renderizar (Intl revienta con un Date inválido), así que no se muestra.
+  const publishedWhere = { status: "published", publishedAt: { not: null } } as const;
   return {
     async latest(count: number): Promise<PublicNewsCard[]> {
+      // take negativo no falla en Prisma: devuelve las MÁS VIEJAS en silencio.
+      const n = Math.min(Math.max(1, Math.trunc(count)), MAX_LATEST_NEWS);
       const rows = await db.news.findMany({
-        where: { status: "published" },
-        orderBy: { publishedAt: "desc" },
-        take: count,
+        where: publishedWhere,
+        orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+        take: n,
         include: publishedInclude,
       });
       return (rows as NewsRow[]).map(toCard);
     },
 
     async publishedPage(page: number) {
-      const total = await db.news.count({ where: { status: "published" } });
+      const total = await db.news.count({ where: publishedWhere });
       const pages = Math.max(1, Math.ceil(total / NEWS_PAGE_SIZE));
-      const current = Math.min(Math.max(1, page), pages);
+      // page viene de un query param público (?pagina=abc): NaN daría skip: NaN.
+      const wanted = Number.isFinite(page) ? Math.trunc(page) : 1;
+      const current = Math.min(Math.max(1, wanted), pages);
       const rows = await db.news.findMany({
-        where: { status: "published" },
-        orderBy: { publishedAt: "desc" },
+        where: publishedWhere,
+        orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
         skip: (current - 1) * NEWS_PAGE_SIZE,
         take: NEWS_PAGE_SIZE,
         include: publishedInclude,
@@ -85,7 +95,7 @@ export function makeNewsQueries(db: Db) {
 
     async bySlug(slug: string): Promise<PublicNewsDetail | null> {
       const n = (await db.news.findFirst({
-        where: { slug, status: "published" },
+        where: { slug, ...publishedWhere },
         include: publishedInclude,
       })) as NewsRow | null;
       if (!n) return null;
@@ -93,10 +103,20 @@ export function makeNewsQueries(db: Db) {
     },
 
     async allForAdmin(): Promise<AdminNewsRow[]> {
-      const rows = (await db.news.findMany({
+      // select explícito: el listado del panel no muestra el body y traerlo
+      // entero para descartarlo es puro peso. Ordenar por createdAt sigue
+      // siendo válido aunque el campo no esté seleccionado.
+      const rows = await db.news.findMany({
         orderBy: { createdAt: "desc" },
-        include: publishedInclude,
-      })) as (NewsRow & { createdAt?: Date })[];
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          status: true,
+          publishedAt: true,
+          author: { select: { name: true } },
+        },
+      });
       return rows.map((n) => ({
         id: n.id,
         title: n.title,
