@@ -6,6 +6,7 @@ const jwt = authConfig.callbacks.jwt as (args: unknown) => Record<string, unknow
 const session = authConfig.callbacks.session as Callbacks["session"];
 
 const NOW = Date.parse("2026-08-19T10:00:00Z");
+// `iat` sí es el claim estándar y sí va en segundos: lo administra la librería.
 const NOW_SECONDS = Math.floor(NOW / 1000);
 
 afterEach(() => {
@@ -18,10 +19,21 @@ function frozen() {
 }
 
 describe("authConfig.callbacks.jwt — el sello de apertura de la sesión", () => {
-  it("stamps authAt at sign in, in whole seconds", () => {
+  it("stamps authAt at sign in, in milliseconds", () => {
     frozen();
     const token = jwt({ token: {}, user: { id: "7", roles: ["socio"] } });
-    expect(token).toMatchObject({ id: "7", roles: ["socio"], authAt: NOW_SECONDS });
+    expect(token).toMatchObject({ id: "7", roles: ["socio"], authAt: NOW });
+  });
+
+  // La unidad no es cosmética: truncando al segundo, una sesión abierta dentro
+  // del mismo segundo que un cambio de contraseña quedaba válida PARA SIEMPRE
+  // (los dos sellos son fijos, así que la comparación nunca cambiaba de
+  // resultado). Los milisegundos tienen que llegar enteros a las guardas.
+  it("does not round the stamp to the second", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW + 123));
+    const token = jwt({ token: {}, user: { id: "7", roles: ["socio"] } });
+    expect(token.authAt).toBe(NOW + 123);
   });
 
   // El punto de todo el mecanismo: el claim se escribe UNA vez, al entrar. Auth.js
@@ -35,7 +47,7 @@ describe("authConfig.callbacks.jwt — el sello de apertura de la sesión", () =
     const first = jwt({ token: {}, user: { id: "7", roles: ["socio"] } });
     vi.setSystemTime(new Date(NOW + 6 * 60 * 60 * 1000));
     const refreshed = jwt({ token: { ...first, iat: NOW_SECONDS + 6 * 3600 } });
-    expect(refreshed.authAt).toBe(NOW_SECONDS);
+    expect(refreshed.authAt).toBe(NOW);
   });
 
   it("does not invent a stamp for a token that never had one", () => {
@@ -54,7 +66,7 @@ describe("authConfig.callbacks.session — lo que ven las guardas", () => {
   }
 
   it("carries authAt through to the session", () => {
-    expect(run({ id: "7", roles: ["admin"], authAt: NOW_SECONDS }).user.authAt).toBe(NOW_SECONDS);
+    expect(run({ id: "7", roles: ["admin"], authAt: NOW }).user.authAt).toBe(NOW);
   });
 
   // `null` y no 0 ni la hora actual: una sesión emitida antes de que el claim

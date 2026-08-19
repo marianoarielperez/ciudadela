@@ -12,7 +12,7 @@ export const authConfig = {
       if (user) {
         token.id = user.id
         token.roles = user.roles ?? []
-        // Sello del momento en que se ABRIÓ esta sesión, en segundos epoch.
+        // Sello del momento en que se ABRIÓ esta sesión, en MILISEGUNDOS epoch.
         // Es lo que `require-admin` y `require-member` comparan contra
         // `User.passwordChangedAt` para cerrar las sesiones que sobrevivieron a
         // un cambio de contraseña (o a una revocación de rol).
@@ -28,10 +28,22 @@ export const authConfig = {
         // Este claim, en cambio, se escribe únicamente acá —cuando hay `user`,
         // que es el login— y viaja intacto por todas las re-firmas posteriores.
         //
+        // Por qué milisegundos y no la convención de segundos de JWT: los dos
+        // sellos que se comparan son fijos, así que truncar al segundo no
+        // regalaba "una ventana de un segundo" sino una sesión válida PARA
+        // SIEMPRE —la que se abriera dentro del mismo segundo del cambio de
+        // contraseña daba `false` en todas las comparaciones posteriores—. En
+        // milisegundos la ventana desaparece del todo, y el auto-echado que
+        // motivó el truncado no puede ocurrir: `User.passwordChangedAt` se
+        // escribe con un `new Date()` del MISMO proceso Node que después sella
+        // el login, y el login es estrictamente posterior. La convención de
+        // segundos no rige acá porque es un claim propio del proyecto, no uno
+        // estándar (`iat`, `exp` y `jti` los sigue administrando la librería).
+        //
         // Es aritmética pura: no toca la base ni rompe el edge runtime, que es
         // la condición para que este archivo lo pueda seguir compartiendo el
         // proxy (`proxy.ts`).
-        token.authAt = Math.floor(Date.now() / 1000)
+        token.authAt = Date.now()
       }
       return token
     },

@@ -43,6 +43,39 @@
 export const STALE_SESSION_MESSAGE =
   "Se cambió la contraseña de esta cuenta, así que esta sesión dejó de valer. Cerrá la sesión y volvé a ingresar con la contraseña nueva.";
 
+// ── El techo absoluto ────────────────────────────────────────────────────────
+//
+// Las 8 horas de `auth.config.ts` NO son la vida de la sesión: son de
+// INACTIVIDAD. Auth.js re-firma el token en cada request que pasa por el proxy
+// (/admin y /mi) y en cada re-firma reescribe `exp` con `ahora + maxAge`
+// (`@auth/core/jwt.js`: `.setExpirationTime(now() + maxAge)` dentro de `encode`,
+// que la rama JWT de `lib/actions/session.js` llama incondicionalmente). O sea
+// que una sesión que se usa no vence nunca por sí sola.
+//
+// Cerrada la invalidación por cambio de contraseña, el inventario completo de
+// formas de terminar una sesión ajena es: cambiarle la contraseña, desactivarle
+// la cuenta, revocarle el rol de admin o dar de baja al socio. Las cuatro
+// requieren que alguien sospeche y actúe. Sin techo, una credencial de sesión
+// robada y usada discretamente —el caso que justamente nadie detecta— dura para
+// siempre.
+//
+// Por qué 7 días y no las 8 horas: un techo de 8 horas echaría al operador a la
+// mitad de la jornada de carga de fichas, que es un cambio de producto agresivo
+// y sin relación con la amenaza. 7 días garantizan que una sesión robada muera
+// dentro de la semana aunque nadie note nada, y el costo de equivocarse es
+// volver a entrar.
+//
+// Y va acá, en las guardas, y NO en el `maxAge` de `auth.config.ts`: ahí el
+// token simplemente deja de decodificar y la persona aparece deslogueada sin
+// motivo. En las guardas es un motivo más, con su texto propio, al lado de
+// `stale_session`.
+
+/** 7 días, en milisegundos. */
+export const SESSION_MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+
+export const EXPIRED_SESSION_MESSAGE =
+  "Por seguridad, las sesiones duran como máximo 7 días y esta ya los cumplió. Cerrá la sesión y volvé a ingresar.";
+
 /**
  * ¿La sesión es anterior al último cambio de contraseña de la cuenta?
  *
@@ -56,16 +89,53 @@ export const STALE_SESSION_MESSAGE =
  *     fallar cerrado: una sesión emitida antes de que existiera el claim no
  *     puede probar que es posterior al cambio, y el costo es un login de más
  *     para alguien que además acaba de elegir una contraseña nueva.
- *  3. Con los dos, se comparan **truncados al segundo**. El sello de la base
- *     tiene milisegundos y `authAt` no: sin truncar, una cuenta creada a las
- *     10:00:00.500 que entra a las 10:00:00.900 se echaría a sí misma. La
- *     ventana que se regala es de menos de un segundo.
+ *  3. Con los dos, se comparan **exacto y en milisegundos**, que es la unidad de
+ *     los dos sellos (`Date.now()` en el callback `jwt`, `Date.prototype.getTime`
+ *     en la columna `DATETIME(3)`).
+ *
+ *     Hubo una versión que truncaba al segundo para evitar que una cuenta creada
+ *     a las 10:00:00.500 se echara a sí misma al entrar a las 10:00:00.900. El
+ *     truncado no regalaba "menos de un segundo": los dos sellos son fijos, así
+ *     que la sesión que caía dentro del mismo segundo del cambio quedaba válida
+ *     PARA SIEMPRE —la comparación daba `false` en todas las visitas
+ *     siguientes—. Y la tolerancia no hacía falta: `passwordChangedAt` se
+ *     escribe con un `new Date()` del mismo proceso Node que después sella el
+ *     login, y el login es estrictamente posterior, así que en milisegundos
+ *     `authAt >= passwordChangedAt` siempre (y el `>` estricto deja pasar el
+ *     empate). No hay dos relojes que puedan cruzarse.
+ *
+ *     Efecto de borde del cambio de unidad, y es el deseable: un `authAt` viejo
+ *     en segundos (~1.7e9) queda muy por debajo de cualquier `passwordChangedAt`
+ *     en milisegundos, así que esas sesiones se cierran. Falla cerrada, cuesta
+ *     un login, y de todos modos el techo absoluto las alcanzaría.
  */
 export function sessionPredatesPasswordChange(
   authAt: number | null | undefined,
   passwordChangedAt: Date | null | undefined,
 ): boolean {
   if (!passwordChangedAt) return false;
-  if (typeof authAt !== "number" || !Number.isFinite(authAt) || authAt <= 0) return true;
-  return Math.floor(passwordChangedAt.getTime() / 1000) > Math.floor(authAt);
+  if (!usableStamp(authAt)) return true;
+  return passwordChangedAt.getTime() > authAt;
+}
+
+/**
+ * ¿La sesión superó el techo absoluto, sin importar cuánto la hayan usado?
+ *
+ * Sin `authAt` utilizable se cierra, por el mismo motivo que la regla 2: una
+ * sesión que no puede probar cuándo empezó no puede probar que esté dentro del
+ * techo. El costo es un login para los tokens emitidos antes de que existiera el
+ * claim, que además duran a lo sumo las 8 horas de inactividad.
+ */
+export function sessionExceededMaxLifetime(
+  authAt: number | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!usableStamp(authAt)) return true;
+  return now - authAt > SESSION_MAX_LIFETIME_MS;
+}
+
+/** Un sello que se pueda usar para comparar. `0`, negativos, `NaN` e `Infinity`
+ *  no lo son: los dos chequeos fallan cerrado ante cualquiera de ellos. */
+function usableStamp(authAt: number | null | undefined): authAt is number {
+  return typeof authAt === "number" && Number.isFinite(authAt) && authAt > 0;
 }

@@ -15,6 +15,8 @@
 //     suspensión. Se mira `status` y no `suspendedFrom/To`: el estado es la
 //     única fuente de verdad y lo mueven las actas (`suspend`/`endSuspension`).
 //   - sin ficha vinculada → el usuario no es socio, sea lo que diga el token.
+//   - `User.active` en `false` → la cuenta de acceso está cerrada, aunque la
+//     ficha esté impecable. Es la misma palanca que mira `require-admin`.
 //
 // Y la misma consulta trae el sello del último cambio de contraseña de la cuenta
 // (`User.passwordChangedAt`): la otra mitad del mismo problema es que un token
@@ -24,14 +26,21 @@
 // El rol del JWT no participa de la decisión: es un dato de conveniencia para el
 // proxy (que sí puede seguir usándolo como filtro barato), no la autorización.
 import type { MemberStatus } from "@/generated/prisma/client";
-import { sessionPredatesPasswordChange, STALE_SESSION_MESSAGE } from "@/lib/auth/session-freshness";
+import {
+  EXPIRED_SESSION_MESSAGE,
+  sessionExceededMaxLifetime,
+  sessionPredatesPasswordChange,
+  STALE_SESSION_MESSAGE,
+} from "@/lib/auth/session-freshness";
 
 export type MemberBlockReason =
   | "anonymous"
   | "not_member"
   | "stale_session"
+  | "expired_session"
   | "suspended"
-  | "withdrawn";
+  | "withdrawn"
+  | "disabled";
 
 export type MemberActor =
   | { ok: true; userId: number; memberId: number; fullName: string }
@@ -43,6 +52,10 @@ export const MEMBER_BLOCKED: Record<MemberBlockReason, string> = {
   anonymous: "Ingresá a tu cuenta para ver tu panel de socio.",
   not_member: "Tu usuario no está vinculado a ninguna ficha del padrón. Comunicate con la vecinal.",
   stale_session: STALE_SESSION_MESSAGE,
+  expired_session: EXPIRED_SESSION_MESSAGE,
+  // Mismo texto que `ADMIN_BLOCKED.disabled`: es el mismo hecho, la cuenta de
+  // acceso está cerrada, y no hay nada que matizarle al socio.
+  disabled: "Tu cuenta de acceso está deshabilitada. Comunicate con la vecinal.",
   suspended:
     "Tu condición de socio está suspendida: mientras dure la suspensión no podés operar desde tu panel (Art. 10). Comunicate con la vecinal.",
   withdrawn: "Figurás con baja en el padrón, así que tu panel de socio no está disponible.",
@@ -57,6 +70,8 @@ export type MemberLookup = (userId: number) => Promise<{
   id: number;
   fullName: string;
   status: MemberStatus;
+  /** De `User.active`, por el vínculo de la ficha. */
+  active: boolean;
   /** De `User.passwordChangedAt`, por el vínculo de la ficha. */
   passwordChangedAt: Date | null;
 } | null>;
@@ -78,11 +93,31 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
     if (sessionPredatesPasswordChange(session?.user?.authAt, member.passwordChangedAt)) {
       return { ok: false, reason: "stale_session", error: MEMBER_BLOCKED.stale_session };
     }
+    // El techo absoluto de la sesión. Las 8 horas del JWT son de inactividad y
+    // se renuevan solas en cada visita, así que sin esto un token robado y usado
+    // discretamente no vence nunca. Ver `@/lib/auth/session-freshness`.
+    if (sessionExceededMaxLifetime(session?.user?.authAt)) {
+      return { ok: false, reason: "expired_session", error: MEMBER_BLOCKED.expired_session };
+    }
     if (member.status === "withdrawn") {
       return { ok: false, reason: "withdrawn", error: MEMBER_BLOCKED.withdrawn };
     }
     if (member.status === "suspended") {
       return { ok: false, reason: "suspended", error: MEMBER_BLOCKED.suspended };
+    }
+    // `User.active` es la palanca de "cuenta deshabilitada", y hasta acá sólo la
+    // miraba `/admin`. Hoy toda cuenta deshabilitada es además una baja del
+    // padrón (`memberService.withdraw` hace las dos cosas en la misma
+    // transacción), así que el bloqueo ocurría igual — pero por coincidencia, no
+    // por una guarda. Cualquier camino futuro que cierre una cuenta sin dar de
+    // baja al socio (una suspensión administrativa del acceso, una respuesta a
+    // un incidente) dejaba /mi abierto con el JWT viejo.
+    //
+    // Va DESPUÉS del estado de la ficha justamente por esa superposición: al
+    // socio dado de baja le sigue correspondiendo el mensaje que le explica el
+    // hecho que le importa —la baja en el padrón— y no el genérico de la cuenta.
+    if (!member.active) {
+      return { ok: false, reason: "disabled", error: MEMBER_BLOCKED.disabled };
     }
     return { ok: true, userId, memberId: member.id, fullName: member.fullName };
   };
@@ -102,16 +137,19 @@ export async function requireMember(): Promise<MemberActor> {
         id: true,
         fullName: true,
         status: true,
-        user: { select: { passwordChangedAt: true } },
+        user: { select: { active: true, passwordChangedAt: true } },
       },
     });
     if (!member) return null;
     // `user` no puede faltar —la búsqueda es POR `userId`—, pero el tipo lo
-    // admite y un `undefined` colado acá desactivaría la comparación en silencio.
+    // admite y un `undefined` colado acá desactivaría la comparación en
+    // silencio. Por eso el `active` ausente se lee como `false`: si no sabemos
+    // si la cuenta está habilitada, no está.
     return {
       id: member.id,
       fullName: member.fullName,
       status: member.status,
+      active: member.user?.active ?? false,
       passwordChangedAt: member.user?.passwordChangedAt ?? null,
     };
   })();

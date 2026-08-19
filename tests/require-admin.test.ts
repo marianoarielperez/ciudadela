@@ -7,8 +7,12 @@ type SessionLike = {
 } | null;
 type Account = { active: boolean; roles: string[]; passwordChangedAt: Date | null };
 
-// Momento en que se abrió la sesión de referencia, en segundos epoch.
-const AUTH_AT = Math.floor(Date.parse("2026-08-19T10:00:00Z") / 1000);
+// Momento en que se abrió la sesión de referencia, en MILISEGUNDOS epoch. Va
+// relativo a la hora real y no a una fecha fija porque el techo absoluto de la
+// sesión se mide contra `Date.now()`: una constante congelada convertiría estos
+// tests en una bomba de tiempo que empieza a fallar sola a los siete días.
+const AUTH_AT = Math.floor(Date.now() / 1000) * 1000 - 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
 
 /** Liga el helper a una sesión y a una cuenta fijas, sin NextAuth ni base.
  *
@@ -148,8 +152,8 @@ describe("requireAdmin — la fila viva manda sobre el token", () => {
 // El hueco de las sesiones vivas: cambiar la contraseña tiene que echar al
 // intruso que entró con la vieja.
 describe("requireAdmin — sesiones anteriores al cambio de contraseña", () => {
-  const changedAfter = new Date((AUTH_AT + 60) * 1000);
-  const changedBefore = new Date((AUTH_AT - 60) * 1000);
+  const changedAfter = new Date(AUTH_AT + 60 * 1000);
+  const changedBefore = new Date(AUTH_AT - 60 * 1000);
 
   it("rejects a session opened before the password changed", async () => {
     const { run } = bind(session("1", ["admin"]), {
@@ -177,11 +181,58 @@ describe("requireAdmin — sesiones anteriores al cambio de contraseña", () => 
   });
 
   // …pero una cuenta sin cambios asentados (todas las filas previas a la
-  // migración) no echa a nadie por no saber.
-  it("keeps a token with no authAt when the account never changed its password", async () => {
+  // migración) no echa a nadie por no saber: esta sesión no muere por
+  // `stale_session`. La termina echando el techo absoluto, que es otra pregunta
+  // —una sesión que no puede probar cuándo empezó tampoco puede probar que esté
+  // dentro de los 7 días— y por eso el motivo es el otro.
+  it("does not call a token with no authAt stale when the password never changed", async () => {
     const { run } = bind(session("1", ["admin"], null), {
       active: true, roles: ["admin"], passwordChangedAt: null,
     });
+    expect(await run()).toMatchObject({ ok: false, reason: "expired_session" });
+  });
+
+  // Los dos sellos están en milisegundos y se comparan exacto: truncando al
+  // segundo, la sesión abierta dentro del mismo segundo del cambio quedaba
+  // válida para siempre.
+  it("rejects a session opened milliseconds before the change", async () => {
+    const { run } = bind(session("1", ["admin"]), {
+      active: true, roles: ["admin"], passwordChangedAt: new Date(AUTH_AT + 800),
+    });
+    expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
+  });
+});
+
+// El techo absoluto: las 8 horas del JWT son de INACTIVIDAD y Auth.js las
+// renueva en cada re-firma, así que la sesión de un panel que queda abierto —o
+// la de un token robado que el atacante sigue usando— no vence nunca sola.
+describe("requireAdmin — el techo absoluto de la sesión", () => {
+  const account = { active: true, roles: ["admin"], passwordChangedAt: null };
+
+  it("accepts a session opened within the last seven days", async () => {
+    const { run } = bind(session("1", ["admin"], Date.now() - 6 * DAY), account);
     expect(await run()).toEqual({ ok: true, actorId: 1 });
+  });
+
+  it("rejects a session older than seven days, however much it was used", async () => {
+    const { run } = bind(session("1", ["admin"], Date.now() - 8 * DAY), account);
+    expect(await run()).toEqual({
+      ok: false, reason: "expired_session", error: ADMIN_BLOCKED.expired_session,
+    });
+  });
+
+  // Un token todavía sellado en segundos (la unidad anterior) cae en 1970.
+  it("rejects a token still stamped in seconds", async () => {
+    const { run } = bind(session("1", ["admin"], Math.floor(Date.now() / 1000)), account);
+    expect(await run()).toMatchObject({ ok: false, reason: "expired_session" });
+  });
+
+  // El cambio de contraseña gana: si la sesión murió por las dos cosas, el
+  // motivo útil es el que dice qué pasó con la cuenta.
+  it("yields to the password change when both apply", async () => {
+    const { run } = bind(session("1", ["admin"], Date.now() - 8 * DAY), {
+      ...account, passwordChangedAt: new Date(),
+    });
+    expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
   });
 });

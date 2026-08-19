@@ -41,14 +41,39 @@ function verifyUrl(baseUrl: string, token: string): string {
   return `${baseUrl}/verificar/${token}`;
 }
 
-export function verificationEmail(opts: { name: string; url: string }): Rendered {
+/** Verificación de la dirección cargada en una ficha del padrón.
+ *
+ *  NO saluda por nombre, y la plantilla ni siquiera lo RECIBE: es el correo que
+ *  dispara el botón del panel durante la carga de fichas desde papel, o sea el
+ *  canal de más volumen y el único donde un dedazo del operador entrega solo,
+ *  sin que nadie haga clic, y sin reparación posible —el correo ya está en el
+ *  buzón de un tercero y ninguna edición posterior lo borra—. Con el nombre
+ *  adentro, ese tercero se llevaba el nombre completo de una persona más el
+ *  hecho de que es socia de la vecinal (Ley 25.326, docs/08). Sin el nombre no
+ *  hay nada que aprender: la única dirección que aparece es la suya.
+ *
+ *  Mismo criterio que `loginEmailVerification` y que las páginas de canje
+ *  (`REDEEM_CARD_SELECT` en `@/lib/members/access`), que tampoco nombran al
+ *  socio del otro lado del clic. Lo que sí queda es el contexto institucional
+ *  completo, porque el socio legítimo tiene que entender qué está confirmando y
+ *  no tomarlo por spam. */
+export function verificationEmail(opts: { url: string }): Rendered {
   return {
     subject: "Verificá tu email — Vecinal Ciudadela",
-    text: `Hola ${opts.name}:\n\nLa Vecinal Ciudadela registró este email como tu domicilio electrónico. Para confirmarlo, abrí este enlace:\n\n${opts.url}\n\nEl enlace vence en 7 días. Si no esperabas este correo, ignoralo.${SIGNATURE}`,
-    html: layout("Verificá tu email", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
-<p>La Vecinal Ciudadela registró este email como tu domicilio electrónico. Para confirmarlo, hacé clic:</p>
-${button(opts.url, "Verificar mi email")}
-<p>El enlace vence en 7 días. Si no esperabas este correo, ignoralo.</p>`),
+    text: `La ${ORG} registró esta dirección de correo como domicilio electrónico en el padrón de socios.
+
+Para confirmar que esta casilla es tuya, abrí este enlace:
+
+${opts.url}
+
+El enlace vence en 7 días. Una vez confirmada, vas a poder crear tu contraseña para entrar al portal de socios.
+
+Si no esperabas este correo, ignoralo y avisale a la vecinal: puede ser un error de carga.${SIGNATURE}`,
+    html: layout("Verificá tu email", `<p>La ${esc(ORG)} registró esta dirección de correo como domicilio electrónico en el padrón de socios.</p>
+<p>Para confirmar que esta casilla es tuya, hacé clic:</p>
+${button(opts.url, "Confirmar mi email")}
+<p>El enlace vence en 7 días. Una vez confirmada, vas a poder crear tu contraseña para entrar al portal de socios.</p>
+<p>Si no esperabas este correo, ignoralo y avisale a la vecinal: puede ser un error de carga.</p>`),
   };
 }
 
@@ -76,7 +101,9 @@ export function portalInvite(input: {
 }): { message: Rendered; summary: string } {
   if (input.kind === "email_verification") {
     return {
-      message: verificationEmail({ name: input.name, url: verifyUrl(input.baseUrl, input.token) }),
+      // Sin `name`: la verificación va a una dirección que todavía nadie
+      // confirmó y puede ser un dedazo del operador. Ver `verificationEmail`.
+      message: verificationEmail({ url: verifyUrl(input.baseUrl, input.token) }),
       summary: "verificación de email + invitación de acceso",
     };
   }
@@ -116,10 +143,16 @@ ${button(opts.url, "Restablecer contraseña")}
 // que el correo se cuidó de no decir. Ver `REDEEM_CARD_SELECT` en
 // `@/lib/members/access`.
 //
-// Deuda declarada: `verificationEmail` e `invitationEmail` —las del circuito de
-// ALTA, que dispara el botón del panel— sí saludan por nombre, así que en ese
-// circuito un dedazo del operador sigue nombrando al socio en el cuerpo del
-// correo. Es preexistente y no lo toca esta ola; corresponde revisarlo aparte.
+// Es el mismo criterio que ahora rige también en el circuito de ALTA:
+// `verificationEmail` dejó de saludar por nombre, que era la deuda declarada acá
+// y el canal de más volumen (una verificación por ficha tipeada desde papel).
+//
+// `invitationEmail` sí sigue saludando por nombre, y a propósito: es la única
+// plantilla que NO puede caer en la casilla de un tercero por un dedazo, porque
+// `verificationTarget` (`members/card-edit.ts`) sólo devuelve
+// `password_invitation` cuando `emailStatus === "verified"`, o sea cuando el
+// propio socio ya confirmó esa casilla haciendo clic en el enlace anterior. Un
+// dedazo nunca llega a esa rama: muere antes, en la verificación.
 
 /** Aviso a la dirección ANTERIOR. Deliberadamente NO nombra la dirección nueva:
  *  si el cambio fue un secuestro, este correo le estaría confirmando al atacante

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 // el módulo se importa igual desde los tests: mockeamos el singleton por las dudas.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
+import { ADMIN_BLOCKED } from "@/lib/auth/require-admin";
 import { makeRequireMember, MEMBER_BLOCKED } from "@/lib/auth/require-member";
 import { STALE_SESSION_MESSAGE } from "@/lib/auth/session-freshness";
 
@@ -15,14 +16,20 @@ type MemberRow = {
   fullName: string;
   status: string;
   userId: number;
+  active: boolean;
   passwordChangedAt: Date | null;
 };
 
-// Momento en que se abrió la sesión de referencia, en segundos epoch.
-const AUTH_AT = Math.floor(Date.parse("2026-08-19T10:00:00Z") / 1000);
+// Momento en que se abrió la sesión de referencia, en MILISEGUNDOS epoch. Va
+// relativo a la hora real y no a una fecha fija porque el techo absoluto de la
+// sesión se mide contra `Date.now()`: una constante congelada convertiría estos
+// tests en una bomba de tiempo que empieza a fallar sola a los siete días.
+const AUTH_AT = Math.floor(Date.now() / 1000) * 1000 - 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
 
 const MEMBER: MemberRow = {
-  id: 7, fullName: "Perez Ana", status: "active", userId: 3, passwordChangedAt: null,
+  id: 7, fullName: "Perez Ana", status: "active", userId: 3,
+  active: true, passwordChangedAt: null,
 };
 
 /** Liga el helper a una sesión y a un padrón fijos, sin NextAuth ni base. */
@@ -91,8 +98,8 @@ describe("requireMember", () => {
 // El otro hueco del JWT sin estado: al socio le robaron la contraseña, la
 // cambió, y hasta acá el intruso seguía adentro hasta que el token venciera solo.
 describe("requireMember — sesiones anteriores al cambio de contraseña", () => {
-  const changedAfter = new Date((AUTH_AT + 60) * 1000);
-  const changedBefore = new Date((AUTH_AT - 60) * 1000);
+  const changedAfter = new Date(AUTH_AT + 60 * 1000);
+  const changedBefore = new Date(AUTH_AT - 60 * 1000);
 
   it("rejects a session opened before the password changed", async () => {
     const { run } = bind(session("3"), [{ ...MEMBER, passwordChangedAt: changedAfter }]);
@@ -114,18 +121,33 @@ describe("requireMember — sesiones anteriores al cambio de contraseña", () =>
     expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
   });
 
-  it("keeps a token with no authAt when the account never changed its password", async () => {
+  // La regla de la comparación de contraseña sigue siendo "no echar a nadie por
+  // no saber": sin `passwordChangedAt` no hay nada que afirmar y esta sesión NO
+  // muere por vieja-respecto-del-cambio. Lo que la termina echando es el techo
+  // absoluto, que es otra pregunta y tiene su propio motivo: una sesión que no
+  // puede probar cuándo empezó tampoco puede probar que esté dentro de los 7
+  // días. Que el motivo sea `expired_session` y no `stale_session` es
+  // exactamente lo que prueba que la primera regla no se movió.
+  it("does not call a token with no authAt stale when the password never changed", async () => {
     const { run } = bind(session("3", ["socio"], null));
-    expect(await run()).toMatchObject({ ok: true, memberId: 7 });
+    expect(await run()).toMatchObject({ ok: false, reason: "expired_session" });
   });
 
-  // Se compara truncando al segundo: el sello de la base tiene milisegundos y
-  // `authAt` no, así que sin truncar una cuenta recién creada se echaría a sí
-  // misma al entrar dentro del mismo segundo.
-  it("does not throw out a session opened within the same second as the change", async () => {
+  // Los dos sellos están en milisegundos y se comparan exacto: la sesión abierta
+  // 800 ms ANTES del cambio muere igual que la de un día antes. Truncando al
+  // segundo esa sesión quedaba viva para siempre, porque los dos sellos son
+  // fijos y la comparación daba `false` en todas las visitas siguientes.
+  it("throws out a session opened milliseconds before the change", async () => {
     const { run } = bind(session("3"), [
-      { ...MEMBER, passwordChangedAt: new Date(AUTH_AT * 1000 + 800) },
+      { ...MEMBER, passwordChangedAt: new Date(AUTH_AT + 800) },
     ]);
+    expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
+  });
+
+  // Y el empate exacto no echa a nadie: es el caso del alta de contraseña
+  // seguida del login, que salen del mismo proceso.
+  it("keeps the session of someone who just signed in at the very stamp", async () => {
+    const { run } = bind(session("3"), [{ ...MEMBER, passwordChangedAt: new Date(AUTH_AT) }]);
     expect(await run()).toMatchObject({ ok: true, memberId: 7 });
   });
 
@@ -136,5 +158,53 @@ describe("requireMember — sesiones anteriores al cambio de contraseña", () =>
       { ...MEMBER, status: "suspended", passwordChangedAt: changedAfter },
     ]);
     expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
+  });
+});
+
+// El techo absoluto: las 8 horas del JWT son de INACTIVIDAD y se renuevan solas
+// en cada visita, así que sin esto un token robado que el atacante siga usando
+// no vence nunca por sí solo.
+describe("requireMember — el techo absoluto de la sesión", () => {
+  it("accepts a session opened within the last seven days", async () => {
+    const { run } = bind(session("3", ["socio"], Date.now() - 6 * DAY));
+    expect(await run()).toMatchObject({ ok: true, memberId: 7 });
+  });
+
+  it("rejects a session older than seven days, however much it was used", async () => {
+    const { run } = bind(session("3", ["socio"], Date.now() - 8 * DAY));
+    expect(await run()).toEqual({
+      ok: false, reason: "expired_session", error: MEMBER_BLOCKED.expired_session,
+    });
+  });
+
+  // Un token todavía sellado en segundos (la unidad anterior) cae en 1970: se
+  // cierra, que es la dirección correcta y cuesta un login.
+  it("rejects a token still stamped in seconds", async () => {
+    const { run } = bind(session("3", ["socio"], Math.floor(Date.now() / 1000)));
+    expect(await run()).toMatchObject({ ok: false, reason: "expired_session" });
+  });
+});
+
+// H2: `User.active` es la palanca de "cuenta deshabilitada" y hasta acá sólo la
+// miraba /admin. Que hoy toda cuenta deshabilitada sea además una baja del
+// padrón es una coincidencia de `memberService.withdraw`, no una guarda.
+describe("requireMember — cuenta de acceso deshabilitada", () => {
+  it("rejects a member whose account was disabled without touching the card", async () => {
+    const { run } = bind(session("3"), [{ ...MEMBER, active: false }]);
+    expect(await run()).toEqual({
+      ok: false, reason: "disabled", error: MEMBER_BLOCKED.disabled,
+    });
+  });
+
+  // Pero al socio dado de baja le sigue correspondiendo el mensaje de la baja,
+  // que es el hecho que le importa, y no el genérico de la cuenta: `withdraw`
+  // deja las dos cosas puestas en la misma transacción.
+  it("still explains the withdrawal to a member whose account was disabled by it", async () => {
+    const { run } = bind(session("3"), [{ ...MEMBER, status: "withdrawn", active: false }]);
+    expect(await run()).toMatchObject({ ok: false, reason: "withdrawn" });
+  });
+
+  it("uses the same wording as the admin guard", async () => {
+    expect(MEMBER_BLOCKED.disabled).toBe(ADMIN_BLOCKED.disabled);
   });
 });

@@ -21,9 +21,19 @@
 // El token conserva un solo papel, y es el barato: si NO dice admin, se rechaza
 // sin tocar la base. O sea que el token puede quitar el permiso pero nunca darlo.
 import { isAdmin } from "@/lib/auth/roles";
-import { sessionPredatesPasswordChange, STALE_SESSION_MESSAGE } from "@/lib/auth/session-freshness";
+import {
+  EXPIRED_SESSION_MESSAGE,
+  sessionExceededMaxLifetime,
+  sessionPredatesPasswordChange,
+  STALE_SESSION_MESSAGE,
+} from "@/lib/auth/session-freshness";
 
-export type AdminBlockReason = "anonymous" | "not_admin" | "disabled" | "stale_session";
+export type AdminBlockReason =
+  | "anonymous"
+  | "not_admin"
+  | "disabled"
+  | "stale_session"
+  | "expired_session";
 
 export type AdminActor =
   | { ok: true; actorId: number }
@@ -53,6 +63,7 @@ export const ADMIN_BLOCKED: Record<AdminBlockReason, string> = {
   not_admin: "No tenés permiso para editar el padrón.",
   disabled: "Tu cuenta de acceso está deshabilitada. Comunicate con la vecinal.",
   stale_session: STALE_SESSION_MESSAGE,
+  expired_session: EXPIRED_SESSION_MESSAGE,
 };
 
 export function makeRequireAdmin(getSession: GetSession, findAccount: AdminAccountLookup) {
@@ -85,6 +96,13 @@ export function makeRequireAdmin(getSession: GetSession, findAccount: AdminAccou
     }
     if (sessionPredatesPasswordChange(session?.user?.authAt, account.passwordChangedAt)) {
       return { ok: false, reason: "stale_session", error: ADMIN_BLOCKED.stale_session };
+    }
+    // El techo absoluto va DESPUÉS del cambio de contraseña: si la sesión murió
+    // por las dos cosas, el motivo útil es el que dice qué pasó con la cuenta.
+    // Las 8 horas del JWT son de inactividad y se renuevan solas en cada visita:
+    // esto es lo único que le pone fin a una sesión que nadie sospecha.
+    if (sessionExceededMaxLifetime(session?.user?.authAt)) {
+      return { ok: false, reason: "expired_session", error: ADMIN_BLOCKED.expired_session };
     }
     return { ok: true, actorId };
   };

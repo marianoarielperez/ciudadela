@@ -11,12 +11,25 @@ import {
 import { getTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
-  it("verification email includes name and url in text and html", () => {
-    const m = verificationEmail({ name: "Ana Perez", url: "https://x/verificar/abc" });
+  // El correo de verificación es el de más volumen de la campaña de carga (uno
+  // por ficha tipeada desde papel) y el único que un dedazo del operador entrega
+  // SOLO, sin que nadie haga clic y sin reparación posible. Por eso no nombra al
+  // socio, y la plantilla ni siquiera recibe el nombre: no hay forma de
+  // filtrarlo por descuido desde el llamador.
+  it("verification email carries the url and cannot carry the member's name", () => {
+    const m = verificationEmail({ url: "https://x/verificar/abc" });
+    // Y no puede recibirlo: el parámetro es `{ url }` a secas, así que un
+    // llamador que intente pasarle `name` no compila (verificado con `tsc`).
+    expect(verificationEmail.length).toBe(1);
     expect(m.subject).toContain("Verificá");
     for (const body of [m.text, m.html]) {
-      expect(body).toContain("Ana Perez");
       expect(body).toContain("https://x/verificar/abc");
+      expect(body).not.toContain("Hola ");
+      // Contexto institucional suficiente para que el socio legítimo entienda
+      // qué está confirmando y no lo tome por spam.
+      expect(body).toContain("Asociación Vecinal del Barrio Ciudadela");
+      expect(body).toContain("padrón de socios");
+      expect(body).toContain("error de carga");
     }
   });
   it("invitation and reset include their urls", () => {
@@ -26,7 +39,7 @@ describe("templates", () => {
   // Un cliente sin HTML tiene que poder leer el mensaje completo, enlace incluido.
   it("every template ships a usable plain-text body carrying the link", () => {
     const rendered = [
-      verificationEmail({ name: "Ana", url: "https://x/v/t" }),
+      verificationEmail({ url: "https://x/v/t" }),
       invitationEmail({ name: "Ana", url: "https://x/i/t" }),
       passwordResetEmail({ url: "https://x/r/t" }),
     ];
@@ -113,10 +126,15 @@ describe("templates", () => {
 
   // El enlace es dato de entrada: no puede romper el HTML ni inyectar atributos.
   it("escapes interpolated values in html", () => {
-    const m = verificationEmail({ name: `Ana "<script>" & Cia`, url: `https://x/v/t?a=1&b="2"` });
-    expect(m.html).not.toContain("<script>");
+    const m = verificationEmail({ url: `https://x/v/t?a=1&b="2"` });
+    expect(m.html).not.toContain(`b="2"`);
     expect(m.html).toContain("&amp;");
     expect(m.text).toContain(`https://x/v/t?a=1&b="2"`);
+    // El nombre sigue entrando en la invitación, que es la única plantilla que
+    // no puede caer en una casilla sin confirmar: ahí el escapado sigue vivo.
+    const i = invitationEmail({ name: `Ana "<script>" & Cia`, url: "https://x/i/t" });
+    expect(i.html).not.toContain("<script>");
+    expect(i.html).toContain("&amp;");
   });
 });
 
@@ -153,7 +171,7 @@ describe("makeMailer", () => {
     });
     await mailer.sendToMember({
       memberId: 5, to: "a@b.com", type: "email_verification",
-      message: verificationEmail({ name: "Ana", url: "https://x/v/t" }),
+      message: verificationEmail({ url: "https://x/v/t" }),
       summary: "verificación de email",
     });
     expect(sent).toHaveLength(1);
