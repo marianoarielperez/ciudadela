@@ -19,7 +19,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { verificationActorLimiter, verificationMemberLimiter } from "@/lib/auth/rate-limiter";
 import { hashToken, tokens, MEMBER_EMAIL_TOKEN_PURPOSES } from "@/lib/tokens";
 import { mailer } from "@/lib/email";
-import { verificationEmail } from "@/lib/email/templates";
+import { portalInvite } from "@/lib/email/templates";
 import {
   buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
 } from "@/lib/members/card-edit";
@@ -112,10 +112,10 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
   const memberKey = `member:${member.id}`;
   const actorKey = `actor:${actor.actorId}`;
   if (!verificationMemberLimiter.allows(memberKey)) {
-    return { error: "Ya se le enviaron varios correos de verificación a este socio en la última hora. Esperá antes de reintentar." };
+    return { error: "Ya se le enviaron varios correos de acceso a este socio en la última hora. Esperá antes de reintentar." };
   }
   if (!verificationActorLimiter.allows(actorKey)) {
-    return { error: "Enviaste demasiadas verificaciones seguidas. Esperá un rato antes de seguir." };
+    return { error: "Enviaste demasiados correos de acceso seguidos. Esperá un rato antes de seguir." };
   }
   verificationMemberLimiter.record(memberKey);
   verificationActorLimiter.record(actorKey);
@@ -125,14 +125,20 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
   // llegó" deja varios enlaces válidos en paralelo durante 7 días, cada uno
   // capaz de crear la contraseña de la cuenta.
   await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES);
-  const raw = await tokens.issue({ purpose: "email_verification", memberId: member.id });
+  // `target.kind` decide los tres: el propósito del token, la plantilla y el
+  // asiento de Notification. Con el email todavía sin confirmar va la
+  // verificación; con el email ya confirmado y sin cuenta creada va derecho la
+  // invitación de contraseña, que es la salida del socio que verificó y no llegó
+  // a elegir la contraseña en la misma sentada.
+  const raw = await tokens.issue({ purpose: target.kind, memberId: member.id });
   const base = process.env.AUTH_URL ?? "http://localhost:3000";
+  const { message, summary } = portalInvite({
+    kind: target.kind, name: member.fullName, baseUrl: base, token: raw,
+  });
 
   try {
     await mailer.sendToMember({
-      memberId: member.id, to: target.email, type: "email_verification",
-      message: verificationEmail({ name: member.fullName, url: `${base}/verificar/${raw}` }),
-      summary: "verificación de email + invitación de acceso",
+      memberId: member.id, to: target.email, type: target.kind, message, summary,
     });
   } catch (e) {
     // `mailer.sendToMember` propaga la excepción del SMTP y NO registra la
@@ -162,14 +168,14 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
     // eso es exactamente lo que hay que poder reconstruir después.
     await audit({
       userId: actor.actorId, action: "member_send_verification_failed", entity: "member",
-      entityId: member.id, detail: { code }, ip,
+      entityId: member.id, detail: { code, kind: target.kind }, ip,
     });
     return { error: "No se pudo enviar el email. Verificá la dirección y reintentá; si sigue fallando, revisá la configuración de correo." };
   }
 
   await audit({
     userId: actor.actorId, action: "member_send_verification", entity: "member",
-    entityId: member.id, ip,
+    entityId: member.id, detail: { kind: target.kind }, ip,
   });
   return { sent: true };
 }

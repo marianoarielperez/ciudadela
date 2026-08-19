@@ -1,5 +1,7 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
+import type { MemberEmailTokenPurpose } from "@/lib/tokens";
+
 type Rendered = { subject: string; text: string; html: string };
 
 const ORG = "Asociación Vecinal del Barrio Ciudadela";
@@ -50,6 +52,29 @@ export function invitationEmail(opts: { name: string; url: string }): Rendered {
 <p>Ya podés crear tu contraseña para acceder al panel de socios:</p>
 ${button(opts.url, "Crear mi contraseña")}
 <p>El enlace vence en 7 días.</p>`),
+  };
+}
+
+/** El correo que le corresponde a cada enlace del circuito de acceso, con su
+ *  URL ya armada. La plantilla y el path van juntos a propósito: el token de
+ *  verificación se canjea en /verificar y el de invitación en /acceso, y
+ *  mandarlos cruzados le daría al socio un enlace muerto. Un solo lugar donde
+ *  equivocarse, y testeado. */
+export function portalInvite(input: {
+  kind: MemberEmailTokenPurpose;
+  name: string;
+  baseUrl: string;
+  token: string;
+}): { message: Rendered; summary: string } {
+  if (input.kind === "email_verification") {
+    return {
+      message: verificationEmail({ name: input.name, url: `${input.baseUrl}/verificar/${input.token}` }),
+      summary: "verificación de email + invitación de acceso",
+    };
+  }
+  return {
+    message: invitationEmail({ name: input.name, url: `${input.baseUrl}/acceso/${input.token}` }),
+    summary: "invitación de acceso al portal",
   };
 }
 

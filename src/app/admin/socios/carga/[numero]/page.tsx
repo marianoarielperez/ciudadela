@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
+import { verificationTarget } from "@/lib/members/card-edit";
 import { formatDateAR } from "@/lib/format";
 import { CargaForm } from "./carga-form";
 
@@ -67,6 +68,11 @@ export default async function CargaPage(props: { params: Promise<{ numero: strin
           streetNumber: m.streetNumber, neighborhood: m.neighborhood,
           email: m.email, emailStatus: m.emailStatus, status: m.status,
         }}
+        // Qué correo de acceso corresponde hoy (o por qué no corresponde
+        // ninguno) lo decide la misma función pura que la action: si el botón y
+        // la guarda razonaran por su cuenta, la pantalla ofrecería envíos que
+        // rebotan o escondería los que sí se pueden hacer.
+        sendTarget={verificationTarget(m)}
         streets={streets}
         prevNumber={prev?.memberNumber ?? null}
         nextNumber={next?.memberNumber ?? null}

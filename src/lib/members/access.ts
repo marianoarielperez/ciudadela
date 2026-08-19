@@ -57,9 +57,11 @@ export function canRedeem(member: Pick<Member, "status">): { ok: true } | { ok: 
  *  - Un rechazo por estado (baja) commitea: el enlace llegó a un buzón que ya no
  *    representa a nadie y no puede quedar vivo esperando otro click.
  *  - Un rechazo por dato mal cargado (ficha sin email, cuenta ajena con esa
- *    dirección) hace rollback: no es un ataque, y quemar el enlace dejaría al
- *    socio sin camino de vuelta —el reenvío desde el panel exige `emailStatus`
- *    distinto de `verified`, así que después de verificar no hay segundo tiro—. */
+ *    dirección) hace rollback: no es un ataque, y el socio no hizo nada mal. El
+ *    panel hoy puede reemitirle el enlace (`verificationTarget` habilita la
+ *    invitación mientras la ficha no tenga cuenta), pero eso es un llamado
+ *    telefónico a la vecinal: conservarle el enlace le deja el camino abierto
+ *    para cuando el dato se corrija. */
 class AccessAbort extends Error {
   constructor(readonly reason: string) {
     super(reason);
@@ -87,7 +89,9 @@ export function makeMemberAccess(db: AccessDb) {
     /** Confirma el domicilio electrónico y, si el socio todavía no tiene cuenta,
      *  devuelve el token crudo de la invitación de contraseña para redirigirlo.
      *  El token de invitación se emite ACÁ (no se pide otro correo): la persona
-     *  ya demostró tener el buzón al abrir este enlace. */
+     *  ya demostró tener el buzón al abrir este enlace. Si pierde esa pantalla,
+     *  el panel le puede mandar la invitación sola por correo (`verificationTarget`
+     *  → `password_invitation`), que revoca ésta y emite una nueva. */
     async verifyEmail(rawToken: string, now = new Date()): Promise<VerifyResult> {
       return redeem(async (tx) => {
         const tokens = makeTokens(tx);

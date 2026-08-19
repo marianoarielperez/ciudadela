@@ -79,6 +79,11 @@ export function makeTokens(db: TokenDb) {
 
 export const tokens = makeTokens(prisma);
 
+/** Los dos enlaces que la vecinal le manda a la ficha del socio. Es a la vez un
+ *  `TokenPurpose` y un `NotificationType`, y el panel elige entre los dos según
+ *  en qué punto del circuito quedó el socio (ver `verificationTarget`). */
+export type MemberEmailTokenPurpose = "email_verification" | "password_invitation";
+
 /** Los propósitos que viajan al email del socio: son los que hay que revocar
  *  cuando esa dirección deja de ser la suya (`password_reset` va atado al
  *  `userId` y al email de la cuenta, no a la ficha). */

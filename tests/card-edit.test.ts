@@ -251,17 +251,21 @@ describe("card-edit — parseBirthDate", () => {
   });
 });
 
-describe("card-edit — a quién se le puede mandar la verificación", () => {
-  const base = { status: "active", email: "juan@example.com", emailStatus: "declared" } as const;
+describe("card-edit — qué correo de acceso le corresponde al socio", () => {
+  const base = {
+    status: "active", email: "juan@example.com", emailStatus: "declared", userId: null,
+  } as const;
 
   it("acepta al socio vigente con email sin verificar", () => {
-    expect(verificationTarget(base)).toEqual({ ok: true, email: "juan@example.com" });
+    expect(verificationTarget(base)).toEqual({
+      ok: true, email: "juan@example.com", kind: "email_verification",
+    });
   });
 
   // La suspensión es temporal y no le saca el domicilio electrónico.
   it("acepta al socio suspendido", () => {
     expect(verificationTarget({ ...base, status: "suspended" })).toEqual({
-      ok: true, email: "juan@example.com",
+      ok: true, email: "juan@example.com", kind: "email_verification",
     });
   });
 
@@ -274,23 +278,55 @@ describe("card-edit — a quién se le puede mandar la verificación", () => {
   });
 
   it("rechaza la baja antes que cualquier otra guarda", () => {
-    expect(verificationTarget({ status: "withdrawn", email: null, emailStatus: "none" }).ok).toBe(false);
+    expect(verificationTarget({ status: "withdrawn", email: null, emailStatus: "none", userId: null }).ok).toBe(false);
     expect(verificationTarget({ ...base, status: "withdrawn", emailStatus: "verified" })).toEqual({
+      ok: false, error: "El socio está dado de baja: no corresponde invitarlo al portal.",
+    });
+    // Verificado, sin cuenta y de baja: la baja gana igual, no se reinvita.
+    expect(verificationTarget({ ...base, status: "withdrawn", emailStatus: "verified", userId: null })).toEqual({
       ok: false, error: "El socio está dado de baja: no corresponde invitarlo al portal.",
     });
   });
 
-  it("rechaza sin email y con el email ya verificado", () => {
+  it("rechaza al socio sin email cargado", () => {
     expect(verificationTarget({ ...base, email: null, emailStatus: "none" })).toEqual({
       ok: false, error: "El socio no tiene email cargado. Guardá la ficha primero.",
     });
-    expect(verificationTarget({ ...base, emailStatus: "verified" })).toEqual({
-      ok: false, error: "El email ya está verificado.",
-    });
+    // La falta de email gana sobre la rama de reinvitación: sin dirección no hay
+    // a dónde mandar nada.
+    expect(verificationTarget({ ...base, email: null, emailStatus: "verified" }).ok).toBe(false);
   });
 
   // Un rebote no bloquea el reenvío a la misma dirección (M-7 del review).
   it("permite reenviar tras un rebote", () => {
-    expect(verificationTarget({ ...base, emailStatus: "bounced" }).ok).toBe(true);
+    expect(verificationTarget({ ...base, emailStatus: "bounced" })).toEqual({
+      ok: true, email: "juan@example.com", kind: "email_verification",
+    });
+  });
+
+  // I1 del review de la Task 14: el socio verifica desde el celular y cierra la
+  // pestaña antes de elegir la contraseña. Sin esta rama quedaba trabado para
+  // siempre (el recupero no lo alcanza: todavía no tiene `User`).
+  it("manda la invitación de contraseña si el email ya está verificado y no hay cuenta", () => {
+    expect(verificationTarget({ ...base, emailStatus: "verified", userId: null })).toEqual({
+      ok: true, email: "juan@example.com", kind: "password_invitation",
+    });
+  });
+
+  // Con cuenta creada la reinvitación deja de corresponder: eso es un recupero
+  // de contraseña, que va contra la cuenta y no contra la ficha.
+  it("rechaza reinvitar al socio que ya tiene cuenta", () => {
+    expect(verificationTarget({ ...base, emailStatus: "verified", userId: 7 })).toEqual({
+      ok: false,
+      error: "El socio ya tiene su cuenta creada. Si perdió la contraseña, tiene que pedir el restablecimiento desde la pantalla de ingreso.",
+    });
+  });
+
+  // Con cuenta vinculada pero email todavía sin confirmar sigue faltando la
+  // verificación: el domicilio electrónico fehaciente no depende de la cuenta.
+  it("manda la verificación al socio con cuenta y email sin verificar", () => {
+    expect(verificationTarget({ ...base, userId: 7 })).toEqual({
+      ok: true, email: "juan@example.com", kind: "email_verification",
+    });
   });
 });

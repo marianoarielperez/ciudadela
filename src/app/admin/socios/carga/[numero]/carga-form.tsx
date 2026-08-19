@@ -18,6 +18,7 @@ import { StreetAutocomplete, type StreetOption } from "@/components/admin/street
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { EMAIL_STATUS_LABELS } from "@/lib/members/labels";
+import type { VerificationTarget } from "@/lib/members/card-edit";
 import type { EmailStatus, MemberStatus } from "@/generated/prisma/client";
 
 export type MemberData = {
@@ -55,11 +56,15 @@ function civilStatusOptions(current: string | null): Array<[string, string]> {
 
 export function CargaForm(props: {
   member: MemberData;
+  // Lo calcula la página con `verificationTarget`, la misma función que la
+  // action usa como guarda: una sola fuente de verdad para qué correo se puede
+  // mandar y para el motivo cuando no se puede.
+  sendTarget: VerificationTarget;
   streets: StreetOption[];
   prevNumber: number | null;
   nextNumber: number | null;
 }) {
-  const { member, streets } = props;
+  const { member, sendTarget, streets } = props;
   const router = useRouter();
   const [saveState, saveAction, saving] = useActionState<SaveState, FormData>(updateMemberAction, {});
   const [sendState, sendAction, sending] = useActionState<SendState, FormData>(sendVerificationAction, {});
@@ -127,9 +132,13 @@ export function CargaForm(props: {
   }
 
   const emailStatusLabel = EMAIL_STATUS_LABELS[member.emailStatus];
-  // La baja no se invita al portal: la guarda real está en la action, esto sólo
-  // evita ofrecerle al operador un botón que va a rebotar.
-  const withdrawn = member.status === "withdrawn";
+  // El texto del botón dice qué correo va a salir. Con el email ya verificado y
+  // sin cuenta creada lo que corresponde es la invitación de contraseña sola:
+  // volver a verificar una dirección ya confirmada no aportaría nada y le
+  // agregaría un paso al socio.
+  const sendLabel = sendTarget.ok && sendTarget.kind === "password_invitation"
+    ? "Reenviar invitación de acceso"
+    : "Enviar verificación + invitación de acceso";
 
   return (
     <div className="space-y-6">
@@ -222,25 +231,17 @@ export function CargaForm(props: {
 
       <form action={sendAction} className="flex max-w-3xl flex-wrap items-center gap-3 border-t pt-4">
         <input type="hidden" name="memberId" value={member.id} />
-        <Button
-          type="submit" variant="outline"
-          disabled={sending || !member.email || member.emailStatus === "verified" || withdrawn}
-        >
-          {sending ? "Enviando…" : "Enviar verificación + invitación de acceso"}
+        <Button type="submit" variant="outline" disabled={sending || !sendTarget.ok}>
+          {sending ? "Enviando…" : sendLabel}
         </Button>
-        {withdrawn && (
-          <span className="text-sm text-muted-foreground">
-            El socio está dado de baja: no corresponde invitarlo al portal.
-          </span>
-        )}
-        {!withdrawn && member.emailStatus === "verified" && (
+        {member.emailStatus === "verified" && member.status !== "withdrawn" && (
           <span className="text-sm text-green-700 dark:text-green-500">Email verificado ✓</span>
         )}
-        {!withdrawn && !member.email && (
-          <span className="text-sm text-muted-foreground">Cargá el email y guardá la ficha para poder enviarlo.</span>
-        )}
-        {!withdrawn && member.email && edited && (
-          <span className="text-sm text-muted-foreground">Se envía al email guardado ({member.email}).</span>
+        {/* El motivo del rechazo lo redacta `verificationTarget`: repetirlo acá
+            fue lo que dejó al operador sin saber que la reinvitación existe. */}
+        {!sendTarget.ok && <span className="text-sm text-muted-foreground">{sendTarget.error}</span>}
+        {sendTarget.ok && edited && (
+          <span className="text-sm text-muted-foreground">Se envía al email guardado ({sendTarget.email}).</span>
         )}
         {sendState.sent && <span role="status" className="text-sm text-green-700 dark:text-green-500">Enviado ✓</span>}
         {sendState.error && <span role="alert" className="text-sm text-destructive">{sendState.error}</span>}

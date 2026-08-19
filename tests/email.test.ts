@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { makeMailer } from "@/lib/email";
-import { invitationEmail, passwordResetEmail, verificationEmail } from "@/lib/email/templates";
+import { invitationEmail, passwordResetEmail, portalInvite, verificationEmail } from "@/lib/email/templates";
 import { getTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
@@ -35,6 +35,27 @@ describe("templates", () => {
       expect(m.html).toContain("Asociación Vecinal del Barrio Ciudadela");
     }
   });
+  // Cada tipo de enlace se canjea en una ruta distinta: el de verificación en
+  // /verificar y el de invitación en /acceso. Mandarlos cruzados le daría al
+  // socio un enlace que muere en la primera pantalla.
+  it("portalInvite pairs each kind with its own route and template", () => {
+    const v = portalInvite({
+      kind: "email_verification", name: "Ana", baseUrl: "https://x", token: "tok1",
+    });
+    expect(v.message.subject).toContain("Verificá");
+    expect(v.message.text).toContain("https://x/verificar/tok1");
+    expect(v.message.text).not.toContain("/acceso/");
+    expect(v.summary).toContain("verificación");
+
+    const i = portalInvite({
+      kind: "password_invitation", name: "Ana", baseUrl: "https://x", token: "tok2",
+    });
+    expect(i.message.subject).toContain("contraseña");
+    expect(i.message.text).toContain("https://x/acceso/tok2");
+    expect(i.message.text).not.toContain("/verificar/");
+    expect(i.summary).toContain("invitación");
+  });
+
   // El enlace es dato de entrada: no puede romper el HTML ni inyectar atributos.
   it("escapes interpolated values in html", () => {
     const m = verificationEmail({ name: `Ana "<script>" & Cia`, url: `https://x/v/t?a=1&b="2"` });

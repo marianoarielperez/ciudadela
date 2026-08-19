@@ -13,6 +13,7 @@
 import { z } from "zod";
 import { civilDateUtc } from "@/lib/dates";
 import type { EmailStatus, Member } from "@/generated/prisma/client";
+import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 
 export const cardSchema = z.object({
   memberId: z.coerce.number().int().positive("Socio inválido."),
@@ -120,16 +121,30 @@ export function changedFields(member: MemberSnapshot, patch: Patch): string[] {
   });
 }
 
-export type VerificationTarget = { ok: true; email: string } | { ok: false; error: string };
+export type VerificationTarget =
+  | { ok: true; email: string; kind: MemberEmailTokenPurpose }
+  | { ok: false; error: string };
 
-// A quién se le puede mandar la verificación + invitación de acceso. El estado
-// del socio manda: una baja (por ejemplo por fallecimiento) puede tener email en
-// la ficha —muchas veces el del familiar que declaró la baja—, y el correo le
-// abriría a esa persona el alta de contraseña del portal. Sólo se invita a quien
-// hoy es socio: vigente o suspendido (la suspensión es temporal y no le saca el
-// domicilio electrónico), nunca una baja.
+// Qué enlace le corresponde hoy al socio, si es que le corresponde alguno.
+//
+// El estado del socio manda: una baja (por ejemplo por fallecimiento) puede
+// tener email en la ficha —muchas veces el del familiar que declaró la baja—, y
+// el correo le abriría a esa persona el alta de contraseña del portal. Sólo se
+// invita a quien hoy es socio: vigente o suspendido (la suspensión es temporal y
+// no le saca el domicilio electrónico), nunca una baja.
+//
+// Con la dirección todavía sin confirmar va la verificación. Con la dirección ya
+// confirmada y SIN cuenta creada va directo la invitación de contraseña: ése es
+// el socio que verificó desde el celular y cerró la pestaña antes de elegir la
+// contraseña. Sin esta rama quedaba afuera para siempre —el recupero de
+// contraseña no lo alcanza porque todavía no existe ningún `User`— y el único
+// remedio era cambiarle el email y volver a ponérselo, que además ensucia la
+// auditoría con dos cambios que nunca ocurrieron.
+//
+// Con cuenta ya creada no se reinvita: eso es un recupero de contraseña, que va
+// por su propio circuito y contra la cuenta, no contra la ficha.
 export function verificationTarget(
-  member: Pick<Member, "status" | "email" | "emailStatus">,
+  member: Pick<Member, "status" | "email" | "emailStatus" | "userId">,
 ): VerificationTarget {
   if (member.status === "withdrawn") {
     return { ok: false, error: "El socio está dado de baja: no corresponde invitarlo al portal." };
@@ -137,6 +152,14 @@ export function verificationTarget(
   if (!member.email) {
     return { ok: false, error: "El socio no tiene email cargado. Guardá la ficha primero." };
   }
-  if (member.emailStatus === "verified") return { ok: false, error: "El email ya está verificado." };
-  return { ok: true, email: member.email };
+  if (member.emailStatus !== "verified") {
+    return { ok: true, email: member.email, kind: "email_verification" };
+  }
+  if (member.userId !== null) {
+    return {
+      ok: false,
+      error: "El socio ya tiene su cuenta creada. Si perdió la contraseña, tiene que pedir el restablecimiento desde la pantalla de ingreso.",
+    };
+  }
+  return { ok: true, email: member.email, kind: "password_invitation" };
 }
