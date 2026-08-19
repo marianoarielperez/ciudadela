@@ -18,14 +18,14 @@ import { StreetAutocomplete, type StreetOption } from "@/components/admin/street
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { EMAIL_STATUS_LABELS } from "@/lib/members/labels";
-import type { EmailStatus } from "@/generated/prisma/client";
+import type { EmailStatus, MemberStatus } from "@/generated/prisma/client";
 
 export type MemberData = {
   id: number; fullName: string; dni: string | null; birthDate: string | null;
   civilStatus: string | null; nationality: string | null; occupation: string | null;
   phone: string | null; streetId: number | null; streetText: string | null;
   streetNumber: string | null; neighborhood: string | null; email: string | null;
-  emailStatus: EmailStatus;
+  emailStatus: EmailStatus; status: MemberStatus;
 };
 
 const CIVIL_STATUS = ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Separado/a", "Unión convivencial"];
@@ -127,6 +127,9 @@ export function CargaForm(props: {
   }
 
   const emailStatusLabel = EMAIL_STATUS_LABELS[member.emailStatus];
+  // La baja no se invita al portal: la guarda real está en la action, esto sólo
+  // evita ofrecerle al operador un botón que va a rebotar.
+  const withdrawn = member.status === "withdrawn";
 
   return (
     <div className="space-y-6">
@@ -221,17 +224,22 @@ export function CargaForm(props: {
         <input type="hidden" name="memberId" value={member.id} />
         <Button
           type="submit" variant="outline"
-          disabled={sending || !member.email || member.emailStatus === "verified"}
+          disabled={sending || !member.email || member.emailStatus === "verified" || withdrawn}
         >
           {sending ? "Enviando…" : "Enviar verificación + invitación de acceso"}
         </Button>
-        {member.emailStatus === "verified" && (
+        {withdrawn && (
+          <span className="text-sm text-muted-foreground">
+            El socio está dado de baja: no corresponde invitarlo al portal.
+          </span>
+        )}
+        {!withdrawn && member.emailStatus === "verified" && (
           <span className="text-sm text-green-700 dark:text-green-500">Email verificado ✓</span>
         )}
-        {!member.email && (
+        {!withdrawn && !member.email && (
           <span className="text-sm text-muted-foreground">Cargá el email y guardá la ficha para poder enviarlo.</span>
         )}
-        {member.email && edited && (
+        {!withdrawn && member.email && edited && (
           <span className="text-sm text-muted-foreground">Se envía al email guardado ({member.email}).</span>
         )}
         {sendState.sent && <span role="status" className="text-sm text-green-700 dark:text-green-500">Enviado ✓</span>}

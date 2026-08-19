@@ -43,6 +43,20 @@ export function makeTokens(db: TokenDb) {
     peek(raw: string, purpose: TokenPurpose, now = new Date()): Promise<ActionToken | null> {
       return find(raw, purpose, now);
     },
+    // Un token vive atado al `memberId`, NO a la dirección a la que se mandó. Si
+    // el email del socio cambia (o se borra), los enlaces ya emitidos seguirían
+    // sirviendo para verificar —y para crear la contraseña de— una cuenta cuyo
+    // domicilio electrónico ahora es otro: con un dedazo en la dirección, quien
+    // tenga el buzón viejo se queda con la cuenta. Por eso el cambio de email
+    // revoca, y por eso un envío nuevo revoca el anterior (un solo enlace vivo
+    // por socio). Sólo se borran los NO usados: los consumidos son rastro.
+    async revokeForMember(memberId: number, purposes: TokenPurpose[]): Promise<number> {
+      if (purposes.length === 0) return 0;
+      const { count } = await db.actionToken.deleteMany({
+        where: { memberId, purpose: { in: purposes }, usedAt: null },
+      });
+      return count;
+    },
     // Un token de un solo uso tiene que consumirse una sola vez incluso con dos POST
     // simultáneos (doble clic, reintento del cliente de correo). Leer y después
     // escribir deja una ventana en la que los dos pasan la validación y los dos
@@ -64,3 +78,8 @@ export function makeTokens(db: TokenDb) {
 }
 
 export const tokens = makeTokens(prisma);
+
+/** Los propósitos que viajan al email del socio: son los que hay que revocar
+ *  cuando esa dirección deja de ser la suya (`password_reset` va atado al
+ *  `userId` y al email de la cuenta, no a la ficha). */
+export const MEMBER_EMAIL_TOKEN_PURPOSES: TokenPurpose[] = ["email_verification", "password_invitation"];

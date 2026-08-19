@@ -7,70 +7,27 @@
 // nunca `joinedAt`, `status`, `category` ni `withdrawalReason`: esos campos sólo
 // cambian por un asiento con acta, y dejarlos entrar acá abriría una puerta
 // lateral para modificar el libro sin dejar el rastro estatutario.
+//
+// La validación y el armado del patch (con esa lista blanca) viven en
+// `@/lib/members/card-edit`, testeados sin base en `tests/card-edit.test.ts`.
+// Acá quedan la sesión, la base, el correo y la auditoría.
 import { headers } from "next/headers";
-import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
-import { civilDateUtc } from "@/lib/dates";
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { hashToken, tokens } from "@/lib/tokens";
+import { verificationActorLimiter, verificationMemberLimiter } from "@/lib/auth/rate-limiter";
+import { hashToken, tokens, MEMBER_EMAIL_TOKEN_PURPOSES } from "@/lib/tokens";
 import { mailer } from "@/lib/email";
 import { verificationEmail } from "@/lib/email/templates";
-import type { EmailStatus, Member } from "@/generated/prisma/client";
-
-const schema = z.object({
-  memberId: z.coerce.number().int().positive("Socio inválido."),
-  fullName: z.string().min(3, "Ingresá apellido y nombre"),
-  dni: z.string().regex(/^\d{7,9}$/, "DNI inválido (7 a 9 dígitos, sin puntos)").optional(),
-  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha de nacimiento inválida").optional(),
-  civilStatus: z.string().max(40, "El estado civil no puede superar los 40 caracteres").optional(),
-  nationality: z.string().max(60, "La nacionalidad no puede superar los 60 caracteres").optional(),
-  occupation: z.string().max(80, "La ocupación no puede superar los 80 caracteres").optional(),
-  phone: z.string().max(40, "El teléfono no puede superar los 40 caracteres").optional(),
-  streetId: z.coerce.number().int().positive("Calle inválida.").optional(),
-  streetText: z.string().max(120, "La calle no puede superar los 120 caracteres").optional(),
-  streetNumber: z.string().max(10, "La altura no puede superar los 10 caracteres").optional(),
-  neighborhood: z.string().max(60, "El barrio no puede superar los 60 caracteres").optional(),
-  email: z.email("Email inválido").max(191, "El email es demasiado largo").optional(),
-});
-
-// Los datos que esta pantalla puede escribir. Enumerarlos explícitamente es la
-// lista blanca: lo que no está acá no se toca aunque venga en el FormData.
-type Patch = {
-  fullName: string;
-  dni: string | null;
-  birthDate: Date | null;
-  civilStatus: string | null;
-  nationality: string | null;
-  occupation: string | null;
-  phone: string | null;
-  streetId: number | null;
-  streetText: string | null;
-  streetNumber: string | null;
-  neighborhood: string | null;
-  email: string | null;
-  emailStatus: EmailStatus;
-  emailVerifiedAt: Date | null;
-};
+import {
+  buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
+} from "@/lib/members/card-edit";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
   // fijar el cliente si le pega directo al origen.
   return (await headers()).get("x-real-ip") ?? "unknown";
-}
-
-function changedFields(member: Member, patch: Patch): string[] {
-  return (Object.keys(patch) as Array<keyof Patch>).filter((key) => {
-    const next = patch[key];
-    const prev = member[key];
-    if (next instanceof Date || prev instanceof Date) {
-      const a = next instanceof Date ? next.getTime() : null;
-      const b = prev instanceof Date ? prev.getTime() : null;
-      return a !== b;
-    }
-    return next !== prev;
-  });
 }
 
 export type SaveState = { error?: string; saved?: boolean; unchanged?: boolean };
@@ -79,60 +36,22 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   const actor = await requireAdmin();
   if (!actor.ok) return { error: actor.error };
 
-  const parsed = parseForm(schema, formData);
+  const parsed = parseForm(cardSchema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const d = parsed.data;
 
   const member = await prisma.member.findUnique({ where: { id: d.memberId } });
   if (!member) return { error: "Socio inexistente." };
 
-  // El regex acepta "1983-02-31" y "0198-01-01": el <input type="date"> no los
-  // produce, pero una action es un endpoint y `civilDateUtc` desbordaría el día
-  // en silencio.
-  let birthDate: Date | null = null;
-  if (d.birthDate) {
-    const [y, m, day] = d.birthDate.split("-").map(Number);
-    birthDate = civilDateUtc(y, m, day);
-    const rolled =
-      birthDate.getUTCFullYear() !== y || birthDate.getUTCMonth() + 1 !== m || birthDate.getUTCDate() !== day;
-    if (rolled) return { error: "Fecha de nacimiento inválida." };
-    if (y < 1900 || birthDate.getTime() > Date.now()) {
-      return { error: "La fecha de nacimiento tiene que estar entre 1900 y hoy." };
-    }
-  }
+  const birth = parseBirthDate(d.birthDate);
+  if (!birth.ok) return { error: birth.error };
 
-  const streetId = d.streetId ?? null;
-  if (streetId !== null) {
-    const street = await prisma.street.findUnique({ where: { id: streetId }, select: { id: true } });
+  if (d.streetId) {
+    const street = await prisma.street.findUnique({ where: { id: d.streetId }, select: { id: true } });
     if (!street) return { error: "La calle elegida no existe en el catálogo." };
   }
 
-  // Comparamos en minúsculas contra lo guardado: varios emails del padrón
-  // importado vienen con mayúsculas, y sin esto abrir y guardar una ficha sin
-  // tocar el email le bajaría la verificación a "declared" por un cambio que no
-  // existió.
-  const email = d.email?.toLowerCase() ?? null;
-  const emailChanged = email !== (member.email?.toLowerCase() ?? null);
-
-  const patch: Patch = {
-    fullName: d.fullName,
-    dni: d.dni ?? null,
-    birthDate,
-    civilStatus: d.civilStatus ?? null,
-    nationality: d.nationality ?? null,
-    occupation: d.occupation ?? null,
-    phone: d.phone ?? null,
-    streetId,
-    // Con calle del catálogo el texto libre sobra: dejar los dos daría un
-    // domicilio con dos fuentes de verdad.
-    streetText: streetId ? null : d.streetText ?? null,
-    streetNumber: d.streetNumber ?? null,
-    neighborhood: d.neighborhood ?? null,
-    email,
-    // Email nuevo o cambiado vuelve a "declared"; borrado → "none"; igual → intacto.
-    emailStatus: emailChanged ? (email ? "declared" : "none") : member.emailStatus,
-    emailVerifiedAt: emailChanged ? null : member.emailVerifiedAt,
-  };
+  const { patch, emailChanged } = buildPatch(member, d, birth.value);
 
   const changed = changedFields(member, patch);
   // Ctrl+S es la forma normal de guardar en esta pantalla y se aprieta de más.
@@ -149,12 +68,22 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
     throw e;
   }
 
+  // Los tokens vivos se emitieron para la dirección VIEJA: si el email cambió o
+  // se borró, un enlace que quedó en ese buzón verificaría —y en el alta de
+  // contraseña, tomaría— la cuenta de un socio cuyo domicilio electrónico ahora
+  // es otro. Es el mismo caso del dedazo ("vecino@gmial.com"). Van después del
+  // update: si el guardado falla, el email no cambió y no hay nada que revocar.
+  const revoked = emailChanged
+    ? await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES)
+    : 0;
+
   // La auditoría con IP la escribe la action: es la única capa que ve las
   // cabeceras. Sólo los NOMBRES de los campos tocados, nunca los valores: el
   // DNI y el domicilio no van al log (Ley 25.326).
   await audit({
     userId: actor.actorId, action: "member_update", entity: "member", entityId: member.id,
-    detail: { fields: changed }, ip: await clientIp(),
+    detail: revoked > 0 ? { fields: changed, revokedTokens: revoked } : { fields: changed },
+    ip: await clientIp(),
   });
   return { saved: true };
 }
@@ -169,16 +98,32 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
   if (!Number.isInteger(memberId) || memberId <= 0) return { error: "Socio inexistente." };
   const member = await prisma.member.findUnique({ where: { id: memberId } });
   if (!member) return { error: "Socio inexistente." };
-  if (!member.email) return { error: "El socio no tiene email cargado. Guardá la ficha primero." };
-  if (member.emailStatus === "verified") return { error: "El email ya está verificado." };
+
+  const target = verificationTarget(member);
+  if (!target.ok) return { error: target.error };
+
+  // El límite va después de las guardas de datos (un error de estado no consume
+  // cupo) y antes de emitir: lo que se está racionando es el envío real y el
+  // asiento de Notification que lo acredita. Primero el del admin, que es el más
+  // amplio, para no gastarle el cupo al socio cuando el barrido ya está frenado.
+  if (!verificationActorLimiter.check(`actor:${actor.actorId}`)) {
+    return { error: "Enviaste demasiadas verificaciones seguidas. Esperá un rato antes de seguir." };
+  }
+  if (!verificationMemberLimiter.check(`member:${member.id}`)) {
+    return { error: "Ya se le enviaron varios correos de verificación a este socio en la última hora. Esperá antes de reintentar." };
+  }
 
   const ip = await clientIp();
+  // Un enlace vivo por socio: el reenvío invalida el anterior. Si no, "no me
+  // llegó" deja varios enlaces válidos en paralelo durante 7 días, cada uno
+  // capaz de crear la contraseña de la cuenta.
+  await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES);
   const raw = await tokens.issue({ purpose: "email_verification", memberId: member.id });
   const base = process.env.AUTH_URL ?? "http://localhost:3000";
 
   try {
     await mailer.sendToMember({
-      memberId: member.id, to: member.email, type: "email_verification",
+      memberId: member.id, to: target.email, type: "email_verification",
       message: verificationEmail({ name: member.fullName, url: `${base}/verificar/${raw}` }),
       summary: "verificación de email + invitación de acceso",
     });
@@ -193,12 +138,15 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
     // El token ya emitido se quema: un enlace de verificación vivo que nadie
     // recibió es superficie de ataque sin ninguna contrapartida.
     await prisma.actionToken.deleteMany({ where: { tokenHash: hashToken(raw) } });
-    console.error("[carga] falló el envío de verificación al socio", member.id, e);
-    // El intento sí queda auditado: alguien apretó el botón y no salió nada, y
-    // eso es exactamente lo que hay que poder reconstruir después. En el detalle
-    // va sólo el código del error, nunca el mensaje del SMTP (puede traer la
-    // dirección del destinatario).
+    // Ni el log ni el detalle de auditoría llevan el objeto de error: los errores
+    // de nodemailer traen `envelope`, `rejected` y el `response` del SMTP, o sea
+    // el email del socio en claro, y el log de PM2 no está cubierto por los
+    // cuidados de docs/08 (Ley 25.326). Con el id del socio y el código del
+    // error alcanza para diagnosticar: el resto se reconstruye desde la base.
     const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
+    console.error("[carga] falló el envío de verificación al socio", member.id, "code:", code);
+    // El intento sí queda auditado: alguien apretó el botón y no salió nada, y
+    // eso es exactamente lo que hay que poder reconstruir después.
     await audit({
       userId: actor.actorId, action: "member_send_verification_failed", entity: "member",
       entityId: member.id, detail: { code }, ip,

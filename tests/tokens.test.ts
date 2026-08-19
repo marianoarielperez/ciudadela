@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // El singleton importa @/lib/prisma (eager, explota sin .env) — mockear SIEMPRE.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import { hashToken, makeTokens, TOKEN_TTL } from "@/lib/tokens";
+import { hashToken, makeTokens, MEMBER_EMAIL_TOKEN_PURPOSES, TOKEN_TTL } from "@/lib/tokens";
 
 type Row = {
   id: number; purpose: string; tokenHash: string; memberId: number | null;
@@ -28,6 +28,19 @@ function makeFakeDb() {
         // serializarían solos y el test de carrera no probaría nada.
         await Promise.resolve();
         return rows.find((r) => r.tokenHash === where.tokenHash) ?? null;
+      },
+      deleteMany: async ({
+        where,
+      }: { where: { memberId?: number; purpose?: { in: string[] }; tokenHash?: string; usedAt?: null } }) => {
+        const doomed = rows.filter(
+          (r) =>
+            (where.memberId === undefined || r.memberId === where.memberId) &&
+            (where.purpose === undefined || where.purpose.in.includes(r.purpose)) &&
+            (where.tokenHash === undefined || r.tokenHash === where.tokenHash) &&
+            (where.usedAt === undefined || r.usedAt === where.usedAt),
+        );
+        for (const row of doomed) rows.splice(rows.indexOf(row), 1);
+        return { count: doomed.length };
       },
       // Imita el UPDATE ... WHERE condicional: el filtro lo evalúa el "motor", no el
       // llamador, y el cuerpo corre sin ceder el turno (como una sentencia atómica).
@@ -60,6 +73,13 @@ describe("tokens", () => {
     expect(TOKEN_TTL.email_verification).toBe(604_800_000); // 7 días
     expect(TOKEN_TTL.password_invitation).toBe(604_800_000); // 7 días
     expect(TOKEN_TTL.password_reset).toBe(1_800_000); // 30 minutos
+  });
+
+  // La lista fija qué se revoca cuando el email del socio deja de ser el suyo.
+  // `password_reset` no entra: va atado al userId y al email de la cuenta, no a
+  // la ficha, y borrarlo desde la pantalla de carga cortaría un recupero en curso.
+  it("pins the purposes tied to the member's mailbox", () => {
+    expect([...MEMBER_EMAIL_TOKEN_PURPOSES].sort()).toEqual(["email_verification", "password_invitation"]);
   });
 
   it("issues a raw token and stores only its hash", async () => {
@@ -116,5 +136,53 @@ describe("tokens", () => {
     expect(await svc.peek(raw, "password_invitation", now)).not.toBeNull();
     expect(await svc.consume(raw, "password_invitation", now)).not.toBeNull();
     expect(await svc.peek(raw, "password_invitation", now)).toBeNull();
+  });
+  // Un token va atado al memberId y no a la dirección a la que se mandó: si el
+  // email del socio cambia, el enlace que quedó en el buzón viejo seguiría
+  // verificando —y creando la contraseña de— esa cuenta. Revocar es lo que
+  // cierra ese agujero, así que hay que probar exactamente qué borra.
+  describe("revokeForMember", () => {
+    it("borra los tokens vivos del socio y devuelve cuántos", async () => {
+      const a = await svc.issue({ purpose: "email_verification", memberId: 7, now });
+      const b = await svc.issue({ purpose: "password_invitation", memberId: 7, now });
+      expect(await svc.revokeForMember(7, ["email_verification", "password_invitation"])).toBe(2);
+      expect(await svc.peek(a, "email_verification", now)).toBeNull();
+      expect(await svc.peek(b, "password_invitation", now)).toBeNull();
+      expect(db.rows).toHaveLength(0);
+    });
+
+    it("no toca los tokens de otro socio", async () => {
+      const mio = await svc.issue({ purpose: "email_verification", memberId: 7, now });
+      const ajeno = await svc.issue({ purpose: "email_verification", memberId: 8, now });
+      expect(await svc.revokeForMember(7, ["email_verification"])).toBe(1);
+      expect(await svc.peek(mio, "email_verification", now)).toBeNull();
+      expect(await svc.peek(ajeno, "email_verification", now)).not.toBeNull();
+    });
+
+    it("no toca propósitos que no se le pidieron", async () => {
+      const inv = await svc.issue({ purpose: "password_invitation", memberId: 7, now });
+      expect(await svc.revokeForMember(7, ["email_verification"])).toBe(0);
+      expect(await svc.peek(inv, "password_invitation", now)).not.toBeNull();
+      expect(await svc.revokeForMember(7, [])).toBe(0);
+      expect(await svc.peek(inv, "password_invitation", now)).not.toBeNull();
+    });
+
+    // Los consumidos son rastro de algo que pasó: borrarlos perdería la prueba
+    // de que el socio verificó.
+    it("conserva los tokens ya usados", async () => {
+      const raw = await svc.issue({ purpose: "email_verification", memberId: 7, now });
+      await svc.consume(raw, "email_verification", now);
+      expect(await svc.revokeForMember(7, ["email_verification"])).toBe(0);
+      expect(db.rows).toHaveLength(1);
+      expect(db.rows[0].usedAt).toEqual(now);
+    });
+
+    it("el enlace revocado ya no se puede consumir", async () => {
+      const viejo = await svc.issue({ purpose: "email_verification", memberId: 7, now });
+      await svc.revokeForMember(7, ["email_verification"]);
+      const nuevo = await svc.issue({ purpose: "email_verification", memberId: 7, now });
+      expect(await svc.consume(viejo, "email_verification", now)).toBeNull();
+      expect(await svc.consume(nuevo, "email_verification", now)).not.toBeNull();
+    });
   });
 });

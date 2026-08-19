@@ -66,3 +66,13 @@ export const loginLimiter = createRateLimiter()
 /** Por IP sola: frena el barrido de muchas cuentas desde un mismo origen,
  *  que nunca llegaría a 5 intentos en ningún par email|ip. */
 export const ipLimiter = createRateLimiter({ limit: 20 })
+
+/** Envío de verificación + invitación de acceso desde el panel, por socio.
+ *  Cada envío acredita una notificación fehaciente (Art. 5° quater) y deja un
+ *  enlace vivo: apretar 20 veces "no me llegó" no puede escribir 20 asientos del
+ *  mismo hecho. La ventana es larga a propósito; el reintento legítimo es raro. */
+export const verificationMemberLimiter = createRateLimiter({ limit: 3, windowMs: 60 * 60_000 })
+
+/** Y por admin: frena el barrido de muchos socios desde una misma sesión, que
+ *  nunca llegaría a 3 en ningún socio concreto. */
+export const verificationActorLimiter = createRateLimiter({ limit: 20, windowMs: 60 * 60_000 })

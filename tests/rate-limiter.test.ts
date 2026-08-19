@@ -5,6 +5,8 @@ import {
   DEFAULT_MAX_KEYS,
   DEFAULT_WINDOW_MS,
   ipLimiter,
+  verificationActorLimiter,
+  verificationMemberLimiter,
 } from "@/lib/auth/rate-limiter"
 
 function clockAt(start: number) {
@@ -105,5 +107,24 @@ describe("ipLimiter", () => {
     const ip = "198.51.100.77"
     for (let i = 0; i < 20; i++) expect(ipLimiter.check(ip)).toBe(true)
     expect(ipLimiter.check(ip)).toBe(false)
+  })
+})
+
+// Cada envío de verificación acredita una Notification con carácter fehaciente y
+// deja un enlace vivo: el "apretá de nuevo que no me llegó" no puede escribir 20
+// asientos del mismo hecho.
+describe("verification limiters", () => {
+  it("stops the 4th send to the same member", () => {
+    const key = "member:4242"
+    for (let i = 0; i < 3; i++) expect(verificationMemberLimiter.check(key)).toBe(true)
+    expect(verificationMemberLimiter.check(key)).toBe(false)
+    // El tope es por socio: otro socio arranca con el cupo entero.
+    expect(verificationMemberLimiter.check("member:4243")).toBe(true)
+  })
+
+  it("stops the 21st send from the same admin across members", () => {
+    const key = "actor:99"
+    for (let i = 0; i < 20; i++) expect(verificationActorLimiter.check(key)).toBe(true)
+    expect(verificationActorLimiter.check(key)).toBe(false)
   })
 })

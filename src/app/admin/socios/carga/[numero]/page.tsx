@@ -65,7 +65,7 @@ export default async function CargaPage(props: { params: Promise<{ numero: strin
           civilStatus: m.civilStatus, nationality: m.nationality, occupation: m.occupation,
           phone: m.phone, streetId: m.streetId, streetText: m.streetText,
           streetNumber: m.streetNumber, neighborhood: m.neighborhood,
-          email: m.email, emailStatus: m.emailStatus,
+          email: m.email, emailStatus: m.emailStatus, status: m.status,
         }}
         streets={streets}
         prevNumber={prev?.memberNumber ?? null}
