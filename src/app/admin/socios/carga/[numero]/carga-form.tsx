@@ -13,7 +13,8 @@
 import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { sendVerificationAction, updateMemberAction, type SaveState, type SendState } from "./actions";
+import { updateMemberAction, type SaveState } from "./actions";
+import { SendVerificationForm } from "@/components/admin/send-verification-form";
 import { StreetAutocomplete, type StreetOption } from "@/components/admin/street-autocomplete";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
@@ -72,7 +73,6 @@ export function CargaForm(props: {
   const { member, sendTarget, streets } = props;
   const router = useRouter();
   const [saveState, saveAction, saving] = useActionState<SaveState, FormData>(updateMemberAction, {});
-  const [sendState, sendAction, sending] = useActionState<SendState, FormData>(sendVerificationAction, {});
   // "Editado desde el último envío". Se apaga en el submit y no en un efecto:
   // apagarlo cuando vuelve la action haría un render en cascada y, peor, dejaría
   // el aviso "Guardado ✓" un instante al lado de un campo ya modificado.
@@ -146,14 +146,6 @@ export function CargaForm(props: {
       ? "Es la dirección con la que el socio ingresa al portal: si la cambiás, pasa a ingresar con la nueva. Le avisamos a la dirección anterior y le pedimos que confirme la nueva."
       : null,
   ].filter(Boolean).join(" · ") || undefined;
-  // El texto del botón dice qué correo va a salir. Con el email ya verificado y
-  // sin cuenta creada lo que corresponde es la invitación de contraseña sola:
-  // volver a verificar una dirección ya confirmada no aportaría nada y le
-  // agregaría un paso al socio.
-  const sendLabel = sendTarget.ok && sendTarget.kind === "password_invitation"
-    ? "Reenviar invitación de acceso"
-    : "Enviar verificación + invitación de acceso";
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -250,23 +242,18 @@ export function CargaForm(props: {
         </div>
       </form>
 
-      <form action={sendAction} className="flex max-w-3xl flex-wrap items-center gap-3 border-t pt-4">
-        <input type="hidden" name="memberId" value={member.id} />
-        <Button type="submit" variant="outline" disabled={sending || !sendTarget.ok}>
-          {sending ? "Enviando…" : sendLabel}
-        </Button>
-        {member.emailStatus === "verified" && member.status !== "withdrawn" && (
-          <span className="text-sm text-green-700 dark:text-green-500">Email verificado ✓</span>
-        )}
-        {/* El motivo del rechazo lo redacta `verificationTarget`: repetirlo acá
-            fue lo que dejó al operador sin saber que la reinvitación existe. */}
-        {!sendTarget.ok && <span className="text-sm text-muted-foreground">{sendTarget.error}</span>}
-        {sendTarget.ok && edited && (
-          <span className="text-sm text-muted-foreground">Se envía al email guardado ({sendTarget.email}).</span>
-        )}
-        {sendState.sent && <span role="status" className="text-sm text-green-700 dark:text-green-500">Enviado ✓</span>}
-        {sendState.error && <span role="alert" className="text-sm text-destructive">{sendState.error}</span>}
-      </form>
+      {/* El mismo formulario que la ficha (`@/components/admin/send-verification-form`):
+          el modo carga sólo le agrega el aviso de que se manda al email GUARDADO
+          y no al que se está tipeando en este momento. */}
+      <SendVerificationForm
+        memberId={member.id}
+        target={sendTarget}
+        verified={member.emailStatus === "verified" && member.status !== "withdrawn"}
+        className="flex max-w-3xl flex-wrap items-center gap-3 border-t pt-4"
+        note={sendTarget.ok && edited
+          ? <span className="text-sm text-muted-foreground">Se envía al email guardado ({sendTarget.email}).</span>
+          : null}
+      />
     </div>
   );
 }

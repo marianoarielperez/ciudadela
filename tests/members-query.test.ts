@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchPadron, padronWhere, parsePadronFilters } from "@/lib/members/query";
+import {
+  fetchPadron, fetchPadronPage, PADRON_PAGE_SIZE, padronWhere, parsePadronFilters,
+  parsePadronPage,
+} from "@/lib/members/query";
 
 describe("parsePadronFilters", () => {
   it("keeps only known values", () => {
@@ -35,5 +38,87 @@ describe("fetchPadron", () => {
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ include: { member: { include: { street: true } } } }),
     );
+  });
+});
+
+// ── Paginación (Brecha 3) ─────────────────────────────────────────────────────
+//
+// El listado pagina; el export a Excel NO. Los dos comparten `padronWhere`, pero
+// NO pueden compartir el `skip`/`take`: si la paginación se metiera adentro de
+// `fetchPadron`, el archivo que la asociación presenta como padrón saldría con
+// las primeras 50 filas y sin ninguna señal de que falta el resto. Por eso son
+// dos funciones, y por eso el primer test de acá vigila que `fetchPadron` siga
+// sin paginar.
+describe("fetchPadron — nunca pagina", () => {
+  it("never sends skip/take: the Excel export shares this function and needs every row", async () => {
+    const findMany = vi.fn<(args: Record<string, unknown>) => Promise<never[]>>(async () => []);
+    const db = { membership: { findMany } } as never;
+    await fetchPadron(db, {});
+    const [arg] = findMany.mock.calls[0] ?? [{}];
+    expect(arg).not.toHaveProperty("skip");
+    expect(arg).not.toHaveProperty("take");
+  });
+});
+
+describe("parsePadronPage", () => {
+  it("defaults to page 1 and ignores junk", () => {
+    expect(parsePadronPage({})).toBe(1);
+    expect(parsePadronPage({ page: "abc" })).toBe(1);
+    expect(parsePadronPage({ page: "0" })).toBe(1);
+    expect(parsePadronPage({ page: "-3" })).toBe(1);
+    expect(parsePadronPage({ page: "4" })).toBe(4);
+  });
+});
+
+describe("parsePadronFilters — la página no es un filtro", () => {
+  // El link de "Exportar Excel" se arma con los filtros. Si `page` entrara ahí,
+  // volvería a acoplar el archivo al listado por la puerta de atrás.
+  it("does not absorb the page number", () => {
+    expect(parsePadronFilters({ q: "perez", page: "3" })).toEqual({ q: "perez" });
+  });
+});
+
+describe("fetchPadronPage", () => {
+  function fakeDb(total: number) {
+    const count = vi.fn<(args: Record<string, unknown>) => Promise<number>>(async () => total);
+    const findMany = vi.fn<(args: Record<string, unknown>) => Promise<never[]>>(async () => []);
+    return { db: { membership: { count, findMany } } as never, count, findMany };
+  }
+
+  it("asks only for the requested slice, with the same filters as the export", async () => {
+    const { db, findMany, count } = fakeDb(283);
+    const res = await fetchPadronPage(db, { status: "active" }, 3);
+    expect(count).toHaveBeenCalledWith({ where: padronWhere({ status: "active" }) });
+    const [arg] = findMany.mock.calls[0] ?? [{}];
+    expect(arg.where).toEqual(padronWhere({ status: "active" }));
+    expect(arg.skip).toBe(2 * PADRON_PAGE_SIZE);
+    expect(arg.take).toBe(PADRON_PAGE_SIZE);
+    expect(res.total).toBe(283);
+    expect(res.page).toBe(3);
+    expect(res.pageCount).toBe(Math.ceil(283 / PADRON_PAGE_SIZE));
+  });
+
+  it("keeps the catalog street relation the export depends on", async () => {
+    const { db, findMany } = fakeDb(1);
+    await fetchPadronPage(db, {}, 1);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ include: { member: { include: { street: true } } } }),
+    );
+  });
+
+  // Un `?page=99` tipeado a mano (o un filtro que achica el padrón mientras se
+  // navega) no puede devolver una tabla vacía sin explicación.
+  it("clamps a page beyond the end back to the last one", async () => {
+    const { db, findMany } = fakeDb(60);
+    const res = await fetchPadronPage(db, {}, 99);
+    expect(res.page).toBe(2);
+    expect((findMany.mock.calls[0] ?? [{}])[0].skip).toBe(PADRON_PAGE_SIZE);
+  });
+
+  it("reports one empty page when nothing matches", async () => {
+    const { db, findMany } = fakeDb(0);
+    const res = await fetchPadronPage(db, { q: "nadie" }, 1);
+    expect(res).toMatchObject({ total: 0, page: 1, pageCount: 1, rows: [] });
+    expect((findMany.mock.calls[0] ?? [{}])[0].skip).toBe(0);
   });
 });

@@ -31,6 +31,7 @@ export default async function ActasPage() {
             <TableRow>
               <TableHead>Tipo</TableHead><TableHead>N°</TableHead><TableHead>Fecha</TableHead>
               <TableHead>Descripción</TableHead><TableHead>Movimientos</TableHead>
+              <TableHead><span className="sr-only">Acciones</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -43,6 +44,11 @@ export default async function ActasPage() {
                 <TableCell>{formatDateAR(m.date)}</TableCell>
                 <TableCell>{m.description ?? "—"}</TableCell>
                 <TableCell>{m._count.movements}</TableCell>
+                <TableCell>
+                  <Link className="text-sm text-primary hover:underline" href={`/admin/actas/${m.id}/editar`}>
+                    Editar
+                  </Link>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

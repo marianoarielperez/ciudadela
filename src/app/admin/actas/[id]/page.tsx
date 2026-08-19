@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS, MOVEMENT_LABELS } from "@/lib/members/labels";
+import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +23,14 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground"><Link href="/admin/actas" className="hover:underline">Actas</Link></p>
-      <h1 className="text-2xl font-semibold">
-        Acta {MINUTE_TYPE_LABELS[minute.type]} N° {minute.number} — {formatDateAR(minute.date)}
-      </h1>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h1 className="text-2xl font-semibold">
+          Acta {MINUTE_TYPE_LABELS[minute.type]} N° {minute.number} — {formatDateAR(minute.date)}
+        </h1>
+        <Button asChild variant="outline">
+          <Link href={`/admin/actas/${minute.id}/editar`}>Editar</Link>
+        </Button>
+      </div>
       {minute.description && <p>{minute.description}</p>}
       <h2 className="text-lg font-medium">Movimientos asentados</h2>
       {minute.movements.length === 0 && <p className="text-sm text-muted-foreground">Sin movimientos asociados.</p>}

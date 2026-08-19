@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // La ola anterior dejó sin test el cableado de `sendVerificationAction`
 // (src/app/admin/socios/carga/[numero]/actions.ts): `target.kind` —lo que
@@ -56,6 +56,7 @@ vi.mock("@/lib/email/templates", () => ({
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
 import { sendVerificationAction } from "@/app/admin/socios/carga/[numero]/actions";
+import { verificationActorLimiter, verificationMemberLimiter } from "@/lib/auth/rate-limiter";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
 import { mailer } from "@/lib/email";
@@ -72,6 +73,11 @@ function member(over: Partial<{
     userId: null, fullName: "Perez Ana", ...over,
   };
 }
+
+// Sin esto, los `toHaveBeenCalled` de un test veían las llamadas del anterior.
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function formDataFor(memberId: number) {
   const fd = new FormData();
@@ -122,5 +128,77 @@ describe("sendVerificationAction — cableado de target.kind", () => {
     expect(mailer.sendToMember).toHaveBeenCalledWith(
       expect.objectContaining({ type: "password_invitation", to: "vecino@example.com" }),
     );
+  });
+});
+
+// ── Guardas del envío ─────────────────────────────────────────────────────────
+//
+// El botón ahora se ofrece también desde la ficha (`/admin/socios/[id]`, spec
+// §8) y no sólo desde el modo carga. Las dos pantallas llaman a ESTA action, así
+// que las guardas se fijan acá: si alguna se debilitara, ninguna de las dos
+// pantallas alcanzaría para notarlo.
+describe("sendVerificationAction — guardas que las dos pantallas comparten", () => {
+  it("never writes to a withdrawn member: no token, no mail", async () => {
+    (prisma.member.findUnique as MockedFn).mockResolvedValue(member({ status: "withdrawn" }));
+
+    const res = await sendVerificationAction({}, formDataFor(1));
+
+    expect(res.error).toContain("dado de baja");
+    expect(tokens.issue).not.toHaveBeenCalled();
+    expect(mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  it("refuses a member who already created the account", async () => {
+    (prisma.member.findUnique as MockedFn).mockResolvedValue(
+      member({ emailStatus: "verified", userId: 42 }),
+    );
+
+    const res = await sendVerificationAction({}, formDataFor(1));
+
+    expect(res.error).toContain("ya tiene su cuenta creada");
+    expect(tokens.issue).not.toHaveBeenCalled();
+    expect(mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  it("refuses a member with no email on the card", async () => {
+    (prisma.member.findUnique as MockedFn).mockResolvedValue(member({ email: null }));
+
+    const res = await sendVerificationAction({}, formDataFor(1));
+
+    expect(res.error).toContain("no tiene email cargado");
+    expect(mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  // El cupo por socio y el cupo por operador siguen vigentes y siguen cobrándose
+  // recién cuando los DOS habilitan (ver el comentario largo de la action).
+  it("honours the per-member rate limit without charging the operator quota", async () => {
+    (prisma.member.findUnique as MockedFn).mockResolvedValue(member());
+    (verificationMemberLimiter.allows as MockedFn).mockReturnValueOnce(false);
+
+    const res = await sendVerificationAction({}, formDataFor(1));
+
+    expect(res.error).toContain("Esperá");
+    expect(verificationActorLimiter.record).not.toHaveBeenCalled();
+    expect(mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  it("honours the per-operator rate limit", async () => {
+    (prisma.member.findUnique as MockedFn).mockResolvedValue(member());
+    (verificationActorLimiter.allows as MockedFn).mockReturnValueOnce(false);
+
+    const res = await sendVerificationAction({}, formDataFor(1));
+
+    expect(res.error).toContain("demasiados correos");
+    expect(verificationMemberLimiter.record).not.toHaveBeenCalled();
+    expect(mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  it("records both quotas on a successful send", async () => {
+    (prisma.member.findUnique as MockedFn).mockResolvedValue(member());
+
+    await sendVerificationAction({}, formDataFor(1));
+
+    expect(verificationMemberLimiter.record).toHaveBeenCalledTimes(1);
+    expect(verificationActorLimiter.record).toHaveBeenCalledTimes(1);
   });
 });

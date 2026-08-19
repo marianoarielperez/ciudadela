@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { fetchPadron, parsePadronFilters } from "@/lib/members/query";
+import { fetchPadronPage, parsePadronFilters, parsePadronPage } from "@/lib/members/query";
 import { CATEGORY_LABELS, EMAIL_STATUS_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,10 +18,26 @@ export default async function SociosPage(props: {
 }) {
   const sp = await props.searchParams;
   const filters = parsePadronFilters(sp);
-  const rows = await fetchPadron(prisma, filters);
+  // La página se lee aparte de los filtros a propósito: `exportQs` se arma con
+  // los filtros y el export tiene que seguir trayendo el padrón completo.
+  const { rows, total, page, pageCount, pageSize } = await fetchPadronPage(
+    prisma, filters, parsePadronPage(sp),
+  );
   const exportQs = new URLSearchParams(
     Object.entries(filters).map(([k, v]) => [k, String(v)]),
   ).toString();
+  // Los links de paginación conservan los filtros vigentes: sin esto, pasar a la
+  // página 2 de una búsqueda devolvería la página 2 del padrón entero.
+  const pageHref = (n: number) => {
+    const qs = new URLSearchParams(
+      Object.entries(filters).map(([k, v]) => [k, String(v)]),
+    );
+    if (n > 1) qs.set("page", String(n));
+    const s = qs.toString();
+    return s ? `/admin/socios?${s}` : "/admin/socios";
+  };
+  const firstShown = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastShown = (page - 1) * pageSize + rows.length;
 
   return (
     <div className="space-y-4">
@@ -59,7 +75,12 @@ export default async function SociosPage(props: {
         <Button type="submit" variant="secondary">Filtrar</Button>
       </form>
 
-      <p className="text-sm text-muted-foreground">{rows.length} socios</p>
+      {/* El total es el del padrón filtrado, no el de la página: el operador
+          tiene que poder leer "160 socios" aunque en pantalla haya 50. */}
+      <p className="text-sm text-muted-foreground">
+        {total === 0 ? "Ningún socio coincide con el filtro" : `${firstShown}–${lastShown} de ${total} socios`}
+        {pageCount > 1 && ` · página ${page} de ${pageCount}`}
+      </p>
 
       <Table>
         <TableHeader>
@@ -100,6 +121,24 @@ export default async function SociosPage(props: {
           ))}
         </TableBody>
       </Table>
+
+      {/* Paginación simple (spec §6). El export a Excel sigue llevándose el
+          padrón filtrado COMPLETO: usa `fetchPadron`, que no pagina. */}
+      {pageCount > 1 && (
+        <nav className="flex items-center gap-2" aria-label="Paginación del padrón">
+          {page > 1 ? (
+            <Button asChild variant="outline"><Link href={pageHref(page - 1)}>← Anterior</Link></Button>
+          ) : (
+            <Button variant="outline" disabled>← Anterior</Button>
+          )}
+          <span className="text-sm text-muted-foreground">Página {page} de {pageCount}</span>
+          {page < pageCount ? (
+            <Button asChild variant="outline"><Link href={pageHref(page + 1)}>Siguiente →</Link></Button>
+          ) : (
+            <Button variant="outline" disabled>Siguiente →</Button>
+          )}
+        </nav>
+      )}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import {
   CATEGORY_LABELS, EMAIL_STATUS_LABELS, MINUTE_TYPE_LABELS, MOVEMENT_LABELS,
   NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS, REASON_LABELS, STATUS_LABELS,
 } from "@/lib/members/labels";
+import { verificationTarget } from "@/lib/members/card-edit";
+import { SendVerificationForm } from "@/components/admin/send-verification-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +44,10 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
   if (!member) notFound();
 
   const openMembership = member.memberships.find((m) => m.book.status === "open");
+  // Misma función que usa la server action como guarda: la ficha no decide nada
+  // por su cuenta sobre a quién se le puede mandar el acceso (spec §8: el envío
+  // se ofrece "desde carga de fichas o ficha").
+  const sendTarget = verificationTarget(member);
   const address = member.street
     ? `${member.street.name} ${member.streetNumber ?? ""}`.trim()
     : [member.streetText, member.streetNumber].filter(Boolean).join(" ");
@@ -149,6 +155,24 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
                 {" "}({NOTIFICATION_STATUS_LABELS[n.status]})
               </p>
             ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Acceso al portal</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              {member.email
+                ? `Email de la ficha: ${member.email} (${EMAIL_STATUS_LABELS[member.emailStatus]}).`
+                : "La ficha no tiene email cargado."}
+              {" "}
+              {member.userId ? "El socio ya creó su cuenta." : "El socio todavía no creó su cuenta."}
+            </p>
+            <SendVerificationForm
+              memberId={member.id}
+              target={sendTarget}
+              verified={member.emailStatus === "verified" && member.status !== "withdrawn"}
+            />
           </CardContent>
         </Card>
 
