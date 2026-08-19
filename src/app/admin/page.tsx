@@ -15,7 +15,7 @@ const sections: { title: string; description: string; href?: string; cta?: strin
     cta: "Ver las actas",
   },
   { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
-  { title: "Noticias", description: "Novedades y comunicados del sitio público." },
+  { title: "Noticias", description: "Novedades y comunicados del sitio público.", href: "/admin/noticias", cta: "Gestionar noticias" },
   { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
 ]
 
