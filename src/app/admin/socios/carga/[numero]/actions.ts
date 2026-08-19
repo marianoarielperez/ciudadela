@@ -9,12 +9,11 @@
 // lateral para modificar el libro sin dejar el rastro estatutario.
 import { headers } from "next/headers";
 import { z } from "zod";
-import { auth } from "@/auth";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
 import { civilDateUtc } from "@/lib/dates";
-import { isAdmin } from "@/lib/auth/roles";
+import { requireAdmin } from "@/lib/auth/require-admin";
 import { hashToken, tokens } from "@/lib/tokens";
 import { mailer } from "@/lib/email";
 import { verificationEmail } from "@/lib/email/templates";
@@ -54,19 +53,6 @@ type Patch = {
   emailStatus: EmailStatus;
   emailVerifiedAt: Date | null;
 };
-
-// Sin `export`: en un módulo "use server" todo lo exportado es un endpoint.
-type Actor = { ok: true; actorId: number } | { ok: false; error: string };
-
-// El proxy (proxy.ts) ya filtra /admin, pero Next recomienda que cada server
-// action se autorice a sí misma: son endpoints POST públicos y estas dos tocan
-// datos personales alcanzados por la Ley 25.326. Defensa en profundidad.
-async function requireAdmin(): Promise<Actor> {
-  const session = await auth();
-  if (!session?.user?.id) return { ok: false, error: "Sesión inválida." };
-  if (!isAdmin(session.user.roles)) return { ok: false, error: "No tenés permiso para editar el padrón." };
-  return { ok: true, actorId: Number(session.user.id) };
-}
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede

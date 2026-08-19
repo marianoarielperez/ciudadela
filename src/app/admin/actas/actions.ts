@@ -2,7 +2,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
@@ -18,8 +18,8 @@ const schema = z.object({
 export async function createMinuteAction(
   _prev: { error?: string }, formData: FormData,
 ): Promise<{ error?: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Sesión inválida." };
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
   const parsed = parseForm(schema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const { type, number, date, description } = parsed.data;
@@ -27,7 +27,7 @@ export async function createMinuteAction(
   // Solo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
   // fijar el cliente si le pega directo al origen.
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
-  const userId = Number(session.user.id);
+  const userId = actor.actorId;
   try {
     const minute = await prisma.minute.create({
       data: { type, number, date: civilDateUtc(y, m, d), description: description ?? null, createdById: userId },

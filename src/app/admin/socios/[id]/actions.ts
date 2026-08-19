@@ -27,7 +27,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { requireAdmin } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
@@ -78,9 +78,9 @@ async function runAction(
     detail?: (member: Member, data: Data) => Record<string, unknown>;
   },
 ): Promise<State> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Sesión inválida." };
-  const actorId = Number(session.user.id);
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
+  const actorId = actor.actorId;
 
   const base = z.object({ memberId: z.coerce.number().int().positive(), ...extraSchema });
   const parsed = parseForm(base, formData);
