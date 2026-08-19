@@ -167,4 +167,42 @@ describe("buildExportRow", () => {
     expect(row.phone).toBe("");
     expect(row.nb).toBe("");
   });
+
+  // El campo `addr` de la fila es el único lugar donde memberAddress() se
+  // ejercita como lo hace la ruta de verdad (dentro de buildExportRow, no
+  // llamado directo). Los tests de memberAddress de arriba prueban la función
+  // pura; estos fijan que las dos ramas del domicilio efectivamente llegan a
+  // la columna del Excel. Hace falta esta cobertura porque contra la base real
+  // hoy 0 de 283 socios tienen streetId cargado: la rama de catálogo
+  // (member.street.name) nunca se ejerció con datos reales en el archivo
+  // generado, así que la única garantía de que funciona es esta.
+  describe("addr — las dos ramas del domicilio", () => {
+    it("uses the catalog street when the member has one (member of the neighborhood)", () => {
+      const row = buildExportRow({
+        memberNumber: 10,
+        member: makeMember({
+          street: { id: 3, loadOrder: 1, name: "Agüero", normalizedName: "aguero" },
+          streetText: null,
+          streetNumber: "456",
+        }),
+      });
+      expect(row.addr).toBe("Agüero 456");
+    });
+
+    it("uses the free-text street when there is no catalog street (member outside the neighborhood)", () => {
+      const row = buildExportRow({
+        memberNumber: 11,
+        member: makeMember({ street: null, streetText: "Ñiripil", streetNumber: "78" }),
+      });
+      expect(row.addr).toBe("Ñiripil 78");
+    });
+
+    it("leaves addr empty for a member with no address of either kind (incomplete card)", () => {
+      const row = buildExportRow({
+        memberNumber: 12,
+        member: makeMember({ street: null, streetText: null, streetNumber: null }),
+      });
+      expect(row.addr).toBe("");
+    });
+  });
 });

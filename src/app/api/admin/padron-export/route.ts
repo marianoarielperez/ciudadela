@@ -42,6 +42,18 @@ export async function GET(req: NextRequest) {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": 'attachment; filename="padron-libro-1.xlsx"',
+      // El archivo trae DNIs, domicilios y teléfonos de los 283 socios (Ley
+      // 25.326). Sin esto Next no agrega ninguna cabecera de caché (verificado
+      // sobre el build de producción — ver task-16-review.md, I-1), así que un
+      // intermediario entre el navegador y este handler (Nginx, un proxy del
+      // operador) podría guardar la respuesta. `no-store` saca la ruta de
+      // cualquier caché; `private` la saca además de las compartidas que
+      // ignoren `no-store`. Y como la ruta no varía la respuesta por cookie
+      // (recalcula todo del lado servidor), agregamos `Cookie` al `vary` que ya
+      // pone Next para que un proxy que sí respete `no-store` no la sirva
+      // igual sin mirar la sesión.
+      "Cache-Control": "no-store, private",
+      Vary: "Cookie",
     },
   });
 }
