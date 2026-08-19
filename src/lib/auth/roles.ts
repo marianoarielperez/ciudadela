@@ -4,3 +4,9 @@
 export function isAdmin(roles: readonly string[] | null | undefined): boolean {
   return (roles ?? []).some((r) => r === "admin" || r === "superadmin");
 }
+
+// La pantalla de Configuración es solo superadmin (docs/05:129): cambiar
+// asociate_activo abre/cierra el alta de socios de cara al público.
+export function isSuperadmin(roles: readonly string[] | null | undefined): boolean {
+  return (roles ?? []).some((r) => r === "superadmin");
+}

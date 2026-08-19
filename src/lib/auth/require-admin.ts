@@ -20,7 +20,7 @@
 //
 // El token conserva un solo papel, y es el barato: si NO dice admin, se rechaza
 // sin tocar la base. O sea que el token puede quitar el permiso pero nunca darlo.
-import { isAdmin } from "@/lib/auth/roles";
+import { isAdmin, isSuperadmin } from "@/lib/auth/roles";
 import {
   EXPIRED_SESSION_MESSAGE,
   sessionExceededMaxLifetime,
@@ -66,16 +66,24 @@ export const ADMIN_BLOCKED: Record<AdminBlockReason, string> = {
   expired_session: EXPIRED_SESSION_MESSAGE,
 };
 
-export function makeRequireAdmin(getSession: GetSession, findAccount: AdminAccountLookup) {
-  return async function requireAdmin(): Promise<AdminActor> {
+// Factory común: la única diferencia entre requireAdmin y requireSuperadmin es
+// QUÉ rol exige. Toda la lógica —token barato primero, fila viva después,
+// frescura de sesión— queda en un solo lugar y en un solo orden.
+function makeRequireRole(
+  getSession: GetSession,
+  findAccount: AdminAccountLookup,
+  hasRole: (roles: readonly string[] | null | undefined) => boolean,
+  notAllowed: string,
+) {
+  return async function requireRole(): Promise<AdminActor> {
     const session = await getSession();
     const id = session?.user?.id;
     if (!id) return { ok: false, reason: "anonymous", error: ADMIN_BLOCKED.anonymous };
-    // Filtro barato ANTES de la base: un token que no dice admin no puede pasar
+    // Filtro barato ANTES de la base: un token que no trae el rol no puede pasar
     // aunque la base diga que sí (para eso está volver a entrar), y así una
     // sesión de socio no le cuesta una consulta al padrón a cada POST.
-    if (!isAdmin(session?.user?.roles)) {
-      return { ok: false, reason: "not_admin", error: ADMIN_BLOCKED.not_admin };
+    if (!hasRole(session?.user?.roles)) {
+      return { ok: false, reason: "not_admin", error: notAllowed };
     }
     // Un id no numérico en el token no puede convertirse en NaN silencioso:
     // NaN como actorId iría a parar a la auditoría y a los FKs.
@@ -87,12 +95,12 @@ export function makeRequireAdmin(getSession: GetSession, findAccount: AdminAccou
     const account = await findAccount(actorId);
     // Cuenta borrada: el token la sobrevive y no hay nadie a quien atribuirle la
     // escritura. Mismo texto que el rol faltante: no hay nada que distinguirle.
-    if (!account) return { ok: false, reason: "not_admin", error: ADMIN_BLOCKED.not_admin };
+    if (!account) return { ok: false, reason: "not_admin", error: notAllowed };
     if (!account.active) return { ok: false, reason: "disabled", error: ADMIN_BLOCKED.disabled };
     // La verdad del rol es la fila viva, no el token: acá es donde se cierra el
     // hueco de la revocación de admin.
-    if (!isAdmin(account.roles)) {
-      return { ok: false, reason: "not_admin", error: ADMIN_BLOCKED.not_admin };
+    if (!hasRole(account.roles)) {
+      return { ok: false, reason: "not_admin", error: notAllowed };
     }
     if (sessionPredatesPasswordChange(session?.user?.authAt, account.passwordChangedAt)) {
       return { ok: false, reason: "stale_session", error: ADMIN_BLOCKED.stale_session };
@@ -108,14 +116,26 @@ export function makeRequireAdmin(getSession: GetSession, findAccount: AdminAccou
   };
 }
 
+export function makeRequireAdmin(getSession: GetSession, findAccount: AdminAccountLookup) {
+  return makeRequireRole(getSession, findAccount, isAdmin, ADMIN_BLOCKED.not_admin);
+}
+
+/** La Configuración no la comparte el admin común: es la llave que abre y cierra
+ *  el alta pública de socios. */
+export const SUPERADMIN_BLOCKED_MESSAGE = "Solo el superadmin puede cambiar la configuración.";
+
+export function makeRequireSuperadmin(getSession: GetSession, findAccount: AdminAccountLookup) {
+  return makeRequireRole(getSession, findAccount, isSuperadmin, SUPERADMIN_BLOCKED_MESSAGE);
+}
+
 /**
- * Versión ligada a la sesión y a la base reales. Los `import()` son dinámicos a
- * propósito: "@/auth" arrastra NextAuth y Prisma, y este módulo lo importan
- * también los tests.
+ * La consulta de la cuenta viva, compartida por las dos guardas ligadas. El
+ * `import()` es dinámico a propósito: "@/lib/prisma" arrastra el cliente y este
+ * módulo lo importan también los tests.
  */
-export async function requireAdmin(): Promise<AdminActor> {
-  const [{ auth }, { prisma }] = await Promise.all([import("@/auth"), import("@/lib/prisma")]);
-  return makeRequireAdmin(auth, async (userId) => {
+async function liveAccount(): Promise<AdminAccountLookup> {
+  const { prisma } = await import("@/lib/prisma");
+  return async (userId) => {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -130,5 +150,20 @@ export async function requireAdmin(): Promise<AdminActor> {
       passwordChangedAt: user.passwordChangedAt,
       roles: user.roles.map((r) => r.role.name),
     };
-  })();
+  };
+}
+
+/**
+ * Versión ligada a la sesión y a la base reales. El `import()` de "@/auth" es
+ * dinámico por el mismo motivo: arrastra NextAuth entero.
+ */
+export async function requireAdmin(): Promise<AdminActor> {
+  const { auth } = await import("@/auth");
+  return makeRequireAdmin(auth, await liveAccount())();
+}
+
+/** Igual que `requireAdmin`, pero sólo para superadmin (pantalla de Configuración). */
+export async function requireSuperadmin(): Promise<AdminActor> {
+  const { auth } = await import("@/auth");
+  return makeRequireSuperadmin(auth, await liveAccount())();
 }
