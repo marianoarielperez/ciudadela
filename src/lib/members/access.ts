@@ -28,7 +28,18 @@ export const ACCESS_ERRORS = {
   dead: "El enlace venció o ya fue usado. Pedí a la vecinal que te lo reenvíe.",
   withdrawn: "Figurás con baja en el padrón: el enlace ya no es válido. Comunicate con la vecinal.",
   noEmail: "Tu ficha no tiene un email registrado. Comunicate con la vecinal.",
-  conflict: "Ya existe una cuenta con ese email que no podemos vincular a tu ficha. Comunicate con la vecinal.",
+  // Caso típico: un matrimonio (u otro hogar) que comparte casilla. La cuenta es
+  // una por email y ya la tiene el primero que la creó; el segundo socio sigue
+  // siendo socio pleno (recibe notificaciones ahí, paga en sede, vota), sólo que
+  // sin autoservicio web. El texto NO puede nombrar de quién es la cuenta
+  // existente ni confirmar ningún dato suyo (nombre, N° de socio, DNI): esta
+  // pantalla la puede estar leyendo cualquiera que abra el enlace.
+  conflict:
+    "Ese email ya tiene una cuenta de acceso creada, así que no podemos vincularla a tu ficha. Tu condición de socio no cambia por esto: vas a seguir recibiendo las notificaciones ahí, podés pagar la cuota en la sede y tenés voz y voto en las asambleas. Si querés tu acceso propio al panel, acercate a la sede vecinal o pedí que te carguen otro email en la ficha.",
+  // Distinto del anterior a propósito: acá no hay ninguna cuenta en conflicto,
+  // es un problema de datos del servidor (falta el rol "socio" del seed).
+  // Mostrarle al socio el texto de arriba sería directamente falso.
+  unavailable: "No pudimos completar el alta por un problema técnico. Comunicate con la vecinal.",
 } as const;
 
 export type VerifyResult =
@@ -172,7 +183,7 @@ export function makeMemberAccess(db: AccessDb) {
         // El seed crea los tres roles; si falta, es un problema de datos del
         // servidor y no algo que el socio pueda resolver reintentando: se aborta
         // sin quemarle el enlace.
-        if (!socioRole) throw new AccessAbort(ACCESS_ERRORS.conflict);
+        if (!socioRole) throw new AccessAbort(ACCESS_ERRORS.unavailable);
 
         const target = linked ?? byEmail;
         // `created` distingue el alta de cuenta del restablecimiento sobre una

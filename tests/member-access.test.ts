@@ -331,6 +331,9 @@ describe("memberAccess.createPassword", () => {
     expect(state.tokens[0].usedAt).toBeNull();
   });
 
+  // El caso del matrimonio (u otro hogar) que comparte casilla: el primero que
+  // canjea el enlace se queda con la cuenta y el segundo choca acá. Sigue siendo
+  // socio pleno (docs/07): esto sólo le cierra el autoservicio web.
   it("refuses an account already linked to another member's card", async () => {
     const { db, state } = makeFakeDb({
       tokens: invite(),
@@ -348,6 +351,18 @@ describe("memberAccess.createPassword", () => {
     expect(state.tokens[0].usedAt).toBeNull();
   });
 
+  // Requisito de seguridad del mensaje (docs/08, Ley 25.326): cualquiera que
+  // abra el enlace puede estar leyendo esta pantalla, así que no puede nombrar
+  // de quién es la cuenta existente ni confirmar ningún dato suyo. El texto es
+  // una constante estática (no interpola nada del socio ajeno), pero se fija acá
+  // para que un cambio futuro que empiece a interpolar nombre/DNI/N° de socio
+  // rompa el test en vez de filtrarse en producción.
+  it("the conflict message never names or otherwise identifies the other account holder", () => {
+    expect(ACCESS_ERRORS.conflict).not.toMatch(/\bperez\b|\bjuan\b|\bana\b|\bdni\b/i);
+    expect(ACCESS_ERRORS.conflict).not.toMatch(/\d/); // ningún DNI ni N° de socio
+    expect(ACCESS_ERRORS.conflict).not.toMatch(/@/); // ninguna dirección de email
+  });
+
   it("refuses when the card has no address to use as the account email", async () => {
     const { db, state } = makeFakeDb({ member: { email: null }, tokens: invite() });
     expect(await makeMemberAccess(db as never).createPassword("raw", "hash", NOW)).toEqual({
@@ -356,10 +371,13 @@ describe("memberAccess.createPassword", () => {
     expect(state.tokens[0].usedAt).toBeNull();
   });
 
+  // A propósito NO es `.conflict`: acá no hay ninguna cuenta en el medio, es un
+  // problema de datos del servidor (falta el rol del seed), y el texto de
+  // `.conflict` ("ese email ya tiene una cuenta") sería falso en este caso.
   it("refuses when the socio role is missing from the database", async () => {
     const { db, state } = makeFakeDb({ tokens: invite(), roles: [{ id: 1, name: "admin" }] });
     expect(await makeMemberAccess(db as never).createPassword("raw", "hash", NOW)).toEqual({
-      ok: false, error: ACCESS_ERRORS.conflict,
+      ok: false, error: ACCESS_ERRORS.unavailable,
     });
     expect(state.users).toHaveLength(0);
     expect(state.tokens[0].usedAt).toBeNull();
