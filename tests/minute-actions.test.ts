@@ -134,6 +134,24 @@ describe("updateMinuteAction — corrección del número mal tipeado", () => {
   });
 });
 
+describe("createMinuteAction — desborde de fecha", () => {
+  // El regex del schema deja pasar "2026-02-31" y años mal tipeados como
+  // "0202": sin la guarda, `civilDateUtc` los desbordaría en silencio, y la
+  // fecha del acta es el campo que después queda bloqueado para siempre.
+  it("rejects a day that does not exist instead of rolling it over", async () => {
+    const fd = new FormData();
+    fd.set("type", "board");
+    fd.set("number", "48");
+    fd.set("date", "2026-02-31");
+
+    const res = await createMinuteAction({}, fd);
+
+    expect(res).toEqual({ error: "La fecha del acta no existe." });
+    expect(db.minute.create).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+});
+
 describe("updateMinuteAction — rechazos con mensaje en castellano", () => {
   // REG-11: la fecha del acta es la fecha de ingreso de los socios admitidos en
   // ella, y esa antigüedad es inmutable.
@@ -163,5 +181,17 @@ describe("updateMinuteAction — rechazos con mensaje en castellano", () => {
     const res = await updateMinuteAction({}, editForm({ number: "74" }));
 
     expect(res).toEqual({ error: MINUTE_EDIT_ERRORS.notFound });
+  });
+
+  // Mismo caso que en el alta: el desborde se rechaza antes de tocar la
+  // base, así que ni siquiera llega al editor a chocar contra el bloqueo por
+  // movimientos.
+  it("rejects a mistyped year instead of rolling it over", async () => {
+    const res = await updateMinuteAction({}, editForm({ date: "0202-08-12" }));
+
+    expect(res).toEqual({ error: "La fecha del acta tiene que estar entre 1900 y hoy." });
+    expect(db.minute.update).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
   });
 });

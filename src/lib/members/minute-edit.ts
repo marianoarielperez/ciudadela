@@ -57,7 +57,13 @@
 // anulación (con acta que la anule), no un DELETE.
 import { z } from "zod";
 import type { MinuteType, PrismaClient } from "@/generated/prisma/client";
-import { civilDateUtc } from "@/lib/dates";
+
+// Re-exportada acá porque las pantallas de edición de acta ya importaban
+// `parseMinuteDate` de este módulo; la implementación vive en `minute-date.ts`
+// para que `minute-form.ts` (alta de acta desde una acción societaria) y
+// `actas/actions.ts` (alta y edición) la compartan sin que este archivo, que
+// es específico de la EDICIÓN, se convierta en su dueño.
+export { parseMinuteDate } from "@/lib/members/minute-date";
 
 export const minuteEditSchema = z.object({
   minuteId: z.coerce.number().int().positive(),
@@ -95,11 +101,6 @@ export class MinuteEditError extends Error {
     super(message);
     this.name = "MinuteEditError";
   }
-}
-
-export function parseMinuteDate(iso: string): Date {
-  const [y, m, d] = iso.split("-").map(Number);
-  return civilDateUtc(y, m, d);
 }
 
 function isoDay(d: Date): string {

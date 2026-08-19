@@ -6,7 +6,6 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
-import { civilDateUtc } from "@/lib/dates";
 import {
   makeMinuteEditor, MinuteEditError, minuteEditAuditDetail, minuteEditSchema,
   parseMinuteDate,
@@ -38,12 +37,13 @@ export async function createMinuteAction(
   const parsed = parseForm(schema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const { type, number, date, description } = parsed.data;
-  const [y, m, d] = date.split("-").map(Number);
+  const parsedDate = parseMinuteDate(date);
+  if (!parsedDate.ok) return { error: parsedDate.error };
   const ip = await clientIp();
   const userId = actor.actorId;
   try {
     const minute = await prisma.minute.create({
-      data: { type, number, date: civilDateUtc(y, m, d), description: description ?? null, createdById: userId },
+      data: { type, number, date: parsedDate.value, description: description ?? null, createdById: userId },
     });
     await audit({ userId, action: "minute_create", entity: "minute", entityId: minute.id, detail: { type, number }, ip });
   } catch (e) {
@@ -68,11 +68,13 @@ export async function updateMinuteAction(
   const parsed = parseForm(minuteEditSchema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const { minuteId, type, number, date, description } = parsed.data;
+  const parsedDate = parseMinuteDate(date);
+  if (!parsedDate.ok) return { error: parsedDate.error };
 
   let result;
   try {
     result = await minuteEditor.update(minuteId, {
-      type, number, date: parseMinuteDate(date), description: description ?? null,
+      type, number, date: parsedDate.value, description: description ?? null,
     });
   } catch (e) {
     // `MinuteEditError` ya trae el mensaje redactado por la capa que conoce la

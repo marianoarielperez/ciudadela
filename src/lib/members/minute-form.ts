@@ -1,7 +1,7 @@
 // Shared "pick or create a Minute" used by every statutory action form.
 import { z } from "zod";
 import type { PrismaClient } from "@/generated/prisma/client";
-import { civilDateUtc } from "@/lib/dates";
+import { parseMinuteDate } from "@/lib/members/minute-date";
 
 export const minuteSelectionSchema = z.union(
   [
@@ -33,11 +33,12 @@ export async function resolveMinuteId(
     if (!existing) throw new Error("El acta seleccionada no existe.");
     return existing.id;
   }
-  const [y, m, d] = sel.minuteDate.split("-").map(Number);
+  const parsedDate = parseMinuteDate(sel.minuteDate);
+  if (!parsedDate.ok) throw new Error(parsedDate.error);
   try {
     const minute = await db.minute.create({
       data: {
-        type: sel.minuteType, number: sel.minuteNumber, date: civilDateUtc(y, m, d),
+        type: sel.minuteType, number: sel.minuteNumber, date: parsedDate.value,
         description: sel.minuteDescription ?? null, createdById: actorId,
       },
     });

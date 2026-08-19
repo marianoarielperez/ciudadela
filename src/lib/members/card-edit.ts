@@ -11,7 +11,7 @@
 // para modificar el libro sin rastro. `buildPatch` construye el objeto campo por
 // campo, nunca por spread del parseado.
 import { z } from "zod";
-import { civilDateUtc } from "@/lib/dates";
+import { parseCivilDate } from "@/lib/dates";
 import type { EmailStatus, Member } from "@/generated/prisma/client";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 
@@ -59,18 +59,15 @@ export type BirthDateResult = { ok: true; value: Date | null } | { ok: false; er
 
 // El regex del schema acepta "1983-02-31" y "0198-01-01": el <input type="date">
 // no los produce, pero una action es un endpoint y `civilDateUtc` desbordaría el
-// día en silencio.
+// día en silencio. `parseCivilDate` (src/lib/dates.ts) es la guarda compartida
+// (rollover + rango de años) que usa también `parseMinuteDate`.
 export function parseBirthDate(raw: string | undefined, now: number = Date.now()): BirthDateResult {
   if (!raw) return { ok: true, value: null };
-  const [y, m, day] = raw.split("-").map(Number);
-  const value = civilDateUtc(y, m, day);
-  const rolled =
-    value.getUTCFullYear() !== y || value.getUTCMonth() + 1 !== m || value.getUTCDate() !== day;
-  if (rolled) return { ok: false, error: "Fecha de nacimiento inválida." };
-  if (y < 1900 || value.getTime() > now) {
-    return { ok: false, error: "La fecha de nacimiento tiene que estar entre 1900 y hoy." };
-  }
-  return { ok: true, value };
+  return parseCivilDate(raw, {
+    maxDate: new Date(now),
+    invalidError: "Fecha de nacimiento inválida.",
+    rangeError: "La fecha de nacimiento tiene que estar entre 1900 y hoy.",
+  });
 }
 
 export function buildPatch(

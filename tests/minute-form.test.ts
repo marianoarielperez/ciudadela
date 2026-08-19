@@ -41,10 +41,23 @@ describe("resolveMinuteId", () => {
     };
     const id = await resolveMinuteId(db as never, {
       minuteNew: "1" as const, minuteType: "board" as const, minuteNumber: 12,
-      minuteDate: "2026-08-20", minuteDescription: undefined,
+      minuteDate: "2026-08-12", minuteDescription: undefined,
     }, 1);
     expect(id).toBe(99);
-    expect((created[0].date as Date).toISOString()).toBe("2026-08-20T12:00:00.000Z");
+    expect((created[0].date as Date).toISOString()).toBe("2026-08-12T12:00:00.000Z");
+  });
+
+  // El regex del schema deja pasar un día que no existe o un año mal tipeado
+  // ("0202"): sin esta guarda, `civilDateUtc` los desbordaría en silencio.
+  // Mismo criterio que `parseBirthDate`, ver `minute-date.ts`.
+  it("rejects a day that does not exist, in Spanish", async () => {
+    const db = { minute: { create: async () => { throw new Error("no debería crear nada"); } } };
+    await expect(
+      resolveMinuteId(db as never, {
+        minuteNew: "1" as const, minuteType: "board" as const, minuteNumber: 12,
+        minuteDate: "2026-02-31", minuteDescription: undefined,
+      }, 1),
+    ).rejects.toThrow("La fecha del acta no existe.");
   });
 
   it("reports a duplicate type+number in Spanish", async () => {
@@ -58,7 +71,7 @@ describe("resolveMinuteId", () => {
     await expect(
       resolveMinuteId(db as never, {
         minuteNew: "1" as const, minuteType: "board" as const, minuteNumber: 12,
-        minuteDate: "2026-08-20", minuteDescription: undefined,
+        minuteDate: "2026-08-12", minuteDescription: undefined,
       }, 1),
     ).rejects.toThrow(/Ya existe el acta/);
   });

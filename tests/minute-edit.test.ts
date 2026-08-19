@@ -181,7 +181,42 @@ describe("MinuteEditError", () => {
 });
 
 describe("parseMinuteDate", () => {
+  // Después de mediodía UTC: las fechas civiles se anclan a las 12:00 UTC
+  // (ver civilDateUtc), así que "hoy" tiene que compararse contra un `now`
+  // posterior a esa hora o el propio día de hoy se rechazaría por "futuro".
+  const NOW = new Date("2026-08-19T18:00:00Z").getTime();
+
   it("anchors the civil day at UTC noon like the rest of the system", () => {
-    expect(parseMinuteDate("2026-08-12").toISOString()).toBe(civilDateUtc(2026, 8, 12).toISOString());
+    expect(parseMinuteDate("2026-08-12", NOW)).toEqual({ ok: true, value: civilDateUtc(2026, 8, 12) });
+  });
+
+  // El regex del schema (`/^\d{4}-\d{2}-\d{2}$/`) deja pasar días que no
+  // existen; sin esta guarda `civilDateUtc` desbordaría en silencio (p.ej.
+  // "2026-02-31" se guardaría como el 3 de marzo) — y la fecha del acta es
+  // justo el campo que queda bloqueado para siempre en cuanto tiene un
+  // movimiento asentado (ver el encabezado de minute-edit.ts).
+  it("rechaza días que no existen en vez de desbordarlos", () => {
+    for (const raw of ["2026-02-31", "2026-13-01", "1990-04-31", "2026-00-10", "1990-06-00"]) {
+      expect(parseMinuteDate(raw, NOW).ok).toBe(false);
+    }
+  });
+
+  it("respeta el año bisiesto", () => {
+    expect(parseMinuteDate("2024-02-29", NOW).ok).toBe(true);
+    expect(parseMinuteDate("2023-02-29", NOW).ok).toBe(false);
+  });
+
+  // Mismo criterio que `parseBirthDate`: un año de cuatro dígitos mal
+  // tipeado ("0202", "2062") pasa el regex igual que un día inexistente, y
+  // acá aterriza en un campo que después no se puede corregir.
+  it("rechaza años fuera de un rango razonable", () => {
+    expect(parseMinuteDate("0202-08-12", NOW).ok).toBe(false);
+    expect(parseMinuteDate("2062-01-01", NOW).ok).toBe(false);
+    expect(parseMinuteDate("1899-12-31", NOW)).toEqual({
+      ok: false, error: "La fecha del acta tiene que estar entre 1900 y hoy.",
+    });
+    expect(parseMinuteDate("1900-01-01", NOW).ok).toBe(true);
+    expect(parseMinuteDate("2026-08-19", NOW).ok).toBe(true);
+    expect(parseMinuteDate("2026-08-20", NOW).ok).toBe(false);
   });
 });
