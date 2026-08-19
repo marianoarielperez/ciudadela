@@ -150,7 +150,7 @@ export const publicTokenLimiter = createRateLimiter({
 
 export const PASSWORD_RESET_WINDOW_MS = 60 * 60_000
 export const PASSWORD_RESET_IP_LIMIT = 10
-export const PASSWORD_RESET_EMAIL_LIMIT = 3
+export const PASSWORD_RESET_EMAIL_LIMIT = 5
 
 /** Pedidos de recupero de contraseña, por IP.
  *
@@ -169,13 +169,22 @@ export const passwordResetIpLimiter = createRateLimiter({
 })
 
 /** Y por dirección pedida: el techo por IP no protege a una casilla concreta si
- *  el atacante rota de origen. Tres por hora es lo que hace falta para no
- *  convertir el formulario público en un botón de inundar el buzón de un socio.
+ *  el atacante rota de origen. Lo que raciona es la inundación del buzón de un
+ *  socio desde el formulario público.
  *
- *  Se consulta y se registra SIEMPRE con la dirección tal como la tipearon,
- *  exista o no una cuenta con ella: si sólo contáramos los pedidos que terminan
- *  en envío, el cuarto intento contestaría distinto según la cuenta exista, que
- *  es exactamente lo que este formulario no puede revelar. */
+ *  Cinco por hora y no tres: este techo es lo único que le puede gastar los
+ *  pedidos a un socio que no pidió nada (Turnstile sigue diferido al M3), así
+ *  que conviene que sobre. Es además el que fija cuántos enlaces de recupero
+ *  pueden convivir vivos para una misma cuenta, porque emitir ya no revoca el
+ *  anterior (ver `auth/password-reset.ts:request`): con media hora de TTL, como
+ *  mucho cinco, todos hacia la misma casilla.
+ *
+ *  Se consulta y se registra SIEMPRE, exista o no una cuenta con esa dirección:
+ *  si sólo contáramos los pedidos que terminan en envío, el intento que se pasa
+ *  del techo contestaría distinto según la cuenta exista, que es exactamente lo
+ *  que este formulario no puede revelar. La clave es la dirección NORMALIZADA
+ *  (minúsculas, sin espacios: la normaliza la action antes de consultar), si no
+ *  alternar mayúsculas alcanzaría para saltarse el techo. */
 export const passwordResetEmailLimiter = createRateLimiter({
   limit: PASSWORD_RESET_EMAIL_LIMIT,
   windowMs: PASSWORD_RESET_WINDOW_MS,

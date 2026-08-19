@@ -57,12 +57,19 @@ export function makeTokens(db: TokenDb) {
       });
       return count;
     },
-    // La misma regla —un solo enlace vivo— pero por CUENTA. El recupero de
-    // contraseña no cuelga de la ficha sino del `userId`: lo pide el titular de
-    // la casilla de la cuenta, existe también para las cuentas de gestión (que
-    // no tienen ficha) y sigue a la cuenta aunque cambie el email de la ficha.
-    // Por eso no alcanza con `revokeForMember`. Sólo borra los NO usados: los
-    // consumidos quedan como rastro.
+    // La misma idea que `revokeForMember` pero por CUENTA: el recupero de
+    // contraseña no cuelga de la ficha sino del `userId` (lo pide el titular de
+    // la casilla de la cuenta y existe también para las cuentas de gestión, que
+    // no tienen ficha), así que `revokeForMember` no lo alcanza.
+    //
+    // Ojo con dónde se llama: NO se usa al emitir. Revocar al emitir le permite
+    // a cualquiera que conozca la dirección matarle al socio el enlace que ya
+    // recibió (ver el comentario largo en `auth/password-reset.ts:request`). Los
+    // dos usos legítimos son posteriores al hecho: el canje exitoso —que cierra
+    // los enlaces paralelos que quedaran vivos— y el cambio de la dirección de
+    // la cuenta desde el panel, que le saca autorización a todo enlace emitido
+    // hacia la casilla anterior (`members/write.ts`).
+    // Sólo borra los NO usados: los consumidos quedan como rastro.
     async revokeForUser(userId: number, purposes: TokenPurpose[]): Promise<number> {
       if (purposes.length === 0) return 0;
       const { count } = await db.actionToken.deleteMany({

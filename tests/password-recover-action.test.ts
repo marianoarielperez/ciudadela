@@ -167,6 +167,26 @@ describe("recoverAction", () => {
     expect(passwordResetEmailLimiter.record).toHaveBeenCalledWith("vecino@example.com");
   });
 
+  it("gives the quota back when the request itself fails, without inventing an audit row", async () => {
+    // El try empieza en el lookup y no en el envío: si la base se cae al buscar
+    // la cuenta, el socio no puede perder uno de sus pedidos por hora por una
+    // falla de infraestructura. Y sin cuenta emitida no hay a quién atribuirle
+    // el asiento: la dirección tipeada es dato de un tercero (Ley 25.326).
+    (passwordReset.request as MockedFn).mockRejectedValueOnce(
+      Object.assign(new Error("db down"), { code: "P1001" }),
+    );
+
+    const res = await recoverAction({}, formDataFor("vecino@example.com"));
+    await flushAfter();
+
+    expect(res).toEqual({ done: true });
+    expect(passwordResetIpLimiter.refund).toHaveBeenCalledWith("203.0.113.7");
+    expect(passwordResetEmailLimiter.refund).toHaveBeenCalledWith("vecino@example.com");
+    // No se emitió nada, así que no hay token que borrar ni asiento que escribir.
+    expect(prisma.actionToken.deleteMany).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
   it("burns the link and gives the quota back when the mail server fails", async () => {
     (passwordReset.request as MockedFn).mockResolvedValueOnce({ userId: 7, token: "RAW" });
     sendMock.mockRejectedValueOnce(Object.assign(new Error("smtp down"), { code: "ECONNREFUSED" }));

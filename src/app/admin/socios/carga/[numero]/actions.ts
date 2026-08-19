@@ -23,7 +23,7 @@ import { portalInvite } from "@/lib/email/templates";
 import {
   buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
 } from "@/lib/members/card-edit";
-import { memberWriter } from "@/lib/members/write";
+import { MemberEmailConflictError, memberWriter } from "@/lib/members/write";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
@@ -60,14 +60,20 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   // corresponde a ningún cambio y ensuciaría el rastro que sí importa.
   if (changed.length === 0) return { saved: true, unchanged: true };
 
-  // El guardado va por `memberWriter`: el update y la revocación de los tokens
-  // que el cambio de dirección invalida corren en UNA transacción, y la regla
-  // vive del lado del dueño del dato (ver `@/lib/members/write`), no acá — donde
-  // el próximo camino de edición tendría que acordarse de repetirla.
+  // El guardado va por `memberWriter`: el update, la revocación de los tokens
+  // que el cambio de dirección invalida y la propagación de esa dirección a la
+  // cuenta de acceso del socio corren en UNA transacción, y la regla vive del
+  // lado del dueño del dato (ver `@/lib/members/write`), no acá — donde el
+  // próximo camino de edición tendría que acordarse de repetirla.
   let revoked = 0;
+  let accountEmailUpdated = false;
   try {
-    ({ revokedTokens: revoked } = await memberWriter.updateMember(member.id, patch));
+    ({ revokedTokens: revoked, accountEmailUpdated } = await memberWriter.updateMember(member.id, patch));
   } catch (e) {
+    // La dirección nueva ya es la de otra cuenta de acceso. El mensaje se lo
+    // escribe la capa que conoce la regla; acá sólo se muestra. No se guardó
+    // nada: la transacción entera volvió atrás.
+    if (e instanceof MemberEmailConflictError) return { error: e.message };
     if (typeof e === "object" && e !== null && "code" in e && e.code === "P2002") {
       return { error: "Ya existe otro socio con ese DNI." };
     }
@@ -76,10 +82,15 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
 
   // La auditoría con IP la escribe la action: es la única capa que ve las
   // cabeceras. Sólo los NOMBRES de los campos tocados, nunca los valores: el
-  // DNI y el domicilio no van al log (Ley 25.326).
+  // DNI y el domicilio no van al log (Ley 25.326). `accountEmailUpdated` sí se
+  // asienta aparte: mover la dirección con la que se ingresa al sistema es un
+  // hecho propio, no un campo más de la ficha.
+  const detail: Record<string, unknown> = { fields: changed };
+  if (revoked > 0) detail.revokedTokens = revoked;
+  if (accountEmailUpdated) detail.accountEmailUpdated = true;
   await audit({
     userId: actor.actorId, action: "member_update", entity: "member", entityId: member.id,
-    detail: revoked > 0 ? { fields: changed, revokedTokens: revoked } : { fields: changed },
+    detail,
     ip: await clientIp(),
   });
   return { saved: true };

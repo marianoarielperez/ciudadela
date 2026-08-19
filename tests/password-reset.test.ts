@@ -138,19 +138,29 @@ describe("passwordReset.request", () => {
     expect(res).toMatchObject({ userId: 7 });
   });
 
-  it("revokes the previous live link: one usable link per account", async () => {
+  // Emitir NO revoca el enlace anterior. Si lo revocara, cualquiera que
+  // conociera la dirección de un socio le mataría el enlace que el socio ya
+  // tiene en el buzón, indefinidamente y sin captcha. Reenviar el mismo token en
+  // vez de emitir otro no es posible: de un token guardamos sólo el sha256.
+  it("leaves the link already in the mailbox alive when a new one is issued", async () => {
     const { db, state } = makeFakeDb({ tokens: [token("anterior")] });
     const res = await makePasswordReset(db as never).request("vecino@example.com", NOW);
 
-    expect(state.tokens.some((t) => t.tokenHash === hashToken("anterior"))).toBe(false);
-    expect(state.tokens.filter((t) => t.purpose === "password_reset" && t.usedAt === null)).toHaveLength(1);
+    expect(state.tokens.some((t) => t.tokenHash === hashToken("anterior"))).toBe(true);
     expect(res).not.toBeNull();
+    // Los dos sirven, y los dos están en la MISMA casilla: la de la cuenta.
+    expect(state.tokens.filter((t) => t.purpose === "password_reset" && t.usedAt === null)).toHaveLength(2);
   });
 
-  it("keeps the consumed tokens as a trail when it revokes", async () => {
-    const { db, state } = makeFakeDb({ tokens: [token("usado", { usedAt: NOW })] });
+  it("does not extend the life of the link it did not issue", async () => {
+    const older = token("anterior", { expiresAt: new Date(NOW.getTime() + 60_000) });
+    const { db, state } = makeFakeDb({ tokens: [older] });
     await makePasswordReset(db as never).request("vecino@example.com", NOW);
-    expect(state.tokens.some((t) => t.tokenHash === hashToken("usado"))).toBe(true);
+    // Cada enlace se muere con su propia ventana: un pedido nuevo no le regala
+    // media hora más al que ya estaba dando vueltas.
+    expect(state.tokens.find((t) => t.tokenHash === hashToken("anterior"))?.expiresAt).toEqual(
+      new Date(NOW.getTime() + 60_000),
+    );
   });
 
   it("returns null and issues nothing when no account has that address", async () => {
@@ -171,17 +181,6 @@ describe("passwordReset.request", () => {
     expect(state.tokens).toHaveLength(0);
   });
 
-  it("does not touch a live link of ANOTHER account", async () => {
-    const { db, state } = makeFakeDb({
-      users: [
-        { id: 7, email: "vecino@example.com", passwordHash: "viejo", active: true },
-        { id: 8, email: "otro@example.com", passwordHash: "otro", active: true },
-      ],
-      tokens: [token("ajeno", { userId: 8 })],
-    });
-    await makePasswordReset(db as never).request("vecino@example.com", NOW);
-    expect(state.tokens.some((t) => t.tokenHash === hashToken("ajeno"))).toBe(true);
-  });
 });
 
 describe("passwordReset.reset", () => {
@@ -208,12 +207,33 @@ describe("passwordReset.reset", () => {
     expect(state.tokens.find((t) => t.tokenHash === hashToken("raw"))?.usedAt).toEqual(NOW);
   });
 
+  // Acá se recupera la invariante que la emisión ya no sostiene: el socio que
+  // apretó "no me llegó" varias veces tiene varios enlaces vivos, y el primero
+  // que usa cierra la puerta de los demás.
   it("kills the other live links of the account when the password changes", async () => {
     const { db, state } = makeFakeDb({ tokens: [token("raw"), token("paralelo")] });
     const res = await makePasswordReset(db as never).reset("raw", "hash-nuevo", NOW);
 
     expect(res).toMatchObject({ ok: true });
     expect(state.tokens.some((t) => t.tokenHash === hashToken("paralelo"))).toBe(false);
+  });
+
+  it("keeps the consumed tokens as a trail when it revokes", async () => {
+    const { db, state } = makeFakeDb({ tokens: [token("raw"), token("usado", { usedAt: NOW })] });
+    await makePasswordReset(db as never).reset("raw", "hash-nuevo", NOW);
+    expect(state.tokens.some((t) => t.tokenHash === hashToken("usado"))).toBe(true);
+  });
+
+  it("does not touch a live link of ANOTHER account", async () => {
+    const { db, state } = makeFakeDb({
+      users: [
+        { id: 7, email: "vecino@example.com", passwordHash: "viejo", active: true },
+        { id: 8, email: "otro@example.com", passwordHash: "otro", active: true },
+      ],
+      tokens: [token("raw"), token("ajeno", { userId: 8 })],
+    });
+    await makePasswordReset(db as never).reset("raw", "hash-nuevo", NOW);
+    expect(state.tokens.some((t) => t.tokenHash === hashToken("ajeno"))).toBe(true);
   });
 
   it("gives the SAME message to a token that does not exist, one expired and one already used", async () => {

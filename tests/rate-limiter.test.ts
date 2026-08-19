@@ -5,6 +5,11 @@ import {
   DEFAULT_MAX_KEYS,
   DEFAULT_WINDOW_MS,
   ipLimiter,
+  PASSWORD_RESET_EMAIL_LIMIT,
+  PASSWORD_RESET_IP_LIMIT,
+  PASSWORD_RESET_WINDOW_MS,
+  passwordResetEmailLimiter,
+  passwordResetIpLimiter,
   PUBLIC_TOKEN_LIMIT,
   PUBLIC_TOKEN_WINDOW_MS,
   publicTokenLimiter,
@@ -190,6 +195,20 @@ describe("verification limiters", () => {
     expect(PUBLIC_TOKEN_WINDOW_MS).toBe(60 * 60_000)
     expect(publicTokenLimiter.limit).toBe(30)
     expect(publicTokenLimiter.windowMs).toBe(60 * 60_000)
+  })
+
+  // El techo por dirección es lo único que le puede gastar los pedidos a un
+  // socio que no pidió nada (Turnstile sigue diferido al M3), y además fija
+  // cuántos enlaces de recupero pueden convivir vivos para una misma cuenta,
+  // porque emitir ya no revoca el anterior.
+  it("pins the budget and the window of the password reset limiters", () => {
+    expect(PASSWORD_RESET_IP_LIMIT).toBe(10)
+    expect(PASSWORD_RESET_EMAIL_LIMIT).toBe(5)
+    expect(PASSWORD_RESET_WINDOW_MS).toBe(60 * 60_000)
+    expect(passwordResetIpLimiter.limit).toBe(10)
+    expect(passwordResetIpLimiter.windowMs).toBe(60 * 60_000)
+    expect(passwordResetEmailLimiter.limit).toBe(5)
+    expect(passwordResetEmailLimiter.windowMs).toBe(60 * 60_000)
   })
 
   it("blocks the 31st redemption from the same origin", () => {

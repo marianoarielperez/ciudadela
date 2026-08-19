@@ -62,10 +62,26 @@ export function makePasswordReset(db: ResetDb) {
         if (!user?.active) return null;
 
         const tokens = makeTokens(tx);
-        // Un solo enlace vivo por cuenta, la misma regla que rige los envíos del
-        // panel: si no revocamos, "no me llegó" deja varios enlaces válidos en
-        // paralelo, cada uno capaz de cambiar la contraseña de esta cuenta.
-        await tokens.revokeForUser(user.id, ["password_reset"]);
+        // Emitir NO revoca los enlaces vivos anteriores de la cuenta, y es
+        // deliberado: revocar acá convertía cada pedido en un arma. Cualquiera
+        // que conociera la dirección de un socio —sin cuenta, sin captcha—
+        // apretaba "olvidé mi contraseña" y le mataba el enlace que el socio ya
+        // tenía en el buzón; el socio pedía otro y se lo volvían a matar.
+        //
+        // La salida obvia —reenviar el enlace vivo en vez de emitir uno nuevo—
+        // acá NO es implementable: de un token guardamos SÓLO el sha256 (ver
+        // `tokens.ts`), el texto crudo viaja una vez, dentro del correo, y no se
+        // puede reconstruir desde la base. Guardarlo en claro para poder
+        // reenviarlo cambiaría un problema de disponibilidad por una toma de
+        // cuenta masiva ante cualquier lectura de la tabla o cualquier backup.
+        //
+        // Que convivan varios enlaces vivos es aceptable y está acotado: los
+        // tres van SIEMPRE a la misma casilla (la de la cuenta, no la que se
+        // tipeó en el formulario), viven media hora, y cuántos puede haber a la
+        // vez lo fija el techo por dirección (`PASSWORD_RESET_EMAIL_LIMIT`).
+        // Quien no tiene el buzón no ve ninguno. Y el canje exitoso revoca todos
+        // los que sigan vivos (ver `reset`), así que después de un
+        // restablecimiento no queda ninguno.
         const token = await tokens.issue({ purpose: "password_reset", userId: user.id, now });
         return { userId: user.id, token };
       });
@@ -95,9 +111,10 @@ export function makePasswordReset(db: ResetDb) {
 
         await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
         // Cambiar la contraseña invalida todo enlace de recupero que siguiera
-        // vivo para esta cuenta. Normalmente no hay ninguno (emitir ya revoca el
-        // anterior), pero dos pedidos que se cruzan pueden dejar dos: el que se
-        // usó cierra la puerta del otro. Lo que NO se puede invalidar desde acá
+        // vivo para esta cuenta, y ACÁ es donde se recupera la invariante: como
+        // emitir ya no revoca (ver `request`), un socio que apretó "no me llegó"
+        // tres veces tiene tres enlaces vivos en su buzón, y el primero que se
+        // usa cierra la puerta de los otros dos. Lo que NO se puede invalidar
         // son las sesiones abiertas: Auth.js las lleva en un JWT firmado sin
         // estado en la base, así que sobreviven al cambio (ver informe).
         await tokens.revokeForUser(user.id, ["password_reset"]);

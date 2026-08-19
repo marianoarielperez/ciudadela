@@ -38,15 +38,18 @@ const TOO_MANY = "Ya pediste el enlace varias veces. Esperá un rato antes de re
  *  pase adentro puede cambiar lo que ve el visitante: ni el resultado, ni el
  *  tiempo. Los errores se registran y se comen. */
 async function deliver(email: string, ip: string): Promise<void> {
-  // `request` devuelve null tanto si la dirección no está registrada como si la
-  // cuenta está deshabilitada (baja del socio): desde acá no se distinguen.
-  const issued = await passwordReset.request(email);
-  if (!issued) return;
-
-  const base = process.env.AUTH_URL ?? "http://localhost:3000";
-  const url = `${base}/ingresar/restablecer/${issued.token}`;
-
+  // Declarado afuera del try: si la emisión llegó a ocurrir y después se cayó
+  // algo, el catch tiene que poder quemar ese enlace.
+  let issued: { userId: number; token: string } | null = null;
   try {
+    // `request` devuelve null tanto si la dirección no está registrada como si
+    // la cuenta está deshabilitada (baja del socio): desde acá no se distinguen.
+    issued = await passwordReset.request(email);
+    if (!issued) return;
+
+    const base = process.env.AUTH_URL ?? "http://localhost:3000";
+    const url = `${base}/ingresar/restablecer/${issued.token}`;
+
     // `getTransport()` crudo y no `mailer.sendToMember`: éste no es un acto de
     // notificación del Art. 5° quater —no lo decide la vecinal, lo dispara quien
     // olvidó su contraseña, y la cuenta puede ser la de un administrador sin
@@ -56,10 +59,16 @@ async function deliver(email: string, ip: string): Promise<void> {
     // estatutario que no existe.)
     await getTransport().send({ to: email, ...passwordResetEmail({ url }) });
   } catch (e) {
-    // El enlace ya emitido se quema: un recupero vivo que nadie recibió es
-    // superficie de ataque sin ninguna contrapartida (mismo criterio que el
-    // envío del panel).
-    await prisma.actionToken.deleteMany({ where: { tokenHash: hashToken(issued.token) } });
+    // El try empieza en el lookup y no en el envío a propósito: si la base falla
+    // al buscar la cuenta o al emitir, el rechazo caía dentro de `after()` sin
+    // asiento y —lo que se nota— sin devolver el cupo, o sea que el socio perdía
+    // uno de sus pedidos por hora por una falla de infraestructura.
+    if (issued) {
+      // El enlace ya emitido se quema: un recupero vivo que nadie recibió es
+      // superficie de ataque sin ninguna contrapartida (mismo criterio que el
+      // envío del panel).
+      await prisma.actionToken.deleteMany({ where: { tokenHash: hashToken(issued.token) } });
+    }
     // Y el cupo reservado se devuelve: no salió ningún correo ni quedó ningún
     // enlace vivo, así que no hay nada que racionar.
     passwordResetIpLimiter.refund(ip);
@@ -69,11 +78,16 @@ async function deliver(email: string, ip: string): Promise<void> {
     // en claro, y el log de PM2 no está cubierto por los cuidados de docs/08
     // (Ley 25.326). Con el id de la cuenta y el código alcanza para diagnosticar.
     const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
-    console.error("[recuperar] falló el envío del enlace a la cuenta", issued.userId, "code:", code);
-    await audit({
-      userId: issued.userId, action: "password_reset_send_failed", entity: "user",
-      entityId: issued.userId, detail: { code }, ip,
-    });
+    console.error("[recuperar] falló el pedido de recupero de la cuenta", issued?.userId ?? "?", "code:", code);
+    // Sin cuenta emitida no hay a quién atribuirle el asiento —y meter la
+    // dirección tipeada sería guardar el dato de un tercero (Ley 25.326)—: la
+    // falla de infraestructura queda en el log del proceso, no en `audit_log`.
+    if (issued) {
+      await audit({
+        userId: issued.userId, action: "password_reset_send_failed", entity: "user",
+        entityId: issued.userId, detail: { code }, ip,
+      });
+    }
     return;
   }
 

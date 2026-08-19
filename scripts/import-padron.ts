@@ -22,7 +22,7 @@ import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/prisma";
 import { audit } from "../src/lib/audit";
 import { mapPadronRow, type RawPadronRow } from "../src/lib/padron/mapping";
-import { memberWriter } from "../src/lib/members/write";
+import { MemberEmailConflictError, memberWriter } from "../src/lib/members/write";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
 const LOCK = join(process.cwd(), "datos", "~$padron_socios.xlsx");
@@ -207,7 +207,7 @@ const UPDATE_FLAG = "--update-existing";
 
 // Si el proceso muere en medio del loop, el reporte nunca se escribe: este contador
 // vive afuera para que el handler de error pueda decir hasta dónde llegó.
-const progress = { created: 0, updated: 0, unchanged: 0, memberships: 0, movements: 0 };
+const progress = { created: 0, updated: 0, unchanged: 0, conflicts: 0, memberships: 0, movements: 0 };
 
 async function main() {
   const updateExisting = process.argv.slice(2).includes(UPDATE_FLAG);
@@ -356,9 +356,25 @@ async function main() {
       // Pasa por `memberWriter` y no por `prisma.member.update` a secas: si el
       // Excel trae otra dirección de correo (o la borra, o la fila viene con la
       // baja asentada), los enlaces de verificación/invitación vivos de ese socio
-      // dejan de estar autorizados y hay que revocarlos en la misma transacción.
-      await memberWriter.updateMember(existing.memberId, m.member);
-      progress.updated++;
+      // dejan de estar autorizados y hay que revocarlos en la misma transacción,
+      // y si el socio ya tiene cuenta de acceso hay que llevarle la dirección
+      // nueva también a la cuenta.
+      try {
+        await memberWriter.updateMember(existing.memberId, m.member);
+        progress.updated++;
+      } catch (err) {
+        // El Excel le pone a este socio una dirección que ya es la de otra
+        // cuenta de acceso. Es un dato a corregir, no una falla del import: se
+        // saltea esta fila (no se escribió nada de ella) y se sigue, porque
+        // abortar dejaría el resto del padrón sin actualizar por un email mal
+        // tipeado en una celda.
+        if (!(err instanceof MemberEmailConflictError)) throw err;
+        warnings.push(
+          `socio ${m.memberNumber}: el email del Excel ya pertenece a otra cuenta de acceso — ` +
+            `la fila NO se actualizó, corregí la dirección y volvé a correr el import`,
+        );
+        progress.conflicts++;
+      }
     } else {
       // Las tres escrituras van en una transacción. Si no, un corte entre la segunda
       // y la tercera dejaría al socio sin asiento de admisión PARA SIEMPRE: la clave
@@ -423,7 +439,8 @@ async function main() {
           filledGaps.length > 0 ? `  huecos que se completaron: ${filledGaps.join(", ")}` : null,
         ].filter((l): l is string => l !== null)),
     `modo: ${updateExisting ? `${UPDATE_FLAG} (los existentes se pisan con el Excel)` : "solo alta (por defecto)"}`,
-    `creados: ${progress.created} | actualizados: ${progress.updated} | sin cambios: ${progress.unchanged}`,
+    `creados: ${progress.created} | actualizados: ${progress.updated} | sin cambios: ${progress.unchanged}`
+      + (progress.conflicts > 0 ? ` | NO actualizados por email en conflicto: ${progress.conflicts}` : ""),
     `memberships creadas: ${progress.memberships} | movements de admision creados: ${progress.movements}`,
     `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission libro ${book.number}: ${dbAdmissions}`,
     ...(updateExisting
@@ -451,7 +468,8 @@ async function main() {
     action: "padron_import", entity: "book", entityId: book.id,
     detail: {
       total, vigentes, bajas, created: progress.created, updated: progress.updated,
-      unchanged: progress.unchanged, memberships: progress.memberships, movements: progress.movements,
+      unchanged: progress.unchanged, conflicts: progress.conflicts,
+      memberships: progress.memberships, movements: progress.movements,
       updateExisting, warnings: warnings.length,
     },
   });
