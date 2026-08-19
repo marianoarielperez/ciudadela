@@ -11,7 +11,17 @@ async function upsertUser(email: string, name: string, password: string, roleNam
   const user = existing
     ? existing
     : await prisma.user.create({
-        data: { email, name, passwordHash: await bcrypt.hash(password, BCRYPT_COST) },
+        data: {
+          email,
+          name,
+          passwordHash: await bcrypt.hash(password, BCRYPT_COST),
+          // Mismo criterio que los otros dos caminos que escriben una
+          // contraseña: la columna significa "cuándo se escribió ésta". Acá no
+          // hay ninguna sesión que invalidar (la cuenta acaba de nacer), pero
+          // dejarla nula haría que una cuenta creada hoy fuera indistinguible de
+          // las previas a la migración. Ver `@/lib/auth/session-freshness`.
+          passwordChangedAt: new Date(),
+        },
       })
   for (const role of roles) {
     await prisma.userRole.upsert({

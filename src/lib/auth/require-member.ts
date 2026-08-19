@@ -16,11 +16,22 @@
 //     única fuente de verdad y lo mueven las actas (`suspend`/`endSuspension`).
 //   - sin ficha vinculada → el usuario no es socio, sea lo que diga el token.
 //
+// Y la misma consulta trae el sello del último cambio de contraseña de la cuenta
+// (`User.passwordChangedAt`): la otra mitad del mismo problema es que un token
+// robado sobrevive a que el socio cambie la contraseña. Ver
+// `@/lib/auth/session-freshness`.
+//
 // El rol del JWT no participa de la decisión: es un dato de conveniencia para el
 // proxy (que sí puede seguir usándolo como filtro barato), no la autorización.
 import type { MemberStatus } from "@/generated/prisma/client";
+import { sessionPredatesPasswordChange, STALE_SESSION_MESSAGE } from "@/lib/auth/session-freshness";
 
-export type MemberBlockReason = "anonymous" | "not_member" | "suspended" | "withdrawn";
+export type MemberBlockReason =
+  | "anonymous"
+  | "not_member"
+  | "stale_session"
+  | "suspended"
+  | "withdrawn";
 
 export type MemberActor =
   | { ok: true; userId: number; memberId: number; fullName: string }
@@ -31,19 +42,24 @@ export type MemberActor =
 export const MEMBER_BLOCKED: Record<MemberBlockReason, string> = {
   anonymous: "Ingresá a tu cuenta para ver tu panel de socio.",
   not_member: "Tu usuario no está vinculado a ninguna ficha del padrón. Comunicate con la vecinal.",
+  stale_session: STALE_SESSION_MESSAGE,
   suspended:
     "Tu condición de socio está suspendida: mientras dure la suspensión no podés operar desde tu panel (Art. 10). Comunicate con la vecinal.",
   withdrawn: "Figurás con baja en el padrón, así que tu panel de socio no está disponible.",
 };
 
-type SessionLike = { user?: { id?: string | null } | null } | null;
+type SessionLike = { user?: { id?: string | null; authAt?: number | null } | null } | null;
 type GetSession = () => Promise<SessionLike>;
 
-/** Lo mínimo que se necesita de la ficha viva. Inyectable: el helper se testea
- *  sin NextAuth ni Prisma. */
-export type MemberLookup = (
-  userId: number,
-) => Promise<{ id: number; fullName: string; status: MemberStatus } | null>;
+/** Lo mínimo que se necesita de la ficha viva y de la cuenta que la opera.
+ *  Inyectable: el helper se testea sin NextAuth ni Prisma. */
+export type MemberLookup = (userId: number) => Promise<{
+  id: number;
+  fullName: string;
+  status: MemberStatus;
+  /** De `User.passwordChangedAt`, por el vínculo de la ficha. */
+  passwordChangedAt: Date | null;
+} | null>;
 
 export function makeRequireMember(getSession: GetSession, findMemberByUserId: MemberLookup) {
   return async function requireMember(): Promise<MemberActor> {
@@ -57,6 +73,11 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
     }
     const member = await findMemberByUserId(userId);
     if (!member) return { ok: false, reason: "not_member", error: MEMBER_BLOCKED.not_member };
+    // Va antes que el estado de la ficha: si la contraseña cambió, esta sesión
+    // ya no representa a nadie, sea cual sea la situación del socio en el padrón.
+    if (sessionPredatesPasswordChange(session?.user?.authAt, member.passwordChangedAt)) {
+      return { ok: false, reason: "stale_session", error: MEMBER_BLOCKED.stale_session };
+    }
     if (member.status === "withdrawn") {
       return { ok: false, reason: "withdrawn", error: MEMBER_BLOCKED.withdrawn };
     }
@@ -74,10 +95,24 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
  */
 export async function requireMember(): Promise<MemberActor> {
   const [{ auth }, { prisma }] = await Promise.all([import("@/auth"), import("@/lib/prisma")]);
-  return makeRequireMember(auth, (userId) =>
-    prisma.member.findUnique({
+  return makeRequireMember(auth, async (userId) => {
+    const member = await prisma.member.findUnique({
       where: { userId },
-      select: { id: true, fullName: true, status: true },
-    }),
-  )();
+      select: {
+        id: true,
+        fullName: true,
+        status: true,
+        user: { select: { passwordChangedAt: true } },
+      },
+    });
+    if (!member) return null;
+    // `user` no puede faltar —la búsqueda es POR `userId`—, pero el tipo lo
+    // admite y un `undefined` colado acá desactivaría la comparación en silencio.
+    return {
+      id: member.id,
+      fullName: member.fullName,
+      status: member.status,
+      passwordChangedAt: member.user?.passwordChangedAt ?? null,
+    };
+  })();
 }

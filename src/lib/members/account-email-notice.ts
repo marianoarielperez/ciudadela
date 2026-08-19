@@ -57,12 +57,12 @@ export type AccountEmailNoticeOutcome = {
   failures: Array<{ target: NoticeTarget; code: string }>;
 };
 
-/** Avisos para el OPERADOR cuando el cambio se guardó pero el correo no salió.
+/** Avisos para el OPERADOR cuando el cambio se guardó pero quedó algo pendiente.
  *
- *  Los cuatro empiezan con "Se guardó el cambio" a propósito: la edición ya
- *  commiteó y el socio YA ingresa con la dirección nueva. Ninguna de estas
- *  fallas la revierte —ver `announce`—, así que el operador tiene que salir
- *  sabiendo que el cambio está hecho y qué le queda por hacer a mano. */
+ *  Todos empiezan con "Se guardó el cambio" a propósito: la edición ya commiteó
+ *  y el socio YA ingresa con la dirección nueva. Ninguna de estas fallas la
+ *  revierte —ver `announce`—, así que el operador tiene que salir sabiendo que el
+ *  cambio está hecho y qué le queda por hacer a mano. */
 export const ACCOUNT_EMAIL_NOTICE_WARNINGS = {
   throttled:
     "Se guardó el cambio, pero no salió ningún correo: ya se le enviaron varios avisos a este socio " +
@@ -79,6 +79,15 @@ export const ACCOUNT_EMAIL_NOTICE_WARNINGS = {
   current:
     "Se guardó el cambio y avisamos a la dirección anterior, pero no se pudo enviar la " +
     "verificación a la dirección nueva. Revisá que esté bien escrita: el socio ya ingresa con ella.",
+  // Éste no es una falla de correo sino del asiento de auditoría, y por eso no
+  // lo elige `accountEmailNoticeWarning` sino el llamador. Vive igual acá porque
+  // es de la misma pantalla y comparte la propiedad que la hace segura: el
+  // operador nunca puede leer "algo falló" como "no se guardó" y volver a editar
+  // (una segunda edición del email es una segunda mudanza de la dirección de
+  // ingreso, con su segundo par de correos).
+  auditFailed:
+    "Se guardó el cambio, pero no se pudo dejar el asiento en el registro de auditoría. " +
+    "Avisale a quien administra el sistema; no vuelvas a editar la ficha por esto.",
 } as const;
 
 /** El texto que le corresponde al operador, o `null` si los dos correos salieron
@@ -190,13 +199,24 @@ export function makeAccountEmailNotice(deps: NoticeDeps) {
         // socio quede con una dirección de ingreso que nadie confirmó.
         outcome.failures.push({ target: "current", code: "not_eligible" });
       } else {
-        const raw = await makeTokens(deps.db).issue({
-          purpose: "email_verification",
-          memberId: input.member.id,
-          now: input.now,
-        });
-        const { message, summary } = loginEmailVerification({ baseUrl: deps.baseUrl(), token: raw });
+        // El `try` empieza ANTES de emitir el token y no en el envío. La emisión
+        // y el quemado son dos escrituras a la base, y una excepción de ellas
+        // —un hipo de MariaDB, el pool agotado— salía de `announce` y de la
+        // server action con la edición YA commiteada: el operador veía la
+        // pantalla de error genérica de Next para un cambio que sí se guardó, no
+        // quedaba el asiento `member_login_email_moved`, y el reflejo natural
+        // —reeditar la ficha— producía una SEGUNDA mudanza de la dirección de
+        // ingreso, que es justo lo que estos avisos existen para evitar. Una
+        // falla de esta parte es un correo que no salió, ni más ni menos: se
+        // degrada al mismo `failures` que un rebote del SMTP.
+        let raw: string | null = null;
         try {
+          raw = await makeTokens(deps.db).issue({
+            purpose: "email_verification",
+            memberId: input.member.id,
+            now: input.now,
+          });
+          const { message, summary } = loginEmailVerification({ baseUrl: deps.baseUrl(), token: raw });
           await deps.mailer.sendToMember({
             memberId: input.member.id,
             to: target.email,
@@ -206,11 +226,21 @@ export function makeAccountEmailNotice(deps: NoticeDeps) {
           });
           outcome.verificationSent = true;
         } catch (e) {
+          const code = codeOf(e);
           // El enlace ya emitido se quema: un enlace de verificación vivo que
           // nadie recibió es superficie de ataque sin ninguna contrapartida
-          // (mismo criterio que `sendVerificationAction`).
-          await deps.db.actionToken.deleteMany({ where: { tokenHash: hashToken(raw) } });
-          const code = codeOf(e);
+          // (mismo criterio que `sendVerificationAction`). Si la emisión fue lo
+          // que falló no hay nada que quemar, y el quemado va en su propio
+          // `try`: es una tercera escritura y tampoco puede tumbar la action.
+          // Un enlace huérfano vive 7 días y muere solo; una pantalla de error
+          // sobre un guardado exitoso produce la segunda mudanza.
+          if (raw !== null) {
+            try {
+              await deps.db.actionToken.deleteMany({ where: { tokenHash: hashToken(raw) } });
+            } catch (burn) {
+              console.error("[carga] no se pudo quemar la verificación no entregada del socio", input.member.id, "code:", codeOf(burn));
+            }
+          }
           console.error("[carga] falló la verificación de la dirección nueva del socio", input.member.id, "code:", code);
           outcome.failures.push({ target: "current", code });
         }

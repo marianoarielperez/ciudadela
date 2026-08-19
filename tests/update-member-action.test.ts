@@ -113,6 +113,9 @@ const allSent = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` borra las llamadas pero NO las implementaciones: sin esto,
+  // un `mockRejectedValue` de un test se derramaría a los siguientes.
+  (audit as MockedFn).mockResolvedValue(undefined);
   (prisma.member.findUnique as MockedFn).mockResolvedValue(stored());
   (memberWriter.updateMember as MockedFn).mockResolvedValue({
     member: stored(), revokedTokens: 0, accountEmailMove: null, accountEmailUpdated: false,
@@ -247,6 +250,61 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
     const entry = (audit as MockedFn).mock.calls[1][0];
     expect(entry.detail.failures).toEqual([{ target: "previous", code: "ECONNREFUSED" }]);
     expect(JSON.stringify(entry.detail)).not.toContain("@");
+  });
+
+  // N9. `announce` degrada adentro lo que puede, pero lo que igual se escape no
+  // puede convertir un guardado exitoso en la pantalla de error genérica de Next:
+  // el operador leería "no se guardó", volvería a editar la ficha y produciría
+  // una SEGUNDA mudanza de la dirección de ingreso, con su segundo par de
+  // correos. Y el asiento del hecho —lo único con lo que se reconstruye después—
+  // se perdería justo cuando algo salió mal.
+  it("still saves, warns and audits when the whole notice blows up", async () => {
+    movedTo("nuevo@example.com");
+    (accountEmailNotice.announce as MockedFn).mockRejectedValue(
+      Object.assign(new Error("pool timeout"), { code: "P2024" }),
+    );
+
+    const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
+
+    expect(res).toEqual({ saved: true, warning: ACCOUNT_EMAIL_NOTICE_WARNINGS.both });
+    const actions = (audit as MockedFn).mock.calls.map((c) => c[0].action);
+    expect(actions).toEqual(["member_update", "member_login_email_moved"]);
+    const entry = (audit as MockedFn).mock.calls[1][0];
+    // `crashed` distingue "los correos no salieron" (observado) de "el aviso
+    // entero se cayó" (suposición conservadora), que es lo que hace falta al
+    // reconstruir.
+    expect(entry.detail).toMatchObject({
+      notifiedPrevious: false, verificationSent: false, crashed: true,
+    });
+    expect(entry.detail.failures).toEqual([
+      { target: "previous", code: "P2024" },
+      { target: "current", code: "P2024" },
+    ]);
+    expect(JSON.stringify(entry.detail)).not.toContain("@");
+  });
+
+  // Misma familia: el asiento es posterior al commit, así que una falla suya
+  // tampoco puede devolver una pantalla de error sobre un cambio ya guardado.
+  it("saves and warns when the audit entry itself cannot be written", async () => {
+    movedTo("nuevo@example.com");
+    (audit as MockedFn).mockRejectedValue(Object.assign(new Error("db down"), { code: "P1001" }));
+
+    const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
+
+    expect(res.saved).toBe(true);
+    expect(res.error).toBeUndefined();
+    expect(res.warning).toContain(ACCOUNT_EMAIL_NOTICE_WARNINGS.auditFailed);
+    // Los dos asientos se intentaron igual: el segundo no se saltea porque el
+    // primero haya fallado.
+    expect(audit).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves and warns when the audit fails on an edit that moved nothing", async () => {
+    (audit as MockedFn).mockRejectedValue(Object.assign(new Error("db down"), { code: "P1001" }));
+
+    const res = await updateMemberAction({}, form({ fullName: "Perez Ana Maria" }));
+
+    expect(res).toEqual({ saved: true, warning: ACCOUNT_EMAIL_NOTICE_WARNINGS.auditFailed });
   });
 
   it("carries the throttled case to the operator too", async () => {

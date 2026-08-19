@@ -12,7 +12,14 @@ type FakeToken = {
   id: number; purpose: string; tokenHash: string; memberId: number | null;
   userId: number | null; expiresAt: Date; usedAt: Date | null;
 };
-type FakeUser = { id: number; email: string; passwordHash: string; name: string | null; active: boolean };
+type FakeUser = {
+  id: number;
+  email: string;
+  passwordHash: string;
+  name: string | null;
+  active: boolean;
+  passwordChangedAt?: Date | null;
+};
 type FakeMember = Record<string, unknown> & { id: number };
 
 const FUTURE = new Date(NOW.getTime() + TOKEN_TTL.email_verification);
@@ -291,6 +298,37 @@ describe("memberAccess.createPassword", () => {
     expect(res).toMatchObject({ ok: true, userId: 42 });
     expect(state.users).toHaveLength(1);
     expect(state.users[0]).toMatchObject({ passwordHash: "hash", active: true });
+  });
+
+  // Escribir la contraseña de una cuenta que ya existía es un restablecimiento
+  // como el del recupero: las sesiones abiertas con la contraseña vieja tienen
+  // que morir, y lo que las mata es este sello (`@/lib/auth/session-freshness`).
+  it("stamps passwordChangedAt when it writes the password", async () => {
+    const reset = makeFakeDb({
+      member: { userId: 42 },
+      tokens: invite(),
+      users: [{ id: 42, email: "vecino@example.com", passwordHash: "viejo", name: "Perez Ana", active: true }],
+    });
+    await makeMemberAccess(reset.db as never).createPassword("raw", "hash", NOW);
+    expect(reset.state.users[0].passwordChangedAt).toEqual(NOW);
+
+    // Y la cuenta nueva nace con el sello puesto, para que "contraseña escrita
+    // hoy" nunca se confunda con "fila anterior a la migración".
+    const fresh = makeFakeDb({ tokens: invite() });
+    await makeMemberAccess(fresh.db as never).createPassword("raw", "hash", NOW);
+    expect(fresh.state.users[0].passwordChangedAt).toEqual(NOW);
+  });
+
+  // El sello no puede aparecer donde no se escribió ninguna contraseña: echaría
+  // sesiones legítimas de una cuenta que nadie tocó.
+  it("does not stamp passwordChangedAt on an account it refuses to write", async () => {
+    const { db, state } = makeFakeDb({
+      tokens: invite(),
+      users: [{ id: 5, email: "vecino@example.com", passwordHash: "del-admin", name: "Admin", active: true }],
+    });
+    seedRole(state, 5, "admin");
+    await makeMemberAccess(db as never).createPassword("raw", "hash", NOW);
+    expect(state.users[0].passwordChangedAt).toBeUndefined();
   });
 
   it("rejects a dead link and a token of another purpose", async () => {

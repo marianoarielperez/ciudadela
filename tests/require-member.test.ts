@@ -5,11 +5,25 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { makeRequireMember, MEMBER_BLOCKED } from "@/lib/auth/require-member";
+import { STALE_SESSION_MESSAGE } from "@/lib/auth/session-freshness";
 
-type SessionLike = { user?: { id?: string | null; roles?: string[] | null } | null } | null;
-type MemberRow = { id: number; fullName: string; status: string; userId: number };
+type SessionLike = {
+  user?: { id?: string | null; roles?: string[] | null; authAt?: number | null } | null;
+} | null;
+type MemberRow = {
+  id: number;
+  fullName: string;
+  status: string;
+  userId: number;
+  passwordChangedAt: Date | null;
+};
 
-const MEMBER: MemberRow = { id: 7, fullName: "Perez Ana", status: "active", userId: 3 };
+// Momento en que se abrió la sesión de referencia, en segundos epoch.
+const AUTH_AT = Math.floor(Date.parse("2026-08-19T10:00:00Z") / 1000);
+
+const MEMBER: MemberRow = {
+  id: 7, fullName: "Perez Ana", status: "active", userId: 3, passwordChangedAt: null,
+};
 
 /** Liga el helper a una sesión y a un padrón fijos, sin NextAuth ni base. */
 function bind(session: SessionLike, members: MemberRow[] = [MEMBER]) {
@@ -17,8 +31,8 @@ function bind(session: SessionLike, members: MemberRow[] = [MEMBER]) {
   return { run: makeRequireMember(async () => session, lookup as never), lookup };
 }
 
-function session(id: string, roles: string[] = ["socio"]): SessionLike {
-  return { user: { id, roles } };
+function session(id: string, roles: string[] = ["socio"], authAt: number | null = AUTH_AT): SessionLike {
+  return { user: { id, roles, authAt } };
 }
 
 describe("requireMember", () => {
@@ -71,5 +85,56 @@ describe("requireMember", () => {
     const { run, lookup } = bind(session("3"));
     await run();
     expect(lookup).toHaveBeenCalledWith(3);
+  });
+});
+
+// El otro hueco del JWT sin estado: al socio le robaron la contraseña, la
+// cambió, y hasta acá el intruso seguía adentro hasta que el token venciera solo.
+describe("requireMember — sesiones anteriores al cambio de contraseña", () => {
+  const changedAfter = new Date((AUTH_AT + 60) * 1000);
+  const changedBefore = new Date((AUTH_AT - 60) * 1000);
+
+  it("rejects a session opened before the password changed", async () => {
+    const { run } = bind(session("3"), [{ ...MEMBER, passwordChangedAt: changedAfter }]);
+    expect(await run()).toEqual({
+      ok: false, reason: "stale_session", error: STALE_SESSION_MESSAGE,
+    });
+  });
+
+  it("accepts the session opened after the change", async () => {
+    const { run } = bind(session("3"), [{ ...MEMBER, passwordChangedAt: changedBefore }]);
+    expect(await run()).toMatchObject({ ok: true, memberId: 7 });
+  });
+
+  // Falla cerrada: sin `authAt` no se puede probar que la sesión sea posterior.
+  it("rejects a token with no authAt once the account has a password change", async () => {
+    const { run } = bind(session("3", ["socio"], null), [
+      { ...MEMBER, passwordChangedAt: changedBefore },
+    ]);
+    expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
+  });
+
+  it("keeps a token with no authAt when the account never changed its password", async () => {
+    const { run } = bind(session("3", ["socio"], null));
+    expect(await run()).toMatchObject({ ok: true, memberId: 7 });
+  });
+
+  // Se compara truncando al segundo: el sello de la base tiene milisegundos y
+  // `authAt` no, así que sin truncar una cuenta recién creada se echaría a sí
+  // misma al entrar dentro del mismo segundo.
+  it("does not throw out a session opened within the same second as the change", async () => {
+    const { run } = bind(session("3"), [
+      { ...MEMBER, passwordChangedAt: new Date(AUTH_AT * 1000 + 800) },
+    ]);
+    expect(await run()).toMatchObject({ ok: true, memberId: 7 });
+  });
+
+  // La sesión muerta gana sobre el estado de la ficha: si la contraseña cambió,
+  // este token no representa a nadie, esté el socio como esté en el padrón.
+  it("takes precedence over the state of the member card", async () => {
+    const { run } = bind(session("3"), [
+      { ...MEMBER, status: "suspended", passwordChangedAt: changedAfter },
+    ]);
+    expect(await run()).toMatchObject({ ok: false, reason: "stale_session" });
   });
 });

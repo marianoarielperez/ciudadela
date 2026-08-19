@@ -23,13 +23,44 @@ import { portalInvite } from "@/lib/email/templates";
 import {
   buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
 } from "@/lib/members/card-edit";
-import { accountEmailNotice, accountEmailNoticeWarning } from "@/lib/members/account-email-notice";
+import {
+  ACCOUNT_EMAIL_NOTICE_WARNINGS, type AccountEmailNoticeOutcome,
+  accountEmailNotice, accountEmailNoticeWarning,
+} from "@/lib/members/account-email-notice";
 import { type AccountEmailMove, MemberWriteError, memberWriter } from "@/lib/members/write";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
   // fijar el cliente si le pega directo al origen.
   return (await headers()).get("x-real-ip") ?? "unknown";
+}
+
+// Del error sólo se conserva el código, nunca el objeto: los errores de Prisma y
+// de nodemailer traen la consulta y el sobre SMTP, o sea datos del socio en
+// claro, y el log de PM2 no está cubierto por los cuidados de docs/08 (Ley 25.326).
+function codeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
+}
+
+/** Asiento POSTERIOR al commit. Devuelve si se pudo escribir en vez de propagar.
+ *
+ *  Una excepción acá —un hipo de MariaDB, el pool agotado— sale de la server
+ *  action y le deja al operador la pantalla de error genérica de Next sobre una
+ *  edición que YA se guardó. El reflejo natural entonces es volver a editar la
+ *  ficha, y si lo que se editó fue el email eso produce una SEGUNDA mudanza de la
+ *  dirección de ingreso, con su segundo par de correos: el modo de falla que
+ *  todos los textos de esta pantalla están escritos para evitar. Perder el
+ *  asiento es grave, pero perderlo Y provocar la segunda mudanza es peor, así
+ *  que se degrada a un aviso explícito para el operador (`auditFailed`) y a un
+ *  `console.error`. */
+async function auditAfterCommit(entry: Parameters<typeof audit>[0]): Promise<boolean> {
+  try {
+    await audit(entry);
+    return true;
+  } catch (e) {
+    console.error("[carga] no se pudo asentar", entry.action, "del socio", entry.entityId, "code:", codeOf(e));
+    return false;
+  }
 }
 
 /** `warning` es un guardado que SÍ ocurrió pero dejó algo pendiente de mano
@@ -111,12 +142,16 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   const detail: Record<string, unknown> = { fields: changed };
   if (revoked > 0) detail.revokedTokens = revoked;
   if (accountEmailMove) detail.accountEmailUpdated = true;
-  await audit({
+  const savedAudited = await auditAfterCommit({
     userId: actor.actorId, action: "member_update", entity: "member", entityId: member.id,
     detail,
     ip,
   });
-  if (!accountEmailMove) return { saved: true };
+  if (!accountEmailMove) {
+    return savedAudited
+      ? { saved: true }
+      : { saved: true, warning: ACCOUNT_EMAIL_NOTICE_WARNINGS.auditFailed };
+  }
 
   // La dirección con la que el socio INGRESA acaba de mudarse. Los dos avisos
   // van después del commit y a propósito: un SMTP lento no puede transcurrir con
@@ -126,9 +161,26 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   // revertir dejaría la cuenta apuntando a una dirección que el padrón ya no le
   // reconoce—: se le dice al operador y queda asentado. Ver
   // `@/lib/members/account-email-notice`.
-  const notice = await accountEmailNotice.announce({
-    member: updated, previousEmail: accountEmailMove.from, actorId: actor.actorId,
-  });
+  //
+  // Y va en `try`: `announce` ya degrada adentro lo que puede (ver su comentario),
+  // pero cualquier cosa que igual se escape no puede convertir un guardado
+  // exitoso en una pantalla de error. Se asume lo peor —ningún correo salió— para
+  // que el operador salga con el aviso que le dice que avise por otro medio.
+  let notice: AccountEmailNoticeOutcome;
+  let noticeCrashed = false;
+  try {
+    notice = await accountEmailNotice.announce({
+      member: updated, previousEmail: accountEmailMove.from, actorId: actor.actorId,
+    });
+  } catch (e) {
+    noticeCrashed = true;
+    const code = codeOf(e);
+    console.error("[carga] falló el aviso de la mudanza de la dirección de ingreso del socio", member.id, "code:", code);
+    notice = {
+      previousNotified: false, verificationSent: false, throttled: false,
+      failures: [{ target: "previous", code }, { target: "current", code }],
+    };
+  }
   // Asiento propio del hecho, separado de `member_update`: mover la identidad de
   // acceso de un socio es lo que hay que poder reconstruir después, y ahora
   // también con qué se le avisó. Sin una sola dirección: van banderas, el motivo
@@ -140,12 +192,21 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   };
   if (notice.throttled) noticeDetail.throttled = true;
   if (notice.failures.length > 0) noticeDetail.failures = notice.failures;
-  await audit({
+  // Distingue "los correos no salieron" de "el aviso entero se cayó": en el
+  // segundo caso las banderas de arriba son una suposición conservadora, no una
+  // observación, y quien reconstruya después tiene que poder saberlo.
+  if (noticeCrashed) noticeDetail.crashed = true;
+  const moveAudited = await auditAfterCommit({
     userId: actor.actorId, action: "member_login_email_moved", entity: "member",
     entityId: member.id, detail: noticeDetail, ip,
   });
 
-  const warning = accountEmailNoticeWarning(notice);
+  // Los dos avisos se acumulan: son dos cosas distintas que el operador tiene
+  // que hacer (avisarle al socio por otro medio, y avisarle a quien administra).
+  const warning = [
+    accountEmailNoticeWarning(notice),
+    savedAudited && moveAudited ? null : ACCOUNT_EMAIL_NOTICE_WARNINGS.auditFailed,
+  ].filter((w): w is string => w !== null).join(" ");
   return warning ? { saved: true, warning } : { saved: true };
 }
 
@@ -228,7 +289,7 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
     // el email del socio en claro, y el log de PM2 no está cubierto por los
     // cuidados de docs/08 (Ley 25.326). Con el id del socio y el código del
     // error alcanza para diagnosticar: el resto se reconstruye desde la base.
-    const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
+    const code = codeOf(e);
     console.error("[carga] falló el envío de verificación al socio", member.id, "code:", code);
     // El intento sí queda auditado: alguien apretó el botón y no salió nada, y
     // eso es exactamente lo que hay que poder reconstruir después.

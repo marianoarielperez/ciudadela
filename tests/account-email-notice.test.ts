@@ -24,7 +24,17 @@ function movedCard(over: Record<string, unknown> = {}) {
 type SentRaw = { to: string; subject: string; text: string; html: string };
 type SentMember = { memberId: number | null; to: string; type: string; summary: string };
 
-function makeDeps(opts: { failRaw?: boolean; failMailer?: boolean; quota?: boolean } = {}) {
+function makeDeps(
+  opts: {
+    failRaw?: boolean;
+    failMailer?: boolean;
+    quota?: boolean;
+    /** La base se cae al EMITIR el token de verificación. */
+    failIssue?: boolean;
+    /** La base se cae al QUEMAR el token que no se pudo entregar. */
+    failBurn?: boolean;
+  } = {},
+) {
   const raw: SentRaw[] = [];
   const notified: SentMember[] = [];
   const created: Array<Record<string, unknown>> = [];
@@ -44,10 +54,12 @@ function makeDeps(opts: { failRaw?: boolean; failMailer?: boolean; quota?: boole
     db: {
       actionToken: {
         create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          if (opts.failIssue) throw Object.assign(new Error("pool timeout"), { code: "P2024" });
           created.push(data);
           return data;
         }),
         deleteMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          if (opts.failBurn) throw Object.assign(new Error("server closed"), { code: "P1017" });
           deleted.push(where);
           return { count: 1 };
         }),
@@ -156,6 +168,44 @@ describe("accountEmailNotice.announce", () => {
     // contrapartida: se borra por su hash, el mismo que se acaba de emitir.
     expect(deleted).toEqual([{ tokenHash: created[0].tokenHash }]);
     expect(accountEmailNoticeWarning(out)).toBe(ACCOUNT_EMAIL_NOTICE_WARNINGS.current);
+  });
+
+  // N9. La emisión y el quemado del token son escrituras a la base y estaban
+  // FUERA de todo `try`. Una excepción de ellas salía de `announce` con la
+  // edición ya commiteada: el operador veía la pantalla de error genérica de Next
+  // sobre un cambio que sí se guardó, no quedaba el asiento del hecho, y el
+  // reflejo de volver a editar producía una segunda mudanza de la dirección de
+  // ingreso — justo lo que estos avisos existen para evitar.
+  it("degrades to a failure instead of throwing when the token cannot be issued", async () => {
+    const { deps, raw, created } = makeDeps({ failIssue: true });
+    const notice = makeAccountEmailNotice(deps as never);
+
+    const out = await notice.announce({ member: movedCard(), previousEmail: PREVIOUS, actorId: 7 });
+
+    expect(out.verificationSent).toBe(false);
+    expect(out.failures).toEqual([{ target: "current", code: "P2024" }]);
+    expect(created).toEqual([]);
+    // Y el aviso de seguridad a la casilla vieja, que va primero, sí salió.
+    expect(out.previousNotified).toBe(true);
+    expect(raw.map((m) => m.to)).toEqual([PREVIOUS]);
+    // Sin token emitido no hay nada que quemar.
+    expect(deps.db.actionToken.deleteMany).not.toHaveBeenCalled();
+    expect(accountEmailNoticeWarning(out)).toBe(ACCOUNT_EMAIL_NOTICE_WARNINGS.current);
+  });
+
+  // El quemado es una TERCERA escritura y tampoco puede tumbar la action. Un
+  // enlace huérfano vive 7 días y muere solo; una pantalla de error sobre un
+  // guardado exitoso produce la segunda mudanza.
+  it("survives a failure while burning the undelivered link", async () => {
+    const { deps } = makeDeps({ failMailer: true, failBurn: true });
+    const notice = makeAccountEmailNotice(deps as never);
+
+    const out = await notice.announce({ member: movedCard(), previousEmail: PREVIOUS, actorId: 7 });
+
+    expect(deps.db.actionToken.deleteMany).toHaveBeenCalledTimes(1);
+    expect(out.verificationSent).toBe(false);
+    // El código que se conserva es el del envío, que es el hecho que importa.
+    expect(out.failures).toEqual([{ target: "current", code: "EENVELOPE" }]);
   });
 
   it("gives the quota back only when neither email went out", async () => {

@@ -1,6 +1,8 @@
 import { ConfirmForm } from "./confirm-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ACCESS_ERRORS, canRedeem } from "@/lib/members/access";
+import {
+  ACCESS_ERRORS, canRedeem, REDEEM_CARD_SELECT, REDEEM_PAGE_COPY,
+} from "@/lib/members/access";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
 
@@ -20,11 +22,11 @@ export default async function VerificarPage(props: { params: Promise<{ token: st
   // clientes de correo abren la URL antes que la persona. Un GET que consumiera
   // dejaría al socio con un enlace muerto sin haber hecho nada.
   const t = await tokens.peek(token, "email_verification");
+  // Sólo la dirección y el estado: esta página es anónima y el correo que trajo
+  // el enlace pudo haber ido a la casilla equivocada. El nombre del socio no se
+  // lee ni se muestra — ver `REDEEM_CARD_SELECT`.
   const member = t?.memberId
-    ? await prisma.member.findUnique({
-        where: { id: t.memberId },
-        select: { fullName: true, email: true, status: true },
-      })
+    ? await prisma.member.findUnique({ where: { id: t.memberId }, select: REDEEM_CARD_SELECT })
     : null;
 
   // La misma revalidación en vivo que hace el canje: si el socio quedó dado de
@@ -47,13 +49,13 @@ export default async function VerificarPage(props: { params: Promise<{ token: st
         <CardContent className="space-y-4">
           {usable ? (
             <>
-              <p className="text-sm">
-                Hola <strong>{member.fullName}</strong>: confirmá que{" "}
-                <strong className="break-all">{member.email}</strong> es tu domicilio electrónico
-                ante la Asociación Vecinal del Barrio Ciudadela. A partir de ahí vamos a poder
-                notificarte de manera fehaciente (Art. 5° quater del estatuto).
+              <p className="text-sm">{REDEEM_PAGE_COPY.verifyLead}</p>
+              <p className="rounded bg-secondary px-3 py-2 text-sm font-medium break-all">
+                {member.email}
               </p>
+              <p className="text-sm text-muted-foreground">{REDEEM_PAGE_COPY.verifyWhy}</p>
               <ConfirmForm token={token} />
+              <p className="text-sm text-muted-foreground">{REDEEM_PAGE_COPY.verifyNotYou}</p>
             </>
           ) : (
             <p className="text-sm text-red-600" role="alert">

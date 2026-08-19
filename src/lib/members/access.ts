@@ -42,6 +42,54 @@ export const ACCESS_ERRORS = {
   unavailable: "No pudimos completar el alta por un problema técnico. Comunicate con la vecinal.",
 } as const;
 
+// ── Lo que las páginas públicas de canje muestran ────────────────────────────
+//
+// /verificar y /acceso son URLs anónimas: la única credencial es el token que
+// viajó dentro de un correo. Y un correo puede haber ido a la casilla
+// equivocada, porque la dirección la tipea un operador desde una ficha de papel.
+//
+// Por eso estas dos páginas NO saludan por nombre. Hasta acá decían
+// "Hola <nombre completo>: confirmá que <email> es tu domicilio electrónico ante
+// la Asociación Vecinal del Barrio Ciudadela", o sea que un dedazo de una letra
+// le entregaba a un tercero, con un solo click, el nombre completo de un socio y
+// el hecho de que pertenece a la asociación: dato personal de los que docs/08 y
+// la Ley 25.326 mandan no publicar, y la contradicción exacta del principio de
+// docs/01 ("ninguna consulta pública revela datos del padrón"). Era además el
+// agujero por donde se escapaba el cuidado del correo de mudanza, que
+// deliberadamente no nombra al socio (ver `loginEmailMovedNotice`).
+//
+// La dirección SÍ se muestra, y no es una inconsistencia: es la misma casilla
+// donde la persona acaba de recibir el enlace —el token se emite y se manda a
+// `Member.email`, y si la ficha cambia de dirección la invariante de
+// `revokeStaleMemberTokens` mata el enlace anterior—, así que no le revela nada
+// que no supiera. Lo que sí le da es lo que el socio legítimo necesita para no
+// abandonar el trámite: cuál de sus direcciones está confirmando.
+//
+// El equilibrio, entonces: contexto institucional completo (quién pregunta, para
+// qué, con qué efecto) y ninguna identidad. Un desconocido que abra el enlace se
+// entera de que alguien cargó SU dirección en la vecinal, no de quién es socio.
+
+/** Lo ÚNICO que /verificar y /acceso leen de la ficha. Que `fullName` no esté es
+ *  la garantía, y es estructural: las páginas no lo tienen a mano ni por
+ *  descuido, igual que `loginEmailMovedNotice()` no puede filtrar la dirección
+ *  nueva porque no la recibe. */
+export const REDEEM_CARD_SELECT = { email: true, status: true } as const;
+
+/** Los textos de las dos páginas. Son constantes y no funciones: no hay ningún
+ *  hueco donde interpolar un nombre. */
+export const REDEEM_PAGE_COPY = {
+  verifyLead: "Confirmá que esta dirección de correo es tuya:",
+  verifyWhy:
+    "Con tu confirmación, la Asociación Vecinal del Barrio Ciudadela va a poder notificarte de manera fehaciente a esta casilla (Art. 5° quater del estatuto).",
+  verifyNotYou:
+    "Si no esperabas este correo, cerrá esta página: sin tu confirmación no queda registrada ninguna dirección.",
+  createLead: "Elegí una contraseña para entrar al portal con esta dirección:",
+  createWhy:
+    "Es la dirección con la que vas a ingresar al portal de la Asociación Vecinal del Barrio Ciudadela.",
+  createNotYou:
+    "Si no esperabas este correo, cerrá esta página y avisale a la vecinal: puede ser un error de carga.",
+} as const;
+
 export type VerifyResult =
   | { ok: true; memberId: number; invite: string | null }
   | { ok: false; error: string };
@@ -194,10 +242,23 @@ export function makeMemberAccess(db: AccessDb) {
               // `active: true` es el reverso del cerrojo que pone la baja: si la
               // ficha volvió a estar vigente (reingreso) y el socio llega hasta
               // acá con un enlace válido, la cuenta tiene que poder entrar.
-              data: { passwordHash, active: true },
+              //
+              // Y `passwordChangedAt` cierra las sesiones anteriores a este
+              // cambio: sobre una cuenta que ya existía, esto es un
+              // restablecimiento de contraseña como el del recupero, y un JWT
+              // emitido con la contraseña vieja no puede sobrevivirle (ver
+              // `@/lib/auth/session-freshness`).
+              data: { passwordHash, active: true, passwordChangedAt: now },
             })
           : await tx.user.create({
-              data: { email, passwordHash, name: member.fullName, active: true },
+              // La cuenta nace con el sello puesto, aunque todavía no exista
+              // ninguna sesión que invalidar: así la columna significa siempre
+              // "cuándo se escribió esta contraseña" y no queda un hueco de
+              // filas nuevas indistinguibles de las previas a la migración.
+              data: {
+                email, passwordHash, name: member.fullName, active: true,
+                passwordChangedAt: now,
+              },
             });
 
         await tx.userRole.upsert({

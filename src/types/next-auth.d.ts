@@ -2,7 +2,10 @@ import type { DefaultSession } from "next-auth"
 
 declare module "next-auth" {
   interface Session {
-    user: { id: string; roles: string[] } & DefaultSession["user"]
+    // `authAt`: segundos epoch del momento en que se abrió la sesión (lo fija el
+    // callback `jwt` al entrar). `null` en las sesiones emitidas antes de que el
+    // claim existiera. Ver `@/lib/auth/session-freshness`.
+    user: { id: string; roles: string[]; authAt: number | null } & DefaultSession["user"]
   }
   interface User {
     roles?: string[]
@@ -15,5 +18,6 @@ declare module "@auth/core/jwt" {
   interface JWT {
     id?: string
     roles?: string[]
+    authAt?: number
   }
 }

@@ -120,14 +120,26 @@ export function makePasswordReset(db: ResetDb) {
           return { ok: false as const, error: RESET_ERRORS.disabled, reason: "disabled" as const };
         }
 
-        await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+        // `passwordChangedAt` NO es un dato informativo: es lo que cierra las
+        // sesiones que se emitieron antes de este cambio. Sin este sello, a un
+        // socio al que le robaron la contraseña no le alcanzaba con cambiarla —el
+        // intruso seguía adentro con su JWT hasta ocho horas más—. Ver
+        // `@/lib/auth/session-freshness`. Va en el mismo `update` que el hash: si
+        // uno se escribe, el otro también.
+        await tx.user.update({
+          where: { id: user.id },
+          data: { passwordHash, passwordChangedAt: now },
+        });
         // Cambiar la contraseña invalida todo enlace de recupero que siguiera
         // vivo para esta cuenta, y ACÁ es donde se recupera la invariante: como
         // emitir ya no revoca (ver `request`), un socio que apretó "no me llegó"
         // tres veces tiene tres enlaces vivos en su buzón, y el primero que se
-        // usa cierra la puerta de los otros dos. Lo que NO se puede invalidar
-        // son las sesiones abiertas: Auth.js las lleva en un JWT firmado sin
-        // estado en la base, así que sobreviven al cambio (ver informe).
+        // usa cierra la puerta de los otros dos. Las sesiones abiertas se
+        // cierran por el otro lado: Auth.js las lleva en un JWT firmado sin
+        // estado en la base, así que no hay ninguna fila que borrar, y lo que
+        // las invalida es el sello `passwordChangedAt` de arriba, que
+        // `require-admin` y `require-member` comparan contra el momento en que
+        // se emitió cada sesión (`@/lib/auth/session-freshness`).
         await tokens.revokeForUser(user.id, ["password_reset"]);
         return { ok: true as const, userId: user.id };
       });

@@ -110,6 +110,16 @@ ${button(opts.url, "Restablecer contraseña")}
 // cambio) y el de la casilla nueva todavía no está confirmado —puede ser un
 // dedazo del operador—. Mismo criterio que `passwordResetEmail`, que tampoco
 // saluda por nombre.
+//
+// Y el cuidado sigue del otro lado del click: la página que abre el enlace
+// (/verificar) tampoco nombra al socio, si no el dedazo entregaría en un paso lo
+// que el correo se cuidó de no decir. Ver `REDEEM_CARD_SELECT` en
+// `@/lib/members/access`.
+//
+// Deuda declarada: `verificationEmail` e `invitationEmail` —las del circuito de
+// ALTA, que dispara el botón del panel— sí saludan por nombre, así que en ese
+// circuito un dedazo del operador sigue nombrando al socio en el cuerpo del
+// correo. Es preexistente y no lo toca esta ola; corresponde revisarlo aparte.
 
 /** Aviso a la dirección ANTERIOR. Deliberadamente NO nombra la dirección nueva:
  *  si el cambio fue un secuestro, este correo le estaría confirmando al atacante

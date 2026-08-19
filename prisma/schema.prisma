@@ -14,6 +14,12 @@ model User {
   id               Int           @id @default(autoincrement())
   email            String        @unique @db.VarChar(191)
   passwordHash     String        @map("password_hash") @db.VarChar(60)
+  // Sello del ÚLTIMO cambio de contraseña de esta cuenta. No es informativo:
+  // lo comparan `require-admin` y `require-member` contra el momento en que se
+  // emitió la sesión (`session.user.authAt`) para cerrar las sesiones que le
+  // son anteriores. Nulo = no se escribió ninguna contraseña desde que existe
+  // esta columna (filas previas a la migración), y entonces no invalida nada.
+  passwordChangedAt DateTime?    @map("password_changed_at")
   name             String?       @db.VarChar(120)
   active           Boolean       @default(true)
   lastLoginAt      DateTime?     @map("last_login_at")

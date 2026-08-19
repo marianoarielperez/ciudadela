@@ -18,7 +18,13 @@ type FakeToken = {
   expiresAt: Date;
   usedAt: Date | null;
 };
-type FakeUser = { id: number; email: string; passwordHash: string; active: boolean };
+type FakeUser = {
+  id: number;
+  email: string;
+  passwordHash: string;
+  active: boolean;
+  passwordChangedAt?: Date | null;
+};
 
 function token(raw: string, over: Partial<FakeToken> = {}): FakeToken {
   return {
@@ -191,6 +197,28 @@ describe("passwordReset.reset", () => {
     expect(res).toMatchObject({ ok: true, userId: 7 });
     expect(state.users[0]?.passwordHash).toBe("hash-nuevo");
     expect(state.tokens.find((t) => t.tokenHash === hashToken("raw"))?.usedAt).toEqual(NOW);
+  });
+
+  // Sin este sello, cambiar la contraseña no echaba al intruso: la sesión de
+  // Auth.js es un JWT sin estado en la base y sobrevivía hasta ocho horas más.
+  // Lo comparan `require-admin` y `require-member` contra el momento en que se
+  // abrió cada sesión (`@/lib/auth/session-freshness`).
+  it("stamps passwordChangedAt so the sessions opened with the old password die", async () => {
+    const { db, state } = makeFakeDb({ tokens: [token("raw")] });
+    await makePasswordReset(db as never).reset("raw", "hash-nuevo", NOW);
+    expect(state.users[0]?.passwordChangedAt).toEqual(NOW);
+  });
+
+  // El sello va en el MISMO update que el hash: un rechazo que no escribe la
+  // contraseña tampoco puede dejar el sello, o echaría sesiones legítimas sin
+  // que ninguna contraseña haya cambiado.
+  it("does not stamp passwordChangedAt when the reset is refused", async () => {
+    const { db, state } = makeFakeDb({
+      users: [{ id: 7, email: "vecino@example.com", passwordHash: "viejo", active: false }],
+      tokens: [token("raw")],
+    });
+    await makePasswordReset(db as never).reset("raw", "hash-nuevo", NOW);
+    expect(state.users[0]?.passwordChangedAt).toBeUndefined();
   });
 
   it("never re-enables a disabled account through the reset", async () => {
