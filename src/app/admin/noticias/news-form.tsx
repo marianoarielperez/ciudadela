@@ -7,7 +7,7 @@ import { useSyncedForm, TextField } from "@/components/admin/synced-fields";
 // image-url, NO images: este es un client component y images.ts importa node:fs.
 import { newsImageUrl } from "@/lib/news/image-url";
 // slugify es puro (sin node:*), así que se puede importar acá.
-import { slugify } from "@/lib/news/slug";
+import { normalizeSlugInput, slugify } from "@/lib/news/slug";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 
@@ -21,9 +21,14 @@ export function NewsForm(props: { mode: "create" } | { mode: "edit"; news: Edita
   const [state, formAction, pending] = useActionState(
     editing ? updateNewsAction : createNewsAction, {},
   );
-  const { values, formRef, field } = useSyncedForm({
+  // `removeCover` entra al estado sincronizado aunque sea un checkbox: si
+  // quedara sin controlar, el reset de React 19 tras un rechazo lo destildaría
+  // en silencio (ver use-form-reset-sync.ts). "on"/"" son los valores que el
+  // navegador manda y que espera el schema.
+  const { values, setValue, formRef, field } = useSyncedForm({
     title: editing?.title ?? "",
     slug: editing?.slug ?? "",
+    removeCover: "",
   });
 
   // Misma regla que `slugFor` en actions.ts: si el campo URL está vacío el
@@ -41,7 +46,10 @@ export function NewsForm(props: { mode: "create" } | { mode: "edit"; news: Edita
       <TextField label="Título" field={field("title")} maxLength={160} autoFocus />
       <TextField
         label="URL (opcional)"
-        field={field("slug", (raw) => raw.toLowerCase().replace(/[^a-z0-9-]/g, "-"))}
+        // La misma normalización que usa `slugify` para derivar el slug del
+        // título: si no, tipear "Ñandú" a mano daba `-and-` y desde el título
+        // `nandu`, dos URLs distintas para lo mismo.
+        field={field("slug", normalizeSlugInput)}
         maxLength={180}
         hint={
           <>
@@ -66,7 +74,11 @@ export function NewsForm(props: { mode: "create" } | { mode: "edit"; news: Edita
             <Image src={newsImageUrl(editing.coverImagePath)} alt="Portada actual" width={120} height={80}
               className="h-20 w-auto rounded border object-cover" unoptimized />
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" name="removeCover" /> Quitar la portada actual
+              <input
+                type="checkbox" name="removeCover" value="on"
+                checked={values.removeCover === "on"}
+                onChange={(e) => setValue("removeCover", e.target.checked ? "on" : "")}
+              /> Quitar la portada actual
             </label>
           </div>
         )}
