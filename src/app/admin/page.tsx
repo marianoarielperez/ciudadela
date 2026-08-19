@@ -5,9 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 export const metadata = { title: "Panel de administración — SIGeV" }
 
-const sections: { title: string; description: string; href?: string }[] = [
+const sections: { title: string; description: string; href?: string; cta?: string }[] = [
   { title: "Solicitudes", description: "Altas de socios pendientes de revisión y aprobación." },
-  { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios" },
+  { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios", cta: "Ver el padrón" },
+  {
+    title: "Actas",
+    description: "Actas de Comisión Directiva y Asamblea donde se asientan los movimientos.",
+    href: "/admin/actas",
+    cta: "Ver las actas",
+  },
   { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
   { title: "Noticias", description: "Novedades y comunicados del sitio público." },
   { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
@@ -36,7 +42,7 @@ export default async function AdminHomePage() {
                   href={section.href}
                   className="inline-block rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:underline"
                 >
-                  Ver el padrón
+                  {section.cta ?? "Abrir"}
                 </Link>
               ) : (
                 <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium">
