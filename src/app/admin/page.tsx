@@ -2,6 +2,7 @@ import Link from "next/link"
 
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { SITE } from "@/lib/site"
 
 export const metadata = { title: "Panel de administración — SIGeV" }
 
@@ -16,7 +17,10 @@ const sections: { title: string; description: string; href?: string; cta?: strin
   },
   {
     title: "Actividades",
-    description: "Calendario de los salones Histórico y Vidriado.",
+    // Los nombres salen de SITE.rooms, que es de donde también sale el selector
+    // del formulario y la grilla pública: si alguna vez se renombra un salón, se
+    // renombra en un solo lugar y esta tarjeta no queda mintiendo.
+    description: `Calendario del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`,
     href: "/admin/actividades",
     cta: "Ver el calendario",
   },

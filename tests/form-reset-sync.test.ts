@@ -67,6 +67,47 @@ describe("syncFormResetToState", () => {
     expect(dias.map((d) => d.checked)).toEqual([false, false]);
   });
 
+  // Los tres casos que siguen fijan la SEMÁNTICA de la lista CSV: pertenencia
+  // por token exacto, no por substring. Con values de un solo carácter las dos
+  // reglas dan lo mismo, así que sin valores donde uno es prefijo del otro el
+  // test pasaría igual con `wanted.includes(el.value)` — y este hook lo comparten
+  // noticias, actas y el modo carga del padrón, así que la regla tiene que
+  // quedar clavada acá y no en un comentario.
+  it("un value que es PREFIJO de otro no se cuela: estado '1' no tilda el value '12'", () => {
+    const uno = checkbox("grupo", false, "1");
+    const doce = checkbox("grupo", true, "12");
+    syncFormResetToState(fakeRoot([uno, doce]), { grupo: "1" });
+    expect(uno.checked).toBe(true);
+    expect(doce.checked).toBe(false);
+  });
+
+  it("y al revés: estado '12' no tilda el value '1'", () => {
+    // Este es el caso que mata la pertenencia por substring: "12".includes("1")
+    // es true, pero "1" no está en la lista ["12"].
+    const uno = checkbox("grupo", true, "1");
+    const doce = checkbox("grupo", false, "12");
+    syncFormResetToState(fakeRoot([uno, doce]), { grupo: "12" });
+    expect(uno.checked).toBe(false);
+    expect(doce.checked).toBe(true);
+  });
+
+  it("con varios tokens tampoco: '12,3' tilda 12 y 3, no 1 ni 2", () => {
+    const items = ["1", "2", "3", "12"].map((v) => checkbox("grupo", true, v));
+    syncFormResetToState(fakeRoot(items), { grupo: "12,3" });
+    expect(items.map((i) => i.checked)).toEqual([false, false, true, true]);
+  });
+
+  it("LÍMITE conocido: un value con coma adentro no se puede representar y queda destildado", () => {
+    // La coma es el separador, así que "a,b" se lee como los tokens "a" y "b" y
+    // nunca como el value literal "a,b". No es un bug latente: hoy todos los
+    // values son "on" o un dígito del 1 al 7. Queda escrito acá para que, si
+    // algún formulario futuro quiere values libres, el test lo frene en vez de
+    // que aparezca como un checkbox que no se re-tilda nunca.
+    const raro = checkbox("grupo", true, "a,b");
+    syncFormResetToState(fakeRoot([raro]), { grupo: "a,b" });
+    expect(raro.checked).toBe(false);
+  });
+
   it("sigue re-afirmando selects y radios", () => {
     const select: Control = { tag: "select", name: "category", value: "active" };
     const si: Control = { tag: "input", type: "radio", name: "kind", value: "board", checked: false };

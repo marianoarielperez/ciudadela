@@ -210,6 +210,28 @@ describe("createActivityAction", () => {
     expect(result.error).toBe("Elegí el salón.");
     expect(prismaMock.activity.create).not.toHaveBeenCalled();
   });
+
+  // Una server action es un endpoint HTTP público: un POST armado a mano con un
+  // campo basura o directamente ausente es tráfico esperable, y lo que zod
+  // devuelve termina en pantalla tal cual. Estos casos fijan que NINGUNO caiga en
+  // el texto default de zod en inglés.
+  it("un valor de visibilidad que no es 'on' se rechaza en castellano", async () => {
+    const result = await createActivityAction({}, form({ ...base, active: "x" }));
+    expect(result.error).toBe("Valor inválido para la visibilidad.");
+    expect(prismaMock.activity.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["name", "startTime", "endTime", "year", "room"] as const)(
+    "un POST sin el campo %s se rechaza en castellano, no con el default de zod",
+    async (missing) => {
+      const entries = { ...base } as Record<string, string>;
+      delete entries[missing];
+      const result = await createActivityAction({}, form(entries));
+      expect(result.error).toBeDefined();
+      expect(result.error).not.toMatch(/Invalid input/);
+      expect(prismaMock.activity.create).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("updateActivityAction", () => {

@@ -35,16 +35,29 @@ async function clientIp(): Promise<string> {
 // público, así que un campo ausente o basura es tráfico esperable y el texto que
 // zod devuelve por defecto ("Invalid input: expected number, received NaN")
 // terminaría en pantalla tal cual.
+// Ojo con el primer argumento de `z.string(...)`: cubre el caso "el campo no
+// vino en el POST". `parseForm` traduce el input vacío a "" y ahí saltan el
+// `.min(1)` y los `.regex(...)`, pero una request armada a mano que directamente
+// omita la clave llega a zod como `undefined` y sin ese mensaje devolvería
+// "Invalid input: expected string, received undefined".
 const activitySchema = z.object({
   name: z
-    .string()
+    .string("Ingresá el nombre de la actividad.")
     .min(1, "Ingresá el nombre de la actividad.")
     .max(120, "El nombre no puede superar los 120 caracteres."),
   room: z.enum(["historic", "glass"], { error: "Elegí el salón." }),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Hora de inicio inválida."),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Hora de fin inválida."),
+  startTime: z
+    .string("Hora de inicio inválida.")
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Hora de inicio inválida."),
+  endTime: z
+    .string("Hora de fin inválida.")
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Hora de fin inválida."),
   year: z.coerce.number("Año inválido.").int("Año inválido.").min(2024, "Año inválido.").max(2100, "Año inválido."),
-  active: z.literal("on").optional(),
+  // El checkbox de visibilidad: el navegador manda "on" o no manda nada, así que
+  // `.optional()` cubre el destildado. Cualquier otra cosa es un POST armado a
+  // mano y sin este mensaje mostraría el default de zod (`Invalid input:
+  // expected "on"`).
+  active: z.literal("on", { error: "Valor inválido para la visibilidad." }).optional(),
 });
 
 const idSchema = z.object({
