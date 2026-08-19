@@ -38,6 +38,10 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
     memberships: [] as Record<string, unknown>[],
     updates: [] as Record<string, unknown>[],
     tokens: LIVE_TOKENS.map((t) => ({ ...t })),
+    // La cuenta del socio: la baja tiene que dejarla sin poder volver a entrar y
+    // el reingreso tiene que devolvérsela.
+    users: [{ id: 55, active: true }],
+    userUpdates: [] as Record<string, unknown>[],
   };
   const openBooks = config.openBooks ?? [{ id: 1, number: 1, status: "open" }];
   const db = {
@@ -53,6 +57,8 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         memberships: [...state.memberships],
         updates: [...state.updates],
         tokens: state.tokens.map((t) => ({ ...t })),
+        users: state.users.map((u) => ({ ...u })),
+        userUpdates: [...state.userUpdates],
       };
       try {
         return await cb(db);
@@ -62,6 +68,8 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         state.memberships = snapshot.memberships;
         state.updates = snapshot.updates;
         state.tokens = snapshot.tokens;
+        state.users = snapshot.users;
+        state.userUpdates = snapshot.userUpdates;
         throw err;
       }
     }),
@@ -93,6 +101,15 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         if (config.failMovementCreate) throw new Error("movement insert failed");
         state.movements.push(data);
         return data;
+      },
+    },
+    user: {
+      update: async ({ where, data }: { where: { id: number }; data: Record<string, unknown> }) => {
+        const row = state.users.find((u) => u.id === where.id);
+        if (!row) throw new Error("user not found");
+        state.userUpdates.push({ id: where.id, ...data });
+        Object.assign(row, data);
+        return { ...row };
       },
     },
     member: {
@@ -181,6 +198,63 @@ describe("memberService.withdraw", () => {
       .rejects.toThrow(/movement insert failed/);
     expect(state.member.status).toBe("active");
     expect(state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+// Revocar el enlace no alcanza si la cuenta que ese enlace creó sigue entrando:
+// la sesión es un JWT de 8 h sin revalidación. `requireMember` cierra el panel
+// contra la fila viva; `user.active` es el cerrojo del RE-login.
+describe("the account follows the card on withdrawal and readmission", () => {
+  it("deactivates the member's account when the withdrawal is recorded", async () => {
+    const { db, state } = makeFakeDb({ userId: 55 });
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 });
+    expect(state.userUpdates).toEqual([{ id: 55, active: false }]);
+    expect(state.users[0].active).toBe(false);
+  });
+
+  it("reactivates it on readmission", async () => {
+    const { db, state } = makeFakeDb({
+      userId: 55, status: "withdrawn", withdrawalReason: "resignation",
+    });
+    state.users[0].active = false;
+    const svc = makeMemberService(db as never);
+    await svc.readmit({ memberId: 1, category: "adherent", minuteId: 10, actorId: 2 });
+    expect(state.userUpdates).toEqual([{ id: 55, active: true }]);
+    expect(state.users[0].active).toBe(true);
+  });
+
+  it("does nothing when the member has no account yet", async () => {
+    const { db, state } = makeFakeDb({ userId: null });
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 });
+    await svc.readmit({ memberId: 1, category: "adherent", minuteId: 10, actorId: 2 });
+    expect(state.userUpdates).toEqual([]);
+  });
+
+  // `user.active` NO es la herramienta de la suspensión: sería una tercera
+  // fuente de verdad junto a `status` y `suspendedFrom/To`, y una suspensión
+  // vencida por fecha sin acta de fin dejaría la cuenta muerta para siempre. Lo
+  // que corta el panel de un suspendido es `requireMember` (REG-20).
+  it("never touches the account on suspension, end of suspension or category change", async () => {
+    const from = new Date("2026-09-01T12:00:00Z");
+    const to = new Date("2026-10-01T12:00:00Z");
+    const { db, state } = makeFakeDb({ userId: 55 });
+    const svc = makeMemberService(db as never);
+    await svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 });
+    await svc.suspend({ memberId: 1, from, to, minuteId: 10, actorId: 2 });
+    await svc.endSuspension({ memberId: 1, minuteId: 10, actorId: 2 });
+    expect(state.userUpdates).toEqual([]);
+    expect(state.users[0].active).toBe(true);
+  });
+
+  it("leaves the account alone when the withdrawal rolls back", async () => {
+    const { db, state } = makeFakeDb({ userId: 55 }, { failMovementCreate: true });
+    const svc = makeMemberService(db as never);
+    await expect(svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 }))
+      .rejects.toThrow(/movement insert failed/);
+    expect(state.users[0].active).toBe(true);
+    expect(state.userUpdates).toEqual([]);
   });
 });
 

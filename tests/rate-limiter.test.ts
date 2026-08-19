@@ -5,6 +5,9 @@ import {
   DEFAULT_MAX_KEYS,
   DEFAULT_WINDOW_MS,
   ipLimiter,
+  PUBLIC_TOKEN_LIMIT,
+  PUBLIC_TOKEN_WINDOW_MS,
+  publicTokenLimiter,
   VERIFICATION_ACTOR_LIMIT,
   VERIFICATION_MEMBER_LIMIT,
   VERIFICATION_WINDOW_MS,
@@ -177,6 +180,31 @@ describe("verification limiters", () => {
     expect(verificationMemberLimiter.windowMs).toBe(60 * 60_000)
     expect(verificationActorLimiter.limit).toBe(20)
     expect(verificationActorLimiter.windowMs).toBe(60 * 60_000)
+  })
+
+  // El canje de /verificar y /acceso es anónimo: la única clave es la IP, y
+  // detrás de un CGNAT móvil hay muchos vecinos. Un socio gasta 2 POST en todo
+  // el circuito, así que el techo tiene que dejar entrar a una docena larga.
+  it("pins the budget and the window of the public token limiter", () => {
+    expect(PUBLIC_TOKEN_LIMIT).toBe(30)
+    expect(PUBLIC_TOKEN_WINDOW_MS).toBe(60 * 60_000)
+    expect(publicTokenLimiter.limit).toBe(30)
+    expect(publicTokenLimiter.windowMs).toBe(60 * 60_000)
+  })
+
+  it("blocks the 31st redemption from the same origin", () => {
+    const clock = clockAt(0)
+    const rl = createRateLimiter({
+      limit: publicTokenLimiter.limit,
+      windowMs: publicTokenLimiter.windowMs,
+      now: clock.now,
+    })
+    for (let i = 0; i < 30; i++) expect(rl.check("186.0.0.1")).toBe(true)
+    expect(rl.check("186.0.0.1")).toBe(false)
+    // Otro origen conserva su presupuesto entero.
+    expect(rl.check("186.0.0.2")).toBe(true)
+    clock.advance(publicTokenLimiter.windowMs)
+    expect(rl.check("186.0.0.1")).toBe(true)
   })
 
   it("stops the 4th send to the same member until the whole window has passed", () => {

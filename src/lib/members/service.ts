@@ -8,7 +8,10 @@ import { revokeStaleMemberTokens } from "./write";
 
 // El cliente que `$transaction` le pasa al callback: mismo API menos los
 // métodos de control de sesión (`$transaction`, `$connect`, …).
-type Tx = Pick<PrismaClient, "actionToken" | "book" | "member" | "membership" | "minute" | "movement">;
+type Tx = Pick<
+  PrismaClient,
+  "actionToken" | "book" | "member" | "membership" | "minute" | "movement" | "user"
+>;
 
 // Exportada: las server actions la consultan para poder rechazar el cambio de
 // categoría ANTES de crear el acta (ver el comentario sobre el acta huérfana en
@@ -98,6 +101,18 @@ export function makeMemberService(db: PrismaClient) {
         // Va en la MISMA transacción que el update y el movimiento: un rollback
         // que deje al socio vigente tiene que dejarle también sus enlaces.
         await revokeStaleMemberTokens(tx, member.id, member, updated);
+        // Y si la cuenta ya existe, se le echa llave. Revocar los enlaces no
+        // alcanza cuando el enlace ya se usó: la sesión es un JWT de 8 h sin
+        // revalidación, así que el rol "socio" sobrevive a la baja. `requireMember`
+        // cierra el panel en cada visita contra la fila viva; `user.active` es el
+        // cerrojo del RE-login, que `verify-credentials` ya respeta.
+        // Sólo baja y reingreso lo tocan: en la suspensión sería una tercera
+        // fuente de verdad junto a `status` y `suspendedFrom/To`, y una
+        // suspensión vencida por fecha sin acta de fin dejaría la cuenta muerta
+        // para siempre (ahí manda `requireMember`, REG-20).
+        if (member.userId) {
+          await tx.user.update({ where: { id: member.userId }, data: { active: false } });
+        }
         await tx.movement.create({
           data: {
             memberId: member.id, type: "withdrawal", date: minute.date, minuteId: minute.id,
@@ -186,6 +201,12 @@ export function makeMemberService(db: PrismaClient) {
             // debtAtWithdrawal se conserva: M4 lo usa para calcular la deuda a saldar (REG-16)
           },
         });
+        // Contracara del cerrojo de la baja: el reingreso le devuelve la cuenta.
+        // Sin esto, un socio readmitido tendría el padrón en orden y el portal
+        // cerrado, y nadie sabría por qué.
+        if (member.userId) {
+          await tx.user.update({ where: { id: member.userId }, data: { active: true } });
+        }
         await tx.movement.create({
           data: {
             memberId: member.id, type: "readmission", date: minute.date, minuteId: minute.id,

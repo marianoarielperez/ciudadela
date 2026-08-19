@@ -126,3 +126,23 @@ export const verificationActorLimiter = createRateLimiter({
   limit: VERIFICATION_ACTOR_LIMIT,
   windowMs: VERIFICATION_WINDOW_MS,
 })
+
+export const PUBLIC_TOKEN_LIMIT = 30
+export const PUBLIC_TOKEN_WINDOW_MS = 60 * 60_000
+
+/** Canje de enlaces en /verificar y /acceso, por IP. Son rutas públicas y
+ *  anónimas: no hay sesión que racionar, así que la única clave posible es el
+ *  origen.
+ *
+ *  El presupuesto es holgado a propósito y no pretende frenar la adivinación de
+ *  tokens —son 256 bits de `randomBytes`, no se enumeran—: lo que raciona es el
+ *  martilleo del alta de contraseña, que cuesta un bcrypt de costo 12 (~300 ms
+ *  de CPU) por intento. Un socio legítimo hace dos POST en todo el circuito, y
+ *  el techo tiene que dejar pasar a varios vecinos detrás del mismo CGNAT de una
+ *  operadora móvil, que es el caso común en Comodoro. Sólo lo consultan los POST:
+ *  el GET de las páginas sólo hace `peek` (una lectura por índice) y limitarlo
+ *  castigaría al que refresca. */
+export const publicTokenLimiter = createRateLimiter({
+  limit: PUBLIC_TOKEN_LIMIT,
+  windowMs: PUBLIC_TOKEN_WINDOW_MS,
+})
