@@ -237,6 +237,29 @@ describe("memberWriter.updateMember — dirección de la cuenta de acceso", () =
     expect(state.users.find((u) => u.id === 50)?.email).toBe("nuevo@example.com");
   });
 
+  // La dirección ANTERIOR desaparece de la base en el commit, y es a la que hay
+  // que mandarle el aviso de que perdió el acceso: si el writer no la devuelve,
+  // el llamador no tiene de dónde sacarla y la mudanza vuelve a ser silenciosa.
+  it("hands the caller both addresses of the move so the previous one can be warned", async () => {
+    const { db } = makeFakeDb(withAccount);
+    const writer = makeMemberWriter(db as never);
+    const { accountEmailMove } = await writer.updateMember(1, { email: "Nuevo@Example.com" });
+
+    expect(accountEmailMove).toEqual({ from: "vecino@example.com", to: "nuevo@example.com" });
+  });
+
+  // `from` sale de la CUENTA y no de la ficha: es la dirección con la que el
+  // socio venía ingresando, que es a la que le importa el aviso. Con las dos
+  // desincronizadas (una cuenta creada antes de una edición que no la propagó,
+  // como pasaba antes de esta capa) el aviso tiene que ir a la de la cuenta.
+  it("warns the address the account had, not the one the card had", async () => {
+    const { db } = makeFakeDb({ ...withAccount, email: "ficha.vieja@example.com" });
+    const writer = makeMemberWriter(db as never);
+    const { accountEmailMove } = await writer.updateMember(1, { email: "nuevo@example.com" });
+
+    expect(accountEmailMove?.from).toBe("vecino@example.com");
+  });
+
   it("revokes the live reset links of the account when the address changes", async () => {
     const { db, state } = makeFakeDb(withAccount);
     const writer = makeMemberWriter(db as never);
@@ -250,9 +273,11 @@ describe("memberWriter.updateMember — dirección de la cuenta de acceso", () =
   it("does not touch any account when the member has none", async () => {
     const { db, state } = makeFakeDb({}); // userId: null
     const writer = makeMemberWriter(db as never);
-    const { accountEmailUpdated } = await writer.updateMember(1, { email: "nuevo@example.com" });
+    const { accountEmailUpdated, accountEmailMove } = await writer.updateMember(1, { email: "nuevo@example.com" });
 
     expect(accountEmailUpdated).toBe(false);
+    // Y no hay mudanza que avisar: no había ninguna dirección de ingreso.
+    expect(accountEmailMove).toBeNull();
     expect(state.users.map((u) => u.email)).toEqual(["vecino@example.com", "otro.socio@example.com"]);
     expect(state.tokens.some((t) => t.id === 3)).toBe(true);
   });
@@ -260,9 +285,11 @@ describe("memberWriter.updateMember — dirección de la cuenta de acceso", () =
   it("does not touch the account when the address is only normalized to lowercase", async () => {
     const { db, state } = makeFakeDb({ ...withAccount, email: "Vecino@Example.com" });
     const writer = makeMemberWriter(db as never);
-    const { accountEmailUpdated } = await writer.updateMember(1, { email: "vecino@example.com" });
+    const { accountEmailUpdated, accountEmailMove } = await writer.updateMember(1, { email: "vecino@example.com" });
 
     expect(accountEmailUpdated).toBe(false);
+    // Y nadie recibe un aviso de mudanza por un cambio de mayúsculas.
+    expect(accountEmailMove).toBeNull();
     // Y tampoco se le revoca el recupero vivo: el buzón es el mismo.
     expect(state.tokens.some((t) => t.id === 3)).toBe(true);
   });

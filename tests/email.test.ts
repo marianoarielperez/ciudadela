@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { makeMailer } from "@/lib/email";
-import { invitationEmail, passwordResetEmail, portalInvite, verificationEmail } from "@/lib/email/templates";
+import {
+  invitationEmail, loginEmailMovedNotice, loginEmailVerification, passwordResetEmail,
+  portalInvite, verificationEmail,
+} from "@/lib/email/templates";
 import { getTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
@@ -54,6 +57,58 @@ describe("templates", () => {
     expect(i.message.text).toContain("https://x/acceso/tok2");
     expect(i.message.text).not.toContain("/verificar/");
     expect(i.summary).toContain("invitación");
+  });
+
+  // El correo que le avisa al socio que su dirección de INGRESO se mudó. Lo que
+  // NO puede llevar es la dirección nueva: si el cambio fue un secuestro, este
+  // correo le confirmaría al atacante que acertó; si fue un dedazo del operador,
+  // le estaría mandando la casilla de un tercero a alguien que no tiene por qué
+  // verla. Por eso la plantilla ni siquiera RECIBE la dirección nueva: no hay
+  // forma de filtrarla por descuido desde el llamador.
+  it("warns the previous address without ever naming the new one", () => {
+    const m = loginEmailMovedNotice();
+    expect(loginEmailMovedNotice.length).toBe(0); // no recibe ninguna dirección
+    for (const body of [m.text, m.html]) {
+      expect(body).not.toContain("@example");
+      // Las tres cosas que la persona tiene que salir sabiendo.
+      expect(body).toContain("otra dirección de correo");
+      expect(body).toContain("ya no sirve para entrar");
+      expect(body).toContain("sede");
+    }
+    expect(m.subject).toContain("Vecinal Ciudadela");
+    // Y ningún enlace: quien recibe esto ya no tiene acceso, y un enlace en un
+    // correo de alerta de seguridad es justo lo que enseña a hacer clic.
+    expect(m.text).not.toContain("http");
+  });
+
+  // La verificación de la dirección nueva se canja en /verificar, igual que
+  // cualquier otro `email_verification`: mandarla a /acceso le daría al socio un
+  // enlace muerto.
+  it("sends the new address a verification link on the /verificar route", () => {
+    const v = loginEmailVerification({ baseUrl: "https://x", token: "tok9" });
+    expect(v.message.text).toContain("https://x/verificar/tok9");
+    expect(v.message.text).not.toContain("/acceso/");
+    // Y le dice lo que el correo de verificación común no dice: que esta casilla
+    // es, además, con la que ingresa.
+    expect(v.message.text).toContain("ingresás al portal");
+    expect(v.message.text).toContain("Tu contraseña no cambia");
+    expect(v.summary).toContain("acceso");
+  });
+
+  // Ninguno de los dos saluda por nombre: la casilla vieja puede estar en manos
+  // de un tercero y la nueva todavía no está confirmada.
+  it("keeps the member's name out of both sides of the move", () => {
+    const bodies = [
+      loginEmailMovedNotice(),
+      loginEmailVerification({ baseUrl: "https://x", token: "t" }).message,
+    ];
+    for (const m of bodies) {
+      expect(m.text).not.toContain("Hola ");
+      expect(m.subject).toContain("Vecinal Ciudadela");
+      expect(m.text).toContain("Asociación Vecinal del Barrio Ciudadela");
+      expect(m.text).not.toContain("<");
+      expect(m.html).toContain("Asociación Vecinal del Barrio Ciudadela");
+    }
   });
 
   // El enlace es dato de entrada: no puede romper el HTML ni inyectar atributos.

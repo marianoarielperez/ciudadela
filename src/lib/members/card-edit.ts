@@ -143,6 +143,18 @@ export type VerificationTarget =
 //
 // Con cuenta ya creada no se reinvita: eso es un recupero de contraseña, que va
 // por su propio circuito y contra la cuenta, no contra la ficha.
+//
+// Ojo con el alcance de esa negativa, que es más chica de lo que parece: lo que
+// no corresponde para una ficha CON cuenta es la INVITACIÓN a crear contraseña
+// (`password_invitation`), no la verificación. Si a un socio con cuenta le
+// cambian el email, la ficha vuelve a `declared` (`buildPatch`) y esta función
+// devuelve `email_verification`, que es exactamente lo que corresponde: hay una
+// dirección nueva sin confirmar y hace falta que el socio confirme que la
+// casilla es suya. Canjearla es inofensivo —`memberAccess.verifyEmail` marca la
+// dirección como verificada y corta antes de emitir ninguna invitación cuando
+// `member.userId` existe—, y es el camino que usa
+// `@/lib/members/account-email-notice` cuando la edición mueve la dirección de
+// ingreso.
 export function verificationTarget(
   member: Pick<Member, "status" | "email" | "emailStatus" | "userId">,
 ): VerificationTarget {

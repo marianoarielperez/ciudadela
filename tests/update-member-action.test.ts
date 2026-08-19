@@ -40,6 +40,13 @@ vi.mock("@/lib/tokens", () => ({
 
 vi.mock("@/lib/email", () => ({ mailer: { sendToMember: vi.fn(async () => ({ messageId: "m" })) } }));
 
+// El singleton de los avisos de mudanza se stubea; los TEXTOS y el
+// `accountEmailNoticeWarning` son los de verdad, si no el test fijaría el mock.
+vi.mock("@/lib/members/account-email-notice", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/members/account-email-notice")>();
+  return { ...actual, accountEmailNotice: { announce: vi.fn() } };
+});
+
 vi.mock("@/lib/email/templates", () => ({
   portalInvite: vi.fn(() => ({ message: { subject: "s", text: "t", html: "<p>t</p>" }, summary: "r" })),
 }));
@@ -55,6 +62,10 @@ vi.mock("@/lib/members/write", async (importOriginal) => {
 });
 
 import { updateMemberAction } from "@/app/admin/socios/carga/[numero]/actions";
+import {
+  ACCOUNT_EMAIL_NOTICE_WARNINGS,
+  accountEmailNotice,
+} from "@/lib/members/account-email-notice";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import {
@@ -85,9 +96,28 @@ function form(fields: Record<string, string>) {
   return fd;
 }
 
+// El guardado que MUEVE la dirección de ingreso: el writer devuelve las dos
+// direcciones de la mudanza y la ficha ya guardada.
+function movedTo(email: string) {
+  (memberWriter.updateMember as MockedFn).mockResolvedValue({
+    member: stored({ email, emailStatus: "declared", emailVerifiedAt: null }),
+    revokedTokens: 2,
+    accountEmailMove: { from: "vecino@example.com", to: email },
+    accountEmailUpdated: true,
+  });
+}
+
+const allSent = {
+  previousNotified: true, verificationSent: true, throttled: false, failures: [] as unknown[],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   (prisma.member.findUnique as MockedFn).mockResolvedValue(stored());
+  (memberWriter.updateMember as MockedFn).mockResolvedValue({
+    member: stored(), revokedTokens: 0, accountEmailMove: null, accountEmailUpdated: false,
+  });
+  (accountEmailNotice.announce as MockedFn).mockResolvedValue(allSent);
 });
 
 describe("updateMemberAction — rechazos de memberWriter", () => {
@@ -127,9 +157,8 @@ describe("updateMemberAction — rechazos de memberWriter", () => {
   });
 
   it("still audits the successful save as member_update", async () => {
-    (memberWriter.updateMember as MockedFn).mockResolvedValue({
-      member: stored({ email: "nuevo@example.com" }), revokedTokens: 2, accountEmailUpdated: true,
-    });
+    movedTo("nuevo@example.com");
+    (accountEmailNotice.announce as MockedFn).mockResolvedValue(allSent);
 
     const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
 
@@ -150,5 +179,85 @@ describe("updateMemberAction — rechazos de memberWriter", () => {
 
     expect(res).toEqual({ error: "Ya existe otro socio con ese DNI." });
     expect(audit).not.toHaveBeenCalled();
+  });
+});
+
+// Cambiar el email de la ficha de un socio con cuenta le mueve la dirección con
+// la que INGRESA. Que se mude enseguida es la decisión de producto; que se mude
+// en silencio, no: la action tiene que disparar los dos avisos y dejar asiento.
+describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
+  it("warns both mailboxes with the address the account had, not the one typed", async () => {
+    movedTo("nuevo@example.com");
+
+    const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
+
+    expect(res).toEqual({ saved: true });
+    expect(accountEmailNotice.announce).toHaveBeenCalledTimes(1);
+    const call = (accountEmailNotice.announce as MockedFn).mock.calls[0][0];
+    expect(call.previousEmail).toBe("vecino@example.com");
+    expect(call.actorId).toBe(7);
+    // La ficha que va es la GUARDADA, no la que había antes: es sobre ella que
+    // `verificationTarget` decide qué enlace corresponde.
+    expect(call.member.email).toBe("nuevo@example.com");
+    expect(call.member.emailStatus).toBe("declared");
+  });
+
+  // Ninguna edición que NO mueva la dirección de ingreso puede disparar correos.
+  it("does not warn anyone when the login address did not move", async () => {
+    const res = await updateMemberAction({}, form({ fullName: "Perez Ana Maria" }));
+
+    expect(res).toEqual({ saved: true });
+    expect(accountEmailNotice.announce).not.toHaveBeenCalled();
+    expect((audit as MockedFn).mock.calls.map((c) => c[0].action)).toEqual(["member_update"]);
+  });
+
+  // Asiento propio del hecho, además del `member_update`: mover la identidad de
+  // acceso de un socio es lo que hay que poder reconstruir después.
+  it("audits the move on its own entry, with no address in it", async () => {
+    movedTo("nuevo@example.com");
+
+    await updateMemberAction({}, form({ email: "nuevo@example.com" }));
+
+    const actions = (audit as MockedFn).mock.calls.map((c) => c[0].action);
+    expect(actions).toEqual(["member_update", "member_login_email_moved"]);
+    const entry = (audit as MockedFn).mock.calls[1][0];
+    expect(entry).toMatchObject({ userId: 7, entity: "member", entityId: 1, ip: "10.0.0.7" });
+    expect(entry.detail).toMatchObject({ notifiedPrevious: true, verificationSent: true });
+    // Banderas y códigos, jamás direcciones (Ley 25.326).
+    expect(JSON.stringify(entry.detail)).not.toContain("@");
+  });
+
+  // El caso real más frecuente: el socio perdió la casilla vieja, así que el
+  // rebote es lo esperado. El cambio NO se revierte —revertir dejaría la cuenta
+  // apuntando a una dirección que el padrón ya no le reconoce— y el operador se
+  // entera de que le queda un aviso por hacer a mano.
+  it("keeps the saved change and warns the operator when a notice could not be delivered", async () => {
+    movedTo("nuevo@example.com");
+    (accountEmailNotice.announce as MockedFn).mockResolvedValue({
+      previousNotified: false, verificationSent: true, throttled: false,
+      failures: [{ target: "previous", code: "ECONNREFUSED" }],
+    });
+
+    const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
+
+    // `saved` sigue en true: el cambio está hecho y no se deshace por el correo.
+    expect(res.saved).toBe(true);
+    expect(res.error).toBeUndefined();
+    expect(res.warning).toBe(ACCOUNT_EMAIL_NOTICE_WARNINGS.previous);
+    const entry = (audit as MockedFn).mock.calls[1][0];
+    expect(entry.detail.failures).toEqual([{ target: "previous", code: "ECONNREFUSED" }]);
+    expect(JSON.stringify(entry.detail)).not.toContain("@");
+  });
+
+  it("carries the throttled case to the operator too", async () => {
+    movedTo("nuevo@example.com");
+    (accountEmailNotice.announce as MockedFn).mockResolvedValue({
+      previousNotified: false, verificationSent: false, throttled: true, failures: [],
+    });
+
+    const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
+
+    expect(res).toEqual({ saved: true, warning: ACCOUNT_EMAIL_NOTICE_WARNINGS.throttled });
+    expect((audit as MockedFn).mock.calls[1][0].detail).toMatchObject({ throttled: true });
   });
 });

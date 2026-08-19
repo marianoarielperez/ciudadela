@@ -23,7 +23,8 @@ import { portalInvite } from "@/lib/email/templates";
 import {
   buildPatch, cardSchema, changedFields, parseBirthDate, verificationTarget,
 } from "@/lib/members/card-edit";
-import { MemberWriteError, memberWriter } from "@/lib/members/write";
+import { accountEmailNotice, accountEmailNoticeWarning } from "@/lib/members/account-email-notice";
+import { type AccountEmailMove, MemberWriteError, memberWriter } from "@/lib/members/write";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
@@ -31,7 +32,10 @@ async function clientIp(): Promise<string> {
   return (await headers()).get("x-real-ip") ?? "unknown";
 }
 
-export type SaveState = { error?: string; saved?: boolean; unchanged?: boolean };
+/** `warning` es un guardado que SÍ ocurrió pero dejó algo pendiente de mano
+ *  humana (los avisos de la mudanza de la dirección de ingreso que no salieron).
+ *  Es distinto de `error`, que significa que no se guardó nada. */
+export type SaveState = { error?: string; saved?: boolean; unchanged?: boolean; warning?: string };
 
 export async function updateMemberAction(_prev: SaveState, formData: FormData): Promise<SaveState> {
   const actor = await requireAdmin();
@@ -66,9 +70,11 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   // lado del dueño del dato (ver `@/lib/members/write`), no acá — donde el
   // próximo camino de edición tendría que acordarse de repetirla.
   let revoked = 0;
-  let accountEmailUpdated = false;
+  let accountEmailMove: AccountEmailMove | null = null;
+  let updated = member;
   try {
-    ({ revokedTokens: revoked, accountEmailUpdated } = await memberWriter.updateMember(member.id, patch));
+    ({ member: updated, revokedTokens: revoked, accountEmailMove } =
+      await memberWriter.updateMember(member.id, patch));
   } catch (e) {
     // Los dos rechazos de `memberWriter` —la dirección nueva ya es la de otra
     // cuenta de acceso, o la edición dejaría sin email a una ficha que ya tiene
@@ -101,15 +107,46 @@ export async function updateMemberAction(_prev: SaveState, formData: FormData): 
   // DNI y el domicilio no van al log (Ley 25.326). `accountEmailUpdated` sí se
   // asienta aparte: mover la dirección con la que se ingresa al sistema es un
   // hecho propio, no un campo más de la ficha.
+  const ip = await clientIp();
   const detail: Record<string, unknown> = { fields: changed };
   if (revoked > 0) detail.revokedTokens = revoked;
-  if (accountEmailUpdated) detail.accountEmailUpdated = true;
+  if (accountEmailMove) detail.accountEmailUpdated = true;
   await audit({
     userId: actor.actorId, action: "member_update", entity: "member", entityId: member.id,
     detail,
-    ip: await clientIp(),
+    ip,
   });
-  return { saved: true };
+  if (!accountEmailMove) return { saved: true };
+
+  // La dirección con la que el socio INGRESA acaba de mudarse. Los dos avisos
+  // van después del commit y a propósito: un SMTP lento no puede transcurrir con
+  // la transacción abierta, y un correo no se deshace con un rollback. Que
+  // fallen no revierte el cambio —el motivo más frecuente de esta edición es que
+  // el socio perdió la casilla vieja, así que el rebote es el caso esperado y
+  // revertir dejaría la cuenta apuntando a una dirección que el padrón ya no le
+  // reconoce—: se le dice al operador y queda asentado. Ver
+  // `@/lib/members/account-email-notice`.
+  const notice = await accountEmailNotice.announce({
+    member: updated, previousEmail: accountEmailMove.from, actorId: actor.actorId,
+  });
+  // Asiento propio del hecho, separado de `member_update`: mover la identidad de
+  // acceso de un socio es lo que hay que poder reconstruir después, y ahora
+  // también con qué se le avisó. Sin una sola dirección: van banderas, el motivo
+  // técnico de la falla y a cuál de las dos casillas le falló, nunca cuáles son
+  // (Ley 25.326).
+  const noticeDetail: Record<string, unknown> = {
+    notifiedPrevious: notice.previousNotified,
+    verificationSent: notice.verificationSent,
+  };
+  if (notice.throttled) noticeDetail.throttled = true;
+  if (notice.failures.length > 0) noticeDetail.failures = notice.failures;
+  await audit({
+    userId: actor.actorId, action: "member_login_email_moved", entity: "member",
+    entityId: member.id, detail: noticeDetail, ip,
+  });
+
+  const warning = accountEmailNoticeWarning(notice);
+  return warning ? { saved: true, warning } : { saved: true };
 }
 
 export type SendState = { error?: string; sent?: boolean };

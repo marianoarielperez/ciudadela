@@ -109,6 +109,11 @@ export class MemberEmailRequiredError extends MemberWriteError {
   }
 }
 
+/** La mudanza de la dirección de INGRESO de un socio: la que tenía la cuenta y
+ *  la que quedó. Las dos normalizadas en minúsculas, que es como las guarda y
+ *  las busca el login (`verify-credentials`). */
+export type AccountEmailMove = { from: string; to: string };
+
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === "P2002";
 }
@@ -128,9 +133,13 @@ function isUniqueViolation(e: unknown): boolean {
  *  se niega a reinvitar una ficha que ya tiene cuenta y `memberAccess.createPassword`
  *  escribe `passwordHash` y `active`, nunca `email`.
  *
- *  Devuelve true si la cuenta quedó con otra dirección (lo usa la auditoría del
- *  llamador: cambiar la dirección de acceso de un socio es un hecho propio, no
- *  un campo más de la ficha).
+ *  Devuelve la mudanza (`{ from, to }`) si la cuenta quedó con otra dirección, y
+ *  `null` si no hubo nada que mover. Lo usa el llamador para dos cosas: la
+ *  auditoría —cambiar la dirección de acceso de un socio es un hecho propio, no
+ *  un campo más de la ficha— y los dos avisos por correo que hacen que la
+ *  mudanza no sea silenciosa (`@/lib/members/account-email-notice`), que
+ *  necesitan la dirección ANTERIOR y ya no la pueden leer de ningún lado: la
+ *  transacción se la llevó puesta.
  *
  *  Un solo caso en el que NO escribe y no aborta: **la ficha no tiene cuenta**
  *  (`userId === null`). No hay nada que mover, y que la ficha lleve una
@@ -144,10 +153,10 @@ async function syncAccountEmail(
   tx: Pick<PrismaClient, "actionToken" | "user">,
   before: Pick<Member, "email">,
   after: Pick<Member, "email" | "userId">,
-): Promise<boolean> {
-  if (sameAddress(before.email, after.email)) return false;
+): Promise<AccountEmailMove | null> {
+  if (sameAddress(before.email, after.email)) return null;
   const userId = after.userId;
-  if (userId === null) return false;
+  if (userId === null) return null;
 
   // El login busca la cuenta en minúsculas (`verify-credentials`), igual que
   // `memberAccess.createPassword`.
@@ -176,7 +185,7 @@ async function syncAccountEmail(
   await makeTokens(tx).revokeForUser(userId, ["password_reset"]);
 
   const account = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
-  if (!account || sameAddress(account.email, email)) return false;
+  if (!account || sameAddress(account.email, email)) return null;
 
   // GUARDA DE COLISIÓN. `User.email` es único: sin esto, propagar abriría un
   // agujero peor que el que cierra. Un admin que le carga a la ficha de un
@@ -199,7 +208,7 @@ async function syncAccountEmail(
     if (isUniqueViolation(e)) throw new MemberEmailConflictError();
     throw e;
   }
-  return true;
+  return { from: account.email, to: email };
 }
 
 type WriterDb = Pick<PrismaClient, "$transaction" | "member" | "actionToken" | "user">;
@@ -226,8 +235,15 @@ export function makeMemberWriter(db: WriterDb) {
         const before = await tx.member.findUniqueOrThrow({ where: { id: memberId } });
         const member = await tx.member.update({ where: { id: memberId }, data });
         const revokedTokens = await revokeStaleMemberTokens(tx, memberId, before, member);
-        const accountEmailUpdated = await syncAccountEmail(tx, before, member);
-        return { member, revokedTokens, accountEmailUpdated };
+        // `accountEmailMove` sale de la transacción para que el llamador pueda
+        // avisar por correo: la dirección ANTERIOR ya no está en ninguna fila
+        // después del commit, así que si no se devuelve acá se pierde. Los
+        // envíos NO van adentro de la transacción —un SMTP lento la dejaría
+        // abierta con la fila de la cuenta bloqueada, y un correo no se puede
+        // "revertir" con un rollback—: son posteriores y su falla no deshace el
+        // cambio (ver `@/lib/members/account-email-notice`).
+        const accountEmailMove = await syncAccountEmail(tx, before, member);
+        return { member, revokedTokens, accountEmailMove, accountEmailUpdated: accountEmailMove !== null };
       });
     },
   };

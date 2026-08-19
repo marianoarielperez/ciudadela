@@ -212,7 +212,8 @@ const UPDATE_FLAG = "--update-existing";
 // Si el proceso muere en medio del loop, el reporte nunca se escribe: este contador
 // vive afuera para que el handler de error pueda decir hasta dónde llegó.
 const progress = {
-  created: 0, updated: 0, unchanged: 0, conflicts: 0, missingEmail: 0, memberships: 0, movements: 0,
+  created: 0, updated: 0, unchanged: 0, conflicts: 0, missingEmail: 0, loginEmailMoved: 0,
+  memberships: 0, movements: 0,
 };
 
 async function main() {
@@ -368,8 +369,22 @@ async function main() {
       // lado del dueño del dato: el import las HEREDA, incluidos sus dos
       // rechazos, y por eso no puede producirlas en masa sin enterarse.
       try {
-        await memberWriter.updateMember(existing.memberId, m.member);
+        const { accountEmailMove } = await memberWriter.updateMember(existing.memberId, m.member);
         progress.updated++;
+        // El writer le llevó la dirección nueva a la CUENTA del socio, o sea que
+        // le movió el nombre de usuario con el que ingresa. Desde el panel eso
+        // dispara dos correos (aviso a la casilla vieja + verificación de la
+        // nueva); desde acá no sale ninguno —es una corrida batch, sin operador
+        // mirando, y con el padrón entero podría ser un mailing masivo—, así que
+        // lo que no puede faltar es que la corrida lo diga.
+        if (accountEmailMove) {
+          warnings.push(
+            `socio ${m.memberNumber}: el Excel le cambió el email y el socio ya tiene cuenta de acceso — ` +
+              `ahora INGRESA con la dirección nueva y NO se le avisó por correo; ` +
+              `avisale por otro medio o volvé a guardar la ficha desde el panel`,
+          );
+          progress.loginEmailMoved++;
+        }
       } catch (err) {
         // Los dos rechazos de `memberWriter` son datos a corregir, no fallas del
         // import: se saltea la fila (no se escribió nada de ella) y se sigue,
@@ -468,7 +483,8 @@ async function main() {
     `modo: ${updateExisting ? `${UPDATE_FLAG} (los existentes se pisan con el Excel)` : "solo alta (por defecto)"}`,
     `creados: ${progress.created} | actualizados: ${progress.updated} | sin cambios: ${progress.unchanged}`
       + (progress.conflicts > 0 ? ` | NO actualizados por email en conflicto: ${progress.conflicts}` : "")
-      + (progress.missingEmail > 0 ? ` | NO actualizados por quedar sin email teniendo cuenta: ${progress.missingEmail}` : ""),
+      + (progress.missingEmail > 0 ? ` | NO actualizados por quedar sin email teniendo cuenta: ${progress.missingEmail}` : "")
+      + (progress.loginEmailMoved > 0 ? ` | socios cuya direccion de INGRESO se mudo sin aviso por correo: ${progress.loginEmailMoved}` : ""),
     `memberships creadas: ${progress.memberships} | movements de admision creados: ${progress.movements}`,
     `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission libro ${book.number}: ${dbAdmissions}`,
     ...(updateExisting
@@ -497,7 +513,7 @@ async function main() {
     detail: {
       total, vigentes, bajas, created: progress.created, updated: progress.updated,
       unchanged: progress.unchanged, conflicts: progress.conflicts,
-      missingEmail: progress.missingEmail,
+      missingEmail: progress.missingEmail, loginEmailMoved: progress.loginEmailMoved,
       memberships: progress.memberships, movements: progress.movements,
       updateExisting, warnings: warnings.length,
     },

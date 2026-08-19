@@ -67,6 +67,9 @@ export default async function CargaPage(props: { params: Promise<{ numero: strin
           phone: m.phone, streetId: m.streetId, streetText: m.streetText,
           streetNumber: m.streetNumber, neighborhood: m.neighborhood,
           email: m.email, emailStatus: m.emailStatus, status: m.status,
+          // Sólo el hecho de tener cuenta, no el id: con eso alcanza para que la
+          // pantalla avise que el email es además la dirección de ingreso.
+          hasAccount: m.userId !== null,
         }}
         // Qué correo de acceso corresponde hoy (o por qué no corresponde
         // ninguno) lo decide la misma función pura que la action: si el botón y

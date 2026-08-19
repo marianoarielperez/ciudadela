@@ -27,6 +27,11 @@ export type MemberData = {
   phone: string | null; streetId: number | null; streetText: string | null;
   streetNumber: string | null; neighborhood: string | null; email: string | null;
   emailStatus: EmailStatus; status: MemberStatus;
+  // ¿El socio ya creó su cuenta de acceso? Cambia lo que significa editar el
+  // email: con cuenta, esa dirección es además el nombre de usuario con el que
+  // ingresa (`members/write.ts:syncAccountEmail`), y el operador tiene que
+  // saberlo ANTES de tipear, no descubrirlo por el aviso posterior.
+  hasAccount: boolean;
 };
 
 const CIVIL_STATUS = ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Separado/a", "Unión convivencial"];
@@ -132,6 +137,15 @@ export function CargaForm(props: {
   }
 
   const emailStatusLabel = EMAIL_STATUS_LABELS[member.emailStatus];
+  // Un dedazo en este campo, en un socio con cuenta, le cambia la dirección con
+  // la que ingresa: el aviso va en el campo y no en un cartel aparte porque es
+  // donde lo va a leer quien está copiando de la ficha de papel.
+  const emailHint = [
+    member.email ? `Guardado: ${emailStatusLabel}` : null,
+    member.hasAccount
+      ? "Es la dirección con la que el socio ingresa al portal: si la cambiás, pasa a ingresar con la nueva. Le avisamos a la dirección anterior y le pedimos que confirme la nueva."
+      : null,
+  ].filter(Boolean).join(" · ") || undefined;
   // El texto del botón dice qué correo va a salir. Con el email ya verificado y
   // sin cuenta creada lo que corresponde es la invitación de contraseña sola:
   // volver a verificar una dirección ya confirmada no aportaría nada y le
@@ -209,7 +223,7 @@ export function CargaForm(props: {
             <TextField
               label="Email" field={field("email")} type="email" maxLength={191}
               autoFocus={focusOn === "email"}
-              hint={member.email ? `Guardado: ${emailStatusLabel}` : undefined}
+              hint={emailHint}
             />
           </div>
         </div>
@@ -225,6 +239,13 @@ export function CargaForm(props: {
             <span role="status" className="text-sm text-muted-foreground">Sin cambios que guardar</span>
           )}
           {saveState.error && <span role="alert" className="text-sm text-destructive">{saveState.error}</span>}
+          {/* Se guardó, pero algo quedó pendiente de mano humana: el aviso de la
+              mudanza de la dirección de ingreso que no salió. No es un error
+              —el cambio está hecho— y por eso no usa el estilo destructivo,
+              pero tiene que quedar leído. */}
+          {saveState.warning && !edited && (
+            <span role="alert" className="text-sm text-amber-700 dark:text-amber-500">{saveState.warning}</span>
+          )}
           {edited && !saving && <span className="text-sm text-muted-foreground">Cambios sin guardar</span>}
         </div>
       </form>
