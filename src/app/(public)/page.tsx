@@ -102,7 +102,8 @@ export default async function HomePage() {
         ) : (
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {latest.map((n) => (
-              <NewsCard key={n.id} news={n} />
+              // h3: acá la grilla cuelga del <h2> "Noticias" de la sección.
+              <NewsCard key={n.id} news={n} titleAs="h3" />
             ))}
           </div>
         )}

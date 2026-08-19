@@ -7,7 +7,17 @@ import { newsImageUrl } from "@/lib/news/image-url";
 import type { PublicNewsCard } from "@/lib/news/query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function NewsCard({ news }: { news: PublicNewsCard }) {
+// `titleAs`: el título de la tarjeta es un encabezado real para que se pueda
+// recorrer el listado saltando de título en título. El nivel depende de dónde
+// se monta la grilla — bajo el <h1> de /noticias es h2; bajo el <h2> "Noticias"
+// de la home es h3 — y por eso lo decide quien la usa, no la tarjeta.
+export function NewsCard({
+  news,
+  titleAs = "h2",
+}: {
+  news: PublicNewsCard;
+  titleAs?: "h2" | "h3";
+}) {
   return (
     <Link href={`/noticias/${news.slug}`} className="group block">
       <Card className="h-full overflow-hidden transition-shadow group-hover:shadow-md">
@@ -24,7 +34,9 @@ export function NewsCard({ news }: { news: PublicNewsCard }) {
           />
         )}
         <CardHeader>
-          <CardTitle className="group-hover:text-primary">{news.title}</CardTitle>
+          <CardTitle as={titleAs} className="group-hover:text-primary">
+            {news.title}
+          </CardTitle>
           <CardDescription>{formatDateAR(new Date(news.publishedAtIso))}</CardDescription>
         </CardHeader>
         <CardContent>
