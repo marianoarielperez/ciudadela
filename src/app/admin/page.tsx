@@ -26,7 +26,12 @@ const sections: { title: string; description: string; href?: string; cta?: strin
   },
   { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
   { title: "Noticias", description: "Novedades y comunicados del sitio público.", href: "/admin/noticias", cta: "Gestionar noticias" },
-  { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
+  {
+    title: "Configuración",
+    description: "Parámetros del sistema (solo superadmin).",
+    href: "/admin/configuracion",
+    cta: "Abrir",
+  },
 ]
 
 export default async function AdminHomePage() {
