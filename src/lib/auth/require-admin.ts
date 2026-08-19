@@ -18,8 +18,9 @@
 // esta guarda hace lo mismo que `require-member`: resuelve contra la fila viva de
 // `User` —rol, `active` y `passwordChangedAt`— y no contra el token.
 //
-// El token conserva un solo papel, y es el barato: si NO dice admin, se rechaza
-// sin tocar la base. O sea que el token puede quitar el permiso pero nunca darlo.
+// El token conserva un solo papel, y es el barato: si NO trae el rol exigido, se
+// rechaza sin tocar la base. O sea que el token puede quitar el permiso pero
+// nunca darlo.
 import { isAdmin, isSuperadmin } from "@/lib/auth/roles";
 import {
   EXPIRED_SESSION_MESSAGE,
@@ -158,12 +159,12 @@ async function liveAccount(): Promise<AdminAccountLookup> {
  * dinámico por el mismo motivo: arrastra NextAuth entero.
  */
 export async function requireAdmin(): Promise<AdminActor> {
-  const { auth } = await import("@/auth");
-  return makeRequireAdmin(auth, await liveAccount())();
+  const [{ auth }, lookup] = await Promise.all([import("@/auth"), liveAccount()]);
+  return makeRequireAdmin(auth, lookup)();
 }
 
 /** Igual que `requireAdmin`, pero sólo para superadmin (pantalla de Configuración). */
 export async function requireSuperadmin(): Promise<AdminActor> {
-  const { auth } = await import("@/auth");
-  return makeRequireSuperadmin(auth, await liveAccount())();
+  const [{ auth }, lookup] = await Promise.all([import("@/auth"), liveAccount()]);
+  return makeRequireSuperadmin(auth, lookup)();
 }

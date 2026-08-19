@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isSuperadmin } from "@/lib/auth/roles";
-import { makeRequireSuperadmin } from "@/lib/auth/require-admin";
+import { makeRequireSuperadmin, SUPERADMIN_BLOCKED_MESSAGE } from "@/lib/auth/require-admin";
 
 const account = (roles: string[]) => async () => ({
   active: true,
@@ -47,6 +47,10 @@ describe("makeRequireSuperadmin", () => {
     const r = await guard();
     expect(r.ok).toBe(false);
     expect(dbCalled).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("not_admin");
+      expect(r.error).toBe(SUPERADMIN_BLOCKED_MESSAGE);
+    }
   });
 
   it("rechaza si la fila viva ya no es superadmin (revocación)", async () => {
