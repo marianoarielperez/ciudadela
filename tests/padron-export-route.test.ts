@@ -19,6 +19,10 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Map([["x-real-ip", "10.0.0.7"]])),
+}));
+
 import { GET } from "@/app/api/admin/padron-export/route";
 import type { AdminActor } from "@/lib/auth/require-admin";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -163,6 +167,7 @@ describe("GET /api/admin/padron-export — pedido autorizado", () => {
       userId: 7,
       action: "padron_export",
       detail: { filters: { status: "active", category: "adherent", hasQuery: false }, rows: 2 },
+      ip: "10.0.0.7",
     });
     // Nada de DNI, nombre ni ningún otro dato personal de las filas exportadas.
     const serialized = JSON.stringify(entry.detail);

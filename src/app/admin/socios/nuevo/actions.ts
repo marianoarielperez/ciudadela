@@ -18,10 +18,10 @@ import {
 const CATEGORIES = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"] as const;
 
 const schema = z.object({
-  fullName: z.string().min(3, "Ingresá apellido y nombre"),
+  fullName: z.string().min(3, "Ingresá apellido y nombre").max(160, "El nombre no puede superar los 160 caracteres"),
   category: z.enum(CATEGORIES, { error: "Elegí la categoría del socio." }),
   dni: z.string().regex(/^\d{7,9}$/, "DNI inválido (solo números, sin puntos)").optional(),
-  email: z.email("Email inválido").optional(),
+  email: z.email("Email inválido").max(191, "El email es demasiado largo").optional(),
 });
 
 type State = { error?: string };

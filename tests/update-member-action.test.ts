@@ -51,7 +51,7 @@ vi.mock("@/lib/email/templates", () => ({
   portalInvite: vi.fn(() => ({ message: { subject: "s", text: "t", html: "<p>t</p>" }, summary: "r" })),
 }));
 
-vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
+vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}), auditStrict: vi.fn(async () => {}) }));
 
 // Del módulo de escritura sólo se stubea el SINGLETON: las clases de error
 // tienen que ser las de verdad, si no `instanceof` en la action mediría el
@@ -67,7 +67,7 @@ import {
   accountEmailNotice,
 } from "@/lib/members/account-email-notice";
 import { prisma } from "@/lib/prisma";
-import { audit } from "@/lib/audit";
+import { audit, auditStrict } from "@/lib/audit";
 import {
   MEMBER_WRITE_ERRORS,
   MemberEmailConflictError,
@@ -116,6 +116,7 @@ beforeEach(() => {
   // `clearAllMocks` borra las llamadas pero NO las implementaciones: sin esto,
   // un `mockRejectedValue` de un test se derramaría a los siguientes.
   (audit as MockedFn).mockResolvedValue(undefined);
+  (auditStrict as MockedFn).mockResolvedValue(undefined);
   (prisma.member.findUnique as MockedFn).mockResolvedValue(stored());
   (memberWriter.updateMember as MockedFn).mockResolvedValue({
     member: stored(), revokedTokens: 0, accountEmailMove: null, accountEmailUpdated: false,
@@ -166,7 +167,7 @@ describe("updateMemberAction — rechazos de memberWriter", () => {
     const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
 
     expect(res).toEqual({ saved: true });
-    const entry = (audit as MockedFn).mock.calls[0][0];
+    const entry = (auditStrict as MockedFn).mock.calls[0][0];
     expect(entry.action).toBe("member_update");
     expect(entry.detail).toMatchObject({ revokedTokens: 2, accountEmailUpdated: true });
   });
@@ -182,6 +183,7 @@ describe("updateMemberAction — rechazos de memberWriter", () => {
 
     expect(res).toEqual({ error: "Ya existe otro socio con ese DNI." });
     expect(audit).not.toHaveBeenCalled();
+    expect(auditStrict).not.toHaveBeenCalled();
   });
 });
 
@@ -211,7 +213,7 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
 
     expect(res).toEqual({ saved: true });
     expect(accountEmailNotice.announce).not.toHaveBeenCalled();
-    expect((audit as MockedFn).mock.calls.map((c) => c[0].action)).toEqual(["member_update"]);
+    expect((auditStrict as MockedFn).mock.calls.map((c) => c[0].action)).toEqual(["member_update"]);
   });
 
   // Asiento propio del hecho, además del `member_update`: mover la identidad de
@@ -221,9 +223,9 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
 
     await updateMemberAction({}, form({ email: "nuevo@example.com" }));
 
-    const actions = (audit as MockedFn).mock.calls.map((c) => c[0].action);
+    const actions = (auditStrict as MockedFn).mock.calls.map((c) => c[0].action);
     expect(actions).toEqual(["member_update", "member_login_email_moved"]);
-    const entry = (audit as MockedFn).mock.calls[1][0];
+    const entry = (auditStrict as MockedFn).mock.calls[1][0];
     expect(entry).toMatchObject({ userId: 7, entity: "member", entityId: 1, ip: "10.0.0.7" });
     expect(entry.detail).toMatchObject({ notifiedPrevious: true, verificationSent: true });
     // Banderas y códigos, jamás direcciones (Ley 25.326).
@@ -247,7 +249,7 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
     expect(res.saved).toBe(true);
     expect(res.error).toBeUndefined();
     expect(res.warning).toBe(ACCOUNT_EMAIL_NOTICE_WARNINGS.previous);
-    const entry = (audit as MockedFn).mock.calls[1][0];
+    const entry = (auditStrict as MockedFn).mock.calls[1][0];
     expect(entry.detail.failures).toEqual([{ target: "previous", code: "ECONNREFUSED" }]);
     expect(JSON.stringify(entry.detail)).not.toContain("@");
   });
@@ -267,9 +269,9 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
     const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
 
     expect(res).toEqual({ saved: true, warning: ACCOUNT_EMAIL_NOTICE_WARNINGS.both });
-    const actions = (audit as MockedFn).mock.calls.map((c) => c[0].action);
+    const actions = (auditStrict as MockedFn).mock.calls.map((c) => c[0].action);
     expect(actions).toEqual(["member_update", "member_login_email_moved"]);
-    const entry = (audit as MockedFn).mock.calls[1][0];
+    const entry = (auditStrict as MockedFn).mock.calls[1][0];
     // `crashed` distingue "los correos no salieron" (observado) de "el aviso
     // entero se cayó" (suposición conservadora), que es lo que hace falta al
     // reconstruir.
@@ -285,9 +287,11 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
 
   // Misma familia: el asiento es posterior al commit, así que una falla suya
   // tampoco puede devolver una pantalla de error sobre un cambio ya guardado.
+  // `auditAfterCommit` llama a `auditStrict` (no a `audit`, que nunca rechaza)
+  // justamente para que este camino sea real y no una rama muerta.
   it("saves and warns when the audit entry itself cannot be written", async () => {
     movedTo("nuevo@example.com");
-    (audit as MockedFn).mockRejectedValue(Object.assign(new Error("db down"), { code: "P1001" }));
+    (auditStrict as MockedFn).mockRejectedValue(Object.assign(new Error("db down"), { code: "P1001" }));
 
     const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
 
@@ -296,11 +300,11 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
     expect(res.warning).toContain(ACCOUNT_EMAIL_NOTICE_WARNINGS.auditFailed);
     // Los dos asientos se intentaron igual: el segundo no se saltea porque el
     // primero haya fallado.
-    expect(audit).toHaveBeenCalledTimes(2);
+    expect(auditStrict).toHaveBeenCalledTimes(2);
   });
 
   it("saves and warns when the audit fails on an edit that moved nothing", async () => {
-    (audit as MockedFn).mockRejectedValue(Object.assign(new Error("db down"), { code: "P1001" }));
+    (auditStrict as MockedFn).mockRejectedValue(Object.assign(new Error("db down"), { code: "P1001" }));
 
     const res = await updateMemberAction({}, form({ fullName: "Perez Ana Maria" }));
 
@@ -316,6 +320,6 @@ describe("updateMemberAction — mudanza de la dirección de ingreso", () => {
     const res = await updateMemberAction({}, form({ email: "nuevo@example.com" }));
 
     expect(res).toEqual({ saved: true, warning: ACCOUNT_EMAIL_NOTICE_WARNINGS.throttled });
-    expect((audit as MockedFn).mock.calls[1][0].detail).toMatchObject({ throttled: true });
+    expect((auditStrict as MockedFn).mock.calls[1][0].detail).toMatchObject({ throttled: true });
   });
 });

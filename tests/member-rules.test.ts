@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canChangeCategory, canReadmit, canSuspend, canWithdraw, hasArrearsDebt } from "@/lib/members/rules";
+import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "@/lib/members/rules";
 
 describe("member rules", () => {
   it("cannot withdraw an already withdrawn member", () => {
@@ -37,10 +37,5 @@ describe("member rules", () => {
     expect(expelled.ok).toBe(false);
     if (!expelled.ok) expect(expelled.error).toContain("expulsión");
     expect(canReadmit({ status: "withdrawn", reentryBlocked: false, withdrawalReason: "arrears" }).ok).toBe(true);
-  });
-
-  it("arrears debt flag (REG-16 placeholder)", () => {
-    expect(hasArrearsDebt({ withdrawalReason: "arrears", debtAtWithdrawal: true })).toBe(true);
-    expect(hasArrearsDebt({ withdrawalReason: "death", debtAtWithdrawal: false })).toBe(false);
   });
 });

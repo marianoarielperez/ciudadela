@@ -12,7 +12,7 @@
 // `@/lib/members/card-edit`, testeados sin base en `tests/card-edit.test.ts`.
 // Acá quedan la sesión, la base, el correo y la auditoría.
 import { headers } from "next/headers";
-import { audit } from "@/lib/audit";
+import { audit, auditStrict } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -52,10 +52,15 @@ function codeOf(e: unknown): string {
  *  todos los textos de esta pantalla están escritos para evitar. Perder el
  *  asiento es grave, pero perderlo Y provocar la segunda mudanza es peor, así
  *  que se degrada a un aviso explícito para el operador (`auditFailed`) y a un
- *  `console.error`. */
+ *  `console.error`.
+ *
+ *  Usa `auditStrict`, no `audit`: `audit()` traga sus propios errores y nunca
+ *  rechaza, así que envolverla acá en un try/catch sería una rama muerta que
+ *  ningún test real podría ejercitar. `auditStrict` es la única forma de que
+ *  este `catch` —y el aviso que dispara— puedan pasar de verdad. */
 async function auditAfterCommit(entry: Parameters<typeof audit>[0]): Promise<boolean> {
   try {
-    await audit(entry);
+    await auditStrict(entry);
     return true;
   } catch (e) {
     console.error("[carga] no se pudo asentar", entry.action, "del socio", entry.entityId, "code:", codeOf(e));

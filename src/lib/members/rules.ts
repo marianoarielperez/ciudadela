@@ -43,7 +43,3 @@ export function canReadmit(m: {
   }
   return { ok: true };
 }
-
-export function hasArrearsDebt(m: { withdrawalReason: WithdrawalReason | null; debtAtWithdrawal: boolean }): boolean {
-  return m.withdrawalReason === "arrears" && m.debtAtWithdrawal;
-}

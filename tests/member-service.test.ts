@@ -273,6 +273,18 @@ describe("statutory actions other than withdrawal keep the live tokens", () => {
     await svc.suspend({ memberId: 1, from, to, minuteId: 10, actorId: 2 });
     await svc.endSuspension({ memberId: 1, minuteId: 10, actorId: 2 });
     expect(state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
+
+    // Readmisión aparte: requiere un socio dado de baja (canReadmit), así que no
+    // puede encadenarse sobre el mismo socio que arriba terminó "active" otra
+    // vez. Es la fila de la tabla que más lo necesitaba: a diferencia de la
+    // baja, acá no hay ningún `Movement` de tipo "readmission" que revoque nada.
+    const readmission = makeFakeDb({
+      email: "vecino@example.com", status: "withdrawn", withdrawalReason: "resignation",
+    });
+    await makeMemberService(readmission.db as never).readmit({
+      memberId: 1, category: "adherent", minuteId: 10, actorId: 2,
+    });
+    expect(readmission.state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("admission of a brand new member revokes nothing", async () => {

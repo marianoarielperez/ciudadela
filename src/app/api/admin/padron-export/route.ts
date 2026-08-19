@@ -3,6 +3,7 @@
 // es exactamente lo que se lleva en el archivo.
 import ExcelJS from "exceljs";
 import type { NextRequest } from "next/server";
+import { headers } from "next/headers";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
@@ -32,10 +33,18 @@ export async function GET(req: NextRequest) {
   // Metadatos únicamente: quién exportó, con qué filtros (sin el texto libre
   // de `q`, que puede traer un apellido o un DNI) y cuántas filas — nunca los
   // datos personales de esas filas. Ver sanitizeFiltersForAudit.
+  //
+  // Sólo X-Real-IP, igual que el resto del panel (ver el comentario largo en
+  // `(public)/ingresar/actions.ts`): Nginx la resuelve con el módulo realip y
+  // la sobrescribe, así que no se puede rotar por request. Esta ruta entrega el
+  // padrón completo —DNIs y domicilios de los 283 socios— y es el asiento donde
+  // más importa poder decir desde dónde se pidió.
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actor.actorId,
     action: "padron_export",
     detail: { filters: sanitizeFiltersForAudit(filters), rows: rows.length },
+    ip,
   });
 
   return new Response(buffer, {

@@ -93,8 +93,7 @@ describe("card-edit — lista blanca de campos", () => {
 describe("card-edit — transiciones de emailStatus", () => {
   it("preserva verified cuando el email no cambió", () => {
     const m = member();
-    const { patch, emailChanged } = buildPatch(m, input(), BIRTH);
-    expect(emailChanged).toBe(false);
+    const { patch } = buildPatch(m, input(), BIRTH);
     expect(patch.emailStatus).toBe("verified");
     expect(patch.emailVerifiedAt).toEqual(m.emailVerifiedAt);
   });
@@ -104,24 +103,21 @@ describe("card-edit — transiciones de emailStatus", () => {
   // verificación por una diferencia de caja.
   it("no considera cambio la sola normalización de mayúsculas", () => {
     const m = member({ email: "JUAN@EXAMPLE.COM" });
-    const { patch, emailChanged } = buildPatch(m, input({ email: "Juan@Example.com" }), BIRTH);
-    expect(emailChanged).toBe(false);
+    const { patch } = buildPatch(m, input({ email: "Juan@Example.com" }), BIRTH);
     expect(patch.email).toBe("juan@example.com");
     expect(patch.emailStatus).toBe("verified");
     expect(patch.emailVerifiedAt).toEqual(m.emailVerifiedAt);
   });
 
   it("baja a declared y limpia la fecha cuando cambia el email de un socio verificado", () => {
-    const { patch, emailChanged } = buildPatch(member(), input({ email: "otro@example.com" }), BIRTH);
-    expect(emailChanged).toBe(true);
+    const { patch } = buildPatch(member(), input({ email: "otro@example.com" }), BIRTH);
     expect(patch.email).toBe("otro@example.com");
     expect(patch.emailStatus).toBe("declared");
     expect(patch.emailVerifiedAt).toBeNull();
   });
 
   it("pasa a none y limpia la fecha cuando se borra el email de un socio verificado", () => {
-    const { patch, emailChanged } = buildPatch(member(), input({ email: undefined }), BIRTH);
-    expect(emailChanged).toBe(true);
+    const { patch } = buildPatch(member(), input({ email: undefined }), BIRTH);
     expect(patch.email).toBeNull();
     expect(patch.emailStatus).toBe("none");
     expect(patch.emailVerifiedAt).toBeNull();
@@ -129,8 +125,7 @@ describe("card-edit — transiciones de emailStatus", () => {
 
   it("un email nuevo sobre una ficha sin email queda declared", () => {
     const m = member({ email: null, emailStatus: "none", emailVerifiedAt: null });
-    const { patch, emailChanged } = buildPatch(m, input({ email: "NUEVO@example.com" }), BIRTH);
-    expect(emailChanged).toBe(true);
+    const { patch } = buildPatch(m, input({ email: "NUEVO@example.com" }), BIRTH);
     expect(patch.email).toBe("nuevo@example.com");
     expect(patch.emailStatus).toBe("declared");
   });
@@ -144,8 +139,7 @@ describe("card-edit — transiciones de emailStatus", () => {
 
   it("guardar sin email una ficha que ya no tenía email no es un cambio", () => {
     const m = member({ email: null, emailStatus: "none", emailVerifiedAt: null });
-    const { patch, emailChanged } = buildPatch(m, input({ email: undefined }), BIRTH);
-    expect(emailChanged).toBe(false);
+    const { patch } = buildPatch(m, input({ email: undefined }), BIRTH);
     expect(patch.emailStatus).toBe("none");
   });
 });

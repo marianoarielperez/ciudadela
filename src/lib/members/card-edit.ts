@@ -17,7 +17,7 @@ import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 
 export const cardSchema = z.object({
   memberId: z.coerce.number().int().positive("Socio inválido."),
-  fullName: z.string().min(3, "Ingresá apellido y nombre"),
+  fullName: z.string().min(3, "Ingresá apellido y nombre").max(160, "El nombre no puede superar los 160 caracteres"),
   dni: z.string().regex(/^\d{7,9}$/, "DNI inválido (7 a 9 dígitos, sin puntos)").optional(),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha de nacimiento inválida").optional(),
   civilStatus: z.string().max(40, "El estado civil no puede superar los 40 caracteres").optional(),
@@ -77,11 +77,16 @@ export function buildPatch(
   member: MemberSnapshot,
   d: CardInput,
   birthDate: Date | null,
-): { patch: Patch; emailChanged: boolean } {
+): { patch: Patch } {
   // Comparamos en minúsculas contra lo guardado: varios emails del padrón
   // importado vienen con mayúsculas, y sin esto abrir y guardar una ficha sin
   // tocar el email le bajaría la verificación a "declared" por un cambio que no
   // existió.
+  //
+  // `emailChanged` es local a esta función: sólo decide `emailStatus` y
+  // `emailVerifiedAt` acá adentro. Antes se devolvía también en el resultado,
+  // pero ningún llamador de producción lo leía (la action sólo destructura
+  // `patch`) — sólo lo sostenían los tests, así que se sacó del contrato.
   const email = d.email?.toLowerCase() ?? null;
   const emailChanged = email !== (member.email?.toLowerCase() ?? null);
   const streetId = d.streetId ?? null;
@@ -105,7 +110,7 @@ export function buildPatch(
     emailStatus: emailChanged ? (email ? "declared" : "none") : member.emailStatus,
     emailVerifiedAt: emailChanged ? null : member.emailVerifiedAt,
   };
-  return { patch, emailChanged };
+  return { patch };
 }
 
 export function changedFields(member: MemberSnapshot, patch: Patch): string[] {
