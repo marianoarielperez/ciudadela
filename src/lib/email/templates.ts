@@ -66,13 +66,13 @@ Para confirmar que esta casilla es tuya, abrí este enlace:
 
 ${opts.url}
 
-El enlace vence en 7 días. Una vez confirmada, vas a poder crear tu contraseña para entrar al portal de socios.
+El enlace vence en 7 días. Si todavía no tenés una contraseña para el portal de socios, vas a poder crearla apenas confirmes.
 
 Si no esperabas este correo, ignoralo y avisale a la vecinal: puede ser un error de carga.${SIGNATURE}`,
     html: layout("Verificá tu email", `<p>La ${esc(ORG)} registró esta dirección de correo como domicilio electrónico en el padrón de socios.</p>
 <p>Para confirmar que esta casilla es tuya, hacé clic:</p>
 ${button(opts.url, "Confirmar mi email")}
-<p>El enlace vence en 7 días. Una vez confirmada, vas a poder crear tu contraseña para entrar al portal de socios.</p>
+<p>El enlace vence en 7 días. Si todavía no tenés una contraseña para el portal de socios, vas a poder crearla apenas confirmes.</p>
 <p>Si no esperabas este correo, ignoralo y avisale a la vecinal: puede ser un error de carga.</p>`),
   };
 }
