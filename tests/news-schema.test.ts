@@ -60,6 +60,18 @@ describe("newsFormSchema", () => {
     }
   });
 
+  // La guarda del schema mide el cuerpo CRUDO y por diseño NO alcanza: sanitizar
+  // agranda el texto (`&` → `&amp;`, rel="noopener noreferrer" en cada <a>). Este
+  // caso pasa acá a propósito y lo corta la action, que mide el ya sanitizado
+  // (ver news-actions.test.ts). Si algún día el schema empezara a rechazarlo,
+  // este test avisa que la división de responsabilidades cambió.
+  it("deja pasar un cuerpo que solo desborda después de sanitizar (lo corta la action)", () => {
+    const body = `<p>${"& ".repeat(12_000)}</p>`;
+    expect(newsBodyByteLength(body)).toBeLessThan(NEWS_BODY_MAX_BYTES);
+
+    expect(newsFormSchema.safeParse({ title: "Hola", body }).success).toBe(true);
+  });
+
   it("el presupuesto de bytes queda por debajo del límite de la columna TEXT", () => {
     expect(NEWS_BODY_MAX_BYTES).toBeLessThan(65535);
   });

@@ -18,7 +18,12 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
-import { newsFormSchema } from "@/lib/news/schema";
+import {
+  NEWS_BODY_MAX_BYTES,
+  NEWS_BODY_TOO_LONG,
+  newsBodyByteLength,
+  newsFormSchema,
+} from "@/lib/news/schema";
 import { slugify } from "@/lib/news/slug";
 import { newsBodyIsEmpty, sanitizeNewsBody } from "@/lib/news/sanitize";
 import { deleteNewsCover, saveNewsCover } from "@/lib/news/images";
@@ -32,7 +37,13 @@ async function clientIp(): Promise<string> {
   return (await headers()).get("x-real-ip") ?? "unknown";
 }
 
-const idSchema = z.object({ id: z.coerce.number().int().positive("Noticia inválida.") });
+// Los tres mensajes van en castellano a propósito: una server action es un
+// endpoint público, así que un `id` ausente, "abc" o "1.5" son tráfico
+// esperable y el texto que devuelve zod por defecto ("Invalid input: expected
+// number, received NaN") terminaría en pantalla tal cual.
+const idSchema = z.object({
+  id: z.coerce.number("Noticia inválida.").int("Noticia inválida.").positive("Noticia inválida."),
+});
 
 // El File NO pasa por parseForm (descarta no-strings a propósito): se lee
 // directo del FormData. Devuelve undefined si el input vino vacío.
@@ -50,6 +61,20 @@ function slugFor(title: string, given: string | undefined): string {
 const DUPLICATE_SLUG = "Ya existe una noticia con esa URL. Cambiá el campo URL.";
 const NOT_FOUND = "La noticia no existe.";
 const EMPTY_BODY = "Escribí el contenido de la noticia.";
+
+// Borrado de portada que NO puede tumbar el flujo. Se usa en los caminos donde
+// la escritura en la base ya salió bien y ya se auditó: ahí un EACCES/EPERM del
+// filesystem solo deja un archivo huérfano (basura benigna en disco), mientras
+// que dejar propagar el error le daría al operador un crash por una operación
+// que en realidad funcionó, y de paso saltearía `updateTag`/`redirect`, que es
+// lo que deja el panel mostrando datos viejos.
+async function deleteCoverBestEffort(fileName: string): Promise<void> {
+  try {
+    await deleteNewsCover(fileName);
+  } catch (err) {
+    console.error("[noticias] no se pudo borrar la portada", fileName, err);
+  }
+}
 
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === "P2002";
@@ -71,6 +96,12 @@ export async function createNewsAction(
   // Un cuerpo que era puro markup prohibido queda vacío después de limpiarlo:
   // eso no es una noticia, es un intento fallido.
   if (newsBodyIsEmpty(body)) return { error: EMPTY_BODY };
+  // Segunda medición, sobre el texto que REALMENTE va a la columna TEXT: el
+  // schema midió el cuerpo crudo, pero sanitizar puede agrandarlo (cada `&` se
+  // escapa a `&amp;`, 1 byte → 5, y cada <a> recibe rel="noopener noreferrer").
+  // Sin esto, `<p>` + "& " ×12.000 pasa las dos guardas del schema con 24.007
+  // bytes crudos y llega al driver con 72.007, por encima de los 65.535 de TEXT.
+  if (newsBodyByteLength(body) > NEWS_BODY_MAX_BYTES) return { error: NEWS_BODY_TOO_LONG };
   const slug = slugFor(parsed.data.title, parsed.data.slug);
 
   let coverImagePath: string | null = null;
@@ -88,20 +119,24 @@ export async function createNewsAction(
       data: { title: parsed.data.title, slug, body, coverImagePath, authorId: actor.actorId },
     });
     newsId = news.id;
-    await audit({
-      userId: actor.actorId,
-      action: "news_create",
-      entity: "news",
-      entityId: news.id,
-      detail: { title: parsed.data.title, slug },
-      ip,
-    });
   } catch (e) {
     // La portada ya está en disco: si el INSERT falló, no dejar el huérfano.
     if (coverImagePath) await deleteNewsCover(coverImagePath);
     if (isUniqueViolation(e)) return { error: DUPLICATE_SLUG };
     throw e;
   }
+  // El asiento va FUERA del try: adentro, un error suyo caería en el catch de
+  // arriba y borraría la portada de una fila que quedó creada — justo la
+  // corrupción que ese catch previene. Hoy `audit()` se traga sus errores, pero
+  // esa dependencia es invisible y se rompería con un `auditStrict`.
+  await audit({
+    userId: actor.actorId,
+    action: "news_create",
+    entity: "news",
+    entityId: newsId,
+    detail: { title: parsed.data.title, slug },
+    ip,
+  });
   updateTag(CACHE_TAGS.news);
   // Fuera del try: redirect() señaliza con una excepción y el catch se la comería.
   redirect(`/admin/noticias/${newsId}`);
@@ -119,6 +154,8 @@ export async function updateNewsAction(
   if (!parsed.ok) return { error: parsed.error };
   const body = sanitizeNewsBody(parsed.data.body);
   if (newsBodyIsEmpty(body)) return { error: EMPTY_BODY };
+  // Igual que en el alta: la medición que vale es la del cuerpo ya sanitizado.
+  if (newsBodyByteLength(body) > NEWS_BODY_MAX_BYTES) return { error: NEWS_BODY_TOO_LONG };
 
   const existing = await prisma.news.findUnique({ where: { id: parsedId.data.id } });
   if (!existing) return { error: NOT_FOUND };
@@ -143,23 +180,27 @@ export async function updateNewsAction(
       where: { id: existing.id },
       data: { title: parsed.data.title, slug, body, coverImagePath },
     });
-    await audit({
-      userId: actor.actorId,
-      action: "news_update",
-      entity: "news",
-      entityId: existing.id,
-      detail: { title: parsed.data.title, slug },
-      ip: await clientIp(),
-    });
   } catch (e) {
     if (newCover) await deleteNewsCover(newCover);
     if (isUniqueViolation(e)) return { error: DUPLICATE_SLUG };
     throw e;
   }
-  // Recién acá, con la fila ya actualizada, se borra la portada anterior: si se
-  // borrara antes y el UPDATE fallara, la fila apuntaría a un archivo que no está.
+  // Fuera del try, por lo mismo que en el alta: un error del asiento no puede
+  // caer en el catch que borra la portada nueva.
+  await audit({
+    userId: actor.actorId,
+    action: "news_update",
+    entity: "news",
+    entityId: existing.id,
+    detail: { title: parsed.data.title, slug },
+    ip: await clientIp(),
+  });
+  // Recién acá, con la fila ya actualizada y ya auditada, se borra la portada
+  // anterior: si se borrara antes y el UPDATE fallara, la fila apuntaría a un
+  // archivo que no está; y si se borrara antes del asiento, un fallo de fs
+  // dejaría el UPDATE sin rastro en auditoría.
   if (existing.coverImagePath && existing.coverImagePath !== coverImagePath) {
-    await deleteNewsCover(existing.coverImagePath);
+    await deleteCoverBestEffort(existing.coverImagePath);
   }
   updateTag(CACHE_TAGS.news);
   redirect(`/admin/noticias/${existing.id}`);
@@ -229,9 +270,10 @@ export async function deleteNewsAction(
   const existing = await prisma.news.findUnique({ where: { id: parsed.data.id } });
   if (!existing) return { error: NOT_FOUND };
   await prisma.news.delete({ where: { id: existing.id } });
-  // Recién con la fila borrada se saca el archivo: al revés dejaría una noticia
-  // viva apuntando a una portada que ya no está.
-  if (existing.coverImagePath) await deleteNewsCover(existing.coverImagePath);
+  // El asiento va ANTES de tocar el disco: `deleteNewsCover` propaga cualquier
+  // error que no sea ENOENT, y con un EACCES/EPERM la fila ya estaría borrada y
+  // el borrado quedaría sin rastro en auditoría — una acción sensible sin
+  // asiento, que es una regla dura del proyecto.
   await audit({
     userId: actor.actorId,
     action: "news_delete",
@@ -240,6 +282,9 @@ export async function deleteNewsAction(
     detail: { title: existing.title, slug: existing.slug, status: existing.status },
     ip: await clientIp(),
   });
+  // Recién con la fila borrada se saca el archivo: al revés dejaría una noticia
+  // viva apuntando a una portada que ya no está.
+  if (existing.coverImagePath) await deleteCoverBestEffort(existing.coverImagePath);
   updateTag(CACHE_TAGS.news);
   redirect("/admin/noticias");
 }

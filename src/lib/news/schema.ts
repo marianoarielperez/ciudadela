@@ -20,6 +20,12 @@ export const NEWS_BODY_MAX_CHARS = 50_000;
 // nadie tenga que recalcular esto si algún día se agrega un prefijo o sufijo.
 export const NEWS_BODY_MAX_BYTES = 60_000;
 
+// Sin número: el operador no puede contar bytes, y decirle "50.000 caracteres"
+// cuando lleva 35.000 acentuados sería mentirle. Se exporta porque la guarda
+// corre DOS veces con el mismo texto: acá sobre el cuerpo crudo (corte
+// temprano) y en las actions sobre el cuerpo ya sanitizado (el que se guarda).
+export const NEWS_BODY_TOO_LONG = "El contenido es demasiado largo para guardarlo: recortalo.";
+
 export function newsBodyByteLength(body: string): number {
   return new TextEncoder().encode(body).length;
 }
@@ -41,12 +47,12 @@ export const newsFormSchema = z.object({
     .string()
     .min(1, "Escribí el contenido de la noticia.")
     .max(NEWS_BODY_MAX_CHARS, "El contenido es demasiado largo: recortalo a 50.000 caracteres.")
-    .refine(
-      (body) => newsBodyByteLength(body) <= NEWS_BODY_MAX_BYTES,
-      // Sin número: el operador no puede contar bytes, y decirle "50.000
-      // caracteres" cuando lleva 35.000 acentuados sería mentirle.
-      "El contenido es demasiado largo para guardarlo: recortalo.",
-    ),
+    // OJO: esta medición es sobre el cuerpo CRUDO y sirve para cortar temprano,
+    // pero NO alcanza: `sanitizeNewsBody` puede AGRANDAR el texto (escapa `&` a
+    // `&amp;` e inyecta rel="noopener noreferrer" en cada <a>), y lo que se
+    // persiste es el sanitizado. La medición que decide es la de las actions,
+    // después de sanitizar.
+    .refine((body) => newsBodyByteLength(body) <= NEWS_BODY_MAX_BYTES, NEWS_BODY_TOO_LONG),
   // checkbox "eliminar portada actual" del formulario de edición
   removeCover: z.literal("on").optional(),
 });

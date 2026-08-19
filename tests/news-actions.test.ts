@@ -47,6 +47,8 @@ import {
 } from "@/app/admin/noticias/actions";
 import { audit } from "@/lib/audit";
 import { deleteNewsCover, saveNewsCover } from "@/lib/news/images";
+import { sanitizeNewsBody } from "@/lib/news/sanitize";
+import { newsBodyByteLength, newsFormSchema } from "@/lib/news/schema";
 
 type MockedFn = ReturnType<typeof vi.fn>;
 
@@ -78,6 +80,9 @@ beforeEach(() => {
   prismaMock.news.delete.mockResolvedValue({});
   prismaMock.news.findUnique.mockResolvedValue(stored());
   (saveNewsCover as MockedFn).mockResolvedValue({ ok: true, fileName: "nueva.jpg" });
+  // clearAllMocks limpia las llamadas pero NO las implementaciones: sin esto un
+  // mockRejectedValue de un test se filtra a los siguientes.
+  (deleteNewsCover as MockedFn).mockResolvedValue(undefined);
 });
 
 describe("persistencia sanitizada (frontera de seguridad)", () => {
@@ -203,6 +208,22 @@ describe("createNewsAction", () => {
     expect(res.error).toBe("El contenido es demasiado largo para guardarlo: recortalo.");
     expect(prismaMock.news.create).not.toHaveBeenCalled();
   });
+
+  // El schema mide el cuerpo CRUDO, pero lo que se guarda es el SANITIZADO, que
+  // puede ser más grande: cada `&` se escapa a `&amp;` (1 byte → 5). Este cuerpo
+  // pasa las dos guardas del schema con 24.007 bytes y llegaría al driver con
+  // 72.007, por encima de los 65.535 de la columna TEXT.
+  it("rechaza un cuerpo que recién desborda DESPUÉS de sanitizar", async () => {
+    const body = `<p>${"& ".repeat(12_000)}</p>`;
+    expect(newsBodyByteLength(body)).toBe(24_007);
+    expect(newsBodyByteLength(sanitizeNewsBody(body))).toBe(72_007);
+    expect(newsFormSchema.safeParse({ title: "x", body }).success).toBe(true);
+
+    const res = await createNewsAction({}, form({ title: "x", body }));
+
+    expect(res.error).toBe("El contenido es demasiado largo para guardarlo: recortalo.");
+    expect(prismaMock.news.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("updateNewsAction", () => {
@@ -279,6 +300,40 @@ describe("updateNewsAction", () => {
     expect(updateTag).toHaveBeenCalledWith("news");
     expect(redirect).toHaveBeenCalledWith("/admin/noticias/5");
   });
+
+  it("audita el UPDATE ANTES de borrar la portada anterior", async () => {
+    prismaMock.news.findUnique.mockResolvedValue(stored({ coverImagePath: "vieja.jpg" }));
+
+    await updateNewsAction({}, form({ id: "5", title: "x", body: "<p>x</p>", removeCover: "on" }));
+
+    const auditedAt = (audit as MockedFn).mock.invocationCallOrder[0];
+    const deletedAt = (deleteNewsCover as MockedFn).mock.invocationCallOrder[0];
+    expect(auditedAt).toBeLessThan(deletedAt);
+  });
+
+  // El archivo huérfano es basura benigna en disco; perder la navegación (y
+  // dejar el panel con datos viejos) no lo es.
+  it("un fallo al borrar la portada anterior no rompe el caché ni la navegación", async () => {
+    prismaMock.news.findUnique.mockResolvedValue(stored({ coverImagePath: "vieja.jpg" }));
+    (deleteNewsCover as MockedFn).mockRejectedValue(
+      Object.assign(new Error("EACCES"), { code: "EACCES" }),
+    );
+
+    const fd = form({ id: "5", title: "x", body: "<p>x</p>", removeCover: "on" });
+    await expect(updateNewsAction({}, fd)).resolves.toBeUndefined();
+
+    expect(updateTag).toHaveBeenCalledWith("news");
+    expect(redirect).toHaveBeenCalledWith("/admin/noticias/5");
+  });
+
+  it("rechaza un cuerpo que recién desborda DESPUÉS de sanitizar", async () => {
+    const body = `<p>${"& ".repeat(12_000)}</p>`;
+
+    const res = await updateNewsAction({}, form({ id: "5", title: "x", body }));
+
+    expect(res.error).toBe("El contenido es demasiado largo para guardarlo: recortalo.");
+    expect(prismaMock.news.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("publishNewsAction", () => {
@@ -340,6 +395,22 @@ describe("unpublishNewsAction", () => {
   });
 });
 
+// Una server action es un endpoint público: el id mal formado es tráfico
+// esperable, no un caso de laboratorio. Sin mensajes propios zod devuelve
+// "Invalid input: expected number, received NaN" y eso se muestra tal cual.
+describe("id inválido", () => {
+  it.each([
+    ["ausente", {} as Record<string, string>],
+    ["no numérico", { id: "abc" }],
+    ["decimal", { id: "1.5" }],
+  ])("%s: responde en castellano sin tocar la base", async (_caso, entries) => {
+    const res = await publishNewsAction({}, form(entries));
+
+    expect(res).toEqual({ error: "Noticia inválida." });
+    expect(prismaMock.news.findUnique).not.toHaveBeenCalled();
+  });
+});
+
 describe("deleteNewsAction", () => {
   it("borra la fila, después el archivo, audita el estado que tenía y vuelve al listado", async () => {
     prismaMock.news.findUnique.mockResolvedValue(
@@ -369,5 +440,30 @@ describe("deleteNewsAction", () => {
 
     expect(res).toEqual({ error: "La noticia no existe." });
     expect(prismaMock.news.delete).not.toHaveBeenCalled();
+  });
+
+  // El asiento va primero: `deleteNewsCover` propaga todo lo que no sea ENOENT,
+  // y con la fila ya borrada un EACCES dejaría la acción sin rastro.
+  it("audita ANTES de tocar el disco", async () => {
+    prismaMock.news.findUnique.mockResolvedValue(stored({ coverImagePath: "vieja.jpg" }));
+
+    await deleteNewsAction({}, form({ id: "5" }));
+
+    const auditedAt = (audit as MockedFn).mock.invocationCallOrder[0];
+    const deletedAt = (deleteNewsCover as MockedFn).mock.invocationCallOrder[0];
+    expect(auditedAt).toBeLessThan(deletedAt);
+  });
+
+  it("un fallo de filesystem no tumba el borrado ya auditado", async () => {
+    prismaMock.news.findUnique.mockResolvedValue(stored({ coverImagePath: "vieja.jpg" }));
+    (deleteNewsCover as MockedFn).mockRejectedValue(
+      Object.assign(new Error("EACCES"), { code: "EACCES" }),
+    );
+
+    await expect(deleteNewsAction({}, form({ id: "5" }))).resolves.toBeUndefined();
+
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "news_delete" }));
+    expect(updateTag).toHaveBeenCalledWith("news");
+    expect(redirect).toHaveBeenCalledWith("/admin/noticias");
   });
 });
