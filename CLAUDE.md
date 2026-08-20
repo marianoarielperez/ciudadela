@@ -86,8 +86,13 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **Claude Code NO se conecta por SSH al VPS.** Los comandos de servidor se preparan
   en bloques copiables y Mariano los ejecuta a mano (SSH puerto 2222, root).
 - El despliegue es git-based: push a GitHub (repo privado) → pull en el VPS → build → PM2 restart.
-- Staging: `sigev.redaccion.ar` con credenciales **de prueba** de MP.
-  Producción: `vecinalciudadela.ar` con credenciales productivas.
+- **Un solo entorno desplegado: `vecinalciudadela.ar`** (decisión del 20/08/2026).
+  El staging `sigev.redaccion.ar` se dio de baja; lo que dicen `docs/03`, `docs/07`,
+  `docs/09` y `docs/10` sobre staging es historia, no el estado actual.
+  Hasta el lanzamiento, ese dominio corre con credenciales **de prueba** de MP y con
+  `EMAIL_ALLOWLIST` definida (el sitio está publicado pero nadie lo conoce todavía).
+  El cambio a credenciales productivas y el borrado de `EMAIL_ALLOWLIST` son dos
+  pasos del checklist de lanzamiento de `docs/07`, no algo que ocurra solo.
 
 ## Datos incluidos
 

@@ -1,9 +1,11 @@
 # 07 — Plan de etapas (Módulos 0 a 6)
 
 Regla: no se arranca un módulo sin cerrar los criterios de aceptación (CA) del anterior.
-El lanzamiento público espera a la oficialización de la IGJ; hasta entonces todo
-corre en staging (`sigev.redaccion.ar`) con MP en modo prueba. Los módulos 1-5 son
-usables internamente desde antes del lanzamiento.
+El lanzamiento público espera a la oficialización de la IGJ. **Desde el 20/08/2026 hay
+un solo entorno desplegado, `vecinalciudadela.ar`** (el staging `sigev.redaccion.ar` se
+dio de baja): el sitio ya está publicado pero sin difundir, con ASOCIATE apagado, MP en
+modo prueba y `EMAIL_ALLOWLIST` puesta. Los módulos 1-5 son usables internamente desde
+antes del lanzamiento.
 
 ## Módulo 0 — Base
 Scaffold Next.js 15 + TS + Prisma + MariaDB (`sigev` DB y usuario dedicado),
@@ -117,8 +119,10 @@ baja con `recurso_hasta` correcto; el Libro 1 queda cerrado y consultable; resta
 backup revierte el simulacro.
 
 ## Lanzamiento (cuando IGJ oficialice)
-Checklist: registrar/apuntar `vecinalciudadela.ar` → cert origin + Nginx →
-credenciales MP productivas → webhooks productivos → SPF/DKIM/DMARC del dominio
+Checklist: **cambiar `MP_ACCESS_TOKEN` a las credenciales productivas** (hasta el
+lanzamiento el dominio corre con las de prueba) → **borrar `EMAIL_ALLOWLIST` del `.env`
+del VPS** (mientras esté definida, los avisos a los socios NO salen) →
+webhooks productivos apuntando a `vecinalciudadela.ar` → SPF/DKIM/DMARC del dominio
 (ya autenticado en Brevo) → carga de fichas completa (160 vigentes: 55 activos +
 105 adherentes) → suscripciones preexistentes vinculadas → acta marco de admisión
 digital dictada (REG-12) → textos legales aprobados por CD → activar

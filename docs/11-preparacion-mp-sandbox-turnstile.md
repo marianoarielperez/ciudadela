@@ -1,9 +1,17 @@
 # 11 — Preparación de Mercado Pago (sandbox) y Cloudflare Turnstile
 
 Instructivo operativo para Mariano. Al terminar vas a tener los **7 valores**
-de la tabla final para pegar en el `.env` local y el de staging. Nada de esto
+de la tabla final para pegar en el `.env` local y en el del VPS. Nada de esto
 toca la cuenta real ni mueve plata: todo es en modo prueba.
 
+> **Entorno**: desde el 20/08/2026 hay un solo sitio desplegado,
+> `vecinalciudadela.ar` (el staging `sigev.redaccion.ar` se dio de baja). Hasta
+> el lanzamiento ese dominio corre con estas credenciales **de prueba** y con
+> `EMAIL_ALLOWLIST` puesta: el sitio ya está publicado pero todavía no se
+> difundió, y el botón ASOCIATE está apagado. Dos pasos quedan pendientes para
+> el día del lanzamiento y están en el checklist de `docs/07`: **cambiar a las
+> credenciales productivas de MP** y **borrar `EMAIL_ALLOWLIST`**.
+>
 > Tiempo estimado: 30–40 minutos. Necesitás: un navegador (y una ventana de
 > incógnito), y acceso a una cuenta de Mercado Pago cualquiera para entrar al
 > panel de developers (puede ser tu cuenta personal; la institucional recién
@@ -34,7 +42,7 @@ Las suscripciones se prueban con **cuentas de test**: una hace de VENDEDOR
    (`TESTUSER...` de la Parte A).
 2. En esa misma ventana andá a
    https://www.mercadopago.com.ar/developers/panel/app y **creá una
-   aplicación**: nombre `SIGeV staging`, solución **Suscripciones** (pagos
+   aplicación**: nombre `SIGeV pruebas`, solución **Suscripciones** (pagos
    recurrentes), sin plataforma de e-commerce.
 3. Entrá a la aplicación → **Credenciales de producción** (así se llaman
    aunque la cuenta sea de prueba: como el dueño es un usuario de test, TODO
@@ -55,11 +63,11 @@ Desde una terminal (PowerShell o Git Bash), reemplazando `TU_ACCESS_TOKEN`
 por el de la Parte B:
 
 ```bash
-curl -X POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer TU_ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"reason\":\"SOCIO ACTIVO\",\"auto_recurring\":{\"frequency\":1,\"frequency_type\":\"months\",\"transaction_amount\":6000,\"currency_id\":\"ARS\"},\"back_url\":\"https://sigev.redaccion.ar/asociate\"}"
+curl -X POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer TU_ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"reason\":\"SOCIO ACTIVO\",\"auto_recurring\":{\"frequency\":1,\"frequency_type\":\"months\",\"transaction_amount\":6000,\"currency_id\":\"ARS\"},\"back_url\":\"https://vecinalciudadela.ar/asociate\"}"
 ```
 
 ```bash
-curl -X POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer TU_ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"reason\":\"SOCIO ADHERENTE/COLABORADOR\",\"auto_recurring\":{\"frequency\":1,\"frequency_type\":\"months\",\"transaction_amount\":3000,\"currency_id\":\"ARS\"},\"back_url\":\"https://sigev.redaccion.ar/asociate\"}"
+curl -X POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer TU_ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"reason\":\"SOCIO ADHERENTE/COLABORADOR\",\"auto_recurring\":{\"frequency\":1,\"frequency_type\":\"months\",\"transaction_amount\":3000,\"currency_id\":\"ARS\"},\"back_url\":\"https://vecinalciudadela.ar/asociate\"}"
 ```
 
 Cada respuesta es un JSON largo; lo único que necesitamos es el campo **`"id"`**
@@ -76,15 +84,15 @@ Si un curl falla con 401, el token está mal copiado; con 400, revisá que las
 comillas escapadas (`\"`) hayan llegado enteras (en PowerShell conviene
 pegarlo tal cual, en una sola línea).
 
-## Parte D — Webhooks (cuando el M3 esté en staging)
+## Parte D — Webhooks (cuando el M3 esté desplegado)
 
 Esto se puede hacer al final, cuando el código esté desplegado en
-`sigev.redaccion.ar` — sin endpoint vivo no hay nada que configurar. Queda
+`vecinalciudadela.ar` — sin endpoint vivo no hay nada que configurar. Queda
 anotado para ese momento:
 
 1. En la aplicación de la Parte B → **Webhooks** → **Modo productivo**
    (recordá: cuenta de prueba ⇒ es sandbox igual):
-   - URL: `https://sigev.redaccion.ar/api/webhooks/mp`
+   - URL: `https://vecinalciudadela.ar/api/webhooks/mp`
    - Eventos: **Pagos** (`payments`), **Planes y suscripciones**
      (`subscription_preapproval` y `subscription_authorized_payment`).
 2. Al guardar, el panel muestra una **clave secreta** → es tu
@@ -95,7 +103,7 @@ anotado para ese momento:
 ## Parte E — Cloudflare Turnstile
 
 1. Entrá a https://dash.cloudflare.com → menú **Turnstile** → **Add widget**.
-2. Nombre: `SIGeV staging`. Hostnames: agregá `sigev.redaccion.ar` **y**
+2. Nombre: `SIGeV`. Hostnames: agregá `vecinalciudadela.ar` **y**
    `localhost`. Modo: **Managed** (recomendado).
 3. Al crear te da dos claves:
    - **Site Key** → `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
@@ -113,15 +121,15 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 
 | Variable / dato | De dónde sale | Dónde va |
 |---|---|---|
-| `MP_ACCESS_TOKEN` | Parte B (Access Token `APP_USR-...` del vendedor de prueba) | `.env` local y staging |
-| `MP_WEBHOOK_SECRET` | Parte D (clave secreta del panel de webhooks) | `.env` staging (local no recibe webhooks) |
+| `MP_ACCESS_TOKEN` | Parte B (Access Token `APP_USR-...` del vendedor de prueba) | `.env` local y del VPS |
+| `MP_WEBHOOK_SECRET` | Parte D (clave secreta del panel de webhooks) | `.env` del VPS (local no recibe webhooks) |
 | `mp_plan_active_id` | Parte C, primer curl | `/admin/configuracion` |
 | `mp_plan_shared_id` | Parte C, segundo curl | `/admin/configuracion` |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Parte E (o dummy en local) | `.env` local y staging |
-| `TURNSTILE_SECRET_KEY` | Parte E (o dummy en local) | `.env` local y staging |
-| `EMAIL_ALLOWLIST` | tus dos casillas de prueba, separadas por coma | `.env` staging (¡NO en producción!) |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Parte E (o dummy en local) | `.env` local y del VPS |
+| `TURNSTILE_SECRET_KEY` | Parte E (o dummy en local) | `.env` local y del VPS |
+| `EMAIL_ALLOWLIST` | tus dos casillas de prueba, separadas por coma | `.env` del VPS (se BORRA en el lanzamiento) |
 
-`EMAIL_ALLOWLIST` para staging:
+`EMAIL_ALLOWLIST` mientras dure la etapa de pruebas:
 
 ```
 EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
@@ -129,7 +137,7 @@ EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
 
 ## Parte G — Cómo probar un débito aprobado (para los CA del módulo)
 
-1. Recorré el wizard en staging eligiendo ACTIVO. Al llegar al checkout de MP,
+1. Recorré el wizard en `vecinalciudadela.ar` eligiendo ACTIVO. Al llegar al checkout de MP,
    **iniciá sesión con la cuenta COMPRADOR de prueba** (`TESTUSER...`).
 2. Pagá con tarjeta de prueba:
    - Mastercard `5031 7557 3453 0604` — CVV `123` — vencimiento `11/30`
@@ -145,7 +153,7 @@ EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
 Junto con el deploy del módulo, agregar al crontab de root (SSH puerto 2222):
 
 ```
-5 8 * * * curl -s -X POST -H "Authorization: Bearer CRON_SECRET_REAL" https://sigev.redaccion.ar/api/cron/applications >> /var/log/sigev-cron.log 2>&1
+5 8 * * * curl -s -X POST -H "Authorization: Bearer CRON_SECRET_REAL" https://vecinalciudadela.ar/api/cron/applications >> /var/log/sigev-cron.log 2>&1
 ```
 
 reemplazando `CRON_SECRET_REAL` por el valor de `CRON_SECRET` del `.env` del
