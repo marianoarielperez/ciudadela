@@ -101,8 +101,12 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
                 cada uno (siete tarjetas de las cuales cuatro dicen "—" son puro
                 andamiaje en una pantalla de 375 px);
               — desde lg los siete días son siete columnas y la semana entra de
-                un vistazo, que es donde el hueco del miércoles sí informa. */}
-          <div className="mt-6 grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-7 lg:gap-2">
+                un vistazo, que es donde el hueco del miércoles sí informa.
+              Sin `items-start`: el `stretch` que trae grid por default empareja
+              la altura de las tarjetas de cada fila. Con items-start las siete
+              columnas quedaban dentadas (290/66/290/66/210/106/66 px), que es
+              exactamente lo contrario de "la semana de un vistazo". */}
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-7 lg:gap-2">
             {agenda.map(({ day, label, entries }) => (
               <section
                 key={day}

@@ -82,6 +82,48 @@ describe("buildWeeklyGrid", () => {
     expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(grid.historic[1]).toHaveLength(1);
   });
+
+  // La grilla se arma con Object.fromEntries, así que hereda Object.prototype:
+  // una clave del prototipo en la columna JSON `weekdays` resolvía a una función
+  // heredada y `.push` tiraba TypeError, con la página pública en 500. Tiene que
+  // descartarse igual que cualquier otro valor inválido.
+  it.each([
+    ["toString", ["toString"]],
+    ["constructor", ["constructor"]],
+    ["valueOf", ["valueOf"]],
+    ["hasOwnProperty", ["hasOwnProperty"]],
+    ["__proto__", ["__proto__"]],
+  ])("no explota con la clave de prototipo %s y la descarta", (_label, weekdays) => {
+    const build = () => buildWeeklyGrid([slot({ weekdays })]);
+    expect(build).not.toThrow();
+    const grid = build();
+    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(WEEKDAYS.every(([d]) => grid.historic[d].length === 0)).toBe(true);
+    expect(WEEKDAYS.every(([d]) => grid.glass[d].length === 0)).toBe(true);
+  });
+
+  it("una clave de prototipo no arrastra a los días válidos de la misma actividad", () => {
+    const grid = buildWeeklyGrid([slot({ weekdays: ["toString", 2, "constructor"] })]);
+    expect(grid.historic[2].map((a) => a.id)).toEqual([1]);
+    expect(grid.historic[1]).toEqual([]);
+  });
+
+  it("valores corruptos no enteros o fuera de rango también se descartan", () => {
+    const grid = buildWeeklyGrid([slot({ weekdays: [0, -1, 1.5, 8, NaN, null, undefined, "lunes"] })]);
+    expect(WEEKDAYS.every(([d]) => grid.historic[d].length === 0)).toBe(true);
+  });
+});
+
+describe("buildDailyAgenda (datos corruptos)", () => {
+  // buildDailyAgenda se apoya en buildWeeklyGrid: si la grilla explota, /actividades
+  // devuelve 500. Es la ruta pública, así que se cubre de punta a punta.
+  it("no explota con claves de prototipo y devuelve los siete días vacíos", () => {
+    const build = () => buildDailyAgenda([slot({ weekdays: ["toString"] }), slot({ id: 2, weekdays: ["constructor"] })]);
+    expect(build).not.toThrow();
+    const agenda = build();
+    expect(agenda.map((d) => d.day)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(agenda.every((d) => d.entries.length === 0)).toBe(true);
+  });
 });
 
 describe("buildDailyAgenda", () => {

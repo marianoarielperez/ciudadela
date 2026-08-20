@@ -69,7 +69,16 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
   for (const a of activities) {
     if (!a.active) continue;
     for (const d of a.weekdays) {
-      grid[a.room][d]?.push({ id: a.id, name: a.name, startTime: a.startTime, endTime: a.endTime });
+      // Validar el día ANTES de indexar, no después. `empty()` sale de
+      // `Object.fromEntries`, así que la grilla es un objeto plano con
+      // `Object.prototype` en la cadena: una columna `weekdays` corrupta con
+      // "toString" o "constructor" resolvería a una función heredada y el `?.`
+      // no protege (el valor existe, solo que no es un array) — `.push` tira
+      // TypeError y la página pública devuelve 500. Con este guard, cualquier
+      // día que no sea un entero de 1 a 7 se descarta como el resto de la
+      // basura posible.
+      if (!Number.isInteger(d) || d < 1 || d > 7) continue;
+      grid[a.room][d].push({ id: a.id, name: a.name, startTime: a.startTime, endTime: a.endTime });
     }
   }
   for (const room of ["historic", "glass"] as const) {
