@@ -71,6 +71,31 @@ export function makeTokens(db: TokenDb) {
       });
       return raw;
     },
+    // El dueño de un token AUNQUE esté usado o vencido. No valida nada, no
+    // autoriza nada y no se puede usar para canjear: existe sólo para que la
+    // pantalla del enlace muerto sepa de qué circuito venía y no dé una
+    // instrucción imposible. Un enlace de FICHA se puede reenviar desde el panel
+    // ("pedí a la vecinal que te lo reenvíe"); el de una SOLICITUD se emite una
+    // única vez al crear la solicitud y no hay reenvío en ninguna parte (el
+    // reenvío público del wizard rota el token de RETOME, que es otro), así que
+    // ese texto sería mandar a la persona a pedir algo que nadie puede darle.
+    //
+    // Que la distinción sea posible es un accidente afortunado del diseño y no
+    // algo que haya que sostener: los tokens consumidos se conservan como rastro
+    // y los de solicitud no se borran nunca (`revokeForMember`/`revokeForUser`
+    // sólo tocan los NO usados, y no hay `revokeForApplication`). Si un día se
+    // purgan los vencidos, este `null` cae en el texto genérico, que es correcto
+    // para todos.
+    async ownerOf(
+      raw: string, purpose: TokenPurpose,
+    ): Promise<Pick<ActionToken, "memberId" | "applicationId"> | null> {
+      const t = await db.actionToken.findUnique({
+        where: { tokenHash: hashToken(raw) },
+        select: { purpose: true, memberId: true, applicationId: true },
+      });
+      if (!t || t.purpose !== purpose) return null;
+      return { memberId: t.memberId, applicationId: t.applicationId };
+    },
     // `peek` valida sin consumir: las páginas que renderizan un formulario con GET
     // tienen que usarla, porque los escáneres de links de los clientes de correo
     // abren la URL y consumirían el token antes de que la persona haga clic.

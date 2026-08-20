@@ -6,14 +6,25 @@ import { confirmEmailAction, type VerifyState } from "./actions";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 
-// Confirmación de la rama de SOLICITUD. El canje de FICHA no pasa nunca por
-// acá: ese termina en un `redirect` (a la creación de contraseña o al login) y
-// la pantalla se va. Una solicitud todavía no tiene cuenta que crear —la
-// invitación sale cuando la Comisión Directiva asienta el alta y nace la ficha
-// (spec §6)—, así que lo único que corresponde es decirle a la persona que ya
-// está y qué sigue.
-const APPLICATION_VERIFIED =
-  "¡Listo! Confirmaste tu email. Cuando la Comisión Directiva asiente tu alta vas a recibir la invitación para crear tu contraseña.";
+// Confirmación de la rama de SOLICITUD. No pasa por acá ningún canje que
+// termine en un `redirect`: ni el de FICHA (que va a la creación de contraseña o
+// al login) ni el de una solicitud YA ASENTADA, que desde el fix de la
+// verificación tardía propaga a la ficha y sale por el mismo redirect. Lo que
+// queda son los dos finales que sí se quedan en pantalla.
+// Exportado sólo para que el test fije lo que cada rama PUEDE prometer: `closed`
+// no puede hablar de altas ni de invitaciones que no van a llegar.
+export const VERIFIED = {
+  // Solicitud viva: la invitación al portal recién puede existir cuando el
+  // asiento en acta cree la ficha (spec §6).
+  pending:
+    "¡Listo! Confirmaste tu email. Cuando la Comisión Directiva asiente tu alta vas a recibir la invitación para crear tu contraseña.",
+  // Solicitud que ya no espera nada (rechazada, vencida, o asentada pero fuera
+  // del alcance de este enlace). Confirmar la dirección no le hace daño a nadie
+  // —y la marca queda—, pero acá no hay ni alta que anunciar ni invitación que
+  // prometer: el texto no puede insinuar ninguna de las dos.
+  closed:
+    "Listo: registramos que esta dirección de correo es tuya. Si estabas esperando novedades de un trámite con la vecinal, comunicate con la Asociación Vecinal para saber cómo sigue.",
+} as const;
 
 // El texto que rodea al botón entra como `children`/`footer` en vez de quedar en
 // la página, porque al confirmar hay que reemplazarlo TODO: el pie dice "sin tu
@@ -28,8 +39,8 @@ export function ConfirmForm({ token, children, footer }: {
 }) {
   const [state, formAction, pending] = useActionState<VerifyState, FormData>(confirmEmailAction, {});
 
-  if (state.verified === "application") {
-    return <FormMessage kind="success" box>{APPLICATION_VERIFIED}</FormMessage>;
+  if (state.verified) {
+    return <FormMessage kind="success" box>{VERIFIED[state.verified]}</FormMessage>;
   }
 
   return (
