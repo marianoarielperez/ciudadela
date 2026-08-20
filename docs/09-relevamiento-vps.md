@@ -112,7 +112,7 @@ servicios, sus bases ni sus server blocks de Nginx. Al modificar Nginx: siempre
 certificado nuevo**: se reutiliza el Origin de Cloudflare ya instalado, igual que
 hace `atenea.redaccion.ar`.
 
-Para producción (`vecinalciudadela.ar`) sí habrá que generar un Origin
+Para producción (`vecinalciudadela.com.ar`) sí habrá que generar un Origin
 Certificate propio en Cloudflare para ese dominio (o usar Certbot, siguiendo el
 patrón de cbinfraestructura.ar).
 
@@ -137,7 +137,7 @@ server {
     ssl_certificate     /etc/ssl/cloudflare/redaccion.ar.pem;
     ssl_certificate_key /etc/ssl/cloudflare/redaccion.ar.key;
 
-    # Staging: no indexar. QUITAR en producción (vecinalciudadela.ar)
+    # Staging: no indexar. QUITAR en producción (vecinalciudadela.com.ar)
     add_header X-Robots-Tag "noindex, nofollow" always;
 
     client_max_body_size 15M;   # uploads de DNI y anexos

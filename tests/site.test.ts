@@ -41,8 +41,8 @@ describe("siteBaseUrl", () => {
 
     it("acepta un dominio real", () => {
       vi.stubEnv("NODE_ENV", "production");
-      vi.stubEnv("AUTH_URL", "https://vecinalciudadela.ar");
-      expect(siteBaseUrl().toString()).toBe("https://vecinalciudadela.ar/");
+      vi.stubEnv("AUTH_URL", "https://vecinalciudadela.com.ar");
+      expect(siteBaseUrl().toString()).toBe("https://vecinalciudadela.com.ar/");
     });
 
     // `next build` fija NODE_ENV=production también en la máquina de desarrollo,

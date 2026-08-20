@@ -40,4 +40,4 @@ sigev/
 Estatuto reformado aprobado por Asamblea Extraordinaria del 15/08/2026, en trámite
 ante la IGJ del Chubut. El sistema se desarrolla y prueba en staging
 (`sigev.redaccion.ar`, Mercado Pago en modo prueba); el lanzamiento público en
-`vecinalciudadela.ar` se hace al oficializarse la reforma.
+`vecinalciudadela.com.ar` se hace al oficializarse la reforma.

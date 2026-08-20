@@ -117,7 +117,7 @@ baja con `recurso_hasta` correcto; el Libro 1 queda cerrado y consultable; resta
 backup revierte el simulacro.
 
 ## Lanzamiento (cuando IGJ oficialice)
-Checklist: registrar/apuntar `vecinalciudadela.ar` → cert origin + Nginx →
+Checklist: registrar/apuntar `vecinalciudadela.com.ar` → cert origin + Nginx →
 credenciales MP productivas → webhooks productivos → SPF/DKIM/DMARC del dominio
 (ya autenticado en Brevo) → carga de fichas completa (160 vigentes: 55 activos +
 105 adherentes) → suscripciones preexistentes vinculadas → acta marco de admisión

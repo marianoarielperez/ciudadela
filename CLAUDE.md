@@ -53,7 +53,7 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
   en bloques copiables y Mariano los ejecuta a mano (SSH puerto 2222, root).
 - El despliegue es git-based: push a GitHub (repo privado) → pull en el VPS → build → PM2 restart.
 - Staging: `sigev.redaccion.ar` con credenciales **de prueba** de MP.
-  Producción: `vecinalciudadela.ar` con credenciales productivas.
+  Producción: `vecinalciudadela.com.ar` con credenciales productivas.
 
 ## Datos incluidos
 
@@ -72,14 +72,14 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
 ```
 DATABASE_URL="mysql://sigev:***@localhost:3306/sigev"
 AUTH_SECRET=***
-AUTH_URL=https://sigev.redaccion.ar        # prod: https://vecinalciudadela.ar
+AUTH_URL=https://sigev.redaccion.ar        # prod: https://vecinalciudadela.com.ar
 MP_ACCESS_TOKEN=***                        # staging: credenciales TEST
 MP_WEBHOOK_SECRET=***                      # para validar x-Signature
 BREVO_SMTP_HOST=smtp-relay.brevo.com
 BREVO_SMTP_PORT=587
 BREVO_SMTP_USER=***
 BREVO_SMTP_KEY=***
-MAIL_FROM="Vecinal Ciudadela <notificaciones@vecinalciudadela.ar>"
+MAIL_FROM="Vecinal Ciudadela <notificaciones@vecinalciudadela.com.ar>"
 UPLOADS_DIR=/var/sigev/uploads             # dev: ./uploads (gitignored)
 TURNSTILE_SITE_KEY=***
 TURNSTILE_SECRET_KEY=***
