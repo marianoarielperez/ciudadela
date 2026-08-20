@@ -1,6 +1,8 @@
 "use server";
 // Pantalla de Configuración: los parámetros que el panel expone al sitio
-// público. Hoy son tres, y el que importa es `asociate_activo`: es la llave que
+// público. Hoy son siete —el flag, los dos contactos, los dos textos legales del
+// wizard ASOCIATE y los dos ids de plan de Mercado Pago— y el que importa es
+// `asociate_activo`: es la llave que
 // abre y cierra el alta de socios de cara al vecino (docs/05:129).
 //
 // Por eso ESTA pantalla no la comparte el admin común. Es la primera consumidora
@@ -35,7 +37,7 @@ async function clientIp(): Promise<string> {
 // devuelve por defecto ("Invalid input: expected \"on\"") terminaría en pantalla
 // tal cual.
 //
-// Los tres campos son `.optional()` y eso cubre DOS casos que no son el mismo:
+// Todos los campos son `.optional()` y eso cubre DOS casos que no son el mismo:
 // el input vacío del formulario, que `parseForm` traduce a `undefined`, y la
 // clave directamente ausente de un POST armado a mano. Los dos significan acá lo
 // mismo —"sin valor"— y por eso ninguno necesita mensaje propio: se guardan como
@@ -52,6 +54,24 @@ const schema = z.object({
     .email("El email de contacto no es válido.")
     .max(191, "El email de contacto no puede superar los 191 caracteres.")
     .optional(),
+  // Textos legales del wizard ASOCIATE. Texto PLANO: el sitio los renderiza con
+  // `whitespace-pre-line`, así que acá no hay marcado que validar ni sanitizar.
+  termsText: z
+    .string("Términos y condiciones inválidos.")
+    .max(20000, "Los términos no pueden superar los 20.000 caracteres.")
+    .optional(),
+  privacyConsentText: z
+    .string("Texto de consentimiento inválido.")
+    .max(20000, "El consentimiento no puede superar los 20.000 caracteres.")
+    .optional(),
+  mpPlanActiveId: z
+    .string("Id de plan inválido.")
+    .max(64, "El id de plan no puede superar los 64 caracteres.")
+    .optional(),
+  mpPlanSharedId: z
+    .string("Id de plan inválido.")
+    .max(64, "El id de plan no puede superar los 64 caracteres.")
+    .optional(),
 });
 
 type ActionState = { error?: string };
@@ -65,7 +85,7 @@ export async function updateConfigAction(
   const parsed = parseForm(schema, formData);
   if (!parsed.ok) return { error: parsed.error };
 
-  // SIEMPRE valores JSON simples: boolean para el flag, string para el contacto
+  // SIEMPRE valores JSON simples: boolean para el flag, string para todo lo demás
   // ("" = sin valor; `configReader.getString` ya devuelve null para ""). Guardar
   // un `null` de JSON obligaría a `Prisma.DbNull` en cada escritura y a
   // distinguirlo del `null` de "columna nula" en cada lectura, sin ganar nada:
@@ -74,10 +94,14 @@ export async function updateConfigAction(
     [CONFIG_KEYS.asociateActivo, parsed.data.asociateActivo === "on"],
     [CONFIG_KEYS.contactPhone, parsed.data.contactPhone ?? ""],
     [CONFIG_KEYS.contactEmail, parsed.data.contactEmail ?? ""],
+    [CONFIG_KEYS.termsText, parsed.data.termsText ?? ""],
+    [CONFIG_KEYS.privacyConsentText, parsed.data.privacyConsentText ?? ""],
+    [CONFIG_KEYS.mpPlanActiveId, parsed.data.mpPlanActiveId ?? ""],
+    [CONFIG_KEYS.mpPlanSharedId, parsed.data.mpPlanSharedId ?? ""],
   ];
   const ip = await clientIp();
 
-  // Las tres claves se escriben en UNA transacción. Sin ella, si la segunda
+  // Todas las claves se escriben en UNA transacción. Sin ella, si la segunda
   // falla (deadlock, P2024) la primera ya quedó escrita: el alta de socios
   // podría quedar cerrada en la base mientras el superadmin ve una pantalla de
   // error y cree que no se guardó nada.

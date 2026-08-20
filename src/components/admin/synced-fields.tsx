@@ -16,12 +16,15 @@ import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 export type FieldBinding = {
   id: string;
   name: string;
   value: string;
-  onChange: (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
+  // El textarea entra en la misma unión que el input y el select: los tres
+  // exponen `value` y es lo único que el handler mira.
+  onChange: (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
 };
 
 export function useSyncedForm<T extends Record<string, string>>(initial: T | (() => T)) {
@@ -90,6 +93,32 @@ export function TextField(props: {
           {props.options?.map((o) => <option key={o} value={o} />)}
         </datalist>
       )}
+    </Wrapper>
+  );
+}
+
+// Texto largo (los textos legales del wizard ASOCIATE). Controlado igual que
+// `TextField`: el valor vive en `useSyncedForm`, así que el reset de React 19 no
+// le borra al superadmin un pliego de veinte mil caracteres cuando la action
+// rechaza por otro campo.
+export function TextareaField(props: {
+  label: string;
+  field: FieldBinding;
+  rows?: number;
+  maxLength?: number;
+  placeholder?: string;
+  hint?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Wrapper htmlFor={props.field.name} label={props.label} hint={props.hint}>
+      <Textarea
+        {...props.field}
+        rows={props.rows}
+        maxLength={props.maxLength}
+        placeholder={props.placeholder}
+        className={props.className}
+      />
     </Wrapper>
   );
 }
