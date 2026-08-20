@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 
-import { signOut } from "@/auth"
+import { SignOutButton } from "@/components/admin/sign-out-button"
 import { requireMember } from "@/lib/auth/require-member"
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -8,14 +8,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-secondary/40">
       <header className="flex items-center justify-between border-b-4 border-primary bg-background px-4 py-3">
         <span className="font-bold">Mi cuenta — Vecinal Ciudadela</span>
-        <form
-          action={async () => {
-            "use server"
-            await signOut({ redirectTo: "/" })
-          }}
-        >
-          <button className="text-sm underline">Cerrar sesión</button>
-        </form>
+        <SignOutButton />
       </header>
       <main className="mx-auto w-full max-w-2xl p-4">{children}</main>
     </div>

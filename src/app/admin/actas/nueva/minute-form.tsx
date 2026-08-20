@@ -1,6 +1,7 @@
 "use client";
 import { useActionState, useRef, useState } from "react";
 import { createMinuteAction } from "../actions";
+import { FormMessage } from "@/components/admin/form-message";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,7 +45,7 @@ export function MinuteForm() {
         <Label htmlFor="description">Descripción</Label>
         <Input id="description" name="description" maxLength={500} value={values.description} onChange={set("description")} />
       </div>
-      {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>{pending ? "Guardando…" : "Crear acta"}</Button>
     </form>
   );

@@ -14,6 +14,7 @@ import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { updateMemberAction, type SaveState } from "./actions";
+import { FormMessage } from "@/components/admin/form-message";
 import { SendVerificationForm } from "@/components/admin/send-verification-form";
 import { StreetAutocomplete, type StreetOption } from "@/components/admin/street-autocomplete";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
@@ -225,20 +226,20 @@ export function CargaForm(props: {
           {/* El aviso desaparece en cuanto se vuelve a tipear: un "Guardado ✓"
               al lado de un campo ya modificado es una mentira. */}
           {saveState.saved && !edited && !saveState.unchanged && (
-            <span role="status" className="text-sm font-medium text-green-700 dark:text-green-500">Guardado ✓</span>
+            <FormMessage kind="success" as="span">Guardado ✓</FormMessage>
           )}
           {saveState.saved && !edited && saveState.unchanged && (
-            <span role="status" className="text-sm text-muted-foreground">Sin cambios que guardar</span>
+            <FormMessage kind="neutral" as="span" role="status">Sin cambios que guardar</FormMessage>
           )}
-          {saveState.error && <span role="alert" className="text-sm text-destructive">{saveState.error}</span>}
+          {saveState.error && <FormMessage kind="error" as="span">{saveState.error}</FormMessage>}
           {/* Se guardó, pero algo quedó pendiente de mano humana: el aviso de la
               mudanza de la dirección de ingreso que no salió. No es un error
               —el cambio está hecho— y por eso no usa el estilo destructivo,
               pero tiene que quedar leído. */}
           {saveState.warning && !edited && (
-            <span role="alert" className="text-sm text-amber-700 dark:text-amber-500">{saveState.warning}</span>
+            <FormMessage kind="warning" as="span">{saveState.warning}</FormMessage>
           )}
-          {edited && !saving && <span className="text-sm text-muted-foreground">Cambios sin guardar</span>}
+          {edited && !saving && <FormMessage kind="neutral" as="span">Cambios sin guardar</FormMessage>}
         </div>
       </form>
 

@@ -1,8 +1,8 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
+import { PageHeader } from "@/components/admin/page-header";
 import { MinuteEditForm } from "./minute-edit-form";
 
 export const dynamic = "force-dynamic";
@@ -28,16 +28,21 @@ export default async function EditarActaPage(props: { params: Promise<{ id: stri
   // el campo bloqueado y el motivo antes de tipear.
   const anchored =
     minute._count.movements + minute._count.booksOpened + minute._count.booksClosed;
+  const tipoLabel = MINUTE_TYPE_LABELS[minute.type];
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        <Link href="/admin/actas" className="hover:underline">Actas</Link> /{" "}
-        <Link href={`/admin/actas/${minute.id}`} className="hover:underline">
-          {MINUTE_TYPE_LABELS[minute.type]} N° {minute.number}
-        </Link>{" "}/ Editar
-      </p>
-      <h1 className="text-2xl font-semibold">Editar acta</h1>
+      <PageHeader
+        title={`Editar acta ${tipoLabel} N° ${minute.number}`}
+        breadcrumb={[
+          { label: "Actas", href: "/admin/actas" },
+          {
+            label: `${tipoLabel} N° ${minute.number}`,
+            href: `/admin/actas/${minute.id}`,
+          },
+          { label: "Editar" },
+        ]}
+      />
       <p className="text-sm text-muted-foreground">
         Asentada el {formatDateAR(minute.date)}. Corregí lo que se tipeó mal al cargarla desde
         el libro en papel.

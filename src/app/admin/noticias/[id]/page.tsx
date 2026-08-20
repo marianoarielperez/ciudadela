@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { PageHeader } from "@/components/admin/page-header";
 import { NewsForm, NewsStateButtons } from "../news-form";
 
 export const dynamic = "force-dynamic";
@@ -21,15 +22,20 @@ export default async function EditNewsPage(props: { params: Promise<{ id: string
   };
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Editar noticia</h1>
-        {news.status === "published" && (
-          <Link className="text-sm text-primary hover:underline" href={`/noticias/${news.slug}`}>
-            Ver en el sitio
-          </Link>
-        )}
-      </div>
-      <NewsStateButtons news={editable} />
+      <PageHeader
+        title={news.title}
+        breadcrumb={[{ label: "Noticias", href: "/admin/noticias" }, { label: "Editar" }]}
+        actions={
+          <>
+            {news.status === "published" && (
+              <Link className="text-sm text-primary hover:underline" href={`/noticias/${news.slug}`}>
+                Ver en el sitio
+              </Link>
+            )}
+            <NewsStateButtons news={editable} />
+          </>
+        }
+      />
       <NewsForm mode="edit" news={editable} />
     </div>
   );

@@ -11,6 +11,7 @@
 // admin el motivo, las fechas y el detalle que acababa de tipear, que en una
 // acción societaria significa volver a mirar el acta en papel.
 import { useActionState, useRef, useState } from "react";
+import { FormMessage } from "@/components/admin/form-message";
 import { MinutePicker, type MinuteOption } from "@/components/admin/minute-picker";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
@@ -76,7 +77,7 @@ export function ActionForm(props: {
         </div>
       ))}
       <MinutePicker minutes={props.minutes} />
-      {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>{pending ? "Guardando…" : props.submitLabel}</Button>
     </form>
   );

@@ -15,6 +15,8 @@ import { formatDateAR } from "@/lib/format";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "@/lib/members/rules";
 import { electionsOngoing } from "@/lib/members/service";
+import { FormMessage } from "@/components/admin/form-message";
+import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { ActionForm, type Field } from "../action-form";
 import {
@@ -29,6 +31,9 @@ type Slug = (typeof SLUGS)[number];
 
 type Screen = {
   title: string;
+  // Hoja del breadcrumb: sustantivo corto, no el h1 repetido. El h1 lleva el
+  // socio ("Dar de baja a Juan Pérez"); la miga solo la acción ("Baja").
+  crumb: string;
   notice?: string;
   // Motivo estatutario por el que la acción no se puede hacer ahora. Si está,
   // se muestra en lugar del formulario.
@@ -51,6 +56,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
     case "baja":
       return {
         title: `Dar de baja a ${member.fullName}`,
+        crumb: "Baja",
         notice: "La baja queda asentada con acta, en el historial y en auditoría. No borra datos.",
         blocked: blockedBy(canWithdraw(member)),
         action: withdrawAction,
@@ -69,6 +75,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
       const probe = (options[0]?.[0] ?? member.category) as MemberCategory;
       return {
         title: `Cambiar categoría de ${member.fullName}`,
+        crumb: "Cambio de categoría",
         notice: `Categoría actual: ${CATEGORY_LABELS[member.category]}. El cambio no interrumpe la antigüedad (Art. 5° ter).`,
         blocked: blockedBy(canChangeCategory(member, probe, elections)),
         action: changeCategoryAction,
@@ -81,6 +88,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
       if (member.status === "suspended") {
         return {
           title: `Levantar la suspensión de ${member.fullName}`,
+          crumb: "Fin de suspensión",
           notice: `Suspendido desde ${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "—"} hasta ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "—"}.`,
           action: endSuspensionAction,
           submitLabel: "Levantar suspensión",
@@ -88,6 +96,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
       }
       return {
         title: `Suspender a ${member.fullName}`,
+        crumb: "Suspensión",
         notice: "La suspensión no puede exceder 180 días (Art. 10 inc. b).",
         blocked: blockedBy(canSuspend(member)),
         action: suspendAction,
@@ -102,6 +111,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
     case "reingreso":
       return {
         title: `Reingreso de ${member.fullName}`,
+        crumb: "Reingreso",
         blocked: blockedBy(canReadmit(member)),
         // REG-16: el reingreso del cesante por mora exige saldar la deuda a
         // valores vigentes. No bloquea la pantalla — el cobro se hace en
@@ -143,24 +153,22 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
 
   return (
     <div className="max-w-2xl space-y-4">
-      <p className="text-sm text-muted-foreground">
-        <Link href="/admin/socios" className="hover:underline">Socios</Link>
-        {" / "}
-        <Link href={`/admin/socios/${member.id}`} className="hover:underline">{member.fullName}</Link>
-      </p>
-      <h1 className="text-2xl font-semibold">{screen.title}</h1>
+      <PageHeader
+        title={screen.title}
+        breadcrumb={[
+          { label: "Socios", href: "/admin/socios" },
+          { label: member.fullName, href: `/admin/socios/${member.id}` },
+          { label: screen.crumb },
+        ]}
+      />
       {screen.notice && <p className="text-sm text-muted-foreground">{screen.notice}</p>}
       {screen.warning && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {screen.warning}
-        </p>
+        <FormMessage kind="warning" box>{screen.warning}</FormMessage>
       )}
 
       {screen.blocked ? (
         <div className="space-y-3">
-          <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-            {screen.blocked}
-          </p>
+          <FormMessage kind="error" box>{screen.blocked}</FormMessage>
           <Button asChild variant="outline">
             <Link href={`/admin/socios/${member.id}`}>Volver a la ficha</Link>
           </Button>

@@ -27,6 +27,8 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -68,6 +70,10 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* Feedback post-acción (FormMessage). Antes el verde/ámbar era Tailwind crudo
+     copiado a mano; estos son los únicos tonos permitidos en el panel. */
+  --success: #15803D;   /* green-700 — 5.02:1 sobre blanco */
+  --warning: #B45309;   /* amber-700 — 5.02:1 sobre blanco */
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -77,14 +83,19 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Shell del panel de administración (spec 2026-08-20 §3.2). El panel es
+     SIEMPRE celeste profundo — no depende del modo oscuro — así que :root y
+     .dark llevan los mismos valores. #003C5F deriva del --primary #0079BC
+     oscurecido; el ítem activo se marca con el celeste de marca #2E9BDF, que
+     sobre este fondo oscuro sí alcanza contraste de indicador (≥3:1). */
+  --sidebar: #003C5F;
+  --sidebar-foreground: rgb(255 255 255 / 0.85);
+  --sidebar-primary: #2E9BDF;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: rgb(255 255 255 / 0.14);
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgb(255 255 255 / 0.16);
+  --sidebar-ring: #9ED3F2;
 }
 
 .dark {
@@ -105,6 +116,8 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --success: #4ADE80;   /* green-400 sobre fondo oscuro */
+  --warning: #FBBF24;   /* amber-400 sobre fondo oscuro */
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -113,14 +126,15 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Panel: mismos valores que :root — ver arriba. */
+  --sidebar: #003C5F;
+  --sidebar-foreground: rgb(255 255 255 / 0.85);
+  --sidebar-primary: #2E9BDF;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: rgb(255 255 255 / 0.14);
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgb(255 255 255 / 0.16);
+  --sidebar-ring: #9ED3F2;
 }
 
 @layer base {

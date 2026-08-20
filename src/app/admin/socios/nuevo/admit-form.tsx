@@ -1,6 +1,7 @@
 "use client";
 import { useActionState, useRef, useState } from "react";
 import { admitAction } from "./actions";
+import { FormMessage } from "@/components/admin/form-message";
 import { MinutePicker, type MinuteOption } from "@/components/admin/minute-picker";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
@@ -49,7 +50,7 @@ export function AdmitForm({ minutes }: { minutes: MinuteOption[] }) {
         <Input id="email" name="email" type="email" value={values.email} onChange={set("email")} />
       </div>
       <MinutePicker minutes={minutes} />
-      {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>{pending ? "Guardando…" : "Dar de alta"}</Button>
     </form>
   );

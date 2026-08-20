@@ -14,6 +14,7 @@
 // las dos escondería un domicilio ambiguo.
 import { useMemo, useRef, useState } from "react";
 import { searchStreets } from "@/lib/streets/search";
+import { FormMessage } from "@/components/admin/form-message";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -138,9 +139,11 @@ export function StreetAutocomplete(props: {
       </div>
 
       {typedButUnmatched && (
-        <p className="text-xs text-amber-700 dark:text-amber-500">
+        // Ayuda del campo, no respuesta a una acción: `role="none"` evita que el
+        // lector de pantalla la interrumpa a cada tecla (ver FormMessage).
+        <FormMessage kind="warning" role="none" className="text-xs">
           No coincide con el catálogo: se va a guardar como texto libre.
-        </p>
+        </FormMessage>
       )}
       {selected && (
         <p className="text-xs text-muted-foreground">Catálogo N° {selected.loadOrder}</p>

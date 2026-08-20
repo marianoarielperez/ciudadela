@@ -13,6 +13,7 @@
 // revalida la propia server action. Acá no hay ninguna regla nueva.
 import { useActionState, type ReactNode } from "react";
 import { sendVerificationAction, type SendState } from "@/app/admin/socios/carga/[numero]/actions";
+import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import type { VerificationTarget } from "@/lib/members/card-edit";
 
@@ -44,14 +45,14 @@ export function SendVerificationForm(props: {
         {pending ? "Enviando…" : label}
       </Button>
       {props.verified && (
-        <span className="text-sm text-green-700 dark:text-green-500">Email verificado ✓</span>
+        <FormMessage kind="success" as="span">Email verificado ✓</FormMessage>
       )}
       {/* El motivo del rechazo lo redacta `verificationTarget`: repetirlo acá
           fue lo que dejó al operador sin saber que la reinvitación existe. */}
       {!target.ok && <span className="text-sm text-muted-foreground">{target.error}</span>}
       {props.note}
-      {state.sent && <span role="status" className="text-sm text-green-700 dark:text-green-500">Enviado ✓</span>}
-      {state.error && <span role="alert" className="text-sm text-destructive">{state.error}</span>}
+      {state.sent && <FormMessage kind="success" as="span">Enviado ✓</FormMessage>}
+      {state.error && <FormMessage kind="error" as="span">{state.error}</FormMessage>}
     </form>
   );
 }

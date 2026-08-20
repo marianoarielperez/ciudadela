@@ -46,6 +46,40 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
   se registra en la tabla de auditoría.
 - Migraciones siempre con `prisma migrate` — nunca `db push` en producción.
 
+## Panel de administración: shell y patrones
+
+El panel tiene un marco compartido. **Una pantalla nueva no escribe su propio encabezado,
+sus propios mensajes ni su propio estado vacío**: usa estos componentes.
+
+- **Navegación**: `src/lib/admin/nav.ts` es la ÚNICA fuente de las secciones (grupos
+  Gestión / Contenido / Sistema). Agregar una sección = agregar un ítem ahí; la lateral,
+  el cajón móvil y el marcado de sección activa salen solos. Las tarjetas de `/admin` viven
+  en `src/lib/admin/dashboard-cards.ts` y un test verifica que no se desincronicen.
+  La lateral lista solo secciones que funcionan; el roadmap ("Próximamente") vive en las
+  tarjetas de Inicio.
+- **Encabezado**: `PageHeader` (`title`, `breadcrumb`, `actions`, `children`). Convenciones
+  acordadas: la **entidad va en el `<h1>`** (el nombre del socio, el título de la noticia) y
+  la miga lleva la referencia corta; la **última miga es un sustantivo corto** ("Baja",
+  "Editar", "Nueva"), nunca una repetición del título.
+- **Mensajes**: `FormMessage` (`kind`: `error | success | warning | neutral`, `box`, `as`).
+  Deriva el `role` del `kind`; la prop `role` solo se usa para casos justificados
+  (`"none"` para texto estático, `"status"` para el guardado del modo carga).
+  **No usar verde/ámbar crudo de Tailwind**: están los tokens `--success` y `--warning`.
+- **Estado vacío**: `EmptyState` (`size="list"` reemplaza la tabla entera y ofrece la acción
+  que lo resuelve; `size="card"` es una línea). **Nunca renderizar un `thead` sin filas.**
+- **Badges de estado**: `src/lib/admin/status-badges.ts`, no ternarios por pantalla.
+- **Roles**: la nav y las tarjetas filtran por los roles del TOKEN — es display, y puede
+  quedar hasta 8 h desactualizado tras una degradación. **La autorización real va siempre
+  en la ruta y en cada server action** (`requireAdmin` / `requireSuperadmin`, que resuelven
+  contra la fila viva de `User`).
+- Accesibilidad del shell (verificada, no romper): targets ≥44px, `aria-current="page"` en la
+  sección activa, `outline-hidden` + `focus-visible:ring-sidebar-ring` en TODO control de la
+  lateral (`outline-none` deja el foco invisible en modo alto contraste), skip link al
+  `<main id="contenido">`.
+- Deuda anotada: 4 formularios y 9 `<select>` crudos siguen sin migrar a `synced-fields`
+  (se ven planos en modo oscuro); `AdminActor` no devuelve los roles vivos, así que el layout
+  llama a `auth()` una segunda vez.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.

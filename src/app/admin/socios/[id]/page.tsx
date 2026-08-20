@@ -7,6 +7,9 @@ import {
   NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS, REASON_LABELS, STATUS_LABELS,
 } from "@/lib/members/labels";
 import { verificationTarget } from "@/lib/members/card-edit";
+import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
+import { EmptyState } from "@/components/admin/empty-state";
+import { PageHeader } from "@/components/admin/page-header";
 import { SendVerificationForm } from "@/components/admin/send-verification-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,44 +57,46 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            <Link href="/admin/socios" className="hover:underline">Socios</Link> / N° {openMembership?.memberNumber ?? "—"}
-          </p>
-          <h1 className="text-2xl font-semibold">{member.fullName}</h1>
-          <div className="mt-1 flex flex-wrap gap-2">
-            {/* La categoría lleva prefijo: "Activo" (categoría) al lado de "Baja"
-                (estado) se lee como una contradicción sin decir de qué es cada uno. */}
-            <Badge variant="secondary">Categoría: {CATEGORY_LABELS[member.category]}</Badge>
-            <Badge variant={member.status === "active" ? "default" : "outline"}>{STATUS_LABELS[member.status]}</Badge>
-            {member.status === "withdrawn" && member.debtAtWithdrawal && <Badge variant="destructive">Deuda de tesorería</Badge>}
-            {member.reentryBlocked && <Badge variant="destructive">Reingreso bloqueado</Badge>}
-          </div>
-        </div>
+      <PageHeader
+        title={member.fullName}
+        breadcrumb={[
+          { label: "Socios", href: "/admin/socios" },
+          { label: `N° ${openMembership?.memberNumber ?? "—"}` },
+        ]}
+        actions={
+          <>
+            {openMembership && (
+              <Button asChild variant="outline">
+                <Link href={`/admin/socios/carga/${openMembership.memberNumber}`}>Cargar ficha</Link>
+              </Button>
+            )}
+            {member.status !== "withdrawn" && (
+              <>
+                <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/categoria`}>Cambiar categoría</Link></Button>
+                {member.status === "active" && (
+                  <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/suspension`}>Suspender</Link></Button>
+                )}
+                <Button asChild variant="destructive"><Link href={`/admin/socios/${member.id}/baja`}>Dar de baja</Link></Button>
+              </>
+            )}
+            {member.status === "suspended" && (
+              <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/suspension`}>Levantar suspensión</Link></Button>
+            )}
+            {member.status === "withdrawn" && !member.reentryBlocked && (
+              <Button asChild><Link href={`/admin/socios/${member.id}/reingreso`}>Reingreso</Link></Button>
+            )}
+          </>
+        }
+      >
         <div className="flex flex-wrap gap-2">
-          {openMembership && (
-            <Button asChild variant="outline">
-              <Link href={`/admin/socios/carga/${openMembership.memberNumber}`}>Cargar ficha</Link>
-            </Button>
-          )}
-          {member.status !== "withdrawn" && (
-            <>
-              <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/categoria`}>Cambiar categoría</Link></Button>
-              {member.status === "active" && (
-                <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/suspension`}>Suspender</Link></Button>
-              )}
-              <Button asChild variant="destructive"><Link href={`/admin/socios/${member.id}/baja`}>Dar de baja</Link></Button>
-            </>
-          )}
-          {member.status === "suspended" && (
-            <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/suspension`}>Levantar suspensión</Link></Button>
-          )}
-          {member.status === "withdrawn" && !member.reentryBlocked && (
-            <Button asChild><Link href={`/admin/socios/${member.id}/reingreso`}>Reingreso</Link></Button>
-          )}
+          {/* La categoría lleva prefijo: "Activo" (categoría) al lado de "Baja"
+              (estado) se lee como una contradicción sin decir de qué es cada uno. */}
+          <Badge variant="secondary">Categoría: {CATEGORY_LABELS[member.category]}</Badge>
+          <Badge variant={memberStatusBadgeVariant(member.status)}>{STATUS_LABELS[member.status]}</Badge>
+          {member.status === "withdrawn" && member.debtAtWithdrawal && <Badge variant="destructive">Deuda de tesorería</Badge>}
+          {member.reentryBlocked && <Badge variant="destructive">Reingreso bloqueado</Badge>}
         </div>
-      </div>
+      </PageHeader>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -124,7 +129,7 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
         <Card>
           <CardHeader><CardTitle>Historial de movimientos</CardTitle></CardHeader>
           <CardContent className="space-y-2">
-            {member.movements.length === 0 && <p className="text-sm text-muted-foreground">Sin movimientos.</p>}
+            {member.movements.length === 0 && <EmptyState size="card" description="Sin movimientos." />}
             {member.movements.map((mv) => (
               <div key={mv.id} className="border-b pb-2 text-sm last:border-0">
                 <span className="font-medium">{MOVEMENT_LABELS[mv.type]}</span> — {formatDateAR(mv.date)}
@@ -148,7 +153,7 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
         <Card>
           <CardHeader><CardTitle>Notificaciones</CardTitle></CardHeader>
           <CardContent className="space-y-1">
-            {member.notifications.length === 0 && <p className="text-sm text-muted-foreground">Sin notificaciones.</p>}
+            {member.notifications.length === 0 && <EmptyState size="card" description="Sin notificaciones." />}
             {member.notifications.map((n) => (
               <p key={String(n.id)} className="text-sm">
                 {formatDateAR(n.sentAt)} — {n.payloadSummary ?? NOTIFICATION_TYPE_LABELS[n.type]}

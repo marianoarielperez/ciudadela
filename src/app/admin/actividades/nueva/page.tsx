@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PageHeader } from "@/components/admin/page-header";
 import { ActivityForm } from "../activity-form";
 import { currentYearAR } from "@/lib/activities/year-param";
 
@@ -12,12 +12,10 @@ export const dynamic = "force-dynamic";
 export default function NewActivityPage() {
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Nueva actividad</h1>
-        <Link className="text-sm text-primary hover:underline" href="/admin/actividades">
-          Volver al calendario
-        </Link>
-      </div>
+      <PageHeader
+        title="Nueva actividad"
+        breadcrumb={[{ label: "Actividades", href: "/admin/actividades" }, { label: "Nueva" }]}
+      />
       <ActivityForm mode="create" defaultYear={currentYearAR()} />
     </div>
   );

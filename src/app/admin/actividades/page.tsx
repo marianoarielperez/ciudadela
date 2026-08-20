@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { activitiesQueries } from "@/lib/activities/query";
 import { ROOM_LABELS, WEEKDAYS } from "@/lib/activities/rules";
+import { activityBadgeVariant } from "@/lib/admin/status-badges";
+import { EmptyState } from "@/components/admin/empty-state";
+import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -24,14 +27,17 @@ export default async function AdminActivitiesPage(props: {
   // fallar por un parámetro mal tipeado a mano.
   const year = yearRaw !== undefined && Number.isInteger(yearRaw) ? yearRaw : undefined;
   const rows = await activitiesQueries.allForAdmin(year);
+  const emptyDescription = `No hay actividades cargadas${year !== undefined ? ` para ${year}` : ""}. Las activas se muestran en la página pública de actividades.`;
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Actividades de los salones</h1>
-        <Button asChild>
-          <Link href="/admin/actividades/nueva">Nueva actividad</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Actividades de los salones"
+        actions={
+          <Button asChild>
+            <Link href="/admin/actividades/nueva">Nueva actividad</Link>
+          </Button>
+        }
+      />
       {/* Filtro sin JS: un GET nativo, igual que el resto de los filtros del panel. */}
       <form method="get" className="flex items-end gap-2">
         <div className="space-y-1">
@@ -58,10 +64,14 @@ export default async function AdminActivitiesPage(props: {
         )}
       </form>
       {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No hay actividades cargadas{year !== undefined ? ` para ${year}` : ""}. Las activas se
-          muestran en la página pública de actividades.
-        </p>
+        <EmptyState
+          description={emptyDescription}
+          action={
+            <Button asChild>
+              <Link href="/admin/actividades/nueva">Nueva actividad</Link>
+            </Button>
+          }
+        />
       ) : (
         <Table>
           <TableHeader>
@@ -95,7 +105,7 @@ export default async function AdminActivitiesPage(props: {
                 </TableCell>
                 <TableCell>{a.year}</TableCell>
                 <TableCell>
-                  <Badge variant={a.active ? "default" : "secondary"}>
+                  <Badge variant={activityBadgeVariant(a.active)}>
                     {a.active ? "Activa" : "Oculta"}
                   </Badge>
                 </TableCell>
