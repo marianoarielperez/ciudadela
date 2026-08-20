@@ -15,6 +15,8 @@ import { formatDateAR } from "@/lib/format";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "@/lib/members/rules";
 import { electionsOngoing } from "@/lib/members/service";
+import { FormMessage } from "@/components/admin/form-message";
+import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { ActionForm, type Field } from "../action-form";
 import {
@@ -143,24 +145,22 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
 
   return (
     <div className="max-w-2xl space-y-4">
-      <p className="text-sm text-muted-foreground">
-        <Link href="/admin/socios" className="hover:underline">Socios</Link>
-        {" / "}
-        <Link href={`/admin/socios/${member.id}`} className="hover:underline">{member.fullName}</Link>
-      </p>
-      <h1 className="text-2xl font-semibold">{screen.title}</h1>
+      <PageHeader
+        title={screen.title}
+        breadcrumb={[
+          { label: "Socios", href: "/admin/socios" },
+          { label: member.fullName, href: `/admin/socios/${member.id}` },
+          { label: screen.title },
+        ]}
+      />
       {screen.notice && <p className="text-sm text-muted-foreground">{screen.notice}</p>}
       {screen.warning && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {screen.warning}
-        </p>
+        <FormMessage kind="warning" box>{screen.warning}</FormMessage>
       )}
 
       {screen.blocked ? (
         <div className="space-y-3">
-          <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-            {screen.blocked}
-          </p>
+          <FormMessage kind="error" box>{screen.blocked}</FormMessage>
           <Button asChild variant="outline">
             <Link href={`/admin/socios/${member.id}`}>Volver a la ficha</Link>
           </Button>

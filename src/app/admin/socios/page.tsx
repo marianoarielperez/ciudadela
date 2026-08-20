@@ -2,6 +2,9 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { fetchPadronPage, parsePadronFilters, parsePadronPage } from "@/lib/members/query";
 import { CATEGORY_LABELS, EMAIL_STATUS_LABELS, STATUS_LABELS } from "@/lib/members/labels";
+import { EmptyState } from "@/components/admin/empty-state";
+import { PageHeader } from "@/components/admin/page-header";
+import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,15 +44,17 @@ export default async function SociosPage(props: {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-semibold">Socios — Libro 1</h1>
-        <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <a href={`/api/admin/padron-export?${exportQs}`}>Exportar Excel</a>
-          </Button>
-          <Button asChild><Link href="/admin/socios/nuevo">Alta manual</Link></Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Socios — Libro 1"
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <a href={`/api/admin/padron-export?${exportQs}`}>Exportar Excel</a>
+            </Button>
+            <Button asChild><Link href="/admin/socios/nuevo">Alta manual</Link></Button>
+          </>
+        }
+      />
 
       <form className="flex flex-wrap items-end gap-2" method="get">
         <Input name="q" placeholder="Nombre, DNI o número" defaultValue={filters.q ?? ""} className="w-56" />
@@ -75,52 +80,61 @@ export default async function SociosPage(props: {
         <Button type="submit" variant="secondary">Filtrar</Button>
       </form>
 
-      {/* El total es el del padrón filtrado, no el de la página: el operador
-          tiene que poder leer "160 socios" aunque en pantalla haya 50. */}
-      <p className="text-sm text-muted-foreground">
-        {total === 0 ? "Ningún socio coincide con el filtro" : `${firstShown}–${lastShown} de ${total} socios`}
-        {pageCount > 1 && ` · página ${page} de ${pageCount}`}
-      </p>
+      {total === 0 ? (
+        <EmptyState
+          description="Ningún socio coincide con el filtro."
+          action={<Button asChild variant="outline"><Link href="/admin/socios">Limpiar filtros</Link></Button>}
+        />
+      ) : (
+        <>
+          {/* El total es el del padrón filtrado, no el de la página: el operador
+              tiene que poder leer "160 socios" aunque en pantalla haya 50. */}
+          <p className="text-sm text-muted-foreground">
+            {`${firstShown}–${lastShown} de ${total} socios`}
+            {pageCount > 1 && ` · página ${page} de ${pageCount}`}
+          </p>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>N°</TableHead><TableHead>Apellido y nombre</TableHead>
-            <TableHead>DNI</TableHead><TableHead>Categoría</TableHead>
-            <TableHead>Estado</TableHead><TableHead>Email</TableHead>
-            <TableHead>Débito</TableHead><TableHead></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map(({ memberNumber, member }) => (
-            <TableRow key={member.id}>
-              <TableCell>{memberNumber}</TableCell>
-              <TableCell>
-                <Link className="hover:underline" href={`/admin/socios/${member.id}`}>{member.fullName}</Link>
-              </TableCell>
-              <TableCell>{member.dni ?? "—"}</TableCell>
-              <TableCell>{CATEGORY_LABELS[member.category]}</TableCell>
-              <TableCell>
-                <Badge variant={member.status === "active" ? "default" : member.status === "suspended" ? "secondary" : "outline"}>
-                  {STATUS_LABELS[member.status]}
-                </Badge>
-                {member.status === "withdrawn" && member.debtAtWithdrawal && (
-                  <Badge variant="destructive" className="ml-1">Deuda</Badge>
-                )}
-              </TableCell>
-              <TableCell>
-                {member.email ? `${member.email} · ${EMAIL_STATUS_LABELS[member.emailStatus]}` : "—"}
-              </TableCell>
-              <TableCell>{member.autoDebit ? "Sí" : "No"}</TableCell>
-              <TableCell>
-                <Link className="text-sm text-primary hover:underline" href={`/admin/socios/carga/${memberNumber}`}>
-                  Cargar ficha
-                </Link>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>N°</TableHead><TableHead>Apellido y nombre</TableHead>
+                <TableHead>DNI</TableHead><TableHead>Categoría</TableHead>
+                <TableHead>Estado</TableHead><TableHead>Email</TableHead>
+                <TableHead>Débito</TableHead><TableHead><span className="sr-only">Acciones</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map(({ memberNumber, member }) => (
+                <TableRow key={member.id}>
+                  <TableCell>{memberNumber}</TableCell>
+                  <TableCell>
+                    <Link className="text-primary hover:underline" href={`/admin/socios/${member.id}`}>{member.fullName}</Link>
+                  </TableCell>
+                  <TableCell>{member.dni ?? "—"}</TableCell>
+                  <TableCell>{CATEGORY_LABELS[member.category]}</TableCell>
+                  <TableCell>
+                    <Badge variant={memberStatusBadgeVariant(member.status)}>
+                      {STATUS_LABELS[member.status]}
+                    </Badge>
+                    {member.status === "withdrawn" && member.debtAtWithdrawal && (
+                      <Badge variant="destructive" className="ml-1">Deuda</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {member.email ? `${member.email} · ${EMAIL_STATUS_LABELS[member.emailStatus]}` : "—"}
+                  </TableCell>
+                  <TableCell>{member.autoDebit ? "Sí" : "No"}</TableCell>
+                  <TableCell>
+                    <Link className="text-sm text-primary hover:underline" href={`/admin/socios/carga/${memberNumber}`}>
+                      Cargar ficha
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </>
+      )}
 
       {/* Paginación simple (spec §6). El export a Excel sigue llevándose el
           padrón filtrado COMPLETO: usa `fetchPadron`, que no pagina. */}

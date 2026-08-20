@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { verificationTarget } from "@/lib/members/card-edit";
 import { formatDateAR } from "@/lib/format";
+import { PageHeader } from "@/components/admin/page-header";
 import { CargaForm } from "./carga-form";
 
 export const dynamic = "force-dynamic";
@@ -45,16 +46,15 @@ export default async function CargaPage(props: { params: Promise<{ numero: strin
 
   return (
     <div className="space-y-4">
-      <div>
-        <p className="text-sm text-muted-foreground">
-          <Link href="/admin/socios" className="hover:underline">Socios</Link> / Modo carga
-        </p>
-        <h1 className="text-2xl font-semibold">N° {numero} — {m.fullName}</h1>
+      <PageHeader
+        title={`N° ${numero} — ${m.fullName}`}
+        breadcrumb={[{ label: "Socios", href: "/admin/socios" }, { label: "Modo carga" }]}
+      >
         <p className="text-sm text-muted-foreground">
           {CATEGORY_LABELS[m.category]} · {STATUS_LABELS[m.status]} · Ingreso {formatDateAR(m.joinedAt)} ·{" "}
           <Link className="text-primary hover:underline" href={`/admin/socios/${m.id}`}>ver ficha</Link>
         </p>
-      </div>
+      </PageHeader>
 
       <CargaForm
         key={m.id}
