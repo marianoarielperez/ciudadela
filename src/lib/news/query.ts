@@ -141,7 +141,26 @@ export const getPublishedNewsPage = unstable_cache(
   ["news-page"],
   { tags: [CACHE_TAGS.news] },
 );
-export const getNewsBySlug = unstable_cache((slug: string) => queries.bySlug(slug), ["news-by-slug"], {
+// Forma que puede tener un slug persistido: `slugify` sólo produce minúsculas
+// ASCII, dígitos y guiones, y el campo "URL" del panel valida exactamente
+// `^[a-z0-9-]*$` con tope 180 (src/lib/news/schema.ts). Nada fuera de esto
+// puede existir en la base, así que se descarta sin consultar.
+const SLUG_SHAPE = /^[a-z0-9-]{1,180}$/;
+
+export function isValidNewsSlug(slug: string): boolean {
+  return SLUG_SHAPE.test(slug);
+}
+
+const bySlugCached = unstable_cache((slug: string) => queries.bySlug(slug), ["news-by-slug"], {
   tags: [CACHE_TAGS.news],
 });
+
+// La clave de unstable_cache incluye el argumento: sin este filtro, cada
+// /noticias/<basura> de un crawler sumaba una entrada de caché permanente
+// (y una consulta) por un slug que jamás va a existir.
+export function getNewsBySlug(slug: string): Promise<PublicNewsDetail | null> {
+  if (!isValidNewsSlug(slug)) return Promise.resolve(null);
+  return bySlugCached(slug);
+}
+
 export const newsQueries = queries;

@@ -34,13 +34,18 @@ export function NewsCard({
           />
         )}
         <CardHeader>
-          <CardTitle as={titleAs} className="group-hover:text-primary">
+          <CardTitle as={titleAs} className="[overflow-wrap:anywhere] group-hover:text-primary">
             {news.title}
           </CardTitle>
           <CardDescription>{formatDateAR(new Date(news.publishedAtIso))}</CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">{news.excerpt}</p>
+          {/* El resumen sale del cuerpo en texto plano y ahí puede venir una
+              URL pegada a mano, que no tiene dónde cortar: sin esto la tarjeta
+              se ensancha, y como está en una grilla arrastra a toda la página
+              a scrollear horizontal en 375px. `anywhere` y no `break-word`
+              porque además achica el min-content, que es lo que la grilla mira. */}
+          <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{news.excerpt}</p>
         </CardContent>
       </Card>
     </Link>

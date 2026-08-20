@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 // la FACTORY con un fake, así que el cliente real no hace falta.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import { makeNewsQueries, NEWS_PAGE_SIZE } from "@/lib/news/query";
+import { getNewsBySlug, isValidNewsSlug, makeNewsQueries, NEWS_PAGE_SIZE } from "@/lib/news/query";
+import { slugify } from "@/lib/news/slug";
 
 // Las tres consultas públicas filtran por esto: publicada Y con fecha. Una
 // noticia publicada sin fecha rompía el formateo con Intl en el render.
@@ -148,5 +149,46 @@ describe("makeNewsQueries", () => {
       publishedAt: true,
       author: { select: { name: true } },
     });
+  });
+});
+
+// La clave de unstable_cache incluye el argumento: sin filtrar, cada
+// /noticias/<basura> de un crawler dejaba una entrada de caché y una consulta.
+describe("isValidNewsSlug", () => {
+  it("acepta todo lo que puede producir slugify", () => {
+    const titles = [
+      "Asamblea General Ordinaria 2026",
+      "¡Inscripción al Taekwondo — Niños!",
+      "¡¡¡···!!!",
+      "",
+      "a".repeat(300),
+      "Ñandú",
+      "2026: balance y memoria",
+    ];
+    for (const t of titles) expect(isValidNewsSlug(slugify(t))).toBe(true);
+  });
+
+  it("acepta lo que el campo URL del panel deja escribir a mano", () => {
+    // schema.ts valida `^[a-z0-9-]*$` con tope 180: guiones en los extremos y
+    // repetidos incluidos, así que ningún slug ya guardado puede quedar afuera.
+    for (const s of ["asamblea", "-asamblea-", "a--b", "2026", "x".repeat(180)]) {
+      expect(isValidNewsSlug(s)).toBe(true);
+    }
+  });
+
+  it("rechaza lo que no puede existir en la base", () => {
+    for (const s of ["", "Asamblea", "asamblea!", "as/amblea", "as amblea", "ñandu", "a".repeat(181)]) {
+      expect(isValidNewsSlug(s)).toBe(false);
+    }
+  });
+});
+
+describe("getNewsBySlug", () => {
+  it("devuelve null sin tocar la base ni la caché con un slug mal formado", async () => {
+    // El módulo corre contra `prisma: {}` (mock de arriba): si llegara a
+    // consultar, reventaría en vez de resolver a null.
+    for (const s of ["../../etc/passwd", "Asamblea", "a".repeat(500), "%00", ""]) {
+      await expect(getNewsBySlug(s)).resolves.toBeNull();
+    }
   });
 });

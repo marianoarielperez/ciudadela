@@ -4,11 +4,9 @@ import type { Metadata } from "next";
 import { NewsCard } from "@/components/public/news-card";
 import { Button } from "@/components/ui/button";
 import { getPublishedNewsPage } from "@/lib/news/query";
+import { siteBaseUrl } from "@/lib/site";
 
-export const metadata: Metadata = {
-  title: "Noticias — Vecinal Ciudadela",
-  description: "Novedades y comunicados de la Asociación Vecinal del Barrio Ciudadela.",
-};
+const DESCRIPTION = "Novedades y comunicados de la Asociación Vecinal del Barrio Ciudadela.";
 
 function pageHref(n: number): string {
   // La página 1 es /noticias a secas: es la URL que se comparte y la que
@@ -16,19 +14,45 @@ function pageHref(n: number): string {
   return n <= 1 ? "/noticias" : `/noticias?pagina=${n}`;
 }
 
+// Valor canónico del query param para una página ya resuelta: ausente en la 1,
+// el número tal cual en el resto. Es contra ESTO que se compara lo recibido.
+function canonicalParam(page: number): string | undefined {
+  return page <= 1 ? undefined : String(page);
+}
+
+// `pagina` puede venir repetida (?pagina=1&pagina=9 → array), decimal o con
+// basura. Cualquier cosa que no sea una tira de dígitos cae en 1; el redirect
+// de abajo se encarga de que la URL no siga contradiciendo lo que se muestra.
+function requestedPage(param: string | string[] | undefined): number {
+  return typeof param === "string" && /^\d+$/.test(param) ? Number(param) : 1;
+}
+
+export async function generateMetadata({
+  searchParams,
+}: PageProps<"/noticias">): Promise<Metadata> {
+  const sp = await searchParams;
+  // Misma consulta (y misma clave de unstable_cache) que el render: la página
+  // resuelta es la que manda, así el canonical de ?pagina=999 apunta a la real.
+  const { page } = await getPublishedNewsPage(requestedPage(sp.pagina));
+  const suffix = page > 1 ? ` — página ${page}` : "";
+  return {
+    title: `Noticias${suffix} — Vecinal Ciudadela`,
+    description: page > 1 ? `${DESCRIPTION} Página ${page}.` : DESCRIPTION,
+    alternates: { canonical: new URL(pageHref(page), siteBaseUrl()).toString() },
+  };
+}
+
 export default async function NoticiasPage({ searchParams }: PageProps<"/noticias">) {
   const sp = await searchParams;
-  // `pagina` puede venir repetida (?pagina=1&pagina=9 → array) o con basura.
-  // getPublishedNewsPage ya normaliza y recorta al rango real; acá sólo se
-  // evita mandarle NaN, que ensuciaría la clave de caché sin necesidad.
-  const raw = typeof sp.pagina === "string" ? Number(sp.pagina) : 1;
-  const requested = Number.isInteger(raw) && raw > 0 ? raw : 1;
-  const { items, page, pages, total } = await getPublishedNewsPage(requested);
+  const param = sp.pagina;
+  const { items, page, pages, total } = await getPublishedNewsPage(requestedPage(param));
 
-  // Si se pidió una página que no existe (?pagina=999), la consulta devolvió
-  // la última válida. Redirigir deja la URL diciendo la verdad: sin esto el
-  // "Anterior" de esa pantalla llevaría a la 998, que tampoco existe.
-  if (page !== requested) redirect(pageHref(page));
+  // Redirigir cuando la URL pedida NO es la canónica de la página que se va a
+  // mostrar. Comparar contra el número ya normalizado no alcanza: ?pagina=abc,
+  // ?pagina=1 y ?pagina=2.5 colapsan todos a 1 y coincidirían, dejando tres
+  // direcciones vivas para el mismo contenido. Además, sin esto el "Anterior"
+  // de ?pagina=999 llevaría a la 998, que tampoco existe.
+  if (param !== canonicalParam(page)) redirect(pageHref(page));
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-10">

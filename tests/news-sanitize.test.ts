@@ -83,4 +83,35 @@ describe("newsPlainText", () => {
     expect(newsPlainText(`<p>${"a".repeat(200)}</p>`, 50).length).toBeLessThanOrEqual(51);
     expect(newsPlainText(`<p>${"a".repeat(200)}</p>`, 50).endsWith("…")).toBe(true);
   });
+
+  // El caso exacto que se vio en vivo: sin separador entre bloques, el
+  // og:description y el resumen de cada tarjeta salían con las frases pegadas.
+  it("separa los bloques pegados en vez de concatenar las frases", () => {
+    expect(newsPlainText("<p>Cuerpo publico 1</p><h2>Subtitulo</h2><p>Mas texto</p>")).toBe(
+      "Cuerpo publico 1 Subtitulo Mas texto",
+    );
+    expect(newsPlainText("<ul><li>uno</li><li>dos</li></ul><p>fin</p>")).toBe("uno dos fin");
+    expect(newsPlainText("<p>una<br>línea</p>")).toBe("una línea");
+  });
+
+  it("no introduce espacios de más cuando el HTML ya venía separado", () => {
+    const withGaps = "<p>Cuerpo publico 1</p>\n  <h2>Subtitulo</h2>\n<p>Mas texto</p>\n";
+    expect(newsPlainText(withGaps)).toBe("Cuerpo publico 1 Subtitulo Mas texto");
+    // Ni dobles en el medio ni sobrantes en los extremos.
+    expect(newsPlainText(withGaps)).not.toMatch(/ {2}/);
+    expect(newsPlainText(withGaps)).toBe(newsPlainText(withGaps).trim());
+    // Los tags inline siguen sin agregar nada.
+    expect(newsPlainText("<p>Hola <strong>vecinos</strong> del barrio</p>")).toBe(
+      "Hola vecinos del barrio",
+    );
+  });
+
+  it("el separador no rompe el recorte con elipsis ni el tope de largo", () => {
+    const html = `<p>${"a".repeat(120)}</p><p>${"b".repeat(120)}</p>`;
+    const out = newsPlainText(html);
+    expect(out.length).toBe(160);
+    expect(out.endsWith("…")).toBe(true);
+    // El corte cae dentro del primer bloque: el separador no se cuela al final.
+    expect(out.startsWith("a".repeat(100))).toBe(true);
+  });
 });
