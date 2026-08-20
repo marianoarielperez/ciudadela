@@ -1,4 +1,4 @@
-# 10 — Runbook: poner el sitio en `vecinalciudadela.com.ar`
+# 10 — Runbook: poner el sitio en `vecinalciudadela.ar`
 
 Procedimiento para publicar SIGeV en el dominio productivo. Los comandos del VPS
 los ejecuta Mariano a mano (SSH puerto **2222**, root, IP **167.86.71.102**); la
@@ -14,19 +14,35 @@ el nombre `sigev`.
 
 ---
 
+## 0. Punto de partida (verificado por DNS el 20/08/2026)
+
+Buena parte del trabajo ya está hecha. Lo que **ya funciona** y no hay que tocar:
+
+| Ítem | Estado |
+|---|---|
+| Delegación en NIC.ar | ✅ `jocelyn.ns.cloudflare.com` / `logan.ns.cloudflare.com` |
+| Zona en Cloudflare | ✅ activa y resolviendo |
+| Brevo (correo saliente) | ✅ dominio autenticado, DKIM `b1`/`b2.vecinalciudadela-ar.dkim.brevo.com` resolviendo |
+| SPF | ✅ `v=spf1 include:_spf.mx.cloudflare.net include:spf.brevo.com ~all` |
+| DMARC y `brevo-code` | ✅ publicados |
+| Envío real | ✅ verificado el 19/08/2026 desde `notificaciones@vecinalciudadela.ar` |
+
+Lo que **falta**, y es todo lo que cubre este runbook:
+
+1. El registro **A** de la raíz y de `www` — hoy el dominio **no resuelve a
+   ninguna IP**, así que la web no apunta a ningún lado (sección 1).
+2. La configuración de **SSL/TLS** y el **certificado de origen** (sección 1).
+3. El **server block de Nginx** en el VPS (sección 2).
+4. `AUTH_URL` y las credenciales productivas de MP en el `.env` del VPS, más el
+   **re-build** que eso obliga (secciones 3 y 4).
+
+---
+
 ## 1. Cloudflare
 
-### 1.1 Alta del dominio
+### 1.1 Registros DNS
 
-1. Cloudflare → **Add a site** → `vecinalciudadela.com.ar`, plan **Free**.
-2. Cloudflare da dos nameservers. Cargarlos en **NIC.ar** (Mis dominios →
-   `vecinalciudadela.com.ar` → Delegación), reemplazando los que estén.
-3. Esperar a que Cloudflare marque el dominio **Active**. NIC.ar suele tardar
-   entre minutos y algunas horas.
-
-### 1.2 Registros DNS
-
-En **DNS → Records**, con la **nube naranja (Proxied)** activa en los dos:
+En **DNS → Records**, agregar los dos con la **nube naranja (Proxied)** activa:
 
 | Tipo | Nombre | Contenido | Proxy |
 |---|---|---|---|
@@ -36,41 +52,41 @@ En **DNS → Records**, con la **nube naranja (Proxied)** activa en los dos:
 El proxy naranja es lo que hace que Cloudflare termine el TLS público y que el
 `X-Real-IP` que ya usa la app llegue bien desde el `realip` de Nginx.
 
-> Si más adelante se unifica el correo en este dominio, acá van también los
-> registros de Brevo (TXT `brevo-code`, dos CNAME DKIM, TXT SPF y TXT DMARC).
-> Ver la sección 5.
+**No tocar los registros que ya están** (TXT `brevo-code`, los CNAME
+`brevo1`/`brevo2._domainkey`, el SPF y el DMARC): son los que sostienen el correo
+transaccional, que hoy funciona.
 
-### 1.3 SSL/TLS
+### 1.2 SSL/TLS
 
 1. **SSL/TLS → Overview → Full (strict)**. No usar «Flexible»: rompe el circuito
-   HTTPS y deja a Auth.js viendo peticiones como HTTP.
+   HTTPS y deja a Auth.js viendo las peticiones como HTTP.
 2. **SSL/TLS → Edge Certificates**:
    - **Always Use HTTPS**: ON.
    - **HSTS**: ON (`max-age` 6 meses, incluir subdominios). La app **no** emite
      HSTS a propósito: la termina Cloudflare, que es quien ve el TLS.
    - **Minimum TLS Version**: 1.2.
 
-### 1.4 Certificado de origen
+### 1.3 Certificado de origen
 
 **SSL/TLS → Origin Server → Create Certificate**, con los hostnames
-`vecinalciudadela.com.ar` y `*.vecinalciudadela.com.ar`, validez 15 años.
-Cloudflare muestra el certificado y la clave **una sola vez**: copiarlos ahora.
+`vecinalciudadela.ar` y `*.vecinalciudadela.ar`, validez 15 años. Cloudflare
+muestra el certificado y la clave **una sola vez**: copiarlos ahora.
 
 En el VPS:
 
 ```bash
 mkdir -p /etc/ssl/cloudflare
-nano /etc/ssl/cloudflare/vecinalciudadela.com.ar.pem   # pegar el Origin Certificate
-nano /etc/ssl/cloudflare/vecinalciudadela.com.ar.key   # pegar la Private Key
-chmod 600 /etc/ssl/cloudflare/vecinalciudadela.com.ar.key
+nano /etc/ssl/cloudflare/vecinalciudadela.ar.pem   # pegar el Origin Certificate
+nano /etc/ssl/cloudflare/vecinalciudadela.ar.key   # pegar la Private Key
+chmod 600 /etc/ssl/cloudflare/vecinalciudadela.ar.key
 ```
 
 ---
 
 ## 2. Nginx en el VPS
 
-Crear `/etc/nginx/sites-available/vecinalciudadela.com.ar`. Es el mismo patrón
-del server block de staging, **con dos diferencias deliberadas**: el certificado
+Crear `/etc/nginx/sites-available/vecinalciudadela.ar`. Es el mismo patrón del
+server block de staging, **con dos diferencias deliberadas**: el certificado
 propio del dominio y **sin** la cabecera `X-Robots-Tag` (en producción el sitio
 tiene que indexarse; el `robots.txt` que emite la app ya bloquea `/admin`, `/mi`
 y `/api`).
@@ -79,29 +95,29 @@ y `/api`).
 server {
     listen 80;
     listen [::]:80;
-    server_name vecinalciudadela.com.ar www.vecinalciudadela.com.ar;
-    return 301 https://vecinalciudadela.com.ar$request_uri;
+    server_name vecinalciudadela.ar www.vecinalciudadela.ar;
+    return 301 https://vecinalciudadela.ar$request_uri;
 }
 
 # www -> raíz, para no tener el sitio duplicado en dos direcciones.
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name www.vecinalciudadela.com.ar;
+    server_name www.vecinalciudadela.ar;
 
-    ssl_certificate     /etc/ssl/cloudflare/vecinalciudadela.com.ar.pem;
-    ssl_certificate_key /etc/ssl/cloudflare/vecinalciudadela.com.ar.key;
+    ssl_certificate     /etc/ssl/cloudflare/vecinalciudadela.ar.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/vecinalciudadela.ar.key;
 
-    return 301 https://vecinalciudadela.com.ar$request_uri;
+    return 301 https://vecinalciudadela.ar$request_uri;
 }
 
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name vecinalciudadela.com.ar;
+    server_name vecinalciudadela.ar;
 
-    ssl_certificate     /etc/ssl/cloudflare/vecinalciudadela.com.ar.pem;
-    ssl_certificate_key /etc/ssl/cloudflare/vecinalciudadela.com.ar.key;
+    ssl_certificate     /etc/ssl/cloudflare/vecinalciudadela.ar.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/vecinalciudadela.ar.key;
 
     client_max_body_size 15M;   # portadas de noticias, DNIs y anexos
 
@@ -126,7 +142,7 @@ cree que la petición es HTTP y rompe el circuito de sesión.
 Activar:
 
 ```bash
-ln -s /etc/nginx/sites-available/vecinalciudadela.com.ar /etc/nginx/sites-enabled/
+ln -s /etc/nginx/sites-available/vecinalciudadela.ar /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx   # reload, NUNCA restart
 ```
 
@@ -137,10 +153,11 @@ nginx -t && systemctl reload nginx   # reload, NUNCA restart
 Editar `/root/dev/ciudadela/.env`:
 
 ```bash
-AUTH_URL=https://vecinalciudadela.com.ar
+AUTH_URL=https://vecinalciudadela.ar
 MP_ACCESS_TOKEN=<credenciales PRODUCTIVAS>
 MP_WEBHOOK_SECRET=<productivo>
 UPLOADS_DIR=/var/sigev/uploads
+MAIL_FROM="Asoc. Vecinal del Barrio Ciudadela <notificaciones@vecinalciudadela.ar>"
 ```
 
 Tres cosas que no avisan si están mal:
@@ -183,13 +200,13 @@ pm2 save
    tablas `news` y `activities`. `migrate deploy` la aplica sola; no usar
    `db push`.
 2. **Directorio de portadas**: la app lo crea al subir la primera imagen, pero
-   conviene dejarlo con el dueño y los permisos correctos de entrada:
+   conviene dejarlo con los permisos correctos de entrada:
    ```bash
    mkdir -p /var/sigev/uploads/news
    chmod 750 /var/sigev/uploads/news
    ```
 3. **`sharp`** pasó a dependencia de producción (lo necesita `next/image` en
-   runtime, no solo en build). `npm ci` lo instala; si el build se hizo con un
+   runtime, no solo en build). `npm ci` lo instala; si el build se hiciera con un
    `node_modules` viejo, las imágenes fallan recién al servirse.
 4. **Backup antes de migrar**, como siempre:
    ```bash
@@ -199,44 +216,33 @@ pm2 save
 ### Verificación post-deploy
 
 ```bash
-curl -sI https://vecinalciudadela.com.ar | grep -i 'content-security-policy'
-curl -sI https://vecinalciudadela.com.ar | grep -i 'strict-transport-security'
-curl -s  https://vecinalciudadela.com.ar/robots.txt | tail -2
+curl -sI https://vecinalciudadela.ar | grep -i 'content-security-policy'
+curl -sI https://vecinalciudadela.ar | grep -i 'strict-transport-security'
+curl -s  https://vecinalciudadela.ar/robots.txt | tail -2
 ```
 
 - La CSP tiene que llegar entera (la emite Next y tiene que sobrevivir a Nginx y
-  Cloudflare).
-- Si el HSTS vuelve vacío, falta prenderlo en Cloudflare (paso 1.3).
+  a Cloudflare).
+- Si el HSTS vuelve vacío, falta prenderlo en Cloudflare (paso 1.2).
 - La última línea del `robots.txt` es `Sitemap: https://…`: **si dice otro
   dominio, el build se hizo con el `AUTH_URL` equivocado** y hay que rehacerlo.
 
 ---
 
-## 5. Correo: el pendiente que queda abierto
+## 5. Correo: nada que hacer
 
-El dominio autenticado en Brevo es **`vecinalciudadela.ar`**, sin `.com`. Se dio
-de alta y se verificó el 19/08/2026 y funciona: SPF, DKIM y DMARC resolviendo, y
-envíos reales confirmados desde `notificaciones@vecinalciudadela.ar`.
+El dominio autenticado en Brevo **es** `vecinalciudadela.ar`, el mismo del sitio,
+así que sitio y remitente coinciden y no hay nada que migrar. Se dio de alta el
+19/08/2026 y quedó verificado: DKIM, SPF y DMARC resolviendo, y envíos reales
+confirmados a las dos casillas autorizadas con `messageId` firmado por el
+dominio propio.
 
-Sitio y remitente pueden vivir en dominios distintos sin romperse. Pero estos
-correos tienen valor de **notificación fehaciente** ante la IGJ, y que el socio
-visite `.com.ar` y reciba los avisos desde `.ar` no ayuda ni a la confianza ni a
-la reputación de entrega.
+Lo único que cambia al pasar a producción es `MAIL_FROM` en el `.env` del VPS
+(sección 3), que hoy puede seguir apuntando a la casilla de prueba.
 
-Para unificar (recomendado antes del lanzamiento):
-
-1. En Brevo: **Senders, Domains & Dedicated IPs → Domains**, dar de alta
-   `vecinalciudadela.com.ar`. Brevo genera un TXT `brevo-code` y **dos CNAME DKIM
-   nuevos** (`b1`/`b2.vecinalciudadela-com-ar.dkim.brevo.com`).
-2. Cargar esos registros en la zona `vecinalciudadela.com.ar` de Cloudflare, más
-   SPF (`v=spf1 include:spf.brevo.com ~all`) y DMARC.
-3. Esperar la verificación en Brevo y recién entonces cambiar en `.env`:
-   `MAIL_FROM="Asoc. Vecinal del Barrio Ciudadela <notificaciones@vecinalciudadela.com.ar>"`.
-4. Reiniciar PM2 y **mandar un correo de prueba real** antes de dar el cambio por
-   bueno.
-
-> Aprendido a la fuerza: Brevo arma el host DKIM reemplazando los puntos del
-> dominio por guiones. Si el valor que muestra no coincide con la zona donde
-> estás publicando los registros, el dominio se cargó mal en Brevo y no es un
-> problema de propagación — nunca va a verificar. La clave SMTP es de la cuenta,
-> no del dominio: se reutiliza tal cual.
+> Para el futuro, si alguna vez hay que rehacer la autenticación: Brevo arma el
+> host DKIM reemplazando los puntos del dominio por guiones. Si el valor que
+> muestra no coincide con la zona donde estás publicando los registros, el
+> dominio se cargó mal en Brevo y **no es un problema de propagación** — nunca va
+> a verificar. La clave SMTP es de la cuenta, no del dominio: se reutiliza tal
+> cual. Las dos cosas costaron un día la primera vez.

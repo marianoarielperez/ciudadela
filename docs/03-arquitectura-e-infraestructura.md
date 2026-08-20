@@ -43,22 +43,21 @@ con comandos preparados):
 | Entorno | URL | Certificado | Credenciales MP |
 |---|---|---|---|
 | Staging | `sigev.redaccion.ar` | Cloudflare Origin wildcard `*.redaccion.ar` (ya instalado, válido hasta 2041) | TEST (sandbox) |
-| Producción | `vecinalciudadela.com.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas |
+| Producción | `vecinalciudadela.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas |
 
-- `vecinalciudadela.com.ar` **ya está registrado y activo** (NIC.ar, a nombre de la
-  vecinal). Confirmado por Mariano el 20/08/2026.
-- DNS en Cloudflare (plan free), registro A → 167.86.71.102, proxy activo.
+- El dominio es **`vecinalciudadela.ar`**, sin `.com`. Ya está registrado en NIC.ar
+  a nombre de la vecinal y **delegado a Cloudflare** (`jocelyn`/`logan.ns.cloudflare.com`,
+  verificado por DNS el 20/08/2026).
+- DNS en Cloudflare (plan free). **Falta el registro A** de la raíz y de `www` →
+  167.86.71.102 con proxy activo: hoy el dominio no resuelve a ninguna IP, así que
+  la web todavía no apunta a ningún lado. Ver `docs/10-runbook-dominio-produccion.md`.
 - Email saliente: Cloudflare Email Routing para recepción + **Brevo SMTP** para envío
   (crítico: estos correos tienen valor de notificación fehaciente, no pueden caer en
   spam). Mismo patrón ya aplicado en cbinfraestructura.ar y 7777.ar.
-- ⚠️ **El dominio autenticado en Brevo es `vecinalciudadela.ar`, NO `.com.ar`.** Se
-  dio de alta y se verificó el 19/08/2026 (SPF, DKIM y DMARC resolviendo, envíos
-  reales confirmados con `MAIL_FROM=notificaciones@vecinalciudadela.ar`). El sitio y
-  el remitente pueden vivir en dominios distintos sin romperse, pero conviene
-  unificarlos antes del lanzamiento: que el sitio sea `.com.ar` y los avisos lleguen
-  desde `.ar` confunde al socio y no ayuda a la reputación de entrega. Unificar
-  significa **rehacer el alta del dominio en Brevo** sobre `.com.ar` y cargar los DKIM
-  nuevos en Cloudflare — el mismo procedimiento que ya se hizo una vez.
+- **El correo ya está terminado y verificado.** Dominio autenticado en Brevo el
+  19/08/2026, con DKIM (`b1`/`b2.vecinalciudadela-ar.dkim.brevo.com`), SPF y DMARC
+  resolviendo, y envíos reales confirmados desde `notificaciones@vecinalciudadela.ar`.
+  Sitio y remitente comparten dominio: no hay nada que migrar.
 - El plan free de Brevo (300 emails/día) sobra para ~70-300 socios.
 
 ## Despliegue
@@ -83,7 +82,7 @@ desindexa solo. Cambiar `AUTH_URL` obliga a re-buildear, no alcanza con reinicia
 Antes de buildear en el VPS, verificar en su `.env`:
 
 - `AUTH_URL` = el dominio real del entorno (staging `https://sigev.redaccion.ar`,
-  producción `https://vecinalciudadela.com.ar`).
+  producción `https://vecinalciudadela.ar`).
 - `ALLOW_LOCALHOST_BASE_URL` **ausente o comentada**. Es una escotilla solo para el
   build local: si está activa en el servidor, desactiva la guarda que justamente
   impide publicar canonicals a localhost. `grep ALLOW_LOCALHOST_BASE_URL .env` no
