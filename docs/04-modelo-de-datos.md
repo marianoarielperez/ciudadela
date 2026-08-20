@@ -159,9 +159,33 @@ Identidad única de la persona a través de todos los libros.
   absoluto de **7 días** de sesión, independiente de la actividad. Ver
   `docs/08-seguridad-y-privacidad.md`.
 
-### Noticia
-- `titulo`, `slug`, `cuerpo` (markdown o rich text simple), `imagen_path` (nullable),
-  `estado` (`borrador` | `publicada`), `publicada_at`, `autor_id`
+### Noticia (`news`) — Módulo 2
+- `title` (varchar 160), `slug` (único, varchar 180 — editable después de publicar:
+  si cambia, la URL vieja da 404), `body` (text, HTML **ya sanitizado en el
+  servidor** por `src/lib/news/sanitize.ts`; nunca se persiste HTML crudo del
+  cliente), `cover_image_path` (nullable), `status` (`draft` | `published`),
+  `published_at` (se fija la primera vez que se publica y no se pisa al
+  republicar), `author_id` (FK a `users`, `SET NULL`).
+- La portada se guarda en `UPLOADS_DIR/news/` con nombre UUID y se sirve por el
+  route handler **público** `/api/imagenes/noticias/[name]` con caché inmutable
+  (excepción a la regla de uploads: una portada es contenido público). Ver
+  `CLAUDE.md` y `src/lib/news/images.ts`.
+- OJO: no confundir esta cartelera digital con la cartelera **física** de
+  notificaciones (`Notificacion.via = cartelera`).
+
+### Actividad (`activities`) — Módulo 2
+
+Actividad sistemática semanal de un salón de la sede ("Gimnasia mujeres",
+"Taekwondo niños"), con vigencia anual. Solo consulta pública; no hay reservas.
+
+- `name` (varchar 120), `room` (enum `Room`: `historic` = Salón Histórico,
+  `glass` = Salón Vidriado — salones fijos, sin tabla), `weekdays` (JSON, array
+  de enteros 1–7, lunes=1), `start_time`/`end_time` (varchar "HH:MM", hora de
+  pared local SIN conversión a UTC: es un horario recurrente, no un instante),
+  `year` (smallint), `active` (bool).
+- Regla: dos actividades activas del mismo salón y año no pueden solaparse
+  en día y horario (validada en `src/lib/activities/rules.ts`). Compartir el
+  borde exacto (una termina 19:30, la otra empieza 19:30) sí es válido.
 
 ### Calle
 - Importada de `datos/calles_inicial.csv`: `id_calle`, `orden_carga`, `nombre_calle`,
@@ -176,6 +200,13 @@ Identidad única de la persona a través de todos los libros.
   (nullable — si está seteado, ASOCIATE se suspende y REEMPADRONATE se activa),
   `elecciones_en_curso` (bool, REG-07), textos legales (términos, consentimiento
   de datos), datos de contacto, links de estatuto.
+- Implementadas en el Módulo 2 (`src/lib/config.ts`, editables desde
+  `/admin/configuracion`, solo superadmin): `asociate_activo` (bool),
+  `contact_phone` (string), `contact_email` (string).
+- Las páginas públicas leen estas claves cacheadas por tag: guardar la
+  configuración invalida el tag `config` y el sitio refleja el cambio sin
+  redeploy (lo mismo hacen los ABM de noticias y actividades con sus tags
+  `news` y `activities`). El panel admin lee siempre directo, sin caché.
 
 ### Auditoria
 - `usuario_id`, `accion`, `entidad`, `entidad_id`, `detalle_json`, `ip`, `timestamp`
