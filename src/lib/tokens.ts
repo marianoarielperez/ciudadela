@@ -49,7 +49,14 @@ export function makeTokens(db: TokenDb) {
     return t;
   }
   return {
-    async issue(input: { purpose: TokenPurpose; memberId?: number; userId?: number; now?: Date }): Promise<string> {
+    // `applicationId` es el titular de un token del M3: la verificación de email
+    // del wizard, que se emite cuando todavía no hay ficha ni cuenta. No tiene
+    // `revokeForApplication` a propósito: ese enlace es uno solo, se emite una
+    // única vez al crear la solicitud, y el Cascade del schema lo limpia si la
+    // solicitud se borra.
+    async issue(input: {
+      purpose: TokenPurpose; memberId?: number; userId?: number; applicationId?: number; now?: Date;
+    }): Promise<string> {
       const raw = randomBytes(32).toString("base64url");
       const now = input.now ?? new Date();
       await db.actionToken.create({
@@ -58,6 +65,7 @@ export function makeTokens(db: TokenDb) {
           tokenHash: hashToken(raw),
           memberId: input.memberId ?? null,
           userId: input.userId ?? null,
+          applicationId: input.applicationId ?? null,
           expiresAt: new Date(now.getTime() + TOKEN_TTL[input.purpose]),
         },
       });
