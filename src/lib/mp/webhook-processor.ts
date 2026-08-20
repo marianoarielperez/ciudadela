@@ -5,6 +5,7 @@
 // MP reintente.
 import type { PrismaClient } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
+import { audit } from "@/lib/audit";
 import { mailer } from "@/lib/email";
 import { applicationAcceptedEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/prisma";
@@ -18,7 +19,23 @@ type Deps = {
   db: Pick<PrismaClient, "application" | "mpSubscription" | "$transaction">;
   gateway: Pick<MpGateway, "getPayment" | "getPreapproval" | "getAuthorizedPayment">;
   mailer: Pick<typeof mailer, "sendToApplication">;
+  audit: typeof audit;
 };
+
+// Los errores de nodemailer traen `envelope`, `rejected` y el `response` del
+// SMTP —o sea la dirección del vecino en claro— y el log de PM2 no está cubierto
+// por los cuidados de docs/08 (Ley 25.326). Mismo criterio que
+// `asociate/actions.ts`: al log va el código. El mensaje se conserva porque un
+// Error pelado NO tiene `.code` y sin él el operador leía literalmente
+// "unknown", pero se enmascara cualquier dirección antes de salir.
+function codeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
+}
+
+function safeMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return raw.replace(/[^\s<>@,;]+@[^\s<>@,;]+/g, "[email]").slice(0, 200);
+}
 
 export function makeWebhookProcessor(deps: Deps) {
   async function onPayment(dataId: string): Promise<string> {
@@ -54,7 +71,24 @@ export function makeWebhookProcessor(deps: Deps) {
           summary: "solicitud aceptada (débito autorizado)",
         });
       } catch (e) {
-        console.error("accepted email failed", (e as { code?: string })?.code ?? "unknown");
+        console.error(
+          "[mp-webhook] falló el email de solicitud aceptada",
+          app.id,
+          "code:", codeOf(e), "message:", safeMessage(e),
+        );
+        // El hueco tiene que quedar consultable: el vecino está aceptado y la
+        // bienvenida no salió, y hasta acá eso sólo vivía en el log de PM2.
+        // Al detalle va el código, nunca el email ni datos personales (docs/08).
+        // El asiento es best-effort igual que el envío: si la auditoría también
+        // falla, la transición ya está firme y no se deshace.
+        await deps
+          .audit({
+            action: "application_accepted_email_failed",
+            entity: "application",
+            entityId: app.id,
+            detail: { code: codeOf(e) },
+          })
+          .catch(() => {});
       }
     }
     return "application_approved";
@@ -92,4 +126,4 @@ export function makeWebhookProcessor(deps: Deps) {
   };
 }
 
-export const webhookProcessor = makeWebhookProcessor({ db: prisma, gateway: mpGateway, mailer });
+export const webhookProcessor = makeWebhookProcessor({ db: prisma, gateway: mpGateway, mailer, audit });

@@ -34,43 +34,70 @@ export async function POST(req: NextRequest) {
   if (!secret) return Response.json({ error: "not_configured" }, { status: 500 });
 
   const url = new URL(req.url);
-  let body: { id?: unknown; type?: unknown; topic?: unknown; data?: { id?: unknown } } | null = null;
+  let body: {
+    id?: unknown; type?: unknown; topic?: unknown; action?: unknown; data?: { id?: unknown };
+  } | null = null;
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: "bad_json" }, { status: 400 });
   }
 
+  const xSignature = req.headers.get("x-signature");
+  const xRequestId = req.headers.get("x-request-id");
+  const ip = req.headers.get("x-real-ip") ?? "unknown";
+
+  // La auditoría de este endpoint corre ANTES de autenticar, o sea que es un
+  // canal de escritura anónimo sobre `audit_log` —la tabla de cumplimiento
+  // estatutario—: un insert por request, desde una URL pública, sin techo.
+  // Criterio: se audita sólo cuando venían AMBOS headers de firma, que es lo
+  // que distingue un intento de falsificación de un escaneo. Una request sin
+  // `x-signature` se rechaza igual (401), pero sin asiento — así el volumen de
+  // `webhook_rejected_signature` sigue siendo señal y no ruido de internet.
+  const claimsSignature = Boolean(xSignature && xRequestId);
+
   // MP firma el data.id que viaja en la query string de la notificación, y lo
   // firma en minúsculas cuando es alfanumérico: se normaliza acá porque el
   // helper delega la normalización al caller (ver su cabecera).
   const dataId = (url.searchParams.get("data.id") ?? String(body?.data?.id ?? "")).toLowerCase();
   if (!SAFE_DATA_ID.test(dataId)) {
-    await audit({
-      action: "webhook_rejected_signature",
-      entity: "webhook",
-      detail: { reason: "malformed_data_id" },
-      ip: req.headers.get("x-real-ip") ?? "unknown",
-    });
+    // El IPN legacy de MP manda `?topic=payment&id=123` — `id=`, NO `data.id=` —,
+    // así que dataId queda vacío y la notificación muere acá, en este 400, ANTES
+    // de que se escriba fila alguna en `webhook_events`. Se marca distinto en la
+    // auditoría para que el operador que lo vea no lo salga a buscar a una tabla
+    // donde nunca va a estar. No implementamos el formato legacy: sólo que se
+    // pueda diagnosticar.
+    const legacyIpn = dataId === "" && url.searchParams.has("topic");
+    if (claimsSignature) {
+      await audit({
+        action: "webhook_rejected_signature",
+        entity: "webhook",
+        detail: { reason: legacyIpn ? "legacy_ipn_shape" : "malformed_data_id" },
+        ip,
+      });
+    }
     return Response.json({ error: "bad_data_id" }, { status: 400 });
   }
 
-  const valid = validateMpSignature({
-    xSignature: req.headers.get("x-signature"),
-    xRequestId: req.headers.get("x-request-id"),
-    dataId,
-    secret,
-  });
+  const valid = validateMpSignature({ xSignature, xRequestId, dataId, secret });
   if (!valid) {
-    await audit({
-      action: "webhook_rejected_signature", entity: "webhook",
-      ip: req.headers.get("x-real-ip") ?? "unknown",
-    });
+    if (claimsSignature) {
+      await audit({ action: "webhook_rejected_signature", entity: "webhook", ip });
+    }
     return Response.json({ error: "invalid_signature" }, { status: 401 });
   }
 
   const topic = String(body?.type ?? body?.topic ?? url.searchParams.get("type") ?? "unknown");
-  const externalEventId = String(body?.id ?? `${topic}:${dataId}`).slice(0, 128);
+  // El fallback lleva el `action` (`payment.created` / `payment.updated`) además
+  // del tópico y el id del recurso. Sin ese discriminador, TODAS las
+  // notificaciones del pago 777 compartirían la clave `payment:777`: la primera
+  // (`created`, status `in_process`) se registraría procesada como
+  // `payment_ignored` y la segunda (`updated`, ya `approved`) se respondería
+  // `ignored_duplicate` sin procesar nunca — el vecino pagó y la solicitud
+  // quedaría en `pending_payment` para siempre.
+  const externalEventId = String(
+    body?.id ?? `${topic}:${dataId}:${String(body?.action ?? "")}`,
+  ).slice(0, 128);
 
   // Insert-or-find: la unique [origin, externalEventId] decide.
   let event: WebhookEvent;

@@ -23,7 +23,11 @@ function deps(payment?: Partial<{ status: string; externalReference: string | nu
     getAuthorizedPayment: vi.fn().mockResolvedValue({ id: "9", preapprovalId: "pre-1", status: "processed" }),
   };
   const mailerMock = { sendToApplication: vi.fn().mockResolvedValue({ messageId: "m" }) };
-  return { db: db as never, gateway: gateway as never, mailer: mailerMock as never, application, mpSubscription, gatewayMock: gateway, mailerMock };
+  const auditMock = vi.fn<(entry: unknown) => Promise<void>>(async () => {});
+  return {
+    db: db as never, gateway: gateway as never, mailer: mailerMock as never, audit: auditMock as never,
+    application, mpSubscription, gatewayMock: gateway, mailerMock, auditMock,
+  };
 }
 
 describe("webhookProcessor payments", () => {
@@ -86,6 +90,43 @@ describe("webhookProcessor payments", () => {
     d.mailerMock.sendToApplication.mockRejectedValue(Object.assign(new Error("smtp down"), { code: "ECONNREFUSED" }));
     const p = makeWebhookProcessor(d);
     await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
+  });
+
+  // Sin asiento, una bienvenida perdida sólo vivía en el log de PM2: el vecino
+  // queda aceptado, el correo nunca llega y nada en la base lo dice.
+  it("una bienvenida perdida deja asiento de auditoría y la transición IGUAL queda firme", async () => {
+    const d = deps();
+    d.mailerMock.sendToApplication.mockRejectedValue(Object.assign(new Error("smtp down"), { code: "ECONNREFUSED" }));
+    const p = makeWebhookProcessor(d);
+
+    await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
+
+    expect(d.auditMock).toHaveBeenCalledTimes(1);
+    const entry = d.auditMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      action: "application_accepted_email_failed",
+      entity: "application",
+      entityId: 55,
+      detail: { code: "ECONNREFUSED" },
+    });
+    // El asiento no puede llevar el email ni el nombre del vecino (docs/08).
+    expect(JSON.stringify(entry)).not.toContain("a@b.com");
+    expect(JSON.stringify(entry)).not.toContain("Ana");
+  });
+
+  it("si la auditoría del email perdido también falla, la aceptación sigue en pie", async () => {
+    const d = deps();
+    d.mailerMock.sendToApplication.mockRejectedValue(new Error("smtp down"));
+    d.auditMock.mockRejectedValue(new Error("db down"));
+    const p = makeWebhookProcessor(d);
+    await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
+  });
+
+  it("un envío OK no escribe asiento de fallo", async () => {
+    const d = deps();
+    const p = makeWebhookProcessor(d);
+    await p.process({ topic: "payment", dataId: "777" });
+    expect(d.auditMock).not.toHaveBeenCalled();
   });
   it("propaga el fallo del gateway (la ruta lo convierte en 500 y MP reintenta)", async () => {
     const d = deps();

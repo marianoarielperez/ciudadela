@@ -114,6 +114,33 @@ describe("POST /api/webhooks/mp — firma", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  // La auditoría corre antes de autenticar: sin este filtro, cualquiera infla
+  // `audit_log` —la tabla de cumplimiento estatutario— a golpe de POST anónimo,
+  // y el ruido de escáner ahoga la señal real de webhook_rejected_signature.
+  it("un POST SIN x-signature se rechaza sin escribir asiento (ruido de escáner)", async () => {
+    const res = await POST(webhookRequest({ xSignature: null }));
+
+    expect(res.status).toBe(401);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("una firma inválida CON headers presentes sí deja asiento (intento de falsificación)", async () => {
+    const res = await POST(webhookRequest({ xSignature: "ts=1,v1=deadbeef" }));
+
+    expect(res.status).toBe(401);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_rejected_signature",
+    });
+  });
+
+  it("sin x-request-id tampoco deja asiento: la firma no está completa", async () => {
+    const res = await POST(webhookRequest({ xRequestId: null, xSignature: "ts=1,v1=deadbeef" }));
+
+    expect(res.status).toBe(401);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
   // La guarda de longitud del helper existe justo para esto: un v1 corto tiene
   // que devolver false, no un RangeError de timingSafeEqual. Si tirara, la ruta
   // respondería 500 y MP reintentaría para siempre.
@@ -165,6 +192,34 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
     expect(res.status).toBe(200);
     expect(process_).toHaveBeenCalledWith(expect.objectContaining({ dataId: upper.toLowerCase() }));
+  });
+
+  // El IPN legacy manda `?topic=payment&id=123` (`id=`, NO `data.id=`): no llega
+  // nunca a `webhook_events`, muere en este 400. El asiento lo dice para que el
+  // operador no salga a buscarlo a una tabla donde no está.
+  it("un IPN legacy se rechaza con 400 y se audita como legacy_ipn_shape", async () => {
+    const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
+      method: "POST",
+      headers: new Headers({ "x-signature": "ts=1,v1=deadbeef", "x-request-id": "req-1", "x-real-ip": "10.0.0.9" }),
+      body: JSON.stringify({ topic: "payment", id: 123 }),
+    }) as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect(create).not.toHaveBeenCalled();
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_rejected_signature",
+      detail: { reason: "legacy_ipn_shape" },
+    });
+  });
+
+  it("un data.id malformado que NO es un IPN legacy se audita como malformed_data_id", async () => {
+    await POST(webhookRequest({ dataId: "777;request-id:otro" }));
+
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      detail: { reason: "malformed_data_id" },
+    });
   });
 
   it("responde 400 a un body que no es JSON", async () => {
@@ -234,10 +289,71 @@ describe("POST /api/webhooks/mp — registro e idempotencia", () => {
     expect(process_).not.toHaveBeenCalled();
   });
 
-  it("sin `id` en el body usa topic:dataId como clave de idempotencia", async () => {
+  it("sin `id` en el body usa topic:dataId:action como clave de idempotencia", async () => {
     await POST(webhookRequest({ body: { type: "payment", data: { id: "777" } } }));
 
-    expect(create.mock.calls[0][0].data).toMatchObject({ externalEventId: "payment:777" });
+    expect(create.mock.calls[0][0].data).toMatchObject({ externalEventId: "payment:777:" });
+  });
+
+  // El caso que este discriminador existe para evitar: MP manda `payment.created`
+  // (status in_process) y después `payment.updated` (ya approved) para el MISMO
+  // pago. Si las dos compartieran la clave `payment:777`, la segunda entraría por
+  // `ignored_duplicate` —la fila de la primera ya tiene processedAt— y la
+  // solicitud quedaría en pending_payment para siempre mientras a MP le
+  // respondemos 200.
+  it("dos notificaciones del mismo pago sin `id` y con distinto `action` se procesan las DOS", async () => {
+    const rows = new Map<string, ReturnType<typeof storedEvent>>();
+    create.mockImplementation(async ({ data }: { data: { externalEventId: string } }) => {
+      if (rows.has(data.externalEventId)) throw new Error("unique constraint");
+      const row = storedEvent({ id: BigInt(rows.size + 1), externalEventId: data.externalEventId });
+      rows.set(data.externalEventId, row);
+      return row;
+    });
+    findUnique.mockImplementation(
+      async ({ where }: { where: { origin_externalEventId: { externalEventId: string } } }) =>
+        rows.get(where.origin_externalEventId.externalEventId) ?? null,
+    );
+    update.mockImplementation(async ({ where, data }: { where: { id: bigint }; data: { processedAt?: Date } }) => {
+      for (const row of rows.values()) {
+        if (row.id === where.id && data.processedAt) row.processedAt = data.processedAt as never;
+      }
+      return storedEvent();
+    });
+
+    process_.mockResolvedValueOnce("payment_ignored").mockResolvedValueOnce("application_approved");
+
+    const first = await POST(webhookRequest({ body: { type: "payment", action: "payment.created", data: { id: "777" } } }));
+    const second = await POST(webhookRequest({ body: { type: "payment", action: "payment.updated", data: { id: "777" } } }));
+
+    expect(await first.json()).toMatchObject({ result: "payment_ignored" });
+    expect(await second.json()).toMatchObject({ result: "application_approved" });
+    expect(process_).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls.map((c: unknown[]) => (c[0] as { data: { externalEventId: string } }).data.externalEventId)).toEqual([
+      "payment:777:payment.created",
+      "payment:777:payment.updated",
+    ]);
+  });
+
+  it("la MISMA notificación repetida sigue siendo un duplicado ignorado", async () => {
+    const rows = new Map<string, ReturnType<typeof storedEvent>>();
+    create.mockImplementation(async ({ data }: { data: { externalEventId: string } }) => {
+      if (rows.has(data.externalEventId)) throw new Error("unique constraint");
+      const row = storedEvent({ externalEventId: data.externalEventId, processedAt: new Date() });
+      rows.set(data.externalEventId, row);
+      return row;
+    });
+    findUnique.mockImplementation(
+      async ({ where }: { where: { origin_externalEventId: { externalEventId: string } } }) =>
+        rows.get(where.origin_externalEventId.externalEventId) ?? null,
+    );
+
+    const body = { type: "payment", action: "payment.updated", data: { id: "777" } };
+    await POST(webhookRequest({ body }));
+    const again = await POST(webhookRequest({ body }));
+
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ result: "ignored_duplicate" });
+    expect(process_).toHaveBeenCalledTimes(1);
   });
 });
 
