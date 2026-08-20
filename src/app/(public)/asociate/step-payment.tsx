@@ -77,7 +77,13 @@ function DebitBranch({
   fees: FeeAmounts | null;
   onBack: () => void;
 }) {
-  const [state, formAction, pending] = useActionState<PayState, FormData>(startPaymentAction, {});
+  // `blocked` no viaja en el `PayState` exportado de `wizard-shared.ts` (ese tipo
+  // se replica a mano del lado del server, ver el comentario de allá): se ensancha
+  // acá nomás, sólo para esta pantalla, en vez de tocar el tipo compartido.
+  const [state, formAction, pending] = useActionState<PayState & { blocked?: true }, FormData>(
+    startPaymentAction,
+    {},
+  );
   const fee = fees ? (category === "active" ? fees.active : fees.shared) : null;
 
   // Irse del sitio ES un efecto sobre un sistema externo: acá el efecto está
@@ -87,6 +93,11 @@ function DebitBranch({
     if (state.redirectUrl) window.location.assign(state.redirectUrl);
   }, [state.redirectUrl]);
   const leaving = Boolean(state.redirectUrl);
+  // Terminal: reintentar acá crearía una segunda suscripción en MP (ver el catch
+  // de persistencia en `actions.ts`). El botón queda inerte, no sólo mientras
+  // `pending` — a diferencia de los demás errores de esta pantalla, que sí
+  // admiten reintento.
+  const blocked = Boolean(state.blocked);
 
   return (
     <form action={formAction}>
@@ -133,6 +144,7 @@ function DebitBranch({
         backLabel="Volver a la documentación"
         nextLabel="Ir a Mercado Pago"
         submit
+        nextDisabled={blocked}
         pending={pending || leaving}
         pendingLabel={leaving ? "Abriendo Mercado Pago…" : "Preparando el pago…"}
       />

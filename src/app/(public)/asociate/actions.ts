@@ -45,7 +45,10 @@ type CreateState = {
 type ResendState = { error?: string; done?: boolean };
 type UploadState = { error?: string; uploaded?: { type: string; count: number } };
 type SubmitState = { error?: string; done?: boolean };
-type PayState = { error?: string; redirectUrl?: string };
+// `blocked` es terminal: sólo lo pone el catch de persistencia post-`createPreapproval`
+// de abajo, donde reintentar crearía una SEGUNDA suscripción en MP. Los demás errores
+// de `startPaymentAction` NO lo llevan, porque ahí sí se puede reintentar.
+type PayState = { error?: string; redirectUrl?: string; blocked?: true };
 
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
@@ -544,10 +547,12 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
     );
     // A propósito NO invita a reintentar: el reintento crearía una SEGUNDA
     // suscripción en MP, porque la solicitud sigue en `started` y sin
-    // `preapprovalId`. El camino que queda es humano.
+    // `preapprovalId`. El camino que queda es humano. `blocked` es lo que la
+    // pantalla usa para dejar el botón inerte en vez de sólo mientras `pending`.
     return {
       error:
         "No pudimos registrar tu pago. No lo intentes de nuevo por ahora: acercate a la sede vecinal o escribinos, que el problema ya quedó anotado de nuestro lado.",
+      blocked: true,
     };
   }
 

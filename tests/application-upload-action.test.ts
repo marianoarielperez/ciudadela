@@ -316,17 +316,25 @@ describe("startPaymentAction", () => {
     );
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const result = await startPaymentAction({}, tokenForm());
+    try {
+      const result = await startPaymentAction({}, tokenForm());
 
-    expect(result.redirectUrl).toBeUndefined();
-    expect(result.error).toMatch(/no pudimos registrar tu pago/i);
-    expect(result.error).toMatch(/no lo intentes de nuevo/i);
-    expect(result.error).not.toMatch(/preapproval_id|P2002/i);
-    // Sin asiento de auditoría: la solicitud no quedó enviada.
-    expect(mocks.audit).not.toHaveBeenCalled();
+      expect(result.redirectUrl).toBeUndefined();
+      expect(result.error).toMatch(/no pudimos registrar tu pago/i);
+      expect(result.error).toMatch(/no lo intentes de nuevo/i);
+      expect(result.error).not.toMatch(/preapproval_id|P2002/i);
+      // Terminal: reintentar acá duplicaría la suscripción en MP. La pantalla
+      // usa este flag para dejar el botón inerte, no sólo mientras `pending`.
+      expect(result.blocked).toBe(true);
+      // Sin asiento de auditoría: la solicitud no quedó enviada.
+      expect(mocks.audit).not.toHaveBeenCalled();
 
-    expect(JSON.stringify(errorLog.mock.calls[0])).toContain("PRE-1");
-    errorLog.mockRestore();
+      expect(JSON.stringify(errorLog.mock.calls[0])).toContain("PRE-1");
+    } finally {
+      // En un `finally`: si una aserción de arriba falla, `console.error` no
+      // queda stubbeado para el resto del archivo.
+      errorLog.mockRestore();
+    }
   });
 
   it("camino feliz: crea la suscripción, la persiste y devuelve el checkout", async () => {
