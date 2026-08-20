@@ -38,7 +38,11 @@ import type { NextConfig } from "next";
 const MP_SCRIPT: string[] = []; // M3: "https://sdk.mercadopago.com", "https://http2.mlstatic.com"
 const MP_CONNECT: string[] = []; // M3: "https://api.mercadopago.com"
 const MP_FRAME: string[] = []; // M3: "https://www.mercadopago.com.ar"
-const TURNSTILE: string[] = []; // M3: "https://challenges.cloudflare.com"
+// Turnstile ya está EN USO (task 12: el wizard ASOCIATE y el reenvío del enlace
+// de retome montan el widget). `script-src` para `api.js` y `frame-src` para el
+// iframe del desafío: sin los dos, el widget queda en blanco y todo envío falla
+// con "No pudimos verificar que sos una persona".
+const TURNSTILE: string[] = ["https://challenges.cloudflare.com"];
 
 // React en desarrollo necesita eval() para reconstruir callstacks; sin esto
 // cada página de `next dev` loguea un error fijo de CSP que tapa errores

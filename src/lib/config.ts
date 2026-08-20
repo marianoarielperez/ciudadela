@@ -60,8 +60,10 @@ export const getContactInfo = unstable_cache(
 // desvío deliberado de la spec §2 —menos superficie de XSS, y el superadmin no
 // necesita marcado para un pliego de condiciones— y por eso el lector devuelve
 // el string tal cual, sin sanitizar nada aguas abajo.
+export type LegalTexts = { terms: string | null; privacyConsent: string | null };
+
 export const getLegalTexts = unstable_cache(
-  async () => ({
+  async (): Promise<LegalTexts> => ({
     terms: await configReader.getString(CONFIG_KEYS.termsText),
     privacyConsent: await configReader.getString(CONFIG_KEYS.privacyConsentText),
   }),
