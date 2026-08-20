@@ -6,7 +6,8 @@ import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import {
   makeApplicationQueries, parseApplicationFilters, parseApplicationsPage,
 } from "@/lib/applications/query";
-import { CATEGORY_LABELS } from "@/lib/members/labels";
+import { RECORDABLE_STATUSES } from "@/lib/applications/record";
+import { CATEGORY_LABELS, MINUTE_TYPE_LABELS } from "@/lib/members/labels";
 import { applicationStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
@@ -17,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { recordApplicationsAction } from "./actions";
+import { RecordForm } from "./record-form";
 
 export const dynamic = "force-dynamic";
 
@@ -44,8 +47,23 @@ export default async function SolicitudesPage(props: {
 
   const sp = await props.searchParams;
   const filters = parseApplicationFilters(sp);
-  const { rows, total, page, pageCount, pageSize } = await makeApplicationQueries(prisma)
-    .fetchPage(filters, parseApplicationsPage(sp));
+  const [{ rows, total, page, pageCount, pageSize }, minuteRows] = await Promise.all([
+    makeApplicationQueries(prisma).fetchPage(filters, parseApplicationsPage(sp)),
+    prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
+  ]);
+  const minutes = minuteRows.map((m) => ({
+    id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
+  }));
+
+  // Sólo estas dos pueden llegar al libro; el resto de las filas se listan pero
+  // no se pueden tildar. Con ninguna asentable en la página, el formulario de
+  // asiento no se muestra: sería un botón que no puede hacer nada.
+  const recordable = (status: string) => (RECORDABLE_STATUSES as readonly string[]).includes(status);
+  const selectableIds = rows.filter((r) => recordable(r.status)).map((r) => r.id);
+
+  // Resultado del asiento anterior, que llega por la URL del redirect.
+  const recorded = Number(sp.asentadas);
+  const failedCount = Number(sp.fallidas);
 
   // Los links de paginación conservan los filtros vigentes: sin esto, pasar a la
   // página 2 de una búsqueda devolvería la página 2 de la bandeja entera.
@@ -64,6 +82,78 @@ export default async function SolicitudesPage(props: {
   const firstShown = (page - 1) * pageSize + 1;
   const lastShown = (page - 1) * pageSize + rows.length;
 
+  // Aparte del JSX de abajo porque va envuelta o pelada según haya algo que
+  // asentar: los checkboxes viven en las filas, así que el <form> del asiento
+  // tiene que contener la tabla entera.
+  const table = (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          {selectableIds.length > 0 && (
+            <TableHead className="w-10"><span className="sr-only">Seleccionar</span></TableHead>
+          )}
+          <TableHead>N°</TableHead><TableHead>Apellido y nombre</TableHead>
+          <TableHead>DNI</TableHead><TableHead>Categoría</TableHead>
+          <TableHead>Débito</TableHead><TableHead>Estado</TableHead>
+          <TableHead>Fecha</TableHead>
+          <TableHead><span className="sr-only">Acciones</span></TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((app) => (
+          <TableRow key={app.id}>
+            {/* Sólo las asentables se pueden tildar. El servidor lo revalida
+                igual DENTRO de la transacción del asiento: esto es el cartel,
+                no la cerradura. */}
+            {selectableIds.length > 0 && (
+              <TableCell>
+                {recordable(app.status) ? (
+                  // El <label> envolvente y no el input pelado: en una pantalla
+                  // de selección masiva el blanco de 16px del checkbox se falla
+                  // seguido, y errarle acá significa asentar en el acta a quien
+                  // no correspondía. El label lo estira a la altura de la fila.
+                  <label className="flex min-h-11 items-center">
+                    <input
+                      type="checkbox" name="ids" value={app.id} className="size-4"
+                      aria-label={`Asentar la solicitud N° ${app.id}`}
+                    />
+                  </label>
+                ) : (
+                  <span className="sr-only">No se puede asentar</span>
+                )}
+              </TableCell>
+            )}
+            <TableCell>{app.id}</TableCell>
+            <TableCell>
+              <Link className="text-primary hover:underline" href={`/admin/solicitudes/${app.id}`}>
+                {app.fullName}
+              </Link>
+            </TableCell>
+            <TableCell>{app.dni}</TableCell>
+            <TableCell>{CATEGORY_LABELS[app.requestedCategory]}</TableCell>
+            <TableCell>{app.wantsDebit ? "Sí" : "No"}</TableCell>
+            <TableCell>
+              <Badge variant={applicationStatusBadgeVariant(app.status)}>
+                {APPLICATION_STATUS_LABELS[app.status]}
+              </Badge>
+              {/* Un reingreso no se asienta como alta nueva (REG-25): el
+                  operador tiene que verlo desde la bandeja, sin abrir. */}
+              {app.memberId !== null && (
+                <Badge variant="secondary" className="ml-1">Reingreso</Badge>
+              )}
+            </TableCell>
+            <TableCell>{formatDateAR(app.createdAt)}</TableCell>
+            <TableCell>
+              <Link className="text-sm text-primary hover:underline" href={`/admin/solicitudes/${app.id}`}>
+                Ver
+              </Link>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -74,6 +164,14 @@ export default async function SolicitudesPage(props: {
           </Button>
         }
       />
+
+      {Number.isInteger(recorded) && recorded > 0 && (
+        <FormMessage kind={failedCount > 0 ? "warning" : "success"} box>
+          {`${recorded} ${recorded === 1 ? "solicitud asentada" : "solicitudes asentadas"} en acta.`}
+          {failedCount > 0 &&
+            ` ${failedCount} ${failedCount === 1 ? "quedó" : "quedaron"} sin asentar: revisalas a mano.`}
+        </FormMessage>
+      )}
 
       <form className="flex flex-wrap items-end gap-2" method="get">
         {/* `aria-label` y no un <label> visible: el formulario es una fila de
@@ -119,48 +217,17 @@ export default async function SolicitudesPage(props: {
             {pageCount > 1 && ` · página ${page} de ${pageCount}`}
           </p>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>N°</TableHead><TableHead>Apellido y nombre</TableHead>
-                <TableHead>DNI</TableHead><TableHead>Categoría</TableHead>
-                <TableHead>Débito</TableHead><TableHead>Estado</TableHead>
-                <TableHead>Fecha</TableHead>
-                <TableHead><span className="sr-only">Acciones</span></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((app) => (
-                <TableRow key={app.id}>
-                  <TableCell>{app.id}</TableCell>
-                  <TableCell>
-                    <Link className="text-primary hover:underline" href={`/admin/solicitudes/${app.id}`}>
-                      {app.fullName}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{app.dni}</TableCell>
-                  <TableCell>{CATEGORY_LABELS[app.requestedCategory]}</TableCell>
-                  <TableCell>{app.wantsDebit ? "Sí" : "No"}</TableCell>
-                  <TableCell>
-                    <Badge variant={applicationStatusBadgeVariant(app.status)}>
-                      {APPLICATION_STATUS_LABELS[app.status]}
-                    </Badge>
-                    {/* Un reingreso no se asienta como alta nueva (REG-25): el
-                        operador tiene que verlo desde la bandeja, sin abrir. */}
-                    {app.memberId !== null && (
-                      <Badge variant="secondary" className="ml-1">Reingreso</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>{formatDateAR(app.createdAt)}</TableCell>
-                  <TableCell>
-                    <Link className="text-sm text-primary hover:underline" href={`/admin/solicitudes/${app.id}`}>
-                      Ver
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          {selectableIds.length > 0 ? (
+            <RecordForm
+              action={recordApplicationsAction}
+              minutes={minutes}
+              selectableIds={selectableIds}
+            >
+              {table}
+            </RecordForm>
+          ) : (
+            table
+          )}
         </>
       )}
 
