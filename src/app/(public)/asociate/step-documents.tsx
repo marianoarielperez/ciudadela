@@ -77,18 +77,23 @@ export function StepDocuments({
       </p>
 
       <ul className="mt-5 space-y-3">
+        {/* Sin `capture="environment"` en ninguna ranura, tampoco en las del DNI
+            (decisión posterior al brief, que sí lo pedía): en iOS Safari
+            `capture` no es una sugerencia sino una RESTRICCIÓN —fuerza la cámara
+            y esconde la galería—, y el vecino que ya tiene la foto o el escaneo
+            del DNI en el celular, que es el caso más común, se queda sin camino.
+            El `accept` solo ya ofrece "Sacar foto" en el selector nativo, así que
+            no se pierde nada. No reponerlo. */}
         <DocumentSlot
           {...slotProps("dni_front")}
           title="Frente del DNI"
           hint="La cara con tu foto y tu número de documento."
-          camera
           done={uploaded.includes("dni_front")}
         />
         <DocumentSlot
           {...slotProps("dni_back")}
           title="Dorso del DNI"
           hint="La cara de atrás, con el domicilio y el código de barras."
-          camera
           done={uploaded.includes("dni_back")}
         />
         <DocumentSlot
@@ -100,9 +105,6 @@ export function StepDocuments({
               : "Opcional. Si querés sumar algo a tu solicitud, este es el lugar."
           }
           optional={!needsAnnex}
-          // Sin `capture`: el anexo casi siempre es un archivo que ya existe
-          // (una boleta en PDF, una foto vieja), no algo que se saca en el
-          // momento, y forzar la cámara esconde la galería en iOS.
           done={annexes > 0}
           doneLabel={annexes === 1 ? "1 archivo" : `${annexes} archivos`}
           full={annexes >= MAX_ANNEXES}
@@ -138,7 +140,6 @@ function DocumentSlot({
   done,
   doneLabel = "Listo",
   optional,
-  camera,
   full,
   fullLabel,
   reopenLabel = "Cambiar",
@@ -154,7 +155,6 @@ function DocumentSlot({
   done: boolean;
   doneLabel?: string;
   optional?: boolean;
-  camera?: boolean;
   full?: boolean;
   fullLabel?: string;
   reopenLabel?: string;
@@ -237,8 +237,6 @@ function DocumentSlot({
             name="file"
             type="file"
             accept={ACCEPT}
-            // Hint para el celular: abre la cámara trasera en vez del selector.
-            capture={camera ? "environment" : undefined}
             onChange={(e) => setHasFile((e.target.files?.length ?? 0) > 0)}
             className={cn(
               "block w-full rounded-md border border-input p-2 text-base",

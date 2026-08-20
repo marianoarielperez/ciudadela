@@ -304,6 +304,31 @@ describe("startPaymentAction", () => {
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it("la suscripción se creó pero la base falla: mensaje en castellano y el preapproval al log", async () => {
+    // El peor momento posible: hay una suscripción VIVA en MP y la escritura
+    // local se cae. La action no puede tirar (el vecino vería el error genérico
+    // de Next) ni invitar a reintentar (crearía una segunda suscripción), y el
+    // id del preapproval tiene que quedar en el log: es lo único que permite
+    // reconciliarla a mano.
+    withDebit();
+    mocks.prisma.$transaction.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed on preapproval_id"), { code: "P2002" }),
+    );
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await startPaymentAction({}, tokenForm());
+
+    expect(result.redirectUrl).toBeUndefined();
+    expect(result.error).toMatch(/no pudimos registrar tu pago/i);
+    expect(result.error).toMatch(/no lo intentes de nuevo/i);
+    expect(result.error).not.toMatch(/preapproval_id|P2002/i);
+    // Sin asiento de auditoría: la solicitud no quedó enviada.
+    expect(mocks.audit).not.toHaveBeenCalled();
+
+    expect(JSON.stringify(errorLog.mock.calls[0])).toContain("PRE-1");
+    errorLog.mockRestore();
+  });
+
   it("camino feliz: crea la suscripción, la persiste y devuelve el checkout", async () => {
     withDebit();
     const result = await startPaymentAction({}, tokenForm());

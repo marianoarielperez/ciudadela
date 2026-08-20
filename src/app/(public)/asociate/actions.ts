@@ -516,18 +516,40 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
   // `pending` con el mismo `external_reference`; lo levanta la conciliación del
   // M4. El botón se deshabilita con `pending` y redirige enseguida, así que la
   // ventana es de milisegundos.
-  await prisma.$transaction(async (tx) => {
-    await tx.application.update({
-      where: { id: app.id },
-      data: { status: "pending_payment", preapprovalId: sub.id },
+  //
+  // La escritura va envuelta porque acá arriba YA hay una suscripción viva en
+  // Mercado Pago: si la base no la registra (caída, timeout, o el `@unique` de
+  // `preapproval_id` de la carrera de arriba), sin este catch la action tira, el
+  // vecino ve el error genérico de Next y no queda NINGÚN rastro local de la
+  // suscripción —la conciliación del M4 sólo la encuentra por
+  // `external_reference`—. Al log va el id del preapproval, que no es dato
+  // personal y es lo único que permite reconciliarla a mano.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.application.update({
+        where: { id: app.id },
+        data: { status: "pending_payment", preapprovalId: sub.id },
+      });
+      await tx.mpSubscription.create({
+        data: {
+          preapprovalId: sub.id, planId, applicationId: app.id,
+          status: sub.status, payerEmail: app.email,
+        },
+      });
     });
-    await tx.mpSubscription.create({
-      data: {
-        preapprovalId: sub.id, planId, applicationId: app.id,
-        status: sub.status, payerEmail: app.email,
-      },
-    });
-  });
+  } catch (e) {
+    console.error(
+      "[asociate] payment persist failed: hay una suscripción viva en MP sin registrar",
+      { applicationId: app.id, preapprovalId: sub.id, code: codeOf(e) },
+    );
+    // A propósito NO invita a reintentar: el reintento crearía una SEGUNDA
+    // suscripción en MP, porque la solicitud sigue en `started` y sin
+    // `preapprovalId`. El camino que queda es humano.
+    return {
+      error:
+        "No pudimos registrar tu pago. No lo intentes de nuevo por ahora: acercate a la sede vecinal o escribinos, que el problema ya quedó anotado de nuestro lado.",
+    };
+  }
 
   const { ip } = await requestMeta();
   await audit({
