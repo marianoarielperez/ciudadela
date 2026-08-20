@@ -1,5 +1,7 @@
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
+import { PageHeader } from "@/components/admin/page-header";
+import { FormMessage } from "@/components/admin/form-message";
 import { ConfigForm } from "./config-form";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +21,9 @@ export default async function ConfigPage(props: {
     // admin común —que tiene sesión válida y entra al panel sin problema— lo
     // haría rebotar sin fin. Acá no le falta la sesión: le falta un rol.
     return (
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold">Configuración</h1>
-        <p role="alert" className="text-sm text-destructive">
-          {actor.error}
-        </p>
+      <div className="space-y-4">
+        <PageHeader title="Configuración" />
+        <FormMessage kind="error">{actor.error}</FormMessage>
       </div>
     );
   }
@@ -37,14 +37,11 @@ export default async function ConfigPage(props: {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Configuración</h1>
+      <PageHeader title="Configuración" />
       {sp.guardado === "1" && (
-        <p
-          role="status"
-          className="rounded-md border border-green-600/30 bg-green-600/10 px-3 py-2 text-sm"
-        >
+        <FormMessage kind="success" box>
           Configuración guardada.
-        </p>
+        </FormMessage>
       )}
       <ConfigForm
         initial={{

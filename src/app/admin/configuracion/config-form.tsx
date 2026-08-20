@@ -12,6 +12,7 @@
 import { useActionState } from "react";
 import { updateConfigAction } from "./actions";
 import { useSyncedForm, TextField } from "@/components/admin/synced-fields";
+import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 
@@ -60,11 +61,7 @@ export function ConfigForm({
         maxLength={191}
         hint="Se muestra en la página Ubicación. Dejalo vacío para ocultarlo."
       />
-      {state.error && (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
-      )}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>
         {pending ? "Guardando…" : "Guardar"}
       </Button>
