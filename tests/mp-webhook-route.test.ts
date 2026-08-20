@@ -194,24 +194,43 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
     expect(process_).toHaveBeenCalledWith(expect.objectContaining({ dataId: upper.toLowerCase() }));
   });
 
-  // El IPN legacy manda `?topic=payment&id=123` (`id=`, NO `data.id=`): no llega
-  // nunca a `webhook_events`, muere en este 400. El asiento lo dice para que el
+  // El IPN legacy manda `?topic=payment&id=123` (`id=`, NO `data.id=`) con el
+  // CUERPO VACÍO y SIN cabeceras de firma (es anterior al esquema de firma):
+  // no llega nunca a `webhook_events`, muere en el `bad_json` de arriba. El
+  // asiento se escribe igual —sin depender de las cabeceras— para que el
   // operador no salga a buscarlo a una tabla donde no está.
-  it("un IPN legacy se rechaza con 400 y se audita como legacy_ipn_shape", async () => {
+  it("un IPN legacy real (sin body, sin cabeceras de firma) se rechaza con 400 y se audita como legacy_ipn_shape", async () => {
     const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
       method: "POST",
-      headers: new Headers({ "x-signature": "ts=1,v1=deadbeef", "x-request-id": "req-1", "x-real-ip": "10.0.0.9" }),
-      body: JSON.stringify({ topic: "payment", id: 123 }),
+      headers: new Headers({ "x-real-ip": "10.0.0.9" }),
     }) as unknown as Parameters<typeof POST>[0];
 
     const res = await POST(req);
 
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "bad_json" });
     expect(create).not.toHaveBeenCalled();
+    expect(audit).toHaveBeenCalledTimes(1);
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
       action: "webhook_rejected_signature",
       detail: { reason: "legacy_ipn_shape" },
     });
+  });
+
+  // Un POST basura genérico (sin cabeceras, sin `topic=`) no es un IPN legacy:
+  // sigue muriendo en el mismo `bad_json`, pero SIN auditar — si no, cualquier
+  // escáner de internet infla `audit_log` a golpe de POST anónimo.
+  it("un POST basura sin cabeceras y sin topic= se rechaza con 400 SIN auditar", async () => {
+    const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp", {
+      method: "POST",
+      body: "no-json",
+    }) as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "bad_json" });
+    expect(audit).not.toHaveBeenCalled();
   });
 
   it("un data.id malformado que NO es un IPN legacy se audita como malformed_data_id", async () => {

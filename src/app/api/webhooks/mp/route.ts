@@ -34,18 +34,41 @@ export async function POST(req: NextRequest) {
   if (!secret) return Response.json({ error: "not_configured" }, { status: 500 });
 
   const url = new URL(req.url);
+  const ip = req.headers.get("x-real-ip") ?? "unknown";
+
+  // El IPN legacy de MP manda `?topic=payment&id=123` — `id=`, NO `data.id=` —
+  // y con el CUERPO VACÍO: eso muere en el catch de abajo (`bad_json`), antes
+  // de que exista ningún `body` que inspeccionar. Por eso la señal se calcula
+  // ACÁ, desde la query string sola, ANTES de intentar parsear el JSON — es la
+  // única forma de que la auditoría sea alcanzable para un IPN legacy real. No
+  // implementamos el formato legacy: sólo que quede diagnosticable.
+  const legacyIpn = url.searchParams.has("topic") && !url.searchParams.has("data.id");
+
   let body: {
     id?: unknown; type?: unknown; topic?: unknown; action?: unknown; data?: { id?: unknown };
   } | null = null;
   try {
     body = await req.json();
   } catch {
+    // Se audita SIEMPRE que sea legacy, sin condicionar a `claimsSignature`:
+    // un IPN legacy es anterior al esquema de firma, así que nunca trae
+    // `x-signature`/`x-request-id` — exigirlas dejaría esta rama inalcanzable
+    // otra vez. `?topic=` sin `data.id=` no es ruido genérico de escáner, es
+    // una notificación mal configurada, así que auditarla sin cabeceras no
+    // reabre el canal de escritura anónimo que se cerró para el resto.
+    if (legacyIpn) {
+      await audit({
+        action: "webhook_rejected_signature",
+        entity: "webhook",
+        detail: { reason: "legacy_ipn_shape" },
+        ip,
+      });
+    }
     return Response.json({ error: "bad_json" }, { status: 400 });
   }
 
   const xSignature = req.headers.get("x-signature");
   const xRequestId = req.headers.get("x-request-id");
-  const ip = req.headers.get("x-real-ip") ?? "unknown";
 
   // La auditoría de este endpoint corre ANTES de autenticar, o sea que es un
   // canal de escritura anónimo sobre `audit_log` —la tabla de cumplimiento
@@ -61,13 +84,6 @@ export async function POST(req: NextRequest) {
   // helper delega la normalización al caller (ver su cabecera).
   const dataId = (url.searchParams.get("data.id") ?? String(body?.data?.id ?? "")).toLowerCase();
   if (!SAFE_DATA_ID.test(dataId)) {
-    // El IPN legacy de MP manda `?topic=payment&id=123` — `id=`, NO `data.id=` —,
-    // así que dataId queda vacío y la notificación muere acá, en este 400, ANTES
-    // de que se escriba fila alguna en `webhook_events`. Se marca distinto en la
-    // auditoría para que el operador que lo vea no lo salga a buscar a una tabla
-    // donde nunca va a estar. No implementamos el formato legacy: sólo que se
-    // pueda diagnosticar.
-    const legacyIpn = dataId === "" && url.searchParams.has("topic");
     if (claimsSignature) {
       await audit({
         action: "webhook_rejected_signature",
