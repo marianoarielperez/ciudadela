@@ -60,6 +60,12 @@ export function makeDocumentStore(db: Pick<PrismaClient, "document">, rootDir?: 
       if (input.data.length === 0 || input.data.length > MAX_DOCUMENT_BYTES) {
         throw new Error("El archivo supera el máximo de 10 MB o está vacío.");
       }
+      // La ruta se arma con este id: un NaN o un string con "../" escaparía de
+      // UPLOADS_DIR. El tipo `number` es promesa de compilación, no garantía de
+      // runtime (un caller en JS puro, un `as any`, un Number(searchParams)).
+      if (!Number.isInteger(input.applicationId) || input.applicationId <= 0) {
+        throw new Error("Solicitud inválida.");
+      }
       const kind = sniffDocument(input.data);
       if (!kind) throw new Error("Formato no admitido: subí una foto JPG/PNG/WebP o un PDF.");
 
@@ -93,11 +99,17 @@ export function makeDocumentStore(db: Pick<PrismaClient, "document">, rootDir?: 
         },
       });
       if (previous) {
-        await db.document.delete({ where: { id: previous.id } });
+        // Best-effort COMPLETO: si dos subidas del mismo tipo entran a la vez,
+        // las dos leen el mismo `previous` y la segunda encuentra la fila ya
+        // borrada (P2025). Eso no puede convertirse en "no pudimos guardar el
+        // archivo" para un documento que sí quedó guardado: `deleteMany` no
+        // falla si no hay nada que borrar, y el unlink de un archivo ya borrado
+        // tampoco importa.
         try {
+          await db.document.deleteMany({ where: { id: previous.id } });
           await unlink(path.join(root(), previous.path));
         } catch {
-          /* best-effort: el archivo huérfano no puede tirar abajo el reemplazo */
+          /* best-effort: la fila nueva ya está */
         }
       }
       return { id: created.id };
