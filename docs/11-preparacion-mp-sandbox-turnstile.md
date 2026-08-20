@@ -59,19 +59,38 @@ Las suscripciones se prueban con **cuentas de test**: una hace de VENDEDOR
 Son **dos** (decisión del 20/08/2026): "SOCIO ACTIVO" ($6.000/mes) y
 "SOCIO ADHERENTE/COLABORADOR" ($3.000/mes, compartido).
 
-Desde una terminal (PowerShell o Git Bash), reemplazando `TU_ACCESS_TOKEN`
-por el de la Parte B:
+Se corre **desde tu máquina** (no hace falta entrar al VPS: es una llamada a la
+API de Mercado Pago por internet). En PowerShell conviene la forma nativa —
+`curl` con comillas escapadas es sintaxis de `cmd` y PowerShell la rompe.
 
-```bash
-curl -X POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer TU_ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"reason\":\"SOCIO ACTIVO\",\"auto_recurring\":{\"frequency\":1,\"frequency_type\":\"months\",\"transaction_amount\":6000,\"currency_id\":\"ARS\"},\"back_url\":\"https://vecinalciudadela.ar/asociate\"}"
+Primero pegá el Access Token de la Parte B en una variable:
+
+```powershell
+$MP_TOKEN = "APP_USR-...tu Access Token de la cuenta de prueba VENDEDORA..."
 ```
 
-```bash
-curl -X POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer TU_ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"reason\":\"SOCIO ADHERENTE/COLABORADOR\",\"auto_recurring\":{\"frequency\":1,\"frequency_type\":\"months\",\"transaction_amount\":3000,\"currency_id\":\"ARS\"},\"back_url\":\"https://vecinalciudadela.ar/asociate\"}"
+Plan de ACTIVO:
+
+```powershell
+$body = @{ reason = "SOCIO ACTIVO"; auto_recurring = @{ frequency = 1; frequency_type = "months"; transaction_amount = 6000; currency_id = "ARS" }; back_url = "https://vecinalciudadela.ar/asociate" } | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Post -Uri "https://api.mercadopago.com/preapproval_plan" -Headers @{ Authorization = "Bearer $MP_TOKEN" } -ContentType "application/json" -Body $body | Select-Object id, reason, status
 ```
 
-Cada respuesta es un JSON largo; lo único que necesitamos es el campo **`"id"`**
-del principio (un string tipo `2c93808491...`):
+Plan compartido ADHERENTE/COLABORADOR (mismo bloque, cambia nombre y monto):
+
+```powershell
+$body = @{ reason = "SOCIO ADHERENTE/COLABORADOR"; auto_recurring = @{ frequency = 1; frequency_type = "months"; transaction_amount = 3000; currency_id = "ARS" }; back_url = "https://vecinalciudadela.ar/asociate" } | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Post -Uri "https://api.mercadopago.com/preapproval_plan" -Headers @{ Authorization = "Bearer $MP_TOKEN" } -ContentType "application/json" -Body $body | Select-Object id, reason, status
+```
+
+En Git Bash / Linux, el equivalente con `curl` (comillas simples, sin escapes):
+
+```bash
+curl -sX POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Bearer $MP_TOKEN" -H 'Content-Type: application/json' -d '{"reason":"SOCIO ACTIVO","auto_recurring":{"frequency":1,"frequency_type":"months","transaction_amount":6000,"currency_id":"ARS"},"back_url":"https://vecinalciudadela.ar/asociate"}'
+```
+
+Cada llamada devuelve el **`id`** del plan creado (un string tipo
+`2c93808491...`), su nombre y su estado:
 
 - id del primer curl → `mp_plan_active_id`
 - id del segundo curl → `mp_plan_shared_id`
@@ -80,9 +99,11 @@ Estos dos ids **no van al `.env`**: se cargan desde
 `/admin/configuracion` cuando la pantalla nueva esté desplegada (o me los
 pasás y los dejo anotados para ese momento).
 
-Si un curl falla con 401, el token está mal copiado; con 400, revisá que las
-comillas escapadas (`\"`) hayan llegado enteras (en PowerShell conviene
-pegarlo tal cual, en una sola línea).
+Si falla con **401**, el token está mal copiado o incompleto; con **400**,
+revisá el monto y que no falte ningún campo del `auto_recurring`.
+
+> ⚠️ Usá el Access Token de la **cuenta de prueba vendedora** (Parte B). Con el
+> de tu cuenta real estarías creando planes de suscripción verdaderos.
 
 ## Parte D — Webhooks (cuando el M3 esté desplegado)
 
