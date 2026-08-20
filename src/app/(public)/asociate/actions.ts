@@ -6,17 +6,26 @@
 import { headers } from "next/headers";
 import { after } from "next/server";
 import { z } from "zod";
+import type { Application } from "@/generated/prisma/client";
 import { audit } from "@/lib/audit";
 import {
-  applicationCreateLimiter, resumeResendLimiter, resumeResendTargetLimiter,
+  applicationCreateLimiter, applicationStatusLimiter, publicTokenLimiter,
+  resumeResendLimiter, resumeResendTargetLimiter,
 } from "@/lib/auth/rate-limiter";
+import { MAX_ANNEXES, requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { checkEligibility } from "@/lib/applications/eligibility";
 import { applicationService, DuplicateLiveApplicationError } from "@/lib/applications/service";
 import { categoryAllowedForResidence, civilTodayAr, isAdult, WEB_CATEGORIES } from "@/lib/applications/wizard";
+import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { parseCivilDate } from "@/lib/dates";
+import { documentStore, MAX_DOCUMENT_BYTES } from "@/lib/documents/storage";
 import { mailer } from "@/lib/email";
-import { applicationResumeEmail, verificationEmail, verifyUrl } from "@/lib/email/templates";
+import {
+  applicationReceivedEmail, applicationResumeEmail, verificationEmail, verifyUrl,
+} from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
+import { checkoutUrlFor } from "@/lib/mp/checkout";
+import { mpGateway } from "@/lib/mp/gateway";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
 import { verifyTurnstile } from "@/lib/turnstile";
@@ -34,6 +43,9 @@ type CreateState = {
   created?: { resumeToken: string };
 };
 type ResendState = { error?: string; done?: boolean };
+type UploadState = { error?: string; uploaded?: { type: string; count: number } };
+type SubmitState = { error?: string; done?: boolean };
+type PayState = { error?: string; redirectUrl?: string };
 
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
@@ -303,4 +315,238 @@ async function deliverResumeLink(dni: string, ip: string): Promise<void> {
   }
 
   await audit({ action: "application_resume_link_sent", entity: "application", entityId: live.id, ip });
+}
+
+// ── Pasos 4 y 5: operan sobre una solicitud YA creada ────────────────────────
+//
+// Acá no hay Turnstile: la creación ya pasó por el captcha y estas tres actions
+// se autentican con el token de retome, que son 256 bits de `randomBytes` y no
+// se enumeran. Lo que las protege es otra cosa:
+//
+//   1. El TOKEN dice sobre qué solicitud se opera. Nunca llega un id por el
+//      formulario: el cliente no puede apuntar a la solicitud de otro.
+//   2. El ESTADO dice qué se puede hacer. `started` es el único que admite
+//      subir documentos y enviar; todo lo demás se rechaza nombrando por qué.
+//   3. El cupo por IP (`publicTokenLimiter`) raciona el martilleo de los POST.
+//      El sondeo de estado usa el suyo (ver `applicationStatusLimiter`).
+//
+// Y la completitud documental se revalida SIEMPRE en el server con la misma
+// función pura que habilita el botón: un POST armado a mano no pasa por el botón.
+
+const DOC_TYPES = ["dni_front", "dni_back", "annex"] as const;
+
+const LINK_DEAD =
+  "No encontramos tu solicitud: el enlace puede estar incompleto o vencido. Empezá de nuevo desde la página Asociate.";
+const ALREADY_SENT = "Tu solicitud ya fue enviada.";
+const CANT_EDIT =
+  "Tu solicitud ya fue enviada, así que no se le pueden agregar documentos. Si necesitás corregir algo, acercate a la sede vecinal.";
+
+type Lookup = { ok: true; app: Application } | { ok: false; error: string };
+
+/** Resuelve la solicitud desde el token del formulario. Distingue los tres
+ *  motivos de fallo en vez de devolver `null`: decirle "no encontramos tu
+ *  solicitud" a quien se pasó de cupo lo manda a empezar de cero un trámite que
+ *  está entero, y esa es la peor respuesta posible del paso 4. */
+async function appFromToken(resumeToken: string): Promise<Lookup> {
+  if (!resumeToken) return { ok: false, error: LINK_DEAD };
+  const { ip } = await requestMeta();
+  if (!publicTokenLimiter.check(ip)) return { ok: false, error: TOO_MANY };
+  const app = await applicationService.findByResumeToken(resumeToken);
+  if (!app) return { ok: false, error: LINK_DEAD };
+  return { ok: true, app };
+}
+
+/** Los documentos ya subidos, para revalidar la completitud en el server. */
+async function docsOf(applicationId: number): Promise<Array<{ type: (typeof DOC_TYPES)[number] }>> {
+  return prisma.document.findMany({
+    where: { ownerType: "application", ownerId: applicationId },
+    select: { type: true },
+  });
+}
+
+export async function uploadDocumentAction(
+  _prev: UploadState,
+  formData: FormData,
+): Promise<UploadState> {
+  const found = await appFromToken(String(formData.get("resumeToken") ?? ""));
+  if (!found.ok) return { error: found.error };
+  const app = found.app;
+  if (app.status !== "started") return { error: CANT_EDIT };
+
+  const docType = String(formData.get("docType") ?? "");
+  if (!(DOC_TYPES as readonly string[]).includes(docType)) {
+    return { error: "Tipo de documento inválido." };
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Elegí un archivo." };
+  // El tope se chequea acá ADEMÁS de en el store: sin esto, un archivo de 30 MB
+  // se lee entero a memoria antes de que nadie lo rechace.
+  if (file.size > MAX_DOCUMENT_BYTES) {
+    return { error: "El archivo supera el máximo de 10 MB. Probá con una foto de menor calidad." };
+  }
+
+  // El tope de anexos vive acá y no en el store: el store no sabe de wizard, y
+  // los otros dos tipos se REEMPLAZAN (re-subir el frente no acumula versiones).
+  if (docType === "annex") {
+    const annexes = await prisma.document.count({
+      where: { ownerType: "application", ownerId: app.id, type: "annex" },
+    });
+    if (annexes >= MAX_ANNEXES) {
+      return { error: `Ya subiste los ${MAX_ANNEXES} anexos permitidos. Borrá uno en la sede si necesitás cambiarlo.` };
+    }
+  }
+
+  try {
+    await documentStore.saveApplicationDocument({
+      applicationId: app.id,
+      type: docType as (typeof DOC_TYPES)[number],
+      data: Buffer.from(await file.arrayBuffer()),
+    });
+  } catch (e) {
+    // El store tira mensajes en castellano para lo que el vecino PUEDE arreglar
+    // (formato no admitido, archivo vacío o de más de 10 MB). Un fallo del
+    // sistema de archivos trae `code` y su mensaje lleva la ruta absoluta de
+    // UPLOADS_DIR: ese va al log, nunca a la pantalla.
+    const code = codeOf(e);
+    if (code !== "unknown") {
+      console.error("[asociate] falló el guardado del documento de la solicitud", app.id, "code:", code);
+      return { error: "No pudimos guardar el archivo. Probá de nuevo en unos minutos." };
+    }
+    return { error: e instanceof Error ? e.message : "No pudimos guardar el archivo." };
+  }
+
+  const count = await prisma.document.count({
+    where: { ownerType: "application", ownerId: app.id },
+  });
+  return { uploaded: { type: docType, count } };
+}
+
+/** Rama sin débito: adherente que eligió no adherir. Va derecho a la CD. */
+export async function submitNoDebitAction(
+  _prev: SubmitState,
+  formData: FormData,
+): Promise<SubmitState> {
+  const found = await appFromToken(String(formData.get("resumeToken") ?? ""));
+  if (!found.ok) return { error: found.error };
+  const app = found.app;
+  if (app.status !== "started") return { error: ALREADY_SENT };
+  if (!(app.requestedCategory === "adherent" && !app.wantsDebit)) {
+    return { error: "Tu solicitud requiere autorizar el débito automático: usá el botón de pago." };
+  }
+
+  const complete = requiredDocsComplete(await docsOf(app.id), app.requestedCategory);
+  if (!complete.ok) return { error: complete.error };
+
+  // UPDATE condicional por estado (patrón `tokens.consume`): dos envíos
+  // simultáneos —o el doble clic de siempre— escriben uno solo, y sólo el que
+  // escribió manda el email y deja el asiento.
+  const { count } = await prisma.application.updateMany({
+    where: { id: app.id, status: "started" },
+    data: { status: "pending_board" },
+  });
+  if (count === 1) {
+    try {
+      await mailer.sendToApplication({
+        applicationId: app.id, to: app.email, type: "application_result",
+        message: applicationReceivedEmail({ name: app.fullName }),
+        summary: "solicitud recibida (pendiente de CD)",
+      });
+    } catch (e) {
+      // Best-effort: la solicitud YA está enviada y la pantalla se lo dice. Un
+      // SMTP caído no puede convertirse en "no pudimos enviarla".
+      console.error("[asociate] falló el email de solicitud recibida", app.id, "code:", codeOf(e));
+    }
+    const { ip } = await requestMeta();
+    await audit({
+      action: "application_submitted", entity: "application", entityId: app.id,
+      detail: { branch: "no_debit" }, ip,
+    });
+  }
+  return { done: true };
+}
+
+/** Rama con débito: crea la suscripción en MP y devuelve el checkout. */
+export async function startPaymentAction(_prev: PayState, formData: FormData): Promise<PayState> {
+  const resumeToken = String(formData.get("resumeToken") ?? "");
+  const found = await appFromToken(resumeToken);
+  if (!found.ok) return { error: found.error };
+  const app = found.app;
+
+  // Reintento del que abandonó el checkout: se vuelve a la MISMA suscripción,
+  // no se crea otra. Es también el camino del email recordatorio del cron.
+  if (app.status === "pending_payment" && app.preapprovalId) {
+    return { redirectUrl: checkoutUrlFor(app.preapprovalId) };
+  }
+  if (app.status !== "started") return { error: ALREADY_SENT };
+  if (app.requestedCategory === "adherent" && !app.wantsDebit) {
+    return { error: "Elegiste no adherir al débito: enviá la solicitud con el otro botón." };
+  }
+
+  const complete = requiredDocsComplete(await docsOf(app.id), app.requestedCategory);
+  if (!complete.ok) return { error: complete.error };
+
+  const planKey =
+    app.requestedCategory === "active" ? CONFIG_KEYS.mpPlanActiveId : CONFIG_KEYS.mpPlanSharedId;
+  const planId = await configReader.getString(planKey);
+  if (!planId) {
+    return {
+      error: "El sistema de pagos no está configurado todavía. Probá más tarde o consultá en la sede.",
+    };
+  }
+
+  let sub: { id: string; initPoint: string; status: string };
+  try {
+    sub = await mpGateway.createPreapproval({
+      planId,
+      payerEmail: app.email,
+      externalReference: `solicitud:${app.id}`,
+      backUrl: `${baseUrl()}/asociate/retomar/${resumeToken}`,
+    });
+  } catch (e) {
+    // El error del SDK trae el cuerpo de la respuesta de MP (y a veces el token
+    // recortado): al log, nunca a la pantalla.
+    console.error("[asociate] falló createPreapproval para la solicitud", app.id, "code:", codeOf(e));
+    return { error: "No pudimos iniciar el pago en Mercado Pago. Probá de nuevo en unos minutos." };
+  }
+
+  // Residual conocido: dos clics que ganen la carrera antes de este UPDATE
+  // crean DOS preapprovals en MP. La solicitud queda apuntando al último —el
+  // que el vecino está por abrir, que es el correcto— y el huérfano queda
+  // `pending` con el mismo `external_reference`; lo levanta la conciliación del
+  // M4. El botón se deshabilita con `pending` y redirige enseguida, así que la
+  // ventana es de milisegundos.
+  await prisma.$transaction(async (tx) => {
+    await tx.application.update({
+      where: { id: app.id },
+      data: { status: "pending_payment", preapprovalId: sub.id },
+    });
+    await tx.mpSubscription.create({
+      data: {
+        preapprovalId: sub.id, planId, applicationId: app.id,
+        status: sub.status, payerEmail: app.email,
+      },
+    });
+  });
+
+  const { ip } = await requestMeta();
+  await audit({
+    action: "application_submitted", entity: "application", entityId: app.id,
+    detail: { branch: "debit" }, ip,
+  });
+  return { redirectUrl: sub.initPoint };
+}
+
+/** Sondeo de la pantalla "estamos confirmando tu pago…". Devuelve CÓDIGOS y no
+ *  prosa: la pantalla decide qué mostrar, y así el sondeo no puede convertirse
+ *  en otra fuente de mensajes al vecino. */
+export async function applicationStatusAction(
+  resumeToken: string,
+): Promise<{ status: string } | { error: string }> {
+  const { ip } = await requestMeta();
+  if (!applicationStatusLimiter.check(ip)) return { error: "rate_limited" };
+  if (!resumeToken) return { error: "not_found" };
+  const app = await applicationService.findByResumeToken(resumeToken);
+  if (!app) return { error: "not_found" };
+  return { status: app.status };
 }

@@ -148,6 +148,24 @@ export const publicTokenLimiter = createRateLimiter({
   windowMs: PUBLIC_TOKEN_WINDOW_MS,
 })
 
+export const APPLICATION_STATUS_LIMIT = 240
+
+/** Sondeo del estado de la solicitud ("estamos confirmando tu pago…"), por IP.
+ *
+ *  Limitador propio y NO `publicTokenLimiter` por el criterio que ese mismo
+ *  limitador documenta: raciona los POST, y deja fuera las lecturas por índice
+ *  porque "limitarlo castigaría al que refresca". Esto es exactamente eso —un
+ *  SELECT por `resume_token_hash`, sin escritura y sin bcrypt—, pero se hace 24
+ *  veces por espera: con el presupuesto de los POST, volver del checkout de MP
+ *  le comía al vecino los intentos que necesita para subir un documento o
+ *  reenviar la solicitud. Doscientos cuarenta por hora son diez esperas
+ *  completas por origen; sigue habiendo techo para el que automatice el sondeo,
+ *  y alcanza para varios vecinos detrás del mismo CGNAT. */
+export const applicationStatusLimiter = createRateLimiter({
+  limit: APPLICATION_STATUS_LIMIT,
+  windowMs: 60 * 60_000,
+})
+
 export const PASSWORD_RESET_WINDOW_MS = 60 * 60_000
 export const PASSWORD_RESET_IP_LIMIT = 10
 export const PASSWORD_RESET_EMAIL_LIMIT = 5

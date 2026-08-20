@@ -1,6 +1,9 @@
 // Tipos y piezas comunes del wizard ASOCIATE, aparte para que `StreetPicker` y
 // `BlockedPanel` vivan en sus propios archivos sin importar el wizard entero
 // (y sin ciclo de imports).
+import type {
+  ApplicationStatus, DocumentType, MemberCategory,
+} from "@/generated/prisma/client";
 import type { LegalTexts } from "@/lib/config";
 import type { FeeAmounts } from "@/lib/mp/plans";
 
@@ -45,6 +48,27 @@ export type CreateState = {
   created?: { resumeToken: string };
 };
 export type ResendState = { error?: string; done?: boolean };
+export type UploadState = { error?: string; uploaded?: { type: string; count: number } };
+export type SubmitState = { error?: string; done?: boolean };
+export type PayState = { error?: string; redirectUrl?: string };
+
+/** Lo que el wizard sabe de una solicitud YA creada. Se arma en el servidor
+ *  (`/asociate/retomar/[token]`) o se deriva del borrador apenas el paso 3
+ *  contesta. Es lo que decide qué pantalla se muestra: `started` sigue en los
+ *  pasos 4-5, cualquier otro estado va a `ApplicationStatusScreen`.
+ *
+ *  Ojo con qué NO viaja: ni el id de la solicitud ni el DNI ni el domicilio. El
+ *  cliente no los necesita —todas las actions se dirigen con el token de
+ *  retome— y meterlos acá los publicaría en el HTML de la página. */
+export type ApplicationSnapshot = {
+  status: ApplicationStatus;
+  requestedCategory: MemberCategory;
+  wantsDebit: boolean;
+  preapprovalId: string | null;
+  /** Con repetidos: `annex` puede aparecer hasta MAX_ANNEXES veces. */
+  uploadedTypes: DocumentType[];
+  fullName: string;
+};
 
 /** El catálogo catastral guarda cinco calles como "Hernandez , Jose": el espacio
  *  antes de la coma es del CSV de origen y no se toca en la base (el padrón y el

@@ -2,9 +2,19 @@
 // Wizard público ASOCIATE (docs/05 §2). Cinco pasos. Acá vive SÓLO el marco —
 // el stepper, el borrador, el foco y el descarte de las respuestas del server—;
 // cada paso está en su propio archivo (`step-residence`, `step-category`,
-// `step-personal`), las primitivas visuales en `wizard-ui` y el rechazo por
-// elegibilidad en `blocked-panel`. Los pasos 4 (documentación) y 5 (pago)
-// llegan con la Task 13, igual que el retome desde /asociate/retomar/[token].
+// `step-personal`, `step-documents`, `step-payment`), las primitivas visuales en
+// `wizard-ui`, el rechazo por elegibilidad en `blocked-panel` y las pantallas de
+// una solicitud ya enviada en `application-status`.
+//
+// De los pasos 1-3 a los 4-5 cambia de qué se habla: antes de crear la solicitud
+// todo vive en el borrador del navegador, y después TODO está en la base y se
+// opera con el token de retome. Por eso a partir del paso 4 no se vuelve atrás:
+// reenviar el paso 3 crearía un duplicado (que el server rechaza igual).
+//
+// Regla del estado de las actions: el de las que CAMBIAN la pantalla del wizard
+// —la subida (habilita "Continuar") y el envío sin débito (lleva a la pantalla
+// de recibida)— vive acá, como ya vivía el del paso 3, y se deriva en el render
+// sin efectos. El de `startPaymentAction`, que se va del sitio, vive en el paso.
 //
 // Criterios de diseño de esta pantalla:
 //
@@ -26,24 +36,32 @@
 // dentro del form, con los nombres EXACTOS del schema de `createApplicationAction`.
 import { useEffect, useRef, useState } from "react";
 import { useActionState } from "react";
+import type { ApplicationStatus, DocumentType, MemberCategory } from "@/generated/prisma/client";
+import { requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { cn } from "@/lib/utils";
-import { createApplicationAction } from "./actions";
+import { createApplicationAction, submitNoDebitAction, uploadDocumentAction } from "./actions";
+import { ApplicationStatusScreen } from "./application-status";
 import { BlockedPanel } from "./blocked-panel";
 import { StepCategory } from "./step-category";
+import { StepDocuments } from "./step-documents";
+import { StepPayment } from "./step-payment";
 import { StepPersonal } from "./step-personal";
 import { StepResidence } from "./step-residence";
 import {
   FOCUS_RING,
+  type ApplicationSnapshot,
   type AsociateDraft,
   type CreateState,
   type FeeAmounts,
   type LegalTexts,
   type StreetOption,
+  type SubmitState,
+  type UploadState,
 } from "./wizard-shared";
 
-// La Task 13 (retome) importa estos tipos desde acá: se re-exportan para no
+// La página de retome importa estos tipos desde acá: se re-exportan para no
 // obligar a nadie a saber que viven en `wizard-shared`.
-export type { AsociateDraft, FeeAmounts, LegalTexts, StreetOption };
+export type { ApplicationSnapshot, AsociateDraft, FeeAmounts, LegalTexts, StreetOption };
 
 const TOTAL_STEPS = 5;
 const STEP_TITLES: Record<number, string> = {
@@ -88,17 +106,42 @@ export function AsociateWizard(props: {
   legal: LegalTexts;
   fees: FeeAmounts | null;
   siteKey: string;
-  /** La Task 13 rehidrata desde /asociate/retomar/[token]. */
-  initial?: { draft?: Partial<AsociateDraft>; resumeToken?: string; step?: number };
+  /** Rehidratación desde /asociate/retomar/[token]: la solicitud ya existe y lo
+   *  que decide la pantalla es su ESTADO, no el borrador. */
+  initial?: {
+    draft?: Partial<AsociateDraft>;
+    resumeToken?: string;
+    application?: ApplicationSnapshot;
+  };
 }) {
   const { streets, legal, fees, siteKey, initial } = props;
 
-  const [navStep, setStep] = useState(initial?.step ?? 1);
+  // El retome cae directo en el paso que corresponde: con la documentación ya
+  // completa, en el 5. La regla es la MISMA función pura que usa el server para
+  // aceptar el envío, así que las dos puntas no se pueden desincronizar.
+  const [navStep, setStep] = useState(() => {
+    const app = initial?.application;
+    if (app?.status !== "started") return 1;
+    return requiredDocsComplete(
+      app.uploadedTypes.map((type) => ({ type })),
+      app.requestedCategory,
+    ).ok
+      ? 5
+      : 4;
+  });
   const [draft, setDraft] = useState<AsociateDraft>({ ...EMPTY_DRAFT, ...initial?.draft });
   const [localError, setLocalError] = useState<string | null>(null);
 
   const [createState, createAction, creating] = useActionState<CreateState, FormData>(
     createApplicationAction,
+    {},
+  );
+  const [uploadState, uploadAction, uploading] = useActionState<UploadState, FormData>(
+    uploadDocumentAction,
+    {},
+  );
+  const [submitState, submitAction, submitting] = useActionState<SubmitState, FormData>(
+    submitNoDebitAction,
     {},
   );
 
@@ -124,6 +167,51 @@ export function AsociateWizard(props: {
   // Con la solicitud ya creada no se vuelve a los pasos 1-3: los datos están en
   // la base y reenviar el paso 3 crearía un duplicado (que el server rechaza).
   const step = resumeToken && navStep < 4 ? 4 : navStep;
+
+  // La solicitud llega de uno de dos lados: la trajo el retome desde la base, o
+  // la acaba de crear el paso 3 y entonces todo lo que sabemos de ella está en
+  // el borrador que la creó.
+  const application: ApplicationSnapshot | null =
+    initial?.application ??
+    (createState.created
+      ? {
+          status: "started",
+          // No puede estar vacía acá: la creación validó ESTE borrador con zod.
+          // El default existe sólo para que el tipo cierre.
+          requestedCategory: (draft.requestedCategory || "adherent") as MemberCategory,
+          // Sólo el adherente elige; activo y colaborador van siempre con débito
+          // (misma regla que aplica `createApplicationAction`).
+          wantsDebit: draft.requestedCategory === "adherent" ? draft.wantsDebit === "si" : true,
+          preapprovalId: null,
+          uploadedTypes: [],
+          fullName: draft.fullName,
+        }
+      : null);
+
+  // Documentos ya subidos. Se arranca de lo que trajo el retome y se le suma lo
+  // que va aceptando el server, derivándolo en el render por identidad de la
+  // respuesta (mismo idioma que `dismissed`, sin efectos): `useActionState`
+  // devuelve un objeto nuevo por respuesta, así que un re-render cualquiera no
+  // vuelve a contar el mismo archivo.
+  const [uploaded, setUploaded] = useState<DocumentType[]>(
+    initial?.application?.uploadedTypes ?? [],
+  );
+  const [appliedUpload, setAppliedUpload] = useState<UploadState | null>(null);
+  if (uploadState !== appliedUpload && uploadState.uploaded) {
+    setAppliedUpload(uploadState);
+    const type = uploadState.uploaded.type as DocumentType;
+    // El frente y el dorso se REEMPLAZAN (el store borra el anterior); los
+    // anexos se acumulan hasta MAX_ANNEXES.
+    setUploaded((prev) => (type !== "annex" && prev.includes(type) ? prev : [...prev, type]));
+  }
+
+  // La rama sin débito no cambia de página: cuando la action contesta, la
+  // solicitud ya pasó a `pending_board` y la pantalla de estado toma el control.
+  const status: ApplicationStatus | null = application
+    ? submitState.done
+      ? "pending_board"
+      : application.status
+    : null;
 
   function patch(values: Partial<AsociateDraft>) {
     setDraft((d) => ({ ...d, ...values }));
@@ -173,6 +261,19 @@ export function AsociateWizard(props: {
         dni={draft.dni}
         siteKey={siteKey}
         onDismiss={dismissBlocked}
+      />
+    );
+  }
+
+  // Solicitud ya enviada: no hay nada que completar, así que la pantalla de
+  // estado reemplaza al wizard entero (stepper incluido, como el bloqueo).
+  if (application && status && status !== "started") {
+    return (
+      <ApplicationStatusScreen
+        status={status}
+        resumeToken={resumeToken}
+        preapprovalId={application.preapprovalId}
+        fullName={application.fullName}
       />
     );
   }
@@ -239,22 +340,28 @@ export function AsociateWizard(props: {
             onBack={() => goTo(2)}
           />
         )}
-        {step === 4 && (
-          /* Provisorio: la Task 13 reemplaza este bloque por el paso 4
-             (documentación) y el 5 (pago), que usan `resumeToken` para
-             enganchar los archivos y la suscripción a la solicitud creada. */
-          <section className="rounded-xl border border-border bg-muted/40 p-5">
-            <p className="font-medium">Registramos tu solicitud.</p>
-            {resumeToken && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Te mandamos un email a <strong className="font-medium">{draft.email}</strong> con
-                el enlace para retomarla cuando quieras.
-              </p>
-            )}
-            <p className="mt-2 text-sm text-muted-foreground">
-              Los pasos de documentación y pago se habilitan en los próximos días.
-            </p>
-          </section>
+        {step === 4 && application && (
+          <StepDocuments
+            resumeToken={resumeToken}
+            category={application.requestedCategory}
+            uploaded={uploaded}
+            state={uploadState}
+            formAction={uploadAction}
+            pending={uploading}
+            onNext={() => goTo(5)}
+          />
+        )}
+        {step === 5 && application && (
+          <StepPayment
+            resumeToken={resumeToken}
+            category={application.requestedCategory}
+            wantsDebit={application.wantsDebit}
+            fees={fees}
+            submitState={submitState}
+            submitAction={submitAction}
+            submitting={submitting}
+            onBack={() => goTo(4)}
+          />
         )}
       </div>
     </div>

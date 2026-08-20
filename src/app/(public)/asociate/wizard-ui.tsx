@@ -88,6 +88,7 @@ export function NavButtons({
   nextDisabled,
   submit,
   pending,
+  pendingLabel = "Enviando…",
 }: {
   onBack?: () => void;
   backLabel?: string;
@@ -96,6 +97,9 @@ export function NavButtons({
   nextDisabled?: boolean;
   submit?: boolean;
   pending?: boolean;
+  /** El paso 5 no "envía": va a Mercado Pago. El rótulo de espera tiene que
+   *  decir lo que está pasando, si no el vecino cree que ya mandó la solicitud. */
+  pendingLabel?: string;
 }) {
   return (
     <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -119,7 +123,7 @@ export function NavButtons({
         disabled={nextDisabled || pending}
         className={cn(CONTROL_HEIGHT, "font-semibold sm:w-auto sm:px-8")}
       >
-        {pending ? "Enviando…" : nextLabel}
+        {pending ? pendingLabel : nextLabel}
       </Button>
     </div>
   );
