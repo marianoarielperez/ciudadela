@@ -153,6 +153,17 @@ export function AsociateWizard(props: {
     headingRef.current?.focus();
   }, [step]);
 
+  // Salir del bloqueo también mueve el foco, y necesita su propio disparo: el
+  // panel lo tenía puesto en SU encabezado, que al descartar se desmonta, y
+  // como el paso nunca cambió (siempre fue 3) el efecto de arriba corta en el
+  // guardia y el foco se cae al body. Es el mismo agujero que arregla el
+  // efecto de navegación, en el camino de vuelta.
+  function dismissBlocked() {
+    goTo(3);
+    // Tras el re-render que desmonta el panel: el encabezado del paso 3 ya existe.
+    queueMicrotask(() => headingRef.current?.focus());
+  }
+
   // El bloqueo no es un paso del wizard: reemplaza la pantalla entera, stepper
   // incluido. Dejar la barra en 60 % sugeriría que hay algo que completar.
   if (live?.blocked) {
@@ -161,7 +172,7 @@ export function AsociateWizard(props: {
         blocked={live.blocked}
         dni={draft.dni}
         siteKey={siteKey}
-        onDismiss={() => goTo(3)}
+        onDismiss={dismissBlocked}
       />
     );
   }
