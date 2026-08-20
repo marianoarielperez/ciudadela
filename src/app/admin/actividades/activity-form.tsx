@@ -11,6 +11,7 @@
 import { useActionState } from "react";
 import { createActivityAction, deleteActivityAction, updateActivityAction } from "./actions";
 import { useSyncedForm, SelectField, TextField } from "@/components/admin/synced-fields";
+import { FormMessage } from "@/components/admin/form-message";
 import { ROOM_LABELS, WEEKDAYS, type ActivitySlot } from "@/lib/activities/rules";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -121,11 +122,7 @@ export function ActivityForm(
           hasta que la hagas visible.
         </p>
       </div>
-      {state.error && (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
-      )}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>
         {pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear actividad"}
       </Button>
@@ -155,11 +152,7 @@ export function DeleteActivityButton({ id, name }: { id: number; name: string })
       >
         {pending ? "Eliminando…" : "Eliminar"}
       </Button>
-      {state.error && (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
-      )}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
     </form>
   );
 }

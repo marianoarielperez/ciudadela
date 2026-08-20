@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { PageHeader } from "@/components/admin/page-header";
 import { ActivityForm, DeleteActivityButton } from "../activity-form";
 import type { ActivitySlot } from "@/lib/activities/rules";
 
@@ -30,12 +30,13 @@ export default async function EditActivityPage(props: { params: Promise<{ id: st
   };
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Editar actividad</h1>
-        <Link className="text-sm text-primary hover:underline" href="/admin/actividades">
-          Volver al calendario
-        </Link>
-      </div>
+      <PageHeader
+        title={activity.name}
+        breadcrumb={[
+          { label: "Actividades", href: "/admin/actividades" },
+          { label: activity.name },
+        ]}
+      />
       <ActivityForm mode="edit" activity={activity} />
       <DeleteActivityButton id={activity.id} name={activity.name} />
     </div>
