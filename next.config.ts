@@ -20,28 +20,45 @@ import type { NextConfig } from "next";
 // - font-src 'self': next/font hospeda las tipografías en /_next/static, no
 //   hay pedidos a Google Fonts.
 // - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen.
-// - frame-src: SOLO el embed de OpenStreetMap de /ubicacion. Ojo: un iframe
-//   bloqueado por CSP no rompe nada visible, deja un recuadro vacío en
-//   silencio — si se cambia el proveedor de mapa hay que tocar acá.
+// - frame-src: hoy SOLO el embed de OpenStreetMap de /ubicacion; en el M3 se
+//   le suman los iframes de Checkout Pro / Bricks (MP_FRAME) y el widget de
+//   Turnstile. Ojo: un iframe bloqueado por CSP no rompe nada visible, deja un
+//   recuadro vacío en silencio — si se cambia el proveedor de mapa hay que
+//   tocar acá.
 // - frame-ancestors 'none' + X-Frame-Options: DENY: la segunda es para los
 //   navegadores viejos que no leen frame-ancestors.
 // - upgrade-insecure-requests: en prod todo va por HTTPS detrás de Cloudflare.
-//   No molesta al probar el build local sobre http://localhost: el navegador
-//   trata a localhost como origen confiable y no lo reescribe a https.
+//   Salvedad al probar el build local sobre http://localhost: las navegaciones
+//   y los formularios no se ven afectados, pero un fetch que sigue a un
+//   redirect SÍ se reescribe a https://localhost:3006 y aborta (verificado en
+//   la task 16). Si algo así falla en local, es esta directiva — no el código.
 //
-// Módulo 3 (Mercado Pago + Turnstile): descomentar los orígenes marcados. Se
-// dejan escritos para que el M3 no arranque con la CSP rota.
-const MP = ""; // M3: " https://sdk.mercadopago.com https://http2.mlstatic.com"
-const TURNSTILE = ""; // M3: " https://challenges.cloudflare.com"
+// Orígenes del Módulo 3 (Mercado Pago + Turnstile). Para activarlos, agregar
+// los strings al array — sin espacios mágicos ni cirugía de comentarios.
+const MP_SCRIPT: string[] = []; // M3: "https://sdk.mercadopago.com", "https://http2.mlstatic.com"
+const MP_CONNECT: string[] = []; // M3: "https://api.mercadopago.com"
+const MP_FRAME: string[] = []; // M3: "https://www.mercadopago.com.ar"
+const TURNSTILE: string[] = []; // M3: "https://challenges.cloudflare.com"
+
+// React en desarrollo necesita eval() para reconstruir callstacks; sin esto
+// cada página de `next dev` loguea un error fijo de CSP que tapa errores
+// reales. En producción no se emite.
+const scriptSrc = [
+  "'self'",
+  "'unsafe-inline'",
+  ...(process.env.NODE_ENV !== "production" ? ["'unsafe-eval'"] : []),
+  ...MP_SCRIPT,
+  ...TURNSTILE,
+];
 
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${MP}${TURNSTILE}`,
+  `script-src ${scriptSrc.join(" ")}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
-  `connect-src 'self'${MP}`,
-  `frame-src https://www.openstreetmap.org${TURNSTILE}`,
+  `connect-src ${["'self'", ...MP_CONNECT].join(" ")}`,
+  `frame-src ${["https://www.openstreetmap.org", ...MP_FRAME, ...TURNSTILE].join(" ")}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
