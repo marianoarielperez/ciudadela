@@ -39,6 +39,10 @@ export default async function SociosPage(props: {
     const s = qs.toString();
     return s ? `/admin/socios?${s}` : "/admin/socios";
   };
+  // `parsePadronFilters` sólo agrega las claves que vinieron con un valor
+  // válido, así que un objeto vacío significa "sin filtros": ofrecer "Limpiar
+  // filtros" ahí llevaba a la misma URL y no hacía nada.
+  const hasFilters = Object.keys(filters).length > 0;
   const firstShown = (page - 1) * pageSize + 1;
   const lastShown = (page - 1) * pageSize + rows.length;
 
@@ -82,8 +86,16 @@ export default async function SociosPage(props: {
 
       {total === 0 ? (
         <EmptyState
-          description="Ningún socio coincide con el filtro."
-          action={<Button asChild variant="outline"><Link href="/admin/socios">Limpiar filtros</Link></Button>}
+          description={
+            hasFilters
+              ? "Ningún socio coincide con el filtro."
+              : "Todavía no hay socios cargados en el padrón."
+          }
+          action={
+            hasFilters
+              ? <Button asChild variant="outline"><Link href="/admin/socios">Limpiar filtros</Link></Button>
+              : undefined
+          }
         />
       ) : (
         <>

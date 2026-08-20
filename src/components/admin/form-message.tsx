@@ -24,16 +24,24 @@ const BOX_CLASSES = {
 // guardar" de la carga de fichas, donde se guarda con Ctrl+S y sin ese anuncio
 // el operador ciego no distingue "no había nada que guardar" de "el guardado no
 // se disparó"—. Sin la prop, el comportamiento es el de siempre.
+//
+// `role="none"` es el caso inverso: un `kind` que anunciaría (warning, error)
+// usado como AYUDA ESTÁTICA de un campo y no como respuesta a una acción —la
+// advertencia de calle fuera del catálogo, que ya está en pantalla mientras se
+// tipea—. Un `role="alert"` ahí interrumpiría al lector de pantalla en cada
+// tecla. No se puede expresar con `undefined` porque eso significa "deducilo del
+// kind", así que hace falta un valor explícito que se traduce a "sin atributo".
 export function FormMessage({ kind, box = false, as: Tag = "p", role: roleOverride, className, children }: {
   kind: "error" | "success" | "warning" | "neutral";
   box?: boolean;
   as?: "p" | "span" | "div";
-  role?: "status" | "alert";
+  role?: "status" | "alert" | "none";
   className?: string;
   children: React.ReactNode;
 }) {
-  const role = roleOverride ?? (kind === "error" || kind === "warning" ? "alert"
+  const resolved = roleOverride ?? (kind === "error" || kind === "warning" ? "alert"
     : kind === "success" ? "status" : undefined);
+  const role = resolved === "none" ? undefined : resolved;
   return (
     <Tag
       role={role}

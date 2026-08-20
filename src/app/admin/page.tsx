@@ -4,58 +4,10 @@ import { auth } from "@/auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DASHBOARD_GROUPS } from "@/lib/admin/dashboard-cards";
 import { isSuperadmin } from "@/lib/auth/roles";
-import { SITE } from "@/lib/site";
 
 export const metadata = { title: "Panel de administración — SIGeV" };
-
-// Tarjetas agrupadas con el MISMO orden que la lateral (src/lib/admin/nav.ts).
-// Acá sí aparecen las secciones futuras como "Próximamente": este es el lugar
-// del roadmap; la lateral solo lista lo que funciona.
-type DashboardCard = { title: string; description: string; href?: string; cta?: string; superadminOnly?: boolean };
-const groups: { label: string; cards: DashboardCard[] }[] = [
-  {
-    label: "Gestión",
-    cards: [
-      { title: "Solicitudes", description: "Altas de socios pendientes de revisión y aprobación." },
-      { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios", cta: "Ver el padrón" },
-      {
-        title: "Actas",
-        description: "Actas de Comisión Directiva y Asamblea donde se asientan los movimientos.",
-        href: "/admin/actas",
-        cta: "Ver las actas",
-      },
-      { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
-    ],
-  },
-  {
-    label: "Contenido",
-    cards: [
-      { title: "Noticias", description: "Novedades y comunicados del sitio público.", href: "/admin/noticias", cta: "Gestionar noticias" },
-      {
-        title: "Actividades",
-        // Los nombres salen de SITE.rooms, que es de donde también sale el selector
-        // del formulario y la grilla pública: si alguna vez se renombra un salón, se
-        // renombra en un solo lugar y esta tarjeta no queda mintiendo.
-        description: `Calendario del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`,
-        href: "/admin/actividades",
-        cta: "Ver el calendario",
-      },
-    ],
-  },
-  {
-    label: "Sistema",
-    cards: [
-      {
-        title: "Configuración",
-        description: "Parámetros del sistema.",
-        href: "/admin/configuracion",
-        cta: "Abrir",
-        superadminOnly: true,
-      },
-    ],
-  },
-];
 
 export default async function AdminHomePage() {
   const session = await auth();
@@ -70,7 +22,7 @@ export default async function AdminHomePage() {
           Estas son las secciones del panel. Se van a ir habilitando a medida que avancemos.
         </p>
       </div>
-      {groups.map((group) => {
+      {DASHBOARD_GROUPS.map((group) => {
         const cards = group.cards.filter((c) => !c.superadminOnly || superadmin);
         if (cards.length === 0) return null;
         return (

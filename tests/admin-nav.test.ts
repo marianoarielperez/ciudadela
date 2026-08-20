@@ -1,5 +1,19 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADMIN_NAV, isNavItemActive, navForRoles, parseSidebarState } from "@/lib/admin/nav";
+
+describe("ADMIN_NAV routes", () => {
+  it("points every href at a route that exists on disk", () => {
+    // Una entrada de M3-M6 apuntando a una ruta que nadie creó todavía es un
+    // 404 desde la lateral: se detecta acá y no en producción.
+    const root = path.resolve(import.meta.dirname, "..", "src", "app");
+    for (const href of ADMIN_NAV.flatMap((g) => g.items).map((i) => i.href)) {
+      const file = path.join(root, ...href.split("/").filter(Boolean), "page.tsx");
+      expect(existsSync(file), `${href} → ${file}`).toBe(true);
+    }
+  });
+});
 
 describe("navForRoles", () => {
   it("hides superadmin-only items from plain admins", () => {

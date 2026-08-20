@@ -28,15 +28,16 @@ export default async function EditarActaPage(props: { params: Promise<{ id: stri
   // el campo bloqueado y el motivo antes de tipear.
   const anchored =
     minute._count.movements + minute._count.booksOpened + minute._count.booksClosed;
+  const tipoLabel = MINUTE_TYPE_LABELS[minute.type];
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Editar acta"
+        title={`Editar acta ${tipoLabel} N° ${minute.number}`}
         breadcrumb={[
           { label: "Actas", href: "/admin/actas" },
           {
-            label: `${MINUTE_TYPE_LABELS[minute.type]} N° ${minute.number}`,
+            label: `${tipoLabel} N° ${minute.number}`,
             href: `/admin/actas/${minute.id}`,
           },
           { label: "Editar" },

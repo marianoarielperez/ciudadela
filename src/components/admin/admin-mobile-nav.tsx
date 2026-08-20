@@ -58,7 +58,12 @@ export function AdminMobileNav({ groups, user, signOut }: {
                 <span className="sr-only">Cerrar la navegación</span>
               </Dialog.Close>
             </div>
-            <AdminNavList groups={groups} />
+            {/* Los dos mecanismos se cubren los puntos ciegos: la delegación cierra
+                cuando se toca la sección en la que ya se está (el pathname no cambia)
+                y el ajuste por pathname cierra en atrás/adelante del navegador. */}
+            <div className="contents" onClick={() => setOpen(false)}>
+              <AdminNavList groups={groups} />
+            </div>
             <div className="border-t border-sidebar-border p-3">
               <p className="mb-2 text-xs">
                 {user.name}

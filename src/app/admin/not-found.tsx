@@ -9,7 +9,7 @@ import Link from "next/link";
 export default function AdminNotFound() {
   return (
     <div className="space-y-3 rounded border bg-background p-4">
-      <h1 className="text-xl font-bold">No encontrado</h1>
+      <h1 className="text-xl font-semibold">No encontrado</h1>
       <p className="text-sm text-muted-foreground">
         El registro que buscás no existe o fue eliminado.
       </p>

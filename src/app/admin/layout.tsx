@@ -32,7 +32,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <div className="min-h-screen">
         <header className="flex items-center justify-between bg-sidebar px-4 py-3">
           <span className="text-sm font-semibold text-white">SIGeV — Panel de administración</span>
-          <SignOutButton className="text-white/85 hover:text-white" />
+          <SignOutButton className="text-white/85 outline-hidden hover:text-white focus-visible:ring-2 focus-visible:ring-sidebar-ring" />
         </header>
         <main className="mx-auto w-full max-w-2xl p-4">
           <div className="space-y-3 rounded-xl border p-4">
@@ -50,7 +50,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const groups = navForRoles(roles);
   const user = {
     name: session?.user.name ?? "—",
-    roleLabel: isSuperadmin(roles) ? "superadmin" : "admin",
+    // El rol se muestra en castellano: los slugs `superadmin`/`admin` son
+    // identificadores internos y el resto del panel está en es-AR.
+    roleLabel: isSuperadmin(roles) ? "Superadministrador/a" : "Administrador/a",
   };
 
   return (
@@ -66,12 +68,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         initialCollapsed={parseSidebarState(cookieStore.get(SIDEBAR_COOKIE)?.value) === "collapsed"}
         user={user}
         signOutExpanded={
-          <SignOutButton className="text-xs text-sidebar-foreground/80 hover:text-white" />
+          <SignOutButton className="text-xs text-sidebar-foreground/80 outline-hidden hover:text-white focus-visible:ring-2 focus-visible:ring-sidebar-ring" />
         }
         signOutCollapsed={
           <SignOutButton
             iconOnly
-            className="flex size-8 items-center justify-center rounded-md no-underline hover:bg-sidebar-accent/60"
+            className="flex size-8 items-center justify-center rounded-md no-underline outline-hidden hover:bg-sidebar-accent/60 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           />
         }
       />
@@ -79,7 +81,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <AdminMobileNav
           groups={groups}
           user={user}
-          signOut={<SignOutButton className="text-xs text-sidebar-foreground/80 hover:text-white" />}
+          signOut={
+            <SignOutButton className="text-xs text-sidebar-foreground/80 outline-hidden hover:text-white focus-visible:ring-2 focus-visible:ring-sidebar-ring" />
+          }
         />
         <main id="contenido" tabIndex={-1} className="flex-1 p-4 lg:p-6">
           {children}

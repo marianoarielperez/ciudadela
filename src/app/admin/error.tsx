@@ -20,7 +20,7 @@ export default function AdminError({
   }, [error]);
   return (
     <div className="space-y-3 rounded border bg-background p-4">
-      <h1 className="text-xl font-bold">Algo salió mal</h1>
+      <h1 className="text-xl font-semibold">Algo salió mal</h1>
       <p className="text-sm text-muted-foreground">
         Ocurrió un error inesperado. Probá de nuevo; si se repite, avisá antes de volver a cargar
         datos para no duplicarlos.

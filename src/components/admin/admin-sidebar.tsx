@@ -26,8 +26,10 @@ export function AdminSidebar({ groups, initialCollapsed, user, signOutExpanded, 
   function toggle() {
     const next = !collapsed;
     setCollapsed(next);
-    // Un año: preferencia de UI del operador, no un dato sensible.
-    document.cookie = `${SIDEBAR_COOKIE}=${next ? "collapsed" : "expanded"}; path=/; max-age=31536000; samesite=lax`;
+    // Un año: preferencia de UI del operador, no un dato sensible. `path=/admin`
+    // porque la lee sólo el layout del panel: con `path=/` viajaba en cada
+    // request del sitio público y de las imágenes, que no la usan para nada.
+    document.cookie = `${SIDEBAR_COOKIE}=${next ? "collapsed" : "expanded"}; path=/admin; max-age=31536000; samesite=lax`;
   }
 
   return (
