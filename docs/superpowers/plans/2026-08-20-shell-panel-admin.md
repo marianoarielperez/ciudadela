@@ -191,7 +191,7 @@ export function parseSidebarState(value: string | undefined): SidebarState {
 
 - [ ] **Step 4: Verificar que pasa**
 
-Run: `npx vitest run tests/admin-nav.test.ts` → PASS (12 tests).
+Run: `npx vitest run tests/admin-nav.test.ts` → PASS (10 tests).
 Run: `npx tsc --noEmit` → sin errores.
 
 - [ ] **Step 5: Commit**
