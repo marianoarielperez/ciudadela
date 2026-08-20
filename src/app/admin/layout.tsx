@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { AdminMobileNav } from "@/components/admin/admin-mobile-nav";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { FormMessage } from "@/components/admin/form-message";
 import { SignOutButton } from "@/components/admin/sign-out-button";
@@ -45,6 +46,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const [session, cookieStore] = await Promise.all([auth(), cookies()]);
   const roles = session?.user.roles ?? [];
+  // La lateral y el cajón móvil comen los mismos datos: se calculan una sola vez.
+  const groups = navForRoles(roles);
+  const user = {
+    name: session?.user.name ?? "—",
+    roleLabel: isSuperadmin(roles) ? "superadmin" : "admin",
+  };
 
   return (
     <div className="min-h-screen lg:flex">
@@ -55,12 +62,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         Saltar al contenido
       </a>
       <AdminSidebar
-        groups={navForRoles(roles)}
+        groups={groups}
         initialCollapsed={parseSidebarState(cookieStore.get(SIDEBAR_COOKIE)?.value) === "collapsed"}
-        user={{
-          name: session?.user.name ?? "—",
-          roleLabel: isSuperadmin(roles) ? "superadmin" : "admin",
-        }}
+        user={user}
         signOutExpanded={
           <SignOutButton className="text-xs text-sidebar-foreground/80 hover:text-white" />
         }
@@ -72,7 +76,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         }
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* La barra móvil llega en el task siguiente (AdminMobileNav). */}
+        <AdminMobileNav
+          groups={groups}
+          user={user}
+          signOut={<SignOutButton className="text-xs text-sidebar-foreground/80 hover:text-white" />}
+        />
         <main id="contenido" tabIndex={-1} className="flex-1 p-4 lg:p-6">
           {children}
         </main>
