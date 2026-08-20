@@ -11,27 +11,28 @@ datasource db {
 }
 
 model User {
-  id               Int           @id @default(autoincrement())
-  email            String        @unique @db.VarChar(191)
-  passwordHash     String        @map("password_hash") @db.VarChar(60)
+  id                 Int           @id @default(autoincrement())
+  email              String        @unique @db.VarChar(191)
+  passwordHash       String        @map("password_hash") @db.VarChar(60)
   // Sello del ÚLTIMO cambio de contraseña de esta cuenta. No es informativo:
   // lo comparan `require-admin` y `require-member` contra el momento en que se
   // emitió la sesión (`session.user.authAt`) para cerrar las sesiones que le
   // son anteriores. Nulo = no se escribió ninguna contraseña desde que existe
   // esta columna (filas previas a la migración), y entonces no invalida nada.
-  passwordChangedAt DateTime?    @map("password_changed_at")
-  name             String?       @db.VarChar(120)
-  active           Boolean       @default(true)
-  lastLoginAt      DateTime?     @map("last_login_at")
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
-  roles            UserRole[]
-  auditLogs        AuditLog[]
-  member           Member?
-  minutesCreated   Minute[]
-  movementsCreated Movement[]
-  actionTokens     ActionToken[]
-  newsAuthored     News[]
+  passwordChangedAt  DateTime?     @map("password_changed_at")
+  name               String?       @db.VarChar(120)
+  active             Boolean       @default(true)
+  lastLoginAt        DateTime?     @map("last_login_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  roles              UserRole[]
+  auditLogs          AuditLog[]
+  member             Member?
+  minutesCreated     Minute[]
+  movementsCreated   Movement[]
+  actionTokens       ActionToken[]
+  newsAuthored       News[]
+  documentsValidated Document[]
 
   @@map("users")
 }
@@ -202,6 +203,8 @@ model Member {
   movements        Movement[]
   notifications    Notification[]
   tokens           ActionToken[]
+  applications     Application[]
+  mpSubscriptions  MpSubscription[]
 
   @@index([fullName])
   @@index([status, category])
@@ -237,17 +240,18 @@ model Membership {
 }
 
 model Minute {
-  id          Int        @id @default(autoincrement())
-  type        MinuteType
-  number      Int
-  date        DateTime
-  description String?    @db.VarChar(500)
-  createdById Int?       @map("created_by_id")
-  createdBy   User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime   @default(now()) @map("created_at")
-  movements   Movement[]
-  booksOpened Book[]     @relation("BookOpeningMinute")
-  booksClosed Book[]     @relation("BookClosingMinute")
+  id           Int           @id @default(autoincrement())
+  type         MinuteType
+  number       Int
+  date         DateTime
+  description  String?       @db.VarChar(500)
+  createdById  Int?          @map("created_by_id")
+  createdBy    User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  movements    Movement[]
+  booksOpened  Book[]        @relation("BookOpeningMinute")
+  booksClosed  Book[]        @relation("BookClosingMinute")
+  applications Application[]
 
   @@unique([type, number])
   @@map("minutes")
@@ -274,11 +278,12 @@ model Movement {
 }
 
 model Street {
-  id             Int      @id
-  loadOrder      Int      @map("load_order")
-  name           String   @db.VarChar(80)
-  normalizedName String   @map("normalized_name") @db.VarChar(80)
+  id             Int           @id
+  loadOrder      Int           @map("load_order")
+  name           String        @db.VarChar(80)
+  normalizedName String        @map("normalized_name") @db.VarChar(80)
   members        Member[]
+  applications   Application[]
 
   @@index([normalizedName])
   @@index([loadOrder])
@@ -289,6 +294,10 @@ model Notification {
   id             BigInt             @id @default(autoincrement())
   memberId       Int?               @map("member_id")
   member         Member?            @relation(fields: [memberId], references: [id])
+  // Notificación dirigida a una solicitud (M3): el destinatario todavía no es
+  // socio, pero el envío tiene que quedar acreditado igual (Art. 5° quater).
+  applicationId  Int?               @map("application_id")
+  application    Application?       @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   type           NotificationType
   via            NotificationVia
   status         NotificationStatus
@@ -303,16 +312,21 @@ model Notification {
 }
 
 model ActionToken {
-  id        Int          @id @default(autoincrement())
-  purpose   TokenPurpose
-  tokenHash String       @unique @map("token_hash") @db.Char(64)
-  memberId  Int?         @map("member_id")
-  member    Member?      @relation(fields: [memberId], references: [id])
-  userId    Int?         @map("user_id")
-  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime     @map("expires_at")
-  usedAt    DateTime?    @map("used_at")
-  createdAt DateTime     @default(now()) @map("created_at")
+  id            Int          @id @default(autoincrement())
+  purpose       TokenPurpose
+  tokenHash     String       @unique @map("token_hash") @db.Char(64)
+  memberId      Int?         @map("member_id")
+  member        Member?      @relation(fields: [memberId], references: [id])
+  // Token de una solicitud de alta que todavía no es socio (M3): la
+  // verificación de email del wizard. Cascade: si la solicitud se borra, sus
+  // enlaces mueren con ella.
+  applicationId Int?         @map("application_id")
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  userId        Int?         @map("user_id")
+  user          User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime     @map("expires_at")
+  usedAt        DateTime?    @map("used_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
 
   @@map("action_tokens")
 }
@@ -329,11 +343,11 @@ enum NewsStatus {
 // Noticias de la cartelera digital del sitio público (docs/04, "Noticia").
 // OJO: no confundir con la cartelera FÍSICA de notificaciones (NotificationVia.board).
 model News {
-  id    Int    @id @default(autoincrement())
-  title String @db.VarChar(160)
+  id             Int        @id @default(autoincrement())
+  title          String     @db.VarChar(160)
   // Editable incluso después de publicar: si cambia, la URL vieja da 404
   // (aceptado en la spec §2: sitio chico, sin SEO heredado que preservar).
-  slug String @unique @db.VarChar(180)
+  slug           String     @unique @db.VarChar(180)
   // HTML YA sanitizado en el servidor (src/lib/news/sanitize.ts). Nunca se
   // persiste HTML crudo del cliente.
   body           String     @db.Text
@@ -341,11 +355,11 @@ model News {
   status         NewsStatus @default(draft)
   // Se fija la PRIMERA vez que se publica y no se pisa al republicar: es la
   // fecha que ve el vecino y ordena la cartelera.
-  publishedAt DateTime? @map("published_at")
-  authorId    Int?      @map("author_id")
-  author      User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  publishedAt    DateTime?  @map("published_at")
+  authorId       Int?       @map("author_id")
+  author         User?      @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
 
   @@index([status, publishedAt])
   @@map("news")
@@ -360,11 +374,11 @@ enum Room {
 // Actividad sistemática semanal de un salón ("Gimnasia mujeres", "Taekwondo
 // niños"), con vigencia anual. Solo consulta pública: no hay reservas.
 model Activity {
-  id   Int    @id @default(autoincrement())
-  name String @db.VarChar(120)
-  room Room
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(120)
+  room      Room
   // Array JSON de enteros 1–7 (lunes=1). Validado por zod en el alta.
-  weekdays Json
+  weekdays  Json
   // "HH:MM" hora de PARED local, sin conversión a UTC: es un horario
   // recurrente, no un instante (excepción documentada, spec §2).
   startTime String   @map("start_time") @db.VarChar(5)
@@ -376,4 +390,162 @@ model Activity {
 
   @@index([year, room])
   @@map("activities")
+}
+
+// ---------------------------------------------------------------------------
+// Módulo 3 — ASOCIATE + Mercado Pago
+// ---------------------------------------------------------------------------
+
+// Máquina de estados de la solicitud de alta web (docs/04 + spec M3 §2).
+//   started → pending_payment → approved_pending_minute → completed   (con débito)
+//   started → pending_board → completed                               (adherente sin débito)
+//   rechazo y expiración cortan cualquier rama viva.
+enum ApplicationStatus {
+  started
+  pending_payment
+  approved_pending_minute
+  pending_board
+  completed
+  rejected
+  expired
+}
+
+// Solicitud de alta del wizard público. Espejo de los datos de Member: acá son
+// obligatorios (REG-02 exige la ficha completa para el alta web), en Member son
+// nullable porque el padrón histórico vino incompleto.
+model Application {
+  id                Int               @id @default(autoincrement())
+  fullName          String            @map("full_name") @db.VarChar(160)
+  // Obligatorio en el alta web (a diferencia de Member.dni). NO es unique: una
+  // misma persona puede tener una rechazada vieja y una viva; la invariante
+  // "una sola solicitud VIVA por DNI" se valida en runtime dentro de la
+  // transacción de creación (MySQL no tiene índices parciales).
+  dni               String            @db.VarChar(12)
+  birthDate         DateTime          @map("birth_date")
+  civilStatus       String            @map("civil_status") @db.VarChar(40)
+  nationality       String            @db.VarChar(60)
+  occupation        String            @db.VarChar(80)
+  phone             String            @db.VarChar(40)
+  email             String            @db.VarChar(191)
+  // Doble opt-in de la solicitud (REG-08). Se copia a la ficha al asentar.
+  emailVerifiedAt   DateTime?         @map("email_verified_at")
+  streetId          Int?              @map("street_id")
+  street            Street?           @relation(fields: [streetId], references: [id], onDelete: SetNull)
+  streetText        String?           @map("street_text") @db.VarChar(120)
+  streetNumber      String?           @map("street_number") @db.VarChar(10)
+  neighborhood      String?           @db.VarChar(60)
+  // Solo active | adherent | collaborator llegan por acá (REG-01): lo valida
+  // el zod del wizard y lo revalida el service. El enum se comparte con Member.
+  requestedCategory MemberCategory    @map("requested_category")
+  wantsDebit        Boolean           @default(false) @map("wants_debit")
+  status            ApplicationStatus @default(started)
+  preapprovalId     String?           @unique @map("preapproval_id") @db.VarChar(64)
+  // El pago de la cuota de ingreso (REG-14). Pago/Recibo llegan con el M4:
+  // hasta entonces este par de campos ES el registro del ingreso.
+  mpPaymentIdEntry  String?           @map("mp_payment_id_entry") @db.VarChar(64)
+  entryAmount       Decimal?          @map("entry_amount") @db.Decimal(10, 2)
+  // sha256 del token de retome (mismo criterio que ActionToken: el crudo viaja
+  // una sola vez, en el cliente del wizard y en el email de recordatorio).
+  resumeTokenHash   String            @unique @map("resume_token_hash") @db.Char(64)
+  // Seteado cuando el DNI matcheó un ex socio sin bloqueo: el asiento hace
+  // REINGRESO sobre esta ficha en vez de crear un socio duplicado (REG-25).
+  memberId          Int?              @map("member_id")
+  member            Member?           @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  // Acta del asiento o del rechazo (REG-11 / REG-13).
+  minuteId          Int?              @map("minute_id")
+  minute            Minute?           @relation(fields: [minuteId], references: [id], onDelete: SetNull)
+  decidedAt         DateTime?         @map("decided_at")
+  // Recordatorio de pago enviado (una sola vez, cron del M3).
+  remindedAt        DateTime?         @map("reminded_at")
+  acceptedTermsAt   DateTime          @map("accepted_terms_at")
+  ip                String            @db.VarChar(45)
+  userAgent         String            @map("user_agent") @db.VarChar(255)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  subscriptions     MpSubscription[]
+  tokens            ActionToken[]
+  notifications     Notification[]
+
+  @@index([status])
+  @@index([dni])
+  @@map("applications")
+}
+
+enum DocumentOwner {
+  application
+  member
+  presentation
+}
+
+enum DocumentType {
+  dni_front
+  dni_back
+  annex
+}
+
+// Documento subido (DNI, anexos). Polimórfico a propósito (docs/04): M6 lo
+// reutiliza para las presentaciones del re-empadronamiento. `ownerId` no tiene
+// FK real; la integridad la cuida la capa de servicio. Conservación PERMANENTE
+// (decisión institucional). Acceso solo admin, auditado por visualización.
+model Document {
+  id            Int           @id @default(autoincrement())
+  ownerType     DocumentOwner @map("owner_type")
+  ownerId       Int           @map("owner_id")
+  type          DocumentType
+  path          String        @db.VarChar(255)
+  mime          String        @db.VarChar(100)
+  size          Int
+  uploadedAt    DateTime      @default(now()) @map("uploaded_at")
+  validatedById Int?          @map("validated_by_id")
+  validatedBy   User?         @relation(fields: [validatedById], references: [id], onDelete: SetNull)
+  validatedAt   DateTime?     @map("validated_at")
+
+  @@index([ownerType, ownerId])
+  @@map("documents")
+}
+
+// Suscripción de débito automático en MP. En M3 nacen de solicitudes
+// (`applicationId`); `memberId` se completa al asentar. `linkedManually` es
+// para las preexistentes que vincula el M4.
+model MpSubscription {
+  id             Int          @id @default(autoincrement())
+  preapprovalId  String       @unique @map("preapproval_id") @db.VarChar(64)
+  planId         String       @map("plan_id") @db.VarChar(64)
+  applicationId  Int?         @map("application_id")
+  application    Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  memberId       Int?         @map("member_id")
+  member         Member?      @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  // Estados de MP tal cual llegan (pending | authorized | paused | cancelled…):
+  // string y no enum, porque el catálogo es de MP y puede crecer sin avisarnos.
+  status         String       @db.VarChar(32)
+  payerEmail     String       @map("payer_email") @db.VarChar(191)
+  linkedManually Boolean      @default(false) @map("linked_manually")
+  lastSyncAt     DateTime?    @map("last_sync_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@map("mp_subscriptions")
+}
+
+enum WebhookOrigin {
+  mp
+  brevo
+}
+
+// Registro crudo de cada webhook entrante. La unique [origin, externalEventId]
+// ES la idempotencia: un reintento del proveedor inserta-o-encuentra y solo se
+// reprocesa si el intento anterior quedó sin `processedAt` (spec §3).
+model WebhookEvent {
+  id              BigInt        @id @default(autoincrement())
+  origin          WebhookOrigin
+  externalEventId String        @map("external_event_id") @db.VarChar(128)
+  topic           String        @db.VarChar(64)
+  payload         Json
+  receivedAt      DateTime      @default(now()) @map("received_at")
+  processedAt     DateTime?     @map("processed_at")
+  result          String?       @db.VarChar(64)
+  error           String?       @db.VarChar(500)
+
+  @@unique([origin, externalEventId])
+  @@map("webhook_events")
 }
