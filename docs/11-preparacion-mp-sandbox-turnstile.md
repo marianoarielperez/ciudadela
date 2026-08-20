@@ -60,12 +60,18 @@ Son **dos** (decisión del 20/08/2026): "SOCIO ACTIVO" ($6.000/mes) y
 "SOCIO ADHERENTE/COLABORADOR" ($3.000/mes, compartido).
 
 Se corre **desde tu máquina** (no hace falta entrar al VPS: es una llamada a la
-API de Mercado Pago por internet). En PowerShell conviene la forma nativa —
-`curl` con comillas escapadas es sintaxis de `cmd` y PowerShell la rompe.
+API de Mercado Pago por internet).
 
-Primero pegá el Access Token de la Parte B en una variable:
+> ⚠️ **No uses `curl` en PowerShell.** En Windows PowerShell 5.1 `curl` es un
+> alias de `Invoke-WebRequest`, que espera los encabezados como diccionario:
+> falla con *"No se puede enlazar el parámetro 'Headers'"* antes de salir a
+> internet. Usá los bloques de abajo, que son nativos de PowerShell.
+
+Primero la sesión y el Access Token de la Parte B (`Tls12` porque PowerShell 5.1
+todavía negocia TLS viejo por defecto y la API de MP lo rechaza):
 
 ```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $MP_TOKEN = "APP_USR-...tu Access Token de la cuenta de prueba VENDEDORA..."
 ```
 
