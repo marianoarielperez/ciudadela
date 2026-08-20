@@ -34,7 +34,7 @@ export function AdminNavList({ groups, collapsed = false }: {
           {group.label && (collapsed ? (
             <hr className="mx-2 my-2 border-sidebar-border" />
           ) : (
-            <p className="px-3 pt-4 pb-1 text-[10px] font-bold tracking-widest uppercase text-sidebar-foreground/50">
+            <p className="px-3 pt-4 pb-1 text-[10px] font-bold tracking-widest uppercase text-sidebar-foreground/70">
               {group.label}
             </p>
           ))}
@@ -48,7 +48,7 @@ export function AdminNavList({ groups, collapsed = false }: {
                 aria-current={active ? "page" : undefined}
                 title={collapsed ? item.label : undefined}
                 className={cn(
-                  "flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm outline-none",
+                  "flex min-h-11 items-center gap-2.5 rounded-md px-3 py-2 text-sm outline-hidden",
                   "focus-visible:ring-2 focus-visible:ring-sidebar-ring",
                   active
                     ? "bg-sidebar-accent font-semibold text-sidebar-primary-foreground shadow-[inset_3px_0_0_var(--sidebar-primary)]"

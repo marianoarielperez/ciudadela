@@ -40,14 +40,14 @@ export function AdminSidebar({ groups, initialCollapsed, user, signOutExpanded, 
       <Link
         href="/admin"
         className={cn(
-          "m-2 flex items-center gap-2.5 rounded-md px-2 py-3 outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          "m-2 flex items-center gap-2.5 rounded-md px-2 py-3 outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
           collapsed && "justify-center px-0",
         )}
       >
         <Image src={logoNegativo} alt="" className="h-8 w-auto" priority />
         <span className={cn("leading-tight", collapsed && "sr-only")}>
           <span className="block text-sm font-semibold text-white">SIGeV</span>
-          <span className="block text-[10.5px] text-sidebar-foreground/60">Panel de administración</span>
+          <span className="block text-[10.5px] text-sidebar-foreground/70">Panel de administración</span>
         </span>
       </Link>
       <AdminNavList groups={groups} collapsed={collapsed} />
@@ -55,7 +55,7 @@ export function AdminSidebar({ groups, initialCollapsed, user, signOutExpanded, 
         {!collapsed && (
           <p className="mb-2 text-xs">
             {user.name}
-            <span className="block text-[10.5px] text-sidebar-foreground/60">{user.roleLabel}</span>
+            <span className="block text-[10.5px] text-sidebar-foreground/70">{user.roleLabel}</span>
           </p>
         )}
         <div className={cn("flex items-center", collapsed ? "flex-col gap-2" : "justify-between gap-2")}>
@@ -63,7 +63,7 @@ export function AdminSidebar({ groups, initialCollapsed, user, signOutExpanded, 
           <button
             onClick={toggle}
             title={collapsed ? "Expandir navegación" : "Colapsar navegación"}
-            className="flex size-8 items-center justify-center rounded-md outline-none hover:bg-sidebar-accent/60 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            className="flex size-8 items-center justify-center rounded-md outline-hidden hover:bg-sidebar-accent/60 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           >
             {collapsed ? <ChevronsRight aria-hidden className="size-4" /> : <ChevronsLeft aria-hidden className="size-4" />}
             <span className="sr-only">{collapsed ? "Expandir navegación" : "Colapsar navegación"}</span>
