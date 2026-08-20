@@ -189,3 +189,26 @@ export const passwordResetEmailLimiter = createRateLimiter({
   limit: PASSWORD_RESET_EMAIL_LIMIT,
   windowMs: PASSWORD_RESET_WINDOW_MS,
 })
+
+export const APPLICATION_WINDOW_MS = 60 * 60_000
+export const APPLICATION_CREATE_LIMIT = 5
+export const RESUME_RESEND_LIMIT = 3
+
+/** Creación de solicitudes ASOCIATE, por IP. Detrás de Turnstile, pero el
+ *  captcha no raciona el volumen de un humano persistente: cinco solicitudes
+ *  por hora desde un mismo origen alcanzan para cualquier hogar (CGNAT
+ *  incluido) y frenan el llenado masivo del padrón de solicitudes. Es además
+ *  la única puerta del chequeo de elegibilidad por DNI (anti-enumeración,
+ *  spec M3 §4). */
+export const applicationCreateLimiter = createRateLimiter({
+  limit: APPLICATION_CREATE_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
+})
+
+/** Reenvío del link de retome ("ya tenés una solicitud en trámite"), por IP:
+ *  dispara un correo hacia afuera desde un formulario anónimo, mismo criterio
+ *  que el recupero de contraseña. */
+export const resumeResendLimiter = createRateLimiter({
+  limit: RESUME_RESEND_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
+})
