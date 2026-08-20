@@ -102,16 +102,21 @@ export function makeApplicationService(db: Db) {
       return db.application.findUnique({ where: { resumeTokenHash: hashToken(raw) } });
     },
 
-    // Para el reenvío del enlace de retome: no podemos recuperar el crudo (solo
+    // Para el reenvío del enlace de retome: no podemos recuperar el crudo (sólo
     // guardamos el hash), así que se ROTA. El enlace anterior y cualquier
     // pestaña vieja quedan inválidos: el último pedido manda.
-    async rotateResumeToken(applicationId: number): Promise<string> {
+    //
+    // El reenvío no puede rotar antes de enviar: si el SMTP falla, el vecino se
+    // queda sin el enlace que YA tenía (el que le devolvió el wizard) y sin uno
+    // nuevo. Por eso se parte en dos: acá se acuña el crudo sin tocar la base,
+    // y `commitResumeToken` recién lo hace efectivo cuando el correo salió.
+    mintResumeToken(): { raw: string; hash: string } {
       const raw = randomBytes(32).toString("base64url");
-      await db.application.update({
-        where: { id: applicationId },
-        data: { resumeTokenHash: hashToken(raw) },
-      });
-      return raw;
+      return { raw, hash: hashToken(raw) };
+    },
+
+    async commitResumeToken(applicationId: number, hash: string): Promise<void> {
+      await db.application.update({ where: { id: applicationId }, data: { resumeTokenHash: hash } });
     },
 
     // UPDATE condicional (patrón tokens.consume): dos clics en el enlace de

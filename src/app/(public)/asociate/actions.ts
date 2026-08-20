@@ -7,7 +7,9 @@ import { headers } from "next/headers";
 import { after } from "next/server";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
-import { applicationCreateLimiter, resumeResendLimiter } from "@/lib/auth/rate-limiter";
+import {
+  applicationCreateLimiter, resumeResendLimiter, resumeResendTargetLimiter,
+} from "@/lib/auth/rate-limiter";
 import { checkEligibility } from "@/lib/applications/eligibility";
 import { applicationService, DuplicateLiveApplicationError } from "@/lib/applications/service";
 import { categoryAllowedForResidence, civilTodayAr, isAdult, WEB_CATEGORIES } from "@/lib/applications/wizard";
@@ -44,12 +46,12 @@ const dniSchema = z.string().regex(/^\d{7,9}$/, "DNI inválido (solo números, s
 
 const schema = z.object({
   livesInBarrio: z.enum(["si", "no"], { error: "Contanos dónde vivís." }),
-  streetId: z.coerce.number().int().positive().optional(),
+  streetId: z.coerce.number({ error: "Elegí tu calle del listado." }).int().positive("Elegí tu calle del listado.").optional(),
   streetText: z.string().max(120, "La calle no puede superar los 120 caracteres").optional(),
   neighborhood: z.string().max(60, "El barrio no puede superar los 60 caracteres").optional(),
   streetNumber: z.string().min(1, "Ingresá la altura").max(10, "La altura no puede superar los 10 caracteres"),
   requestedCategory: z.enum(WEB_CATEGORIES, { error: "Elegí la categoría." }),
-  wantsDebit: z.enum(["si", "no"]).optional(),
+  wantsDebit: z.enum(["si", "no"], { error: "Indicá si querés adherir al débito automático." }).optional(),
   fullName: z.string().min(3, "Ingresá tu nombre y apellido").max(160, "El nombre no puede superar los 160 caracteres"),
   dni: dniSchema,
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ingresá tu fecha de nacimiento"),
@@ -84,13 +86,24 @@ function codeOf(e: unknown): string {
 export async function createApplicationAction(_prev: CreateState, formData: FormData): Promise<CreateState> {
   const { ip, userAgent } = await requestMeta();
 
-  // Cupo primero y registro después del captcha: un captcha vencido (la ficha
-  // dura 5 minutos y el paso 3 del wizard puede tardar más) no le puede gastar
-  // al vecino uno de sus cinco intentos por hora.
+  // El orden es `allows` → captcha → formato → `record` → padrón.
+  //
+  // Se consulta el cupo primero (no se gasta un intento contra alguien que ya
+  // está bloqueado) y se REGISTRA recién después del captcha y de las
+  // validaciones puras. Que el registro vaya después del captcha evita que uno
+  // vencido —la ficha dura 5 minutos y el paso 3 del wizard puede tardar más—
+  // le queme un intento al vecino. Que vaya después del formato evita lo mismo
+  // con los tipeos: son ~16 campos y el formulario reporta un error por vez, así
+  // que corregir la fecha, el email repetido y la altura podía comerse los cinco
+  // intentos de la hora sin haber llegado nunca a la base.
+  //
+  // Esto NO afloja la anti-enumeración de §4: la validez de FORMATO no depende
+  // del padrón (es zod sobre el POST, ninguna consulta), cada intento sigue
+  // costando un captcha resuelto —el token de Turnstile es de un solo uso— y
+  // todo lo que toca el padrón sigue detrás del captcha Y del cupo ya gastado.
   if (!applicationCreateLimiter.allows(ip)) return { error: TOO_MANY };
   const captcha = await verifyTurnstile(String(formData.get("cf-turnstile-response") ?? ""), ip);
   if (!captcha) return { error: NO_CAPTCHA };
-  applicationCreateLimiter.record(ip);
 
   const parsed = parseForm(schema, formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -125,6 +138,10 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
       error: "Para asociarte por la web tenés que ser mayor de 18 años. Los cadetes (14-17) se asocian en la sede.",
     };
   }
+
+  // Desde acá se toca el padrón, así que el intento se cobra: el cupo es lo
+  // único, junto con el captcha, que impide usar este formulario para barrerlo.
+  applicationCreateLimiter.record(ip);
 
   // Elegibilidad por DNI (spec §4): corre DESPUÉS de Turnstile + rate limit,
   // que son lo único que impide usar este formulario para barrer el padrón.
@@ -219,20 +236,33 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
 //      verificador de solicitudes por DNI.
 //   3. Los cupos: se consultan y se registran ANTES de mirar si la solicitud
 //      existe, para que el intento número cuatro conteste igual en los dos casos.
+//      Son DOS —por IP y por DNI pedido— porque el techo por origen no protege
+//      a un vecino concreto si el atacante rota de IP (ver los comentarios de
+//      los dos limitadores).
 export async function resendResumeLinkAction(_prev: ResendState, formData: FormData): Promise<ResendState> {
   const { ip } = await requestMeta();
 
   if (!resumeResendLimiter.allows(ip)) return { error: TOO_MANY };
   const captcha = await verifyTurnstile(String(formData.get("cf-turnstile-response") ?? ""), ip);
   if (!captcha) return { error: NO_CAPTCHA };
-  resumeResendLimiter.record(ip);
 
-  // El formato se valida antes de gastar cupo: un typo no puede dejar a nadie
-  // sin reintentos.
+  // El formato se valida antes de REGISTRAR el cupo: un DNI mal tipeado no
+  // puede dejar a nadie sin reintentos, y de paso es lo que da la clave del
+  // segundo limitador. Es sólo zod sobre el POST: no hay consulta a la base
+  // todavía, así que adelantarlo no abre ninguna vía de enumeración.
   const parsed = parseForm(z.object({ dni: dniSchema }), formData);
   if (!parsed.ok) return { error: parsed.error };
+  const dni = parsed.data.dni; // ya normalizado: parseForm recorta y el regex deja sólo dígitos
 
-  after(() => deliverResumeLink(parsed.data.dni, ip));
+  // Los dos se consultan sin registrar y recién después se registra en los dos
+  // (mismo patrón que `sendVerificationAction`): con `check` a secas, el primero
+  // en evaluarse le cobra el intento a su clave aunque el segundo termine
+  // rechazando.
+  if (!resumeResendTargetLimiter.allows(dni)) return { error: TOO_MANY };
+  resumeResendLimiter.record(ip);
+  resumeResendTargetLimiter.record(dni);
+
+  after(() => deliverResumeLink(dni, ip));
   return RESEND_DONE; // idéntico exista o no la solicitud
 }
 
@@ -245,18 +275,29 @@ async function deliverResumeLink(dni: string, ip: string): Promise<void> {
     live = await applicationService.findLiveByDni(dni);
     if (!live) return;
 
-    // La rotación va antes del envío por fuerza: el crudo sólo existe al
-    // generarlo (la base guarda el hash). O sea que un SMTP caído deja al vecino
-    // con el enlace viejo YA invalidado y sin uno nuevo — por eso el cupo se
-    // devuelve en el catch, para que el reintento sea posible.
-    const raw = await applicationService.rotateResumeToken(live.id);
+    // Enviar PRIMERO y persistir después. El crudo sólo existe al generarlo (la
+    // base guarda el hash), así que rotar antes del envío significa que un SMTP
+    // caído deja al vecino con el enlace viejo YA invalidado y sin uno nuevo. Y
+    // el caso más probable no es el SMTP caído sino el email mal tipeado en el
+    // wizard, que Brevo va a rechazar SIEMPRE: con la rotación adelante, cada
+    // reintento le movía el enlace de nuevo. Acá se acuña sin tocar la base
+    // (`mintResumeToken`) y el hash se hace efectivo (`commitResumeToken`) sólo
+    // cuando el correo salió: si falla, no se commitea nada y el enlace que el
+    // wizard ya le dio sigue vivo.
+    const { raw, hash } = applicationService.mintResumeToken();
     await mailer.sendToApplication({
       applicationId: live.id, to: live.email, type: "generic",
       message: applicationResumeEmail({ url: `${baseUrl()}/asociate/retomar/${raw}` }),
       summary: "reenvío del enlace de retome",
     });
+    await applicationService.commitResumeToken(live.id, hash);
   } catch (e) {
-    resumeResendLimiter.refund(ip);
+    // Sin refund del cupo, a diferencia de `sendVerificationAction`: allá el
+    // fallo dejaba un token vivo que se quema y nada que racionar, acá no queda
+    // NINGÚN estado destructivo que compensar —el enlace viejo nunca se tocó—.
+    // Y el cupo tiene que gastarse igual: si el envío que rebota se devolviera,
+    // martillar contra una dirección inválida sería gratis, que es justo el
+    // escenario que estos dos techos existen para racionar.
     console.error("[asociate] falló el reenvío del enlace de retome", live?.id ?? "?", "code:", codeOf(e));
     return;
   }

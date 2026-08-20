@@ -143,24 +143,35 @@ describe("findByResumeToken / verifyEmail", () => {
     });
   });
 
-  it("rotateResumeToken pisa el hash y devuelve el crudo nuevo", async () => {
+  it("mintResumeToken acuña el par crudo/hash SIN tocar la base", async () => {
+    // Esto es lo que hace posible el orden "enviar y recién después persistir"
+    // del reenvío: acuñar no puede invalidar el enlace que el vecino ya tiene.
     const { db, application } = fakeDb();
     const svc = makeApplicationService(db);
-    const raw = await svc.rotateResumeToken(55);
+    const { raw, hash } = svc.mintResumeToken();
     expect(raw).toMatch(/^[A-Za-z0-9_-]{43}$/); // base64url de 32 bytes
+    expect(hash).toBe(hashToken(raw));
+    expect(application.update).not.toHaveBeenCalled();
+  });
+
+  it("dos acuñaciones seguidas dan tokens distintos", async () => {
+    const { db } = fakeDb();
+    const svc = makeApplicationService(db);
+    expect(svc.mintResumeToken().raw).not.toBe(svc.mintResumeToken().raw);
+  });
+
+  it("commitResumeToken persiste exactamente el hash acuñado, nunca el crudo", async () => {
+    const { db, application } = fakeDb();
+    const svc = makeApplicationService(db);
+    const { raw, hash } = svc.mintResumeToken();
+    await svc.commitResumeToken(55, hash);
     expect(application.update).toHaveBeenCalledWith({
       where: { id: 55 },
-      data: { resumeTokenHash: hashToken(raw) },
+      data: { resumeTokenHash: hash },
     });
     // El crudo no se persiste (mismo criterio que `create`).
     const data = application.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(JSON.stringify(data)).not.toContain(raw);
-  });
-
-  it("dos rotaciones seguidas dan tokens distintos (la vieja queda inválida)", async () => {
-    const { db } = fakeDb();
-    const svc = makeApplicationService(db);
-    expect(await svc.rotateResumeToken(55)).not.toBe(await svc.rotateResumeToken(55));
   });
 
   it("verifyEmail solo escribe si aún no estaba verificada", async () => {

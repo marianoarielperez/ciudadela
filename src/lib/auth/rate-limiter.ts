@@ -212,3 +212,16 @@ export const resumeResendLimiter = createRateLimiter({
   limit: RESUME_RESEND_LIMIT,
   windowMs: APPLICATION_WINDOW_MS,
 })
+
+/** Reenvío del enlace de retome, por DNI pedido. Espejo de
+ *  `passwordResetEmailLimiter`: el techo por IP no protege a un solicitante
+ *  concreto si el atacante rota de origen, y acá el objetivo es identificable
+ *  (el DNI es dato semi-público). El daño que raciona es doble: inundarle el
+ *  buzón y, con el Fix del envío-antes-de-persistir, hacerlo pelear contra un
+ *  enlace que se le mueve. Se consulta y se registra SIEMPRE, exista o no la
+ *  solicitud: contar sólo los pedidos que terminan en envío haría que el
+ *  techo mismo revele si ese DNI tiene trámite abierto. */
+export const resumeResendTargetLimiter = createRateLimiter({
+  limit: RESUME_RESEND_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
+})

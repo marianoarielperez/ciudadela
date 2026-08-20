@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => {
       create: vi.fn(),
       findLiveByDni: vi.fn(),
       lastRejectionAt: vi.fn(),
-      rotateResumeToken: vi.fn(),
+      mintResumeToken: vi.fn(),
+      commitResumeToken: vi.fn(),
     },
     verifyTurnstile: vi.fn(),
     tokens: { issue: vi.fn() },
@@ -29,6 +30,7 @@ const mocks = vi.hoisted(() => {
     audit: vi.fn(),
     createLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
     resendLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
+    resendTargetLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
     afterCallbacks: [] as Array<() => unknown>,
   };
 });
@@ -45,6 +47,7 @@ vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/auth/rate-limiter", () => ({
   applicationCreateLimiter: mocks.createLimiter,
   resumeResendLimiter: mocks.resendLimiter,
+  resumeResendTargetLimiter: mocks.resendTargetLimiter,
 }));
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-real-ip": "1.2.3.4", "user-agent": "vitest" }),
@@ -96,12 +99,14 @@ beforeEach(() => {
   mocks.afterCallbacks.length = 0;
   mocks.createLimiter.allows.mockReturnValue(true);
   mocks.resendLimiter.allows.mockReturnValue(true);
+  mocks.resendTargetLimiter.allows.mockReturnValue(true);
   mocks.verifyTurnstile.mockResolvedValue(true);
   mocks.prisma.member.findUnique.mockResolvedValue(null);
   mocks.service.findLiveByDni.mockResolvedValue(null);
   mocks.service.lastRejectionAt.mockResolvedValue(null);
   mocks.service.create.mockResolvedValue({ id: 7, resumeToken: "RESUME-RAW" });
-  mocks.service.rotateResumeToken.mockResolvedValue("ROTATED-RAW");
+  mocks.service.mintResumeToken.mockReturnValue({ raw: "MINTED-RAW", hash: "MINTED-HASH" });
+  mocks.service.commitResumeToken.mockResolvedValue(undefined);
   mocks.tokens.issue.mockResolvedValue("VERIFY-RAW");
   mocks.mailer.sendToApplication.mockResolvedValue({ messageId: "mid" });
 });
@@ -215,6 +220,53 @@ describe("createApplicationAction", () => {
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
+  it("un POST con formato inválido NO consume cupo", async () => {
+    // Son ~16 campos y el formulario reporta un error por vez: sin esto,
+    // corregir tres tipeos se comía los cinco intentos de la hora sin haber
+    // llegado nunca a la base.
+    const result = await createApplicationAction({}, form({ ...VALID, email: "no-es-un-email" }));
+
+    expect(result.error).toMatch(/email válido/i);
+    expect(mocks.createLimiter.record).not.toHaveBeenCalled();
+    expect(mocks.prisma.member.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("las validaciones puras tampoco consumen cupo, pero el formato válido sí lo consume antes del padrón", async () => {
+    // Menor de edad: formato correcto, regla pura que falla. Tampoco cobra.
+    await createApplicationAction({}, form({ ...VALID, birthDate: "2015-05-05" }));
+    expect(mocks.createLimiter.record).not.toHaveBeenCalled();
+
+    // Y en el camino que sí toca el padrón, el cupo se cobra ANTES de tocarlo:
+    // el cupo (con el captcha) es lo único que impide barrerlo.
+    await createApplicationAction({}, form(VALID));
+    expect(mocks.createLimiter.record).toHaveBeenCalledWith("1.2.3.4");
+    expect(mocks.createLimiter.record.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.prisma.member.findUnique.mock.invocationCallOrder[0]);
+  });
+
+  it("el bloqueo in_progress no le filtra al cliente el id de la solicitud", async () => {
+    // `checkEligibility` devuelve `applicationId` en esa regla; el estado que
+    // vuelve al navegador no puede llevarlo: es un identificador de un trámite
+    // ajeno para cualquiera que tipee un DNI que no es el suyo.
+    mocks.service.findLiveByDni.mockResolvedValue({ id: 4242, email: EMAIL });
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.blocked?.code).toBe("in_progress");
+    expect(result.blocked).toEqual({ code: "in_progress", message: expect.any(String), retryAtIso: undefined });
+    expect(JSON.stringify(result)).not.toContain("4242");
+  });
+
+  it("el colaborador va con débito aunque el formulario diga que no", async () => {
+    // Sólo el adherente elige: activo y colaborador tienen cuota obligatoria.
+    await createApplicationAction({}, form({
+      ...VALID, livesInBarrio: "no", streetId: "", streetText: "Rivadavia",
+      neighborhood: "Centro", requestedCategory: "collaborator", wantsDebit: "no",
+    }));
+    const created = mocks.service.create.mock.calls[0][0];
+    expect(created.requestedCategory).toBe("collaborator");
+    expect(created.wantsDebit).toBe(true);
+  });
+
   it("si el SMTP falla la solicitud sobrevive igual", async () => {
     mocks.mailer.sendToApplication.mockRejectedValue(Object.assign(new Error("smtp"), { code: "ECONNREFUSED" }));
     const result = await createApplicationAction({}, form(VALID));
@@ -241,41 +293,51 @@ describe("resendResumeLinkAction", () => {
     expect(without).toEqual(withApp);
   });
 
-  it("con solicitud viva rota el token, manda el enlace nuevo y audita", async () => {
+  it("con solicitud viva manda el enlace nuevo, recién después lo persiste y audita", async () => {
     mocks.service.findLiveByDni.mockResolvedValue({ id: 7, email: EMAIL });
     await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: DNI }));
     await flushAfter();
 
-    expect(mocks.service.rotateResumeToken).toHaveBeenCalledWith(7);
     const sent = mocks.mailer.sendToApplication.mock.calls[0][0];
     expect(sent.applicationId).toBe(7);
-    expect(sent.message.text).toContain("/asociate/retomar/ROTATED-RAW");
+    expect(sent.message.text).toContain("/asociate/retomar/MINTED-RAW");
+    // Se persiste el hash del MISMO crudo que se mandó, y no antes de mandarlo.
+    expect(mocks.service.commitResumeToken).toHaveBeenCalledWith(7, "MINTED-HASH");
+    expect(mocks.mailer.sendToApplication.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.service.commitResumeToken.mock.invocationCallOrder[0]);
     const entry = mocks.audit.mock.calls[0][0];
     expect(entry.action).toBe("application_resume_link_sent");
     expect(JSON.stringify(entry)).not.toMatch(/30111222|test@x/);
   });
 
-  it("sin solicitud viva no rota, no manda y no audita", async () => {
+  it("sin solicitud viva no acuña, no manda, no persiste y no audita", async () => {
     await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: DNI }));
     await flushAfter();
-    expect(mocks.service.rotateResumeToken).not.toHaveBeenCalled();
+    expect(mocks.service.mintResumeToken).not.toHaveBeenCalled();
+    expect(mocks.service.commitResumeToken).not.toHaveBeenCalled();
     expect(mocks.mailer.sendToApplication).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
-  it("si el envío falla se devuelve el cupo (el enlace viejo ya quedó muerto)", async () => {
+  it("si el envío falla NO se persiste el hash nuevo: el enlace viejo sigue vivo", async () => {
     mocks.service.findLiveByDni.mockResolvedValue({ id: 7, email: EMAIL });
     mocks.mailer.sendToApplication.mockRejectedValue(Object.assign(new Error("smtp"), { code: "EAUTH" }));
     await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: DNI }));
     await flushAfter();
 
-    expect(mocks.resendLimiter.refund).toHaveBeenCalledWith("1.2.3.4");
+    expect(mocks.service.commitResumeToken).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
+    // Y el cupo NO se devuelve: no hay estado destructivo que compensar, y
+    // martillar contra un email mal tipeado no puede salir gratis.
+    expect(mocks.resendLimiter.refund).not.toHaveBeenCalled();
+    expect(mocks.resendTargetLimiter.refund).not.toHaveBeenCalled();
   });
 
-  it("DNI mal tipeado: error de formato y ninguna tarea diferida", async () => {
+  it("DNI mal tipeado: error de formato, ningún cupo gastado y ninguna tarea diferida", async () => {
     const result = await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: "12.345.678" }));
     expect(result.error).toMatch(/dni inválido/i);
+    expect(mocks.resendLimiter.record).not.toHaveBeenCalled();
+    expect(mocks.resendTargetLimiter.record).not.toHaveBeenCalled();
     expect(mocks.afterCallbacks).toHaveLength(0);
   });
 
@@ -284,6 +346,25 @@ describe("resendResumeLinkAction", () => {
     const result = await resendResumeLinkAction({}, form({ "cf-turnstile-response": "x", dni: DNI }));
     expect(result.error).toMatch(/no pudimos verificar/i);
     expect(mocks.resendLimiter.record).not.toHaveBeenCalled();
+    expect(mocks.resendTargetLimiter.record).not.toHaveBeenCalled();
     expect(mocks.afterCallbacks).toHaveLength(0);
+  });
+
+  it("reserva cupo en los DOS limitadores, con el DNI parseado como clave", async () => {
+    await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: ` ${DNI} ` }));
+    expect(mocks.resendLimiter.record).toHaveBeenCalledWith("1.2.3.4");
+    expect(mocks.resendTargetLimiter.record).toHaveBeenCalledWith(DNI);
+  });
+
+  it("el techo por DNI corta aunque el de la IP tenga cupo (atacante que rota de origen)", async () => {
+    mocks.resendTargetLimiter.allows.mockReturnValue(false);
+    const result = await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: DNI }));
+
+    expect(result.error).toMatch(/demasiados intentos/i);
+    expect(mocks.afterCallbacks).toHaveLength(0);
+    // Patrón `allows` en los dos y recién después `record`: el rechazo del
+    // segundo no puede haberle cobrado el intento al primero.
+    expect(mocks.resendLimiter.record).not.toHaveBeenCalled();
+    expect(mocks.resendTargetLimiter.record).not.toHaveBeenCalled();
   });
 });
