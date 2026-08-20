@@ -32,6 +32,7 @@ function fakeDb() {
       return { id: 55, ...data };
     }),
     findUnique: vi.fn().mockResolvedValue(null),
+    update: vi.fn().mockResolvedValue({ id: 55 }),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   };
   const db = {
@@ -140,6 +141,26 @@ describe("findByResumeToken / verifyEmail", () => {
     expect(application.findUnique).toHaveBeenCalledWith({
       where: { resumeTokenHash: hashToken("raw-token") },
     });
+  });
+
+  it("rotateResumeToken pisa el hash y devuelve el crudo nuevo", async () => {
+    const { db, application } = fakeDb();
+    const svc = makeApplicationService(db);
+    const raw = await svc.rotateResumeToken(55);
+    expect(raw).toMatch(/^[A-Za-z0-9_-]{43}$/); // base64url de 32 bytes
+    expect(application.update).toHaveBeenCalledWith({
+      where: { id: 55 },
+      data: { resumeTokenHash: hashToken(raw) },
+    });
+    // El crudo no se persiste (mismo criterio que `create`).
+    const data = application.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(JSON.stringify(data)).not.toContain(raw);
+  });
+
+  it("dos rotaciones seguidas dan tokens distintos (la vieja queda inválida)", async () => {
+    const { db } = fakeDb();
+    const svc = makeApplicationService(db);
+    expect(await svc.rotateResumeToken(55)).not.toBe(await svc.rotateResumeToken(55));
   });
 
   it("verifyEmail solo escribe si aún no estaba verificada", async () => {

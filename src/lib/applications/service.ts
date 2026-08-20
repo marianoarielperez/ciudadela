@@ -102,6 +102,18 @@ export function makeApplicationService(db: Db) {
       return db.application.findUnique({ where: { resumeTokenHash: hashToken(raw) } });
     },
 
+    // Para el reenvío del enlace de retome: no podemos recuperar el crudo (solo
+    // guardamos el hash), así que se ROTA. El enlace anterior y cualquier
+    // pestaña vieja quedan inválidos: el último pedido manda.
+    async rotateResumeToken(applicationId: number): Promise<string> {
+      const raw = randomBytes(32).toString("base64url");
+      await db.application.update({
+        where: { id: applicationId },
+        data: { resumeTokenHash: hashToken(raw) },
+      });
+      return raw;
+    },
+
     // UPDATE condicional (patrón tokens.consume): dos clics en el enlace de
     // verificación no escriben dos veces.
     async verifyEmail(applicationId: number, now: Date = new Date()): Promise<void> {
