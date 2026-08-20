@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDailyAgenda,
   buildWeeklyGrid,
   findOverlap,
   parseWeekdays,
@@ -80,6 +81,47 @@ describe("buildWeeklyGrid", () => {
     const grid = buildWeeklyGrid([slot({ weekdays: [1, 9] })]);
     expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(grid.historic[1]).toHaveLength(1);
+  });
+});
+
+describe("buildDailyAgenda", () => {
+  it("devuelve los siete días en orden, con o sin actividades", () => {
+    const agenda = buildDailyAgenda([]);
+    expect(agenda.map((d) => d.day)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(agenda.map((d) => d.label)).toEqual(WEEKDAYS.map(([, l]) => l));
+    expect(agenda.every((d) => d.entries.length === 0)).toBe(true);
+  });
+
+  it("mezcla los dos salones en el mismo día y ordena por hora", () => {
+    const agenda = buildDailyAgenda([
+      slot({ id: 2, name: "Zumba", room: "glass", weekdays: [1], startTime: "20:00", endTime: "21:00" }),
+      slot({ id: 3, name: "Yoga", room: "historic", weekdays: [1], startTime: "08:00", endTime: "09:00" }),
+    ]);
+    expect(agenda[0].entries.map((e) => [e.name, e.room])).toEqual([
+      ["Yoga", "historic"],
+      ["Zumba", "glass"],
+    ]);
+  });
+
+  it("a igual hora desempata por nombre y no por salón", () => {
+    const agenda = buildDailyAgenda([
+      slot({ id: 2, name: "Zumba", room: "historic", weekdays: [2], startTime: "18:00", endTime: "19:00" }),
+      slot({ id: 3, name: "Ajedrez", room: "glass", weekdays: [2], startTime: "18:00", endTime: "19:00" }),
+    ]);
+    expect(agenda[1].entries.map((e) => e.name)).toEqual(["Ajedrez", "Zumba"]);
+  });
+
+  it("repite la actividad en cada uno de sus días y excluye las inactivas", () => {
+    const agenda = buildDailyAgenda([slot(), slot({ id: 9, name: "Apagada", weekdays: [5], active: false })]);
+    expect(agenda[0].entries.map((e) => e.id)).toEqual([1]); // lunes
+    expect(agenda[2].entries.map((e) => e.id)).toEqual([1]); // miércoles
+    expect(agenda[1].entries).toEqual([]); // martes
+    expect(agenda[4].entries).toEqual([]); // viernes: la inactiva no entra
+  });
+
+  it("cada entrada trae el salón para poder etiquetarla en la página pública", () => {
+    const agenda = buildDailyAgenda([slot({ room: "glass" })]);
+    expect(ROOM_LABELS[agenda[0].entries[0].room]).toBe(SITE.rooms.glass);
   });
 });
 

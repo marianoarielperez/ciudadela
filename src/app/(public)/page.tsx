@@ -68,7 +68,13 @@ export default async function HomePage() {
                     Las asociaciones están suspendidas temporalmente. Para más información acercate
                     a la sede vecinal:
                   </p>
-                  <p className="mt-1 text-sm font-semibold">{SITE.address}</p>
+                  {/* La dirección era un callejón sin salida: decía dónde ir y
+                      ahí terminaba. Ahora lleva al mapa y al contacto. */}
+                  <p className="mt-1 text-sm font-semibold">
+                    <Link href="/ubicacion" className="text-primary underline">
+                      {SITE.address}
+                    </Link>
+                  </p>
                 </div>
                 {/* Estado inerte con tratamiento fantasma (sin relleno, borde
                     fino punteado, texto atenuado) para que se lea como no

@@ -79,3 +79,39 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
   }
   return grid;
 }
+
+export type AgendaEntry = {
+  id: number;
+  name: string;
+  room: "historic" | "glass";
+  startTime: string;
+  endTime: string;
+};
+
+// Reproyección día-primero de buildWeeklyGrid para el calendario público. La
+// grilla por salón es la vista del que administra el espacio; el vecino
+// pregunta "¿qué hay el martes?" y "¿a qué hora?", y el salón recién le importa
+// cuando ya está yendo. Acá el día es el eje y el salón es un dato de cada
+// actividad, así el martes aparece una sola vez y no dos.
+//
+// Mismo contrato implícito que buildWeeklyGrid: recibe las actividades de UN
+// solo año, no filtra por año.
+export function buildDailyAgenda(
+  activities: ActivitySlot[],
+): Array<{ day: number; label: string; entries: AgendaEntry[] }> {
+  const grid = buildWeeklyGrid(activities);
+  return WEEKDAYS.map(([day, label]) => ({
+    day,
+    label,
+    entries: (["historic", "glass"] as const)
+      .flatMap((room) => grid[room][day].map((a) => ({ ...a, room })))
+      // Desempate por nombre: al mezclar los dos salones, dos actividades que
+      // arrancan a la misma hora quedarían en orden de salón, que no es un
+      // orden que el lector pueda anticipar.
+      .sort(
+        (x, y) =>
+          (timeToMinutes(x.startTime) ?? 0) - (timeToMinutes(y.startTime) ?? 0) ||
+          x.name.localeCompare(y.name, "es-AR"),
+      ),
+  }));
+}
