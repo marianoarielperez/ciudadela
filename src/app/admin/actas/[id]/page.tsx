@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS, MOVEMENT_LABELS } from "@/lib/members/labels";
+import { EmptyState } from "@/components/admin/empty-state";
+import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -20,20 +22,22 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
     include: { movements: { include: { member: true }, orderBy: { id: "asc" } } },
   });
   if (!minute) notFound();
+
+  const tipoLabel = MINUTE_TYPE_LABELS[minute.type];
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground"><Link href="/admin/actas" className="hover:underline">Actas</Link></p>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <h1 className="text-2xl font-semibold">
-          Acta {MINUTE_TYPE_LABELS[minute.type]} N° {minute.number} — {formatDateAR(minute.date)}
-        </h1>
-        <Button asChild variant="outline">
-          <Link href={`/admin/actas/${minute.id}/editar`}>Editar</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title={`Acta ${tipoLabel} N° ${minute.number} — ${formatDateAR(minute.date)}`}
+        breadcrumb={[{ label: "Actas", href: "/admin/actas" }, { label: `${tipoLabel} N° ${minute.number}` }]}
+        actions={
+          <Button asChild variant="outline">
+            <Link href={`/admin/actas/${minute.id}/editar`}>Editar</Link>
+          </Button>
+        }
+      />
       {minute.description && <p>{minute.description}</p>}
-      <h2 className="text-lg font-medium">Movimientos asentados</h2>
-      {minute.movements.length === 0 && <p className="text-sm text-muted-foreground">Sin movimientos asociados.</p>}
+      <h2 className="text-lg font-semibold">Movimientos asentados</h2>
+      {minute.movements.length === 0 && <EmptyState size="card" description="Sin movimientos." />}
       <ul className="space-y-1">
         {minute.movements.map((mv) => (
           <li key={mv.id} className="text-sm">

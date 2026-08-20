@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PageHeader } from "@/components/admin/page-header";
 import { MinuteForm } from "./minute-form";
 
 export const metadata = { title: "Nueva acta — SIGeV" };
@@ -6,10 +6,10 @@ export const metadata = { title: "Nueva acta — SIGeV" };
 export default function NuevaActaPage() {
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        <Link href="/admin/actas" className="hover:underline">Actas</Link> / Nueva
-      </p>
-      <h1 className="text-2xl font-semibold">Nueva acta</h1>
+      <PageHeader
+        title="Nueva acta"
+        breadcrumb={[{ label: "Actas", href: "/admin/actas" }, { label: "Nueva" }]}
+      />
       <MinuteForm />
     </div>
   );

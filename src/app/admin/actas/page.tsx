@@ -2,6 +2,8 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
+import { EmptyState } from "@/components/admin/empty-state";
+import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -16,15 +18,15 @@ export default async function ActasPage() {
   });
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Actas</h1>
-        <Button asChild><Link href="/admin/actas/nueva">Nueva acta</Link></Button>
-      </div>
+      <PageHeader
+        title="Actas"
+        actions={<Button asChild><Link href="/admin/actas/nueva">Nueva acta</Link></Button>}
+      />
       {minutes.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Todavía no hay actas cargadas. Las acciones societarias (altas, bajas, cambios de
-          categoría) se asientan siempre en un acta.
-        </p>
+        <EmptyState
+          description="Todavía no hay actas cargadas. Las acciones societarias (altas, bajas, cambios de categoría) se asientan siempre en un acta."
+          action={<Button asChild><Link href="/admin/actas/nueva">Nueva acta</Link></Button>}
+        />
       ) : (
         <Table>
           <TableHeader>

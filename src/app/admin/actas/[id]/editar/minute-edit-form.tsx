@@ -4,6 +4,7 @@
 // descubra el bloqueo recién después de tipear.
 import { useActionState } from "react";
 import { updateMinuteAction } from "../../actions";
+import { FormMessage } from "@/components/admin/form-message";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -81,7 +82,7 @@ export function MinuteEditForm(props: {
 
       <TextField label="Descripción" field={field("description")} maxLength={500} />
 
-      {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>{pending ? "Guardando…" : "Guardar cambios"}</Button>
     </form>
   );
