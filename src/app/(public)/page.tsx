@@ -7,7 +7,7 @@ import heroImg from "../../../assets/hero.jpg";
 import { getAsociateActive } from "@/lib/config";
 import { getLatestNews } from "@/lib/news/query";
 import { NewsCard } from "@/components/public/news-card";
-import { SITE } from "@/lib/site";
+import { SITE, siteBaseUrl } from "@/lib/site";
 
 export const metadata: Metadata = {
   description: `Sitio oficial de la ${SITE.name} — noticias, actividades y asociación.`,
@@ -17,6 +17,28 @@ export default async function HomePage() {
   const [asociateActive, latest] = await Promise.all([getAsociateActive(), getLatestNews(3)]);
   return (
     <main>
+      <script
+        type="application/ld+json"
+        // JSON-LD estático generado desde constantes propias (SITE): no hay
+        // input de usuario acá, el dangerouslySetInnerHTML es seguro.
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "Organization",
+            name: SITE.name,
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: SITE.address,
+              addressLocality: "Comodoro Rivadavia",
+              addressRegion: "Chubut",
+              addressCountry: "AR",
+            },
+            foundingDate: "1964-08-04",
+            url: siteBaseUrl().toString(),
+            logo: new URL("/logo-header.png", siteBaseUrl()).toString(),
+          }),
+        }}
+      />
       {/* Hero: la foto tiene pixeles casi blancos (techos, chapa) en TODA su
           altura, así que el contraste del texto no puede depender de qué zona
           le toque atrás. El overlay se define en píxeles desde el borde

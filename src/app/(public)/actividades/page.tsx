@@ -1,24 +1,33 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { getActivitiesForYear, getActivityYears } from "@/lib/activities/query";
 import { buildDailyAgenda, ROOM_LABELS } from "@/lib/activities/rules";
-import { SITE } from "@/lib/site";
+import {
+  activitiesYearHref,
+  currentYearAR,
+  resolveActivitiesYear,
+} from "@/lib/activities/year-param";
+import { SITE, siteBaseUrl } from "@/lib/site";
 
-export const metadata: Metadata = {
-  title: "Actividades — Vecinal Ciudadela",
-  description: `Calendario semanal de actividades del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`,
-};
+const DESCRIPTION = `Calendario semanal de actividades del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`;
 
-// Año "actual" en hora argentina, no UTC del server: entre las 21 y las 24 del
-// 31 de diciembre el server ya está en enero y la página mostraría el año que
-// viene mientras el vecino todavía está en el anterior.
-function currentYearAR(): number {
-  return Number(
-    new Intl.DateTimeFormat("es-AR", {
-      timeZone: "America/Argentina/Buenos_Aires",
-      year: "numeric",
-    }).format(new Date()),
+export async function generateMetadata({
+  searchParams,
+}: PageProps<"/actividades">): Promise<Metadata> {
+  const sp = await searchParams;
+  // Misma consulta cacheada que el render: el año resuelto es el que manda,
+  // así el canonical de ?anio=1999 apunta al año que realmente se muestra.
+  const { year, canonicalHref } = resolveActivitiesYear(
+    sp.anio,
+    await getActivityYears(),
+    currentYearAR(),
   );
+  return {
+    title: `Actividades ${year} — Vecinal Ciudadela`,
+    description: `${DESCRIPTION} Año ${year}.`,
+    alternates: { canonical: new URL(canonicalHref, siteBaseUrl()).toString() },
+  };
 }
 
 // "martes, jueves y domingo". Sin Intl.ListFormat para no depender de qué ICU
@@ -31,13 +40,17 @@ function joinEs(items: string[]): string {
 export default async function ActividadesPage({ searchParams }: PageProps<"/actividades">) {
   const sp = await searchParams;
   const years = await getActivityYears(); // descendente, solo años con actividades activas
-  const current = currentYearAR();
-  // El año en curso manda por sobre el más reciente cargado: si la Comisión ya
-  // dejó armado el calendario del año que viene, el vecino que entra hoy tiene
-  // que ver el de hoy, no el que todavía no empezó.
-  const fallback = years.includes(current) ? current : (years[0] ?? current);
-  const requested = typeof sp.anio === "string" ? Number(sp.anio) : NaN;
-  const year = Number.isInteger(requested) && years.includes(requested) ? requested : fallback;
+  const { year, fallback, canonicalHref, isCanonical } = resolveActivitiesYear(
+    sp.anio,
+    years,
+    currentYearAR(),
+  );
+
+  // Redirigir cuando la URL pedida NO es la canónica del año que se va a
+  // mostrar (mismo criterio que /noticias): ?anio=abc, ?anio=%202025,
+  // ?anio=2025.0 y ?anio=1999 muestran todos lo mismo que alguna URL canónica
+  // y sin esto quedarían cuatro direcciones vivas para el mismo contenido.
+  if (!isCanonical) redirect(canonicalHref);
 
   const activities = await getActivitiesForYear(year);
   const agenda = buildDailyAgenda(activities);
@@ -72,7 +85,10 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
               {years.map((y) => (
                 <li key={y}>
                   <Link
-                    href={`/actividades?anio=${y}`}
+                    // Href canónico, no `?anio=${y}` siempre: el año por
+                    // defecto vive en /actividades a secas y linkearlo con el
+                    // query param mandaría al vecino por un redirect al pedo.
+                    href={activitiesYearHref(y, fallback)}
                     aria-current={y === year ? "page" : undefined}
                     className={`inline-flex min-h-11 items-center rounded-md border px-4 text-sm font-medium ${
                       y === year

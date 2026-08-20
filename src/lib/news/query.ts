@@ -58,6 +58,7 @@ function toCard(n: NewsRow): PublicNewsCard {
 }
 
 export const MAX_LATEST_NEWS = 50;
+export const SITEMAP_MAX_NEWS = 5000;
 
 export function makeNewsQueries(db: Db) {
   const publishedInclude = { author: { select: { name: true } } };
@@ -100,6 +101,24 @@ export function makeNewsQueries(db: Db) {
       })) as NewsRow | null;
       if (!n) return null;
       return { ...toCard(n), body: n.body };
+    },
+
+    // Para el sitemap: SOLO publicadas, filtradas en SQL. No se filtra en JS
+    // sobre allForAdmin() porque eso traería los borradores a la memoria del
+    // proceso que arma un XML público — un descuido ahí y el título o el slug
+    // de un borrador salen listados.
+    async publishedForSitemap(): Promise<{ slug: string; publishedAtIso: string }[]> {
+      const rows = await db.news.findMany({
+        where: publishedWhere,
+        orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+        // El protocolo del sitemap corta en 50.000 URLs por archivo; con este
+        // tope no hay forma de pasarse ni de que la consulta crezca sin techo.
+        take: SITEMAP_MAX_NEWS,
+        select: { slug: true, publishedAt: true },
+      });
+      // publishedWhere ya exige publishedAt no nulo; el `?? ""` es solo para
+      // el tipo y no puede darse en la práctica.
+      return rows.map((n) => ({ slug: n.slug, publishedAtIso: n.publishedAt?.toISOString() ?? "" }));
     },
 
     async allForAdmin(): Promise<AdminNewsRow[]> {

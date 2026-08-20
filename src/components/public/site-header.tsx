@@ -17,10 +17,10 @@ export function SiteHeader() {
           {/* alt vacío: el nombre de la asociación va como texto acá al lado,
               un alt lo repetiría en el lector de pantalla. */}
           <Image
-            src="/logo.png"
+            src="/logo-header.png"
             alt=""
-            width={674}
-            height={669}
+            width={161}
+            height={160}
             // Se muestra a 40px de alto (y ancho casi igual, es cuadrado).
             // Sin `sizes` next/image sirve la variante de 1920px del PNG.
             sizes="40px"
