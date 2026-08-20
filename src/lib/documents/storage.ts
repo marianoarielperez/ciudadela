@@ -105,6 +105,12 @@ export function makeDocumentStore(db: Pick<PrismaClient, "document">, rootDir?: 
         // archivo" para un documento que sí quedó guardado: `deleteMany` no
         // falla si no hay nada que borrar, y el unlink de un archivo ya borrado
         // tampoco importa.
+        //
+        // Lo que esto NO hace es serializar: de esa carrera pueden quedar DOS
+        // filas del mismo `type` (las dos con foto nueva, así que el admin ve
+        // duplicado, nunca un documento viejo resucitado). El arreglo de fondo
+        // es un unique sobre `(ownerType, ownerId, type)` para los tipos que no
+        // son `annex` —los anexos son varios a propósito—, y eso pide migración.
         try {
           await db.document.deleteMany({ where: { id: previous.id } });
           await unlink(path.join(root(), previous.path));
