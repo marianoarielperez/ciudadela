@@ -45,7 +45,15 @@ type Db = Pick<PrismaClient, "application" | "$transaction">;
 // `auth/rate-limiter.ts`). Si se clusteriza, este mutex deja de garantizar
 // nada y hay que mover la exclusión a la base — índice único parcial mantenido
 // por la app sobre (dni, estado vivo), o lock distribuido.
-const applicationMutex = createKeyedMutex();
+// Anclado a `globalThis` con el mismo criterio que el cliente de Prisma
+// (`src/lib/prisma.ts`): si el módulo se re-evalúa dentro del MISMO proceso
+// —el HMR de `next dev` lo hace en cada guardado— dos instancias serían dos
+// colas distintas y la exclusión se perdería sin ruido. En los limitadores eso
+// sólo afloja una cuota; acá reabre la carrera que este mutex existe para
+// cerrar, así que la instancia tiene que ser una sola por proceso.
+const globalForMutex = globalThis as unknown as { applicationMutex?: ReturnType<typeof createKeyedMutex> };
+const applicationMutex = globalForMutex.applicationMutex ?? createKeyedMutex();
+globalForMutex.applicationMutex = applicationMutex;
 
 export function makeApplicationService(db: Db) {
   return {
