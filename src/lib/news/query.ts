@@ -5,13 +5,9 @@ import { unstable_cache } from "next/cache";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { newsPlainText } from "@/lib/news/sanitize";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 
 export const NEWS_PAGE_SIZE = 10;
-
-// Tags de caché del sitio público. Las actions del ABM invalidan con
-// updateTag(CACHE_TAGS.news) etc. — en Next 16.3.1 revalidateTag pide un
-// segundo argumento de perfil y no se puede llamar desde una server action.
-export const CACHE_TAGS = { news: "news", activities: "activities", config: "config" } as const;
 
 export type PublicNewsCard = {
   id: number;

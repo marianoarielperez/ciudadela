@@ -27,7 +27,7 @@ import {
 import { slugify } from "@/lib/news/slug";
 import { newsBodyIsEmpty, sanitizeNewsBody } from "@/lib/news/sanitize";
 import { deleteNewsCover, saveNewsCover } from "@/lib/news/images";
-import { CACHE_TAGS } from "@/lib/news/query";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
 // función async (es un endpoint).

@@ -31,7 +31,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { audit } from "@/lib/audit";
-import { CACHE_TAGS } from "@/lib/news/query";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 import { CONFIG_KEYS } from "@/lib/config";
 import { updateConfigAction } from "@/app/admin/configuracion/actions";
 

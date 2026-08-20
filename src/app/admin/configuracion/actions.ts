@@ -20,7 +20,7 @@ import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
 import { CONFIG_KEYS } from "@/lib/config";
-import { CACHE_TAGS } from "@/lib/news/query";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
 // función async (es un endpoint).

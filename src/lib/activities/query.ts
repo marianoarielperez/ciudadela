@@ -7,7 +7,7 @@
 import { unstable_cache } from "next/cache";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { CACHE_TAGS } from "@/lib/news/query";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 import type { ActivitySlot } from "@/lib/activities/rules";
 
 type Db = Pick<PrismaClient, "activity">;
