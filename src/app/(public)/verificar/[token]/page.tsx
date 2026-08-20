@@ -29,11 +29,24 @@ export default async function VerificarPage(props: { params: Promise<{ token: st
     ? await prisma.member.findUnique({ where: { id: t.memberId }, select: REDEEM_CARD_SELECT })
     : null;
 
+  // El mismo enlace puede pertenecer a una SOLICITUD del wizard (M3), que
+  // todavía no tiene ficha ni cuenta. Se le muestra este mismo formulario: el
+  // texto es genérico y no nombra a nadie. De la solicitud se lee sólo la
+  // dirección, con el mismo criterio de `REDEEM_CARD_SELECT` — nunca el nombre.
+  const application = t?.applicationId
+    ? await prisma.application.findUnique({ where: { id: t.applicationId }, select: { email: true } })
+    : null;
+
   // La misma revalidación en vivo que hace el canje: si el socio quedó dado de
   // baja después del envío, la página no le ofrece el botón. Lo que cierra el
   // agujero es la guarda del canje —esto es sólo no mentirle a la persona—.
-  const blocked = member ? canRedeem(member) : { ok: false as const, error: ACCESS_ERRORS.dead };
-  const usable = member && blocked.ok && member.email;
+  // La solicitud no tiene un estado equivalente que cierre el canje: verificar
+  // el email es idempotente y no le da acceso a nada.
+  const blocked = member ? canRedeem(member)
+    : application ? { ok: true as const }
+    : { ok: false as const, error: ACCESS_ERRORS.dead };
+  const email = member?.email ?? application?.email ?? null;
+  const usable = blocked.ok && email;
 
   return (
     <main className="mx-auto flex min-h-[70vh] max-w-md flex-col justify-center p-4">
@@ -48,15 +61,16 @@ export default async function VerificarPage(props: { params: Promise<{ token: st
         </CardHeader>
         <CardContent className="space-y-4">
           {usable ? (
-            <>
+            <ConfirmForm
+              token={token}
+              footer={<p className="text-sm text-muted-foreground">{REDEEM_PAGE_COPY.verifyNotYou}</p>}
+            >
               <p className="text-sm">{REDEEM_PAGE_COPY.verifyLead}</p>
               <p className="rounded bg-secondary px-3 py-2 text-sm font-medium break-all">
-                {member.email}
+                {email}
               </p>
               <p className="text-sm text-muted-foreground">{REDEEM_PAGE_COPY.verifyWhy}</p>
-              <ConfirmForm token={token} />
-              <p className="text-sm text-muted-foreground">{REDEEM_PAGE_COPY.verifyNotYou}</p>
-            </>
+            </ConfirmForm>
           ) : (
             <p className="text-sm text-red-600" role="alert">
               {blocked.ok ? ACCESS_ERRORS.noEmail : blocked.error}

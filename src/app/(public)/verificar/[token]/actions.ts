@@ -8,15 +8,20 @@
 // la auditoría, y redirigir.
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { applicationService } from "@/lib/applications/service";
 import { audit } from "@/lib/audit";
 import { publicTokenLimiter } from "@/lib/auth/rate-limiter";
 import { memberAccess } from "@/lib/members/access";
+import { tokens } from "@/lib/tokens";
 
-export type VerifyState = { error?: string };
+// `verified` sólo aparece en la rama de SOLICITUD: el canje de ficha termina en
+// un `redirect` y nunca vuelve con estado.
+export type VerifyState = { error?: string; verified?: "application" };
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
 // función async (lo exportado es un endpoint), y una constante rompe el build.
 const TOO_MANY = "Demasiados intentos desde tu conexión. Probá de nuevo en un rato.";
+const DEAD_LINK = "El enlace ya fue usado o venció.";
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como el login y el modo carga: el resto de las cabeceras de
@@ -30,6 +35,35 @@ export async function confirmEmailAction(_prev: VerifyState, formData: FormData)
   const ip = await clientIp();
   if (!publicTokenLimiter.check(ip)) return { error: TOO_MANY };
 
+  // ── Rama de SOLICITUD (M3) ────────────────────────────────────────────────
+  // El mismo `purpose` (`email_verification`) tiene dos dueños posibles: una
+  // ficha (`memberId`, circuito del M1) o una solicitud del wizard
+  // (`applicationId`), que se emite cuando todavía no hay ni ficha ni cuenta.
+  // El `peek` sólo decide de quién es el token; el `consume` —que es lo que
+  // quema el enlace— sigue ocurriendo únicamente acá, en el POST.
+  const peeked = await tokens.peek(raw, "email_verification");
+  if (peeked?.applicationId) {
+    // Dos clicks (o el reintento del cliente de correo) no verifican dos veces:
+    // el UPDATE condicional de `consume` lo gana exactamente uno, y
+    // `applicationService.verifyEmail` es idempotente por su propio
+    // `WHERE email_verified_at IS NULL`.
+    const consumed = await tokens.consume(raw, "email_verification");
+    if (!consumed) return { error: DEAD_LINK };
+    await applicationService.verifyEmail(peeked.applicationId);
+    // Sin `userId` ni `detail`: la persona no tiene sesión y la solicitud ya
+    // queda identificada por su id. Ni el email ni el token van al log
+    // (docs/08, Ley 25.326).
+    await audit({
+      action: "application_email_verified", entity: "application",
+      entityId: peeked.applicationId, ip,
+    });
+    // No hay redirect ni invitación de contraseña: la cuenta recién puede
+    // existir cuando el asiento en acta cree la ficha (spec §6). Se vuelve con
+    // estado y el formulario muestra la confirmación en su lugar.
+    return { verified: "application" };
+  }
+
+  // ── Rama de FICHA (M1, sin cambios) ───────────────────────────────────────
   // El `consume` ocurre acá adentro y NUNCA en el GET de la página: los
   // escáneres de enlaces de los clientes de correo abren la URL, y con una
   // página que consumiera, el token moriría antes de que la persona haga clic.
