@@ -35,12 +35,12 @@ export function AdminMobileNav({ groups, user, signOut }: {
     <header className="sticky top-0 z-40 flex items-center gap-2 bg-sidebar px-2 py-1.5 lg:hidden">
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger
-          className="flex size-11 items-center justify-center rounded-md text-white outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          className="flex size-11 items-center justify-center rounded-md text-white outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
         >
           <Menu aria-hidden className="size-5" />
           <span className="sr-only">Abrir la navegación</span>
         </Dialog.Trigger>
-        <Link href="/admin" className="text-sm font-semibold text-white">
+        <Link href="/admin" className="flex min-h-11 items-center rounded-md px-2 text-sm font-semibold text-white outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring">
           SIGeV — Panel
         </Link>
         <Dialog.Portal>
@@ -53,7 +53,7 @@ export function AdminMobileNav({ groups, user, signOut }: {
               <Dialog.Title className="text-sm font-semibold text-white">
                 SIGeV — Panel de administración
               </Dialog.Title>
-              <Dialog.Close className="flex size-11 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring">
+              <Dialog.Close className="flex size-11 items-center justify-center rounded-md outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring">
                 <X aria-hidden className="size-5" />
                 <span className="sr-only">Cerrar la navegación</span>
               </Dialog.Close>
@@ -62,7 +62,7 @@ export function AdminMobileNav({ groups, user, signOut }: {
             <div className="border-t border-sidebar-border p-3">
               <p className="mb-2 text-xs">
                 {user.name}
-                <span className="block text-[10.5px] text-sidebar-foreground/60">{user.roleLabel}</span>
+                <span className="block text-[10.5px] text-sidebar-foreground/70">{user.roleLabel}</span>
               </p>
               {signOut}
             </div>
