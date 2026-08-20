@@ -8,18 +8,52 @@ import {
 } from "@/lib/applications/service";
 import { hashToken } from "@/lib/tokens";
 
+// El fake pasa el mismo objeto de mocks como `tx`, así que la sola llamada no
+// prueba nada sobre DÓNDE corrió el chequeo. `state.inTransaction` es el testigo:
+// se prende justo antes de invocar el callback de `$transaction` y se apaga al
+// salir, y cada mock anota el valor que vio. Si alguien mueve el `findFirst`
+// afuera de la transacción, `seenInTransaction` queda en false y el test cae.
 function fakeDb() {
+  const state = { inTransaction: false };
+  const seenInTransaction: Record<string, boolean[]> = { findFirst: [], create: [] };
+  const witness = (name: keyof typeof seenInTransaction) => {
+    seenInTransaction[name].push(state.inTransaction);
+  };
+
+  // Filas vivas por DNI; los casos las fijan con `setLive`.
+  const live = new Map<string, { id: number }>();
   const application = {
-    findFirst: vi.fn().mockResolvedValue(null),
-    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: 55, ...data })),
+    findFirst: vi.fn(async (args: { where: Record<string, unknown> }) => {
+      witness("findFirst");
+      return live.get(String(args.where.dni)) ?? null;
+    }),
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      witness("create");
+      return { id: 55, ...data };
+    }),
     findUnique: vi.fn().mockResolvedValue(null),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   };
   const db = {
     application,
-    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({ application })),
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      state.inTransaction = true;
+      try {
+        return await fn({ application });
+      } finally {
+        state.inTransaction = false;
+      }
+    }),
   };
-  return { db: db as never, application };
+  return {
+    db: db as never,
+    application,
+    transaction: db.$transaction,
+    seenInTransaction,
+    setLive(dni: string, row: { id: number }) {
+      live.set(dni, row);
+    },
+  };
 }
 
 const input = {
@@ -43,13 +77,58 @@ describe("applicationService.create", () => {
     expect(JSON.stringify(data)).not.toContain(resumeToken);
   });
 
-  it("rechaza si hay una solicitud viva con el mismo DNI (dentro de la transacción)", async () => {
-    const { db, application } = fakeDb();
-    application.findFirst.mockResolvedValue({ id: 9 });
+  it("rechaza si hay una solicitud viva con el mismo DNI", async () => {
+    const { db, application, setLive } = fakeDb();
+    setLive(input.dni, { id: 9 });
     const svc = makeApplicationService(db);
     await expect(svc.create(input)).rejects.toBeInstanceOf(DuplicateLiveApplicationError);
     expect(application.findFirst.mock.calls[0][0].where.status).toEqual({ in: LIVE_APPLICATION_STATUSES });
     expect(application.create).not.toHaveBeenCalled();
+  });
+
+  it("el chequeo de unicidad corre DENTRO de la transacción, igual que el create", async () => {
+    const { db, application, transaction, seenInTransaction } = fakeDb();
+    const svc = makeApplicationService(db);
+    await svc.create(input);
+
+    // Ambos vieron el testigo prendido: corrieron entre el inicio y el fin del
+    // callback de `$transaction`, no antes ni después.
+    expect(seenInTransaction.findFirst).toEqual([true]);
+    expect(seenInTransaction.create).toEqual([true]);
+    // Y la transacción se abrió antes que el chequeo (cinturón y tirantes).
+    expect(transaction.mock.invocationCallOrder[0])
+      .toBeLessThan(application.findFirst.mock.invocationCallOrder[0]);
+  });
+
+  it("serializa dos create simultáneos del mismo DNI: el segundo ve al primero", async () => {
+    // La transacción NO alcanza: en InnoDB el findFirst es lectura consistente
+    // sin locks. Lo que serializa es el mutex por DNI del módulo.
+    const { db, application, setLive } = fakeDb();
+    application.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      // Simula la fila que queda viva en la base tras el INSERT.
+      setLive(String(data.dni), { id: 55 });
+      return { id: 55, ...data };
+    });
+    const svc = makeApplicationService(db);
+
+    const [first, second] = await Promise.allSettled([svc.create(input), svc.create(input)]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
+    expect((second as PromiseRejectedResult).reason).toBeInstanceOf(DuplicateLiveApplicationError);
+    expect(application.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("el mutex es por DNI: dos DNI distintos no se bloquean entre sí", async () => {
+    const { db, application, setLive } = fakeDb();
+    application.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      setLive(String(data.dni), { id: 55 });
+      return { id: 55, ...data };
+    });
+    const svc = makeApplicationService(db);
+
+    // Mismo escenario que el caso anterior salvo el DNI: acá los dos entran.
+    await Promise.all([svc.create(input), svc.create({ ...input, dni: "27999888" })]);
+    expect(application.create).toHaveBeenCalledTimes(2);
   });
 });
 

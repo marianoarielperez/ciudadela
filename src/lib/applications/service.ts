@@ -2,6 +2,7 @@
 // factory con un Prisma "pick", transacciones con callback, singleton al final.
 import { randomBytes } from "node:crypto";
 import type { Application, ApplicationStatus, MemberCategory, PrismaClient } from "@/generated/prisma/client";
+import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { prisma } from "@/lib/prisma";
 import { hashToken } from "@/lib/tokens";
 
@@ -31,26 +32,44 @@ export type CreateApplicationInput = {
 
 type Db = Pick<PrismaClient, "application" | "$transaction">;
 
+// Serializa los `create` que comparten DNI. Es el mutex —no la transacción— lo
+// que hace atómico el "chequear y crear": en InnoDB con REPEATABLE READ el
+// `findFirst` es una lectura consistente SIN locks, así que dos transacciones
+// simultáneas del mismo DNI ven las dos `null` y las dos insertan; y
+// `Application.dni` no es unique a propósito (el mismo vecino puede tener una
+// rechazada vieja y una viva), así que la base tampoco las atrapa. La
+// transacción sigue estando por lo suyo: que el chequeo y el INSERT vean la
+// misma foto y que un fallo no deje media escritura.
+//
+// Premisa: PM2 corre un único proceso (misma que documenta
+// `auth/rate-limiter.ts`). Si se clusteriza, este mutex deja de garantizar
+// nada y hay que mover la exclusión a la base — índice único parcial mantenido
+// por la app sobre (dni, estado vivo), o lock distribuido.
+const applicationMutex = createKeyedMutex();
+
 export function makeApplicationService(db: Db) {
   return {
-    // La unicidad "una sola viva por DNI" se revalida DENTRO de la transacción:
-    // la elegibilidad de la action corre antes y sin lock, dos POST simultáneos
-    // del mismo DNI pasan los dos el chequeo externo (patrón requireOpenBook).
+    // La unicidad "una sola viva por DNI" se revalida acá adentro: la
+    // elegibilidad de la action corre antes y sin exclusión, dos POST
+    // simultáneos del mismo DNI pasan los dos el chequeo externo (patrón
+    // requireOpenBook).
     async create(input: CreateApplicationInput): Promise<{ id: number; resumeToken: string }> {
-      const raw = randomBytes(32).toString("base64url");
-      const created = await db.$transaction(async (tx) => {
-        const live = await tx.application.findFirst({
-          where: { dni: input.dni, status: { in: LIVE_APPLICATION_STATUSES } },
-          select: { id: true },
+      return applicationMutex.run(input.dni, async () => {
+        const raw = randomBytes(32).toString("base64url");
+        const created = await db.$transaction(async (tx) => {
+          const live = await tx.application.findFirst({
+            where: { dni: input.dni, status: { in: LIVE_APPLICATION_STATUSES } },
+            select: { id: true },
+          });
+          if (live) throw new DuplicateLiveApplicationError();
+          // Sólo el sha256 se persiste: el crudo vuelve al caller (enlace de
+          // retome) y no queda en la base ni en los logs de Prisma.
+          return tx.application.create({
+            data: { ...input, resumeTokenHash: hashToken(raw) },
+          });
         });
-        if (live) throw new DuplicateLiveApplicationError();
-        // Sólo el sha256 se persiste: el crudo vuelve al caller (enlace de
-        // retome) y no queda en la base ni en los logs de Prisma.
-        return tx.application.create({
-          data: { ...input, resumeTokenHash: hashToken(raw) },
-        });
+        return { id: created.id, resumeToken: raw };
       });
-      return { id: created.id, resumeToken: raw };
     },
 
     async findLiveByDni(dni: string): Promise<{ id: number; email: string } | null> {
