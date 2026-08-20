@@ -24,13 +24,19 @@ export function NewsCard({
         {news.coverImagePath && (
           // alt vacío a propósito: la portada es decorativa, el título que va
           // justo abajo ya nombra la noticia. Describirla otra vez sería ruido.
+          // La portada la sube la Comisión desde el panel y puede ser una foto
+          // de celular de varios MB. El route handler que la sirve cachea el
+          // original, pero cachear no es redimensionar: sin optimizar, cada
+          // visitante se baja el archivo entero para una tarjeta de 320 px.
+          // `sizes` sigue a la grilla: 1 columna, 2 desde sm, 3 desde lg
+          // dentro de un contenedor de 992 px.
           <Image
             src={newsImageUrl(news.coverImagePath)}
             alt=""
             width={640}
             height={360}
+            sizes="(min-width: 1024px) 320px, (min-width: 640px) 50vw, 100vw"
             className="aspect-video w-full object-cover"
-            unoptimized
           />
         )}
         <CardHeader>

@@ -80,11 +80,13 @@ export default async function NoticiaPage({ params }: PageProps<"/noticias/[slug
             alt=""
             width={1280}
             height={720}
+            sizes="(min-width: 768px) 736px, 100vw"
             className="mt-6 w-full rounded-lg object-cover"
-            // La portada se sirve por /api/imagenes/noticias/[name], que ya
-            // responde con Cache-Control immutable: pasarla además por el
-            // optimizador de Next sería hacer el mismo trabajo dos veces.
-            unoptimized
+            // El route handler que sirve la portada ya responde con
+            // Cache-Control immutable, pero eso es caché, no redimensionado: el
+            // original que subió la Comisión puede pesar megabytes. El
+            // optimizador genera la variante del ancho real (736 px como
+            // máximo acá) y en formato moderno; son trabajos distintos.
             priority
           />
         )}
