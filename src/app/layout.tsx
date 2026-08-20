@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { siteBaseUrl } from "@/lib/site";
+import { SITE, siteBaseUrl } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -27,7 +27,10 @@ export const metadata: Metadata = {
   description:
     "Sitio institucional y sistema de gestión de socios de la Asociación Vecinal del Barrio Ciudadela — Comodoro Rivadavia, Chubut.",
   openGraph: {
-    siteName: "Vecinal Ciudadela",
+    // /noticias/[slug] tiene que repetir siteName y locale, porque su propio
+    // openGraph reemplaza a este en vez de fusionarse: sale del mismo SITE
+    // para que no puedan divergir.
+    siteName: SITE.shortName,
     locale: "es_AR",
     type: "website",
   },

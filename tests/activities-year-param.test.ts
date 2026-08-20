@@ -57,28 +57,15 @@ describe("resolveActivitiesYear", () => {
     });
   });
 
-  // El caso que dejaba dos URLs vivas para el mismo contenido: %20 delante del
-  // número. Number(" 2025") es 2025, así que resuelve igual pero la dirección
-  // no es la canónica.
-  it("no deja viva la variante con espacio (?anio=%202025)", () => {
-    expect(resolve(" 2025")).toMatchObject({
-      year: 2025,
-      canonicalHref: "/actividades?anio=2025",
-      isCanonical: false,
-    });
-  });
-
-  // Number() acepta varias escrituras del mismo año ("2025.0", "2025e0",
-  // "0x7e9"): todas muestran 2025 y todas redirigen a la única URL canónica.
-  it.each(["2025.0", "2025e0", "0x7e9"])("%s redirige a la forma canónica del año", (param) => {
-    expect(resolve(param)).toMatchObject({
-      year: 2025,
-      canonicalHref: "/actividades?anio=2025",
-      isCanonical: false,
-    });
-  });
-
+  // Sólo una tira de dígitos cuenta como año, igual que el `?pagina=` de
+  // /noticias: ni el espacio de "%202025" ni las otras escrituras que Number()
+  // aceptaba ("2025.0", "2025e0", "0x7e9") llegan a resolver el año. Todas caen
+  // en el default y redirigen a la única URL canónica.
   it.each([
+    ["espacio delante (%202025)", " 2025"],
+    ["decimal", "2025.0"],
+    ["notación exponencial", "2025e0"],
+    ["hexadecimal", "0x7e9"],
     ["basura", "abc"],
     ["no numérico", "Infinity"],
     ["año sin actividades", "1999"],

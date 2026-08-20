@@ -48,7 +48,12 @@ export function resolveActivitiesYear(
   // `anio` puede venir repetido (?anio=2025&anio=2024 → array), decimal, con
   // espacios ("%202025") o con basura. Todo lo que no resuelva a un año con
   // actividades cargadas cae en el fallback.
-  const requested = typeof param === "string" ? Number(param) : NaN;
+  //
+  // El criterio es el mismo `^\d+$` estricto que usa /noticias con `?pagina=`:
+  // son páginas hermanas y no tiene sentido que una acepte `0x7e9` y `2025e0`
+  // como año y la otra no. Number() los aceptaba; el redirect a la canónica
+  // tapaba el efecto, pero eran dos varas distintas para el mismo problema.
+  const requested = typeof param === "string" && /^\d+$/.test(param) ? Number(param) : NaN;
   const year = Number.isInteger(requested) && years.includes(requested) ? requested : fallback;
   // Valor canónico del query param para un año ya resuelto: ausente en el
   // fallback, el número tal cual en el resto. Es contra ESTO que se compara lo

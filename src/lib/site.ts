@@ -15,8 +15,40 @@ export const SITE = {
   rooms: { historic: "Salón Histórico", glass: "Salón Vidriado" },
 } as const;
 
+// Hosts que NO pueden ser la base pública del sitio: si el build los hornea,
+// lo que se publica apunta a la máquina del visitante, no al sitio.
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+// Escotilla para el caso legítimo de correr `next build` en la máquina de
+// desarrollo (donde AUTH_URL ES localhost a propósito, porque Auth.js lo usa
+// para los callbacks de `next dev`). NUNCA en el VPS.
+const ESCAPE_HATCH = "ALLOW_LOCALHOST_BASE_URL";
+
 // URL base absoluta para metadata/sitemap. AUTH_URL ya apunta al dominio del
 // entorno (staging o producción); en dev cae a localhost.
+//
+// Ojo: este valor se HORNEA en el build. robots.txt, el sitemap, la home y
+// todos los `canonical` salen estáticos, así que un build con AUTH_URL vacía o
+// en localhost publica el sitio entero apuntando a localhost — y un canonical
+// a localhost es peor que ninguno, porque desindexa. Por eso acá se rompe el
+// build en vez de dejarlo salir con exit 0.
+//
+// La condición no puede ser sólo `NODE_ENV === "production"`: `next build` fija
+// NODE_ENV=production también localmente, donde localhost es el valor correcto.
+// De ahí la escotilla explícita, que en el VPS no existe.
 export function siteBaseUrl(): URL {
-  return new URL(process.env.AUTH_URL ?? "http://localhost:3000");
+  const raw = process.env.AUTH_URL;
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env[ESCAPE_HATCH] !== "1" &&
+    (!raw || LOCAL_HOSTS.has(new URL(raw).hostname))
+  ) {
+    throw new Error(
+      `AUTH_URL ${raw ? `apunta a localhost ("${raw}")` : "no está definida"} en un build de ` +
+        "producción: el sitemap, el robots.txt y todos los canonical saldrían apuntando a " +
+        `localhost. Definí AUTH_URL con el dominio del entorno, o ${ESCAPE_HATCH}=1 si de ` +
+        "verdad es un build local de prueba.",
+    );
+  }
+  return new URL(raw ?? "http://localhost:3000");
 }
