@@ -42,19 +42,50 @@ Lo que **falta**, y es todo lo que cubre este runbook:
 
 ### 1.1 Registros DNS
 
-En **DNS → Records**, agregar los dos con la **nube naranja (Proxied)** activa:
+La zona ya tiene 9 registros (correo). **Hay que agregar exactamente dos**, los
+del web, en **DNS → Records → Add record**:
 
-| Tipo | Nombre | Contenido | Proxy |
-|---|---|---|---|
-| A | `@` | `167.86.71.102` | Proxied |
-| A | `www` | `167.86.71.102` | Proxied |
+| Tipo | Nombre | Contenido | Proxy | TTL |
+|---|---|---|---|---|
+| A | `vecinalciudadela.ar` (o `@`) | `167.86.71.102` | **Proxied** 🟠 | Auto |
+| A | `www` | `167.86.71.102` | **Proxied** 🟠 | Auto |
 
-El proxy naranja es lo que hace que Cloudflare termine el TLS público y que el
-`X-Real-IP` que ya usa la app llegue bien desde el `realip` de Nginx.
+**No tocar los 9 que ya están** (los CNAME `brevo1`/`brevo2._domainkey`, los tres
+MX de `route*.mx.cloudflare.net`, y los TXT de SPF, DMARC, `brevo-code` y
+`cf2024-1._domainkey`): son los que sostienen el correo, que hoy funciona.
 
-**No tocar los registros que ya están** (TXT `brevo-code`, los CNAME
-`brevo1`/`brevo2._domainkey`, el SPF y el DMARC): son los que sostienen el correo
-transaccional, que hoy funciona.
+### Por qué proxied y no «DNS only», como cbinfraestructura.ar
+
+`cbinfraestructura.ar` corre en el mismo VPS con la nube **gris**, y es una
+configuración válida — pero SIGeV **no** debe copiarla, porque los dos sitios
+resuelven el TLS de manera distinta:
+
+| | cbinfraestructura.ar | SIGeV |
+|---|---|---|
+| Proxy | DNS only 🔘 | **Proxied 🟠** |
+| Certificado | Let's Encrypt (Certbot) en el VPS | **Cloudflare Origin** |
+| Quién termina el TLS público | el VPS | Cloudflare |
+
+Tres razones por las que SIGeV va proxied:
+
+1. **El certificado de origen de Cloudflare solo sirve proxied.** No lo valida
+   ningún navegador: lo valida Cloudflare. Con la nube gris el visitante recibe
+   un certificado no confiable. Si se prefiriera la nube gris, habría que usar
+   Certbot como cbinfraestructura y saltear el paso 1.3.
+2. **Staging ya funciona así** (`sigev.redaccion.ar`, con el Origin wildcard de
+   `redaccion.ar`), y el server block de producción es el mismo patrón.
+3. **HSTS la emite Cloudflare, no la app** — decisión tomada en el Módulo 2 y
+   escrita en `next.config.ts`. Con la nube gris nadie la emite.
+
+De yapa: el proxy oculta la IP del origen, que además hospeda otras cinco
+aplicaciones.
+
+> ⚠️ El proxy naranja **obliga** al bloque `set_real_ip_from` de la sección 2.
+> Sin él, `$remote_addr` es el edge de Cloudflare, todos los visitantes comparten
+> IP y el limitador de intentos del login deja afuera a cualquiera después de
+> cinco fallos de otro. No es opcional.
+
+`google-site-verification` no hace falta: es específico de cbinfraestructura.ar.
 
 ### 1.2 SSL/TLS
 
@@ -121,9 +152,42 @@ server {
 
     client_max_body_size 15M;   # portadas de noticias, DNIs y anexos
 
+    # Cloudflare real IP (https://www.cloudflare.com/ips/).
+    # OBLIGATORIO con el proxy naranja: sin esto `$remote_addr` es el edge de
+    # Cloudflare y TODOS los visitantes comparten IP, así que el rate limiter
+    # del login no distingue a nadie — cinco intentos fallidos de cualquiera
+    # dejan afuera al barrio entero. Va DENTRO del server block, no es global:
+    # hay que repetirlo acá aunque staging ya lo tenga.
+    set_real_ip_from 173.245.48.0/20;
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    set_real_ip_from 141.101.64.0/18;
+    set_real_ip_from 108.162.192.0/18;
+    set_real_ip_from 190.93.240.0/20;
+    set_real_ip_from 188.114.96.0/20;
+    set_real_ip_from 197.234.240.0/22;
+    set_real_ip_from 198.41.128.0/17;
+    set_real_ip_from 162.158.0.0/15;
+    set_real_ip_from 104.16.0.0/13;
+    set_real_ip_from 104.24.0.0/14;
+    set_real_ip_from 172.64.0.0/13;
+    set_real_ip_from 131.0.72.0/22;
+    set_real_ip_from 2400:cb00::/32;
+    set_real_ip_from 2606:4700::/32;
+    set_real_ip_from 2803:f800::/32;
+    set_real_ip_from 2405:b500::/32;
+    set_real_ip_from 2405:8100::/32;
+    set_real_ip_from 2a06:98c0::/29;
+    set_real_ip_from 2c0f:f248::/32;
+    real_ip_header CF-Connecting-IP;
+
     location / {
         proxy_pass http://127.0.0.1:3006;
         proxy_http_version 1.1;
+        # Se descarta la cabecera que mande el cliente: solo vale la que resolvió
+        # el módulo realip a partir de las redes de Cloudflare de arriba.
+        proxy_set_header CF-Connecting-IP "";
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
