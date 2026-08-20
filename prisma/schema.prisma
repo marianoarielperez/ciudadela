@@ -31,6 +31,7 @@ model User {
   minutesCreated   Minute[]
   movementsCreated Movement[]
   actionTokens     ActionToken[]
+  newsAuthored     News[]
 
   @@map("users")
 }
@@ -314,4 +315,65 @@ model ActionToken {
   createdAt DateTime     @default(now()) @map("created_at")
 
   @@map("action_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Módulo 2 — sitio público
+// ---------------------------------------------------------------------------
+
+enum NewsStatus {
+  draft
+  published
+}
+
+// Noticias de la cartelera digital del sitio público (docs/04, "Noticia").
+// OJO: no confundir con la cartelera FÍSICA de notificaciones (NotificationVia.board).
+model News {
+  id    Int    @id @default(autoincrement())
+  title String @db.VarChar(160)
+  // Editable incluso después de publicar: si cambia, la URL vieja da 404
+  // (aceptado en la spec §2: sitio chico, sin SEO heredado que preservar).
+  slug String @unique @db.VarChar(180)
+  // HTML YA sanitizado en el servidor (src/lib/news/sanitize.ts). Nunca se
+  // persiste HTML crudo del cliente.
+  body           String     @db.Text
+  coverImagePath String?    @map("cover_image_path") @db.VarChar(255)
+  status         NewsStatus @default(draft)
+  // Se fija la PRIMERA vez que se publica y no se pisa al republicar: es la
+  // fecha que ve el vecino y ordena la cartelera.
+  publishedAt DateTime? @map("published_at")
+  authorId    Int?      @map("author_id")
+  author      User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, publishedAt])
+  @@map("news")
+}
+
+// Los dos salones de la sede son fijos: enum, no tabla (YAGNI, spec §2).
+enum Room {
+  historic // Salón Histórico
+  glass // Salón Vidriado
+}
+
+// Actividad sistemática semanal de un salón ("Gimnasia mujeres", "Taekwondo
+// niños"), con vigencia anual. Solo consulta pública: no hay reservas.
+model Activity {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(120)
+  room Room
+  // Array JSON de enteros 1–7 (lunes=1). Validado por zod en el alta.
+  weekdays Json
+  // "HH:MM" hora de PARED local, sin conversión a UTC: es un horario
+  // recurrente, no un instante (excepción documentada, spec §2).
+  startTime String   @map("start_time") @db.VarChar(5)
+  endTime   String   @map("end_time") @db.VarChar(5)
+  year      Int      @db.SmallInt
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([year, room])
+  @@map("activities")
 }

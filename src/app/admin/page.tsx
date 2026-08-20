@@ -2,6 +2,7 @@ import Link from "next/link"
 
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { SITE } from "@/lib/site"
 
 export const metadata = { title: "Panel de administración — SIGeV" }
 
@@ -14,9 +15,23 @@ const sections: { title: string; description: string; href?: string; cta?: strin
     href: "/admin/actas",
     cta: "Ver las actas",
   },
+  {
+    title: "Actividades",
+    // Los nombres salen de SITE.rooms, que es de donde también sale el selector
+    // del formulario y la grilla pública: si alguna vez se renombra un salón, se
+    // renombra en un solo lugar y esta tarjeta no queda mintiendo.
+    description: `Calendario del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`,
+    href: "/admin/actividades",
+    cta: "Ver el calendario",
+  },
   { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
-  { title: "Noticias", description: "Novedades y comunicados del sitio público." },
-  { title: "Configuración", description: "Parámetros del sistema y usuarios del panel." },
+  { title: "Noticias", description: "Novedades y comunicados del sitio público.", href: "/admin/noticias", cta: "Gestionar noticias" },
+  {
+    title: "Configuración",
+    description: "Parámetros del sistema (solo superadmin).",
+    href: "/admin/configuracion",
+    cta: "Abrir",
+  },
 ]
 
 export default async function AdminHomePage() {

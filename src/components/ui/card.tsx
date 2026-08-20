@@ -33,9 +33,18 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+// `as` existe para que una tarjeta que ES un ítem de una lista (las noticias
+// del sitio público) pueda titularse con un encabezado real y el lector de
+// pantalla pueda recorrer el listado saltando por títulos. El default sigue
+// siendo `div`: las tarjetas del panel son fichas sueltas dentro de una
+// pantalla que ya tiene su jerarquía, y meterles un h2/h3 la ensuciaría.
+function CardTitle({
+  className,
+  as: Comp = "div",
+  ...props
+}: React.ComponentProps<"div"> & { as?: "div" | "h2" | "h3" | "h4" }) {
   return (
-    <div
+    <Comp
       data-slot="card-title"
       className={cn(
         "font-heading text-base leading-snug font-medium group-data-[size=sm]/card:text-sm",

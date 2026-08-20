@@ -29,12 +29,26 @@ una baja con acta queda en el historial y en auditoría; el email de verificaci�
 llega vía Brevo y el estado cambia a `verificado`.
 
 ## Módulo 2 — Sitio público
-Home (hero + botones con estados), cartelera de noticias + ABM admin, páginas
-Ubicación y Estatuto, footer, SEO básico, responsive.
+Home (hero + botones con estados), cartelera de noticias + ABM admin (editor
+visual básico + imagen de portada), calendario de actividades de los salones
+(Salón Histórico y Salón Vidriado, grilla semanal por año) + ABM admin,
+página Ubicación (OpenStreetMap), pantalla Configuración (superadmin:
+`asociate_activo`, contacto), footer con datos legales, SEO básico (robots,
+sitemap, OG), CSP completa, responsive.
+
+Las lecturas del sitio público van cacheadas por tag (`news`, `activities`,
+`config`) y las invalidan las acciones del panel: el cambio se ve sin redeploy.
+
+El Estatuto se movió al Módulo 5 (panel del socio, como PDF autenticado):
+decisión del 19/08/2026 — no va en el sitio público.
 
 CA: publicar una noticia con imagen desde el panel y verla en la home desde un
-celular; Lighthouse accesibilidad ≥90; ASOCIATE deshabilitado muestra el banner
-correcto cuando `asociate_activo=false`.
+celular; Lighthouse accesibilidad ≥90 en home/noticias/actividades; ASOCIATE
+deshabilitado muestra el banner correcto cuando `asociate_activo=false` y
+habilitarlo desde /admin/configuracion lo refleja sin redeploy; cargar
+"Taekwondo niños — Salón Vidriado — martes y jueves 18:00–19:30 — 2026" y
+verla en /actividades; una actividad solapada en el mismo salón es rechazada;
+robots.txt bloquea /admin y /mi y el sitemap lista las noticias publicadas.
 
 ## Módulo 3 — ASOCIATE + Mercado Pago
 Wizard completo (5 pasos, Turnstile, términos, uploads), integración MP
@@ -85,7 +99,8 @@ con acta y el socio queda `baja` con motivo `renuncia`.
 
 Ideas incorporadas durante el desarrollo del Módulo 1: que el socio vea cuántas
 cuotas debe; que pueda solicitar cambio de categoría solo si no tiene deuda de
-tesorería (REG-07).
+tesorería (REG-07). Del Módulo 2: publicar el estatuto como PDF dentro del panel
+del socio (movido desde el Módulo 2 el 19/08/2026; fuente: `datos/estatuto.docx`).
 
 ## Módulo 6 — Re-empadronamiento y cierre de libro
 Wizard público (DNI+apellido enmascarado, rate limit), activación con validaciones

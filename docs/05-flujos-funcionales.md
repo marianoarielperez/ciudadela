@@ -12,13 +12,31 @@
   - REEMPADRONATE solo visible/activo si hay proceso en 1ª o 2ª instancia.
 - **Cartelera digital**: últimas noticias publicadas (tarjetas con imagen, título,
   fecha; detalle en `/noticias/[slug]`).
-- **Ubicación**: mapa embebido de la sede + dirección + contacto.
-- **Estatuto**: página con el PDF del estatuto embebido/descargable (el reformado,
-  una vez oficializado por IGJ; configurable).
+- **Ubicación** (`/ubicacion`): mapa embebido de la sede (OpenStreetMap) +
+  dirección + contacto (teléfono y email desde `Configuracion`).
+- **Estatuto**: NO tiene página pública. Por decisión del 19/08/2026 se difiere al
+  panel del socio (Módulo 5), como PDF servido detrás de autenticación.
 - Footer: datos legales, "Sistema SIGeV", acceso al login (`/ingresar`).
+
+Navegación pública: **Inicio · Noticias · Actividades · Ubicación** (más
+"Ingresar", que en el celular vive dentro del menú colapsable).
 
 Diseño: mobile-first (el público entra desde el celular), color primario #2E9BDF,
 tipografía simple, accesible (población de todas las edades).
+
+### Actividades (`/actividades`) — Módulo 2
+
+Calendario semanal de los dos salones de la sede (Salón Histórico y Salón
+Vidriado) con selector de año — solo se listan los años que tienen actividades
+visibles. La grilla se lee por día: los siete días de la semana, y en cada uno
+las actividades ordenadas por hora con su nombre, horario y salón. En el celular
+los días sin actividades se resumen en una línea al pie en vez de ocupar una
+tarjeta cada uno.
+
+La carga es desde `/admin/actividades` (nombre, salón, días de la semana,
+horario, año, visible en el sitio público sí/no). El alta que se superpone con
+otra actividad visible del mismo salón y año se rechaza nombrando a la que ya
+estaba.
 
 ## 2. ASOCIATE (wizard público)
 
@@ -121,12 +139,15 @@ Acciones:
   (API) vs. tabla ValorCuota local; botón "registrar nuevo valor" (con acta) cuando
   la CD cambió el plan en MP.
 
-## 6. Panel admin — Noticias, Actas, Configuración
+## 6. Panel admin — Noticias, Actividades, Actas, Configuración
 
-- Noticias: ABM con imagen, borrador/publicada.
+- Noticias: ABM con editor visual básico e imagen de portada, borrador/publicada.
+- Actividades: ABM del calendario de salones (ver `/actividades` en §1).
 - Actas: ABM (tipo, número, fecha, descripción) + vista de movimientos asociados.
-- Configuración (superadmin): interruptores (`asociate_activo`, `elecciones_en_curso`),
-  textos legales, feriados, usuarios y roles, salud del sistema.
+- Configuración (solo superadmin): interruptor de ASOCIATE (`asociate_activo`) y
+  datos de contacto (teléfono y email que muestra el sitio público). Pendientes de
+  módulos posteriores: `elecciones_en_curso`, textos legales, feriados, usuarios y
+  roles, salud del sistema.
 
 ## 7. Panel de socio (`/mi`)
 

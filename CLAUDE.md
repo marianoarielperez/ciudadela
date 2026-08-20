@@ -19,7 +19,8 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
 
 ## Stack (no negociable)
 
-- **Next.js 15+** (App Router, TypeScript) — un solo proyecto: sitio público + panel + API
+- **Next.js 16+** (App Router, TypeScript; `proxy.ts` en lugar de middleware,
+  `params`/`searchParams` como Promise) — un solo proyecto: sitio público + panel + API
 - **MariaDB** (localhost:3306, ya corre en el VPS) vía **Prisma** (provider `mysql`)
 - **Auth.js v5** con provider Credentials (bcrypt). Roles: `superadmin`, `admin`, `socio` (acumulables)
 - **Nodemailer + Brevo SMTP** para emails transaccionales
@@ -33,8 +34,14 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
   Código, nombres de variables, tablas y commits en **inglés**.
 - Zona horaria: `America/Argentina/Buenos_Aires` (UTC-3, sin DST). Guardar UTC en DB.
 - Color primario de marca: celeste `#2E9BDF` (derivado de `assets/logo.png`).
+  Ojo accesibilidad: `#2E9BDF` solo llega a 3.06:1 sobre blanco — para botones/links
+  se usa el token `--primary` `#0079BC` (4.71:1). Ver `src/app/globals.css`.
 - Los archivos subidos (DNIs, facturas) van a `UPLOADS_DIR` (en prod `/var/sigev/uploads`),
   **NUNCA** dentro de `public/` ni del repo. Se sirven solo por API route autenticada.
+  Excepción: las imágenes de portada de noticias viven en `UPLOADS_DIR/news/` pero se
+  sirven por route handler público SIN autenticación (`/api/imagenes/noticias/[name]`)
+  con caché inmutable — son contenido público. La regla de API autenticada aplica a
+  documentos personales (DNIs, facturas).
 - Toda acción sensible de admin (aprobar alta, declarar baja, registrar pago, ver documento)
   se registra en la tabla de auditoría.
 - Migraciones siempre con `prisma migrate` — nunca `db push` en producción.
@@ -58,7 +65,7 @@ y **tienen prioridad sobre cualquier decisión de diseño propia**:
   (campos: id_calle, orden_carga, nombre_calle). Ojo: nombres sin tilde y con comas
   tipo "Pizarro , Francisco" → normalizar para búsqueda.
 - `assets/logo.png` — logo institucional (monocromo celeste, fondo transparente).
-- `assets/hero.jpg` — foto aérea del barrio para el hero (1868px; generar variantes responsive).
+- `assets/hero.jpg` — foto aérea del barrio para el hero (1980×788; generar variantes responsive).
 
 ## Variables de entorno (`.env`)
 

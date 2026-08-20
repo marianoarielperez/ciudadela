@@ -66,6 +66,37 @@ Git-based, igual al patrón establecido en el VPS:
 3. Nginx: server block que proxya el dominio al 3006 (`proxy_pass http://localhost:3006`),
    con `client_max_body_size 15m` (uploads de DNI).
 
+### Variables que se hornean en el build (revisar ANTES de `npm run build`)
+
+`AUTH_URL` no se lee en cada request: queda fija dentro del build porque de ahí salen
+`metadataBase`, las URLs canónicas, el `robots.txt` y el `sitemap.xml`. Si se buildea
+con el valor equivocado, el sitio publica canonicals apuntando a otro dominio y se
+desindexa solo. Cambiar `AUTH_URL` obliga a re-buildear, no alcanza con reiniciar PM2.
+
+Antes de buildear en el VPS, verificar en su `.env`:
+
+- `AUTH_URL` = el dominio real del entorno (staging `https://sigev.redaccion.ar`,
+  producción `https://vecinalciudadela.ar`).
+- `ALLOW_LOCALHOST_BASE_URL` **ausente o comentada**. Es una escotilla solo para el
+  build local: si está activa en el servidor, desactiva la guarda que justamente
+  impide publicar canonicals a localhost. `grep ALLOW_LOCALHOST_BASE_URL .env` no
+  debe devolver ninguna línea sin `#`.
+- `UPLOADS_DIR=/var/sigev/uploads`. Si falta, el código cae en silencio a `./uploads`
+  dentro del directorio de la app: las portadas de noticias se escriben ahí y se
+  pierden en el próximo deploy, sin ningún error visible.
+
+### Verificación post-deploy
+
+```bash
+curl -sI https://<dominio> | grep -i 'content-security-policy'   # la CSP llega entera
+curl -sI https://<dominio> | grep -i 'strict-transport-security' # si vacío: activar HSTS en Cloudflare
+curl -s  https://<dominio>/robots.txt | tail -2                  # Sitemap: con el dominio correcto
+```
+
+La CSP y `Permissions-Policy` las emite Next; **HSTS la termina Cloudflare**
+(SSL/TLS → Edge Certificates), no la app. Si el `grep` de HSTS vuelve vacío, hay que
+prenderla ahí.
+
 ## Cron jobs (crontab del sistema, no dentro de la app)
 
 | Frecuencia | Tarea |
@@ -84,6 +115,12 @@ la app usan endpoints `/api/cron/*` protegidos por `CRON_SECRET`.
 - Nombres de archivo aleatorios (UUID) + extensión validada (jpg/png/webp/pdf, máx 10 MB c/u).
 - Se sirven ÚNICAMENTE por API route autenticada que verifica rol y registra el acceso
   en auditoría. Jamás bajo `public/`.
+- **Excepción (Módulo 2): las portadas de noticias.** Viven en `UPLOADS_DIR/news/` con
+  el mismo criterio de nombre UUID, pero se sirven por `/api/imagenes/noticias/[name]`
+  **sin autenticación** y con `Cache-Control` inmutable: una portada es contenido
+  público por definición. La regla de API autenticada sigue valiendo entera para los
+  documentos personales (DNIs, facturas). El original queda intacto en disco; la
+  variante que baja el visitante la genera `next/image` según el ancho de pantalla.
 - Recibos PDF generados a `/var/sigev/recibos/{año}/`.
 
 ## Observabilidad

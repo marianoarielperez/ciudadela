@@ -1,17 +1,100 @@
 import type { NextConfig } from "next";
 
-// Cabeceras de seguridad mínimas para todo el sitio. La CSP completa queda
-// para el Módulo 2, cuando estén definidos los orígenes de Mercado Pago y
-// Turnstile: una CSP a medias rompe pagos sin proteger de nada.
+// Content-Security-Policy del sitio. Notas de cada decisión:
+//
+// - script-src 'unsafe-inline': Next 16 emite scripts inline de hidratación
+//   (el payload RSC va en `self.__next_f.push(...)`) y la home tiene el
+//   JSON-LD de la organización en un <script type="application/ld+json">.
+//   La alternativa —nonces— obliga a servir TODO dinámico, y este módulo
+//   estrena caché estática con invalidación por tags. Trade-off deliberado,
+//   documentado en la spec §7: NO cambiar a nonces sin rehacer el cacheo.
+// - style-src 'unsafe-inline': Next/styled-jsx inyectan <style> inline y
+//   next/image usa `style=""` en el wrapper del blur placeholder.
+// - img-src data:: los blur placeholders de next/image viajan como data: URI
+//   dentro del `style` del wrapper (el hero de la home los usa). Sin esto la
+//   foto aparece de golpe, sin el degradé de carga.
+//   blob: no lo necesita nada hoy —no hay un solo URL.createObjectURL en
+//   `src/`— pero queda declarado para que el día que el editor previsualice
+//   la portada elegida antes de subirla no haya que descubrirlo por una
+//   imagen en blanco.
+// - font-src 'self': next/font hospeda las tipografías en /_next/static, no
+//   hay pedidos a Google Fonts.
+// - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen.
+// - frame-src: hoy SOLO el embed de OpenStreetMap de /ubicacion; en el M3 se
+//   le suman los iframes de Checkout Pro / Bricks (MP_FRAME) y el widget de
+//   Turnstile. Ojo: un iframe bloqueado por CSP no rompe nada visible, deja un
+//   recuadro vacío en silencio — si se cambia el proveedor de mapa hay que
+//   tocar acá.
+// - frame-ancestors 'none' + X-Frame-Options: DENY: la segunda es para los
+//   navegadores viejos que no leen frame-ancestors.
+// - upgrade-insecure-requests: en prod todo va por HTTPS detrás de Cloudflare.
+//   Salvedad al probar el build local sobre http://localhost: las navegaciones
+//   y los formularios no se ven afectados, pero un fetch que sigue a un
+//   redirect SÍ se reescribe a https://localhost:3006 y aborta (verificado en
+//   la task 16). Si algo así falla en local, es esta directiva — no el código.
+//
+// Orígenes del Módulo 3 (Mercado Pago + Turnstile). Para activarlos, agregar
+// los strings al array — sin espacios mágicos ni cirugía de comentarios.
+const MP_SCRIPT: string[] = []; // M3: "https://sdk.mercadopago.com", "https://http2.mlstatic.com"
+const MP_CONNECT: string[] = []; // M3: "https://api.mercadopago.com"
+const MP_FRAME: string[] = []; // M3: "https://www.mercadopago.com.ar"
+const TURNSTILE: string[] = []; // M3: "https://challenges.cloudflare.com"
+
+// React en desarrollo necesita eval() para reconstruir callstacks; sin esto
+// cada página de `next dev` loguea un error fijo de CSP que tapa errores
+// reales. En producción no se emite.
+const scriptSrc = [
+  "'self'",
+  "'unsafe-inline'",
+  ...(process.env.NODE_ENV !== "production" ? ["'unsafe-eval'"] : []),
+  ...MP_SCRIPT,
+  ...TURNSTILE,
+];
+
+const csp = [
+  "default-src 'self'",
+  `script-src ${scriptSrc.join(" ")}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  `connect-src ${["'self'", ...MP_CONNECT].join(" ")}`,
+  `frame-src ${["https://www.openstreetmap.org", ...MP_FRAME, ...TURNSTILE].join(" ")}`,
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "upgrade-insecure-requests",
+].join("; ");
+
+// HSTS NO se emite acá: la termina Cloudflare (SSL/TLS → Edge Certificates),
+// que es quien ve el TLS. Emitirla desde Next sobre HTTP en dev no sirve y en
+// prod duplicaría la cabecera.
 const securityHeaders = [
+  { key: "Content-Security-Policy", value: csp },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // El sitio no usa cámara, micrófono ni geolocalización: se apagan para todos
+  // (incluidos los iframes de terceros, como el mapa).
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
 const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
+  },
+  experimental: {
+    // El default de Next es 1 MB y la portada de una noticia puede pesar hasta
+    // MAX_COVER_BYTES (5 MB): sin esto el body parser corta ANTES de que
+    // saveNewsCover pueda devolver su mensaje en castellano.
+    //
+    // Tiene que ser MAYOR que MAX_COVER_BYTES, no igual. El límite de Next se
+    // mide sobre el cuerpo multipart ENTERO —archivo + título + cuerpo de la
+    // noticia + límites MIME + payload de la server action—, así que con "5mb"
+    // justos una portada de 5 MB se pasa por el peso del resto y el operador
+    // recibe un 413 en inglés: exactamente lo que este ajuste quiere evitar.
+    // El margen es para el sobre, no para la imagen.
+    serverActions: { bodySizeLimit: "6mb" },
   },
 };
 

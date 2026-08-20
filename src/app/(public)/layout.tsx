@@ -1,38 +1,27 @@
-import Image from "next/image"
-import Link from "next/link"
+import { SiteFooter } from "@/components/public/site-footer";
+import { SiteHeader } from "@/components/public/site-header";
 
 export default function PublicLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <Link href="/" className="flex items-center gap-3">
-            <Image
-              src="/logo.png"
-              alt="Logo de la Asociación Vecinal del Barrio Ciudadela"
-              width={674}
-              height={669}
-              className="h-10 w-auto"
-              priority
-            />
-            <span className="font-semibold leading-tight">
-              Asociación Vecinal
-              <br />
-              del Barrio Ciudadela
-            </span>
-          </Link>
-          <Link href="/ingresar" className="text-sm font-medium text-primary underline">
-            Ingresar
-          </Link>
-        </div>
-      </header>
-      <div className="flex-1">{children}</div>
-      <footer className="border-t">
-        <div className="mx-auto w-full max-w-5xl px-4 py-6 text-sm text-muted-foreground">
-          <p>Asociación Vecinal del Barrio Ciudadela — Comodoro Rivadavia, Chubut</p>
-          <p>Sistema SIGeV</p>
-        </div>
-      </footer>
+      {/* Salto al contenido: primer tabulable de la página, visible solo con
+          foco de teclado. El header repite los mismos 5 links en todas las
+          páginas y sin esto hay que atravesarlos siempre. */}
+      <a
+        href="#contenido"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+      >
+        Saltar al contenido
+      </a>
+      <SiteHeader />
+      {/* No es un <main>: varias páginas del grupo (ingresar, verificar,
+          acceso) ya traen el suyo y anidarlos duplicaría el landmark.
+          tabIndex={-1}: sin esto el destino del skip link no es enfocable y el
+          salto queda a criterio del navegador en vez de mover el foco. */}
+      <div id="contenido" tabIndex={-1} className="flex-1">
+        {children}
+      </div>
+      <SiteFooter />
     </div>
-  )
+  );
 }

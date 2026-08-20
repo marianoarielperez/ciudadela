@@ -4,7 +4,7 @@
 
 **Goal:** Convertir el placeholder público en el sitio institucional real: home con hero y botones con estado, cartelera de noticias con ABM (editor visual + imagen de portada), calendario de actividades de los dos salones, página Ubicación con OpenStreetMap, pantalla de configuración (superadmin), SEO, CSP completa y caché por tags.
 
-**Architecture:** Se sigue el patrón del Módulo 1: lógica pura testeable en `src/lib/<dominio>/` (factories que reciben un Prisma "pick"), server actions en `actions.ts` junto a cada página que se autorizan a sí mismas (`requireAdmin`/`requireSuperadmin`), auditoría con `audit()`, formularios cliente con `useActionState` + campos controlados. Las páginas públicas estrenan caché: las consultas van envueltas en `unstable_cache` con tags (`news`, `activities`, `config`) y las actions invalidan con `revalidateTag`. Las funciones cacheadas devuelven **DTOs serializables** (fechas como string ISO) porque `unstable_cache` serializa a JSON y un `Date` volvería como string en el segundo hit.
+**Architecture:** Se sigue el patrón del Módulo 1: lógica pura testeable en `src/lib/<dominio>/` (factories que reciben un Prisma "pick"), server actions en `actions.ts` junto a cada página que se autorizan a sí mismas (`requireAdmin`/`requireSuperadmin`), auditoría con `audit()`, formularios cliente con `useActionState` + campos controlados. Las páginas públicas estrenan caché: las consultas van envueltas en `unstable_cache` con tags (`news`, `activities`, `config`) y las actions invalidan con `updateTag` (Next 16.3: `revalidateTag` exige un segundo argumento de perfil; `updateTag` es la forma de server action, con read-your-own-writes). Las funciones cacheadas devuelven **DTOs serializables** (fechas como string ISO) porque `unstable_cache` serializa a JSON y un `Date` volvería como string en el segundo hit.
 
 **Tech Stack:** Next.js 16.3.1 (App Router, `proxy.ts`, `searchParams` como Promise), React 19.2.8, Prisma 7 + MariaDB, Auth.js v5, Tailwind v4 + shadcn, vitest. Nuevas dependencias: `@tiptap/react@^3.30.2`, `@tiptap/starter-kit@^3.30.2`, `@tiptap/pm@^3.30.2`, `sanitize-html@^2.17.7` (+ `@types/sanitize-html` dev, `sharp` dev para el script de assets).
 
@@ -776,7 +776,7 @@ import { newsPlainText } from "@/lib/news/sanitize";
 export const NEWS_PAGE_SIZE = 10;
 
 // Tags de caché del sitio público. Las actions del ABM invalidan con
-// revalidateTag(CACHE_TAGS.news) etc.
+// updateTag(CACHE_TAGS.news) etc.
 export const CACHE_TAGS = { news: "news", activities: "activities", config: "config" } as const;
 
 export type PublicNewsCard = {
@@ -903,7 +903,7 @@ npx tsc --noEmit
 
 Expected: PASS y exit 0. Si vitest fallara EN EL IMPORT del módulo (por
 `unstable_cache` de `next/cache` fuera del runtime de Next), agregar al tope
-del test: `vi.mock("next/cache", () => ({ unstable_cache: (fn: unknown) => fn, revalidateTag: vi.fn() }));`
+del test: `vi.mock("next/cache", () => ({ unstable_cache: (fn: unknown) => fn, updateTag: vi.fn() }));`
 — el test usa la factory, no los singletons cacheados.
 
 - [ ] **Step 5: Commit**
@@ -1192,7 +1192,7 @@ Correr `npx vitest run tests/news-schema.test.ts` → FAIL → implementar → P
 ```ts
 "use server";
 import { headers } from "next/headers";
-import { revalidateTag } from "next/cache";
+import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -1258,7 +1258,7 @@ export async function createNewsAction(_prev: ActionState, formData: FormData): 
     }
     throw e;
   }
-  revalidateTag(CACHE_TAGS.news, "max");
+  updateTag(CACHE_TAGS.news);
   redirect(`/admin/noticias/${newsId}`);
 }
 
@@ -1310,7 +1310,7 @@ export async function updateNewsAction(_prev: ActionState, formData: FormData): 
   if (existing.coverImagePath && existing.coverImagePath !== coverImagePath) {
     await deleteNewsCover(existing.coverImagePath);
   }
-  revalidateTag(CACHE_TAGS.news, "max");
+  updateTag(CACHE_TAGS.news);
   redirect(`/admin/noticias/${existing.id}`);
 }
 
@@ -1331,7 +1331,7 @@ export async function publishNewsAction(_prev: ActionState, formData: FormData):
     userId: actor.actorId, action: "news_publish", entity: "news", entityId: existing.id,
     detail: { slug: existing.slug }, ip: await clientIp(),
   });
-  revalidateTag(CACHE_TAGS.news, "max");
+  updateTag(CACHE_TAGS.news);
   redirect(`/admin/noticias/${existing.id}`);
 }
 
@@ -1348,7 +1348,7 @@ export async function unpublishNewsAction(_prev: ActionState, formData: FormData
     userId: actor.actorId, action: "news_unpublish", entity: "news", entityId: existing.id,
     detail: { slug: existing.slug }, ip: await clientIp(),
   });
-  revalidateTag(CACHE_TAGS.news, "max");
+  updateTag(CACHE_TAGS.news);
   redirect(`/admin/noticias/${existing.id}`);
 }
 
@@ -1366,12 +1366,12 @@ export async function deleteNewsAction(_prev: ActionState, formData: FormData): 
     detail: { title: existing.title, slug: existing.slug, status: existing.status },
     ip: await clientIp(),
   });
-  revalidateTag(CACHE_TAGS.news, "max");
+  updateTag(CACHE_TAGS.news);
   redirect("/admin/noticias");
 }
 ```
 
-Nota Next 16: `revalidateTag` acepta un segundo argumento de perfil de caché (`"max"`). Si la versión instalada tipa `revalidateTag(tag)` con un solo parámetro, usar esa forma — comprobar con `tsc` y ajustar en todos los llamadores por igual.
+Nota Next 16.3.1 (VERIFICADA contra `node_modules/next/.../revalidate.d.ts`): `revalidateTag(tag, profile)` exige un segundo argumento y NO sirve acá. Desde una server action corresponde **`updateTag(tag)`** (un solo argumento, semántica read-your-own-writes: el admin ve su propio cambio al instante). Usar `updateTag` en TODAS las actions de noticias, actividades y configuración.
 
 - [ ] **Step 3: Test de autorización (cierra el gap señalado en la revisión del M1)**
 
@@ -1391,7 +1391,7 @@ vi.mock("@/lib/auth/require-admin", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
-vi.mock("next/cache", () => ({ revalidateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
+vi.mock("next/cache", () => ({ updateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
     throw new Error(`REDIRECT:${url}`);
@@ -2105,7 +2105,7 @@ git commit -m "feat(activities): overlap rules, weekly grid and cached queries"
 ```ts
 "use server";
 import { headers } from "next/headers";
-import { revalidateTag } from "next/cache";
+import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -2180,7 +2180,7 @@ export async function createActivityAction(_prev: ActionState, formData: FormDat
     userId: actor.actorId, action: "activity_create", entity: "activity", entityId: activity.id,
     detail: { name: data.name, room: data.room, year: data.year }, ip: await clientIp(),
   });
-  revalidateTag(CACHE_TAGS.activities, "max");
+  updateTag(CACHE_TAGS.activities);
   redirect("/admin/actividades");
 }
 
@@ -2199,7 +2199,7 @@ export async function updateActivityAction(_prev: ActionState, formData: FormDat
     userId: actor.actorId, action: "activity_update", entity: "activity", entityId: existing.id,
     detail: { name: data.name, room: data.room, year: data.year }, ip: await clientIp(),
   });
-  revalidateTag(CACHE_TAGS.activities, "max");
+  updateTag(CACHE_TAGS.activities);
   redirect("/admin/actividades");
 }
 
@@ -2215,7 +2215,7 @@ export async function deleteActivityAction(_prev: ActionState, formData: FormDat
     userId: actor.actorId, action: "activity_delete", entity: "activity", entityId: existing.id,
     detail: { name: existing.name, room: existing.room, year: existing.year }, ip: await clientIp(),
   });
-  revalidateTag(CACHE_TAGS.activities, "max");
+  updateTag(CACHE_TAGS.activities);
   redirect("/admin/actividades");
 }
 ```
@@ -2234,7 +2234,7 @@ vi.mock("@/lib/auth/require-admin", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
-vi.mock("next/cache", () => ({ revalidateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
+vi.mock("next/cache", () => ({ updateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT:${url}`); } }));
 
 import { createActivityAction, deleteActivityAction, updateActivityAction } from "@/app/admin/actividades/actions";
@@ -2529,7 +2529,7 @@ git commit -m "feat(activities): admin CRUD with overlap validation"
 ```ts
 "use server";
 import { headers } from "next/headers";
-import { revalidateTag } from "next/cache";
+import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
@@ -2576,7 +2576,7 @@ export async function updateConfigAction(
       detail: { from: prev?.value ?? null, to: value }, ip,
     });
   }
-  revalidateTag(CACHE_TAGS.config, "max");
+  updateTag(CACHE_TAGS.config);
   redirect("/admin/configuracion?guardado=1");
 }
 ```
@@ -2597,7 +2597,7 @@ vi.mock("@/lib/auth/require-admin", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
-vi.mock("next/cache", () => ({ revalidateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
+vi.mock("next/cache", () => ({ updateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT:${url}`); } }));
 
 import { updateConfigAction } from "@/app/admin/configuracion/actions";
@@ -3579,10 +3579,21 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
+  experimental: {
+    // El default de Next son 1 MB y la portada de una noticia puede pesar
+    // hasta MAX_COVER_BYTES (5 MB): sin esto el body parser corta ANTES de
+    // que saveNewsCover pueda devolver su mensaje en castellano. Agregado en
+    // la Task 6; NO quitar al tocar este archivo.
+    serverActions: { bodySizeLimit: "5mb" },
+  },
 };
 
 export default nextConfig;
 ```
+
+IMPORTANTE: el bloque `experimental.serverActions` ya existe en el archivo desde
+la Task 6. Al reescribir `next.config.ts` acá, **conservalo tal cual** — quitarlo
+rompe la subida de portadas de más de 1 MB.
 
 - [ ] **Step 2: Verificar contra el build real**
 
@@ -3721,7 +3732,7 @@ Con el build de producción local (`npm start`, puerto 3006):
 3. Repetir el curl → el banner desaparece y aparece el link ASOCIATE **sin reiniciar el server**.
 4. Publicar una noticia nueva → aparece en `/` y `/noticias` sin reinicio.
 
-Si el paso 3/4 NO refresca (limitación real de `unstable_cache`+`revalidateTag` en Next 16.3), aplicar el fallback aprobado en la spec §8: `export const dynamic = "force-dynamic"` en las páginas públicas, quitar los wrappers `unstable_cache` (dejar las queries directas) y anotar la decisión en la spec. NO inventar un tercer mecanismo.
+Si el paso 3/4 NO refresca (limitación real de `unstable_cache`+`updateTag` en Next 16.3), aplicar el fallback aprobado en la spec §8: `export const dynamic = "force-dynamic"` en las páginas públicas, quitar los wrappers `unstable_cache` (dejar las queries directas) y anotar la decisión en la spec. NO inventar un tercer mecanismo.
 
 - [ ] **Step 3: Criterios de aceptación (spec §11), uno por uno**
 
@@ -3765,5 +3776,5 @@ git add -A && git commit -m "fix: module 2 final verification adjustments"
 - **`.env` local**: debe tener `UPLOADS_DIR=./uploads` (ya gitignoreado) además de las variables del M0/M1. Docker Desktop corriendo para MariaDB.
 - **No tocar**: `scripts/import-padron.ts` (el padrón está al día — confirmado por Mariano el 19/08/2026), el flujo de emails, nada de `/mi`, nada de Turnstile.
 - **Los datos institucionales de `src/lib/site.ts` son exactos** (entrevista 19/08/2026): no "mejorarlos" ni inventar teléfono/email — esos van vacíos y los carga el superadmin.
-- Si `revalidateTag(tag, "max")` no tipa en la versión instalada, usar `revalidateTag(tag)` en TODOS los llamadores por igual (queda dicho en Task 7).
+- La invalidación de caché desde server actions es `updateTag(tag)` de `next/cache` (verificado en Next 16.3.1; `revalidateTag` exige un segundo argumento de perfil y no aplica acá).
 
