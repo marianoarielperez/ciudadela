@@ -68,7 +68,12 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
   const grid = { historic: empty(), glass: empty() };
   for (const a of activities) {
     if (!a.active) continue;
-    for (const d of a.weekdays) {
+    // `new Set` porque un `weekdays` con el día repetido ([2,2]) pintaría la
+    // actividad dos veces en el martes. Por el ABM no puede entrar —
+    // `parseWeekdays` deduplica—, pero esta función también recibe lo que haya
+    // en la columna JSON, y de ahí ya nos defendemos abajo contra otras formas
+    // de basura: un arreglo a mano en la base o un import futuro son la vía.
+    for (const d of new Set(a.weekdays)) {
       // Validar el día ANTES de indexar, no después. `empty()` sale de
       // `Object.fromEntries`, así que la grilla es un objeto plano con
       // `Object.prototype` en la cadena: una columna `weekdays` corrupta con

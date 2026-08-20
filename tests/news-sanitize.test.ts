@@ -16,6 +16,21 @@ describe("sanitizeNewsBody", () => {
       '<a href="https://example.com" rel="noopener noreferrer">x</a>',
     );
   });
+  it("conserva mailto: y tel:, que el redactor usa para el contacto", () => {
+    // Antes se borraba el href y quedaba SOLO el texto: el enlace desaparecía
+    // sin aviso ni para quien lo escribió ni para quien lo lee.
+    expect(sanitizeNewsBody('<a href="mailto:vecinal@ejemplo.ar">escribinos</a>')).toBe(
+      '<a href="mailto:vecinal@ejemplo.ar" rel="noopener noreferrer">escribinos</a>',
+    );
+    expect(sanitizeNewsBody('<a href="tel:+542974000000">llamanos</a>')).toBe(
+      '<a href="tel:+542974000000" rel="noopener noreferrer">llamanos</a>',
+    );
+  });
+  it("sumar mailto/tel no abrió la puerta a otros esquemas", () => {
+    for (const href of ["javascript:alert(1)", "data:text/html,<b>x</b>", "vbscript:msgbox", "file:///etc/passwd"]) {
+      expect(sanitizeNewsBody(`<a href="${href}">x</a>`)).toBe('<a rel="noopener noreferrer">x</a>');
+    }
+  });
   it("degrada tags fuera de la allowlist conservando el texto", () => {
     expect(sanitizeNewsBody("<h1>grande</h1><table><tr><td>celda</td></tr></table>")).toBe("grandecelda");
   });
@@ -82,6 +97,19 @@ describe("newsPlainText", () => {
     expect(newsPlainText("<p>Hola <strong>vecinos</strong> del barrio</p>")).toBe("Hola vecinos del barrio");
     expect(newsPlainText(`<p>${"a".repeat(200)}</p>`, 50).length).toBeLessThanOrEqual(51);
     expect(newsPlainText(`<p>${"a".repeat(200)}</p>`, 50).endsWith("…")).toBe(true);
+  });
+
+  it("no parte un emoji al cortar: nada de suplentes sueltos en el og:description", () => {
+    // `slice` corta por unidades UTF-16, así que un emoji justo en el límite
+    // dejaba medio par suplente viajando al <meta name="description">.
+    const texto = newsPlainText(`<p>${"a".repeat(158)}🎉 y más texto</p>`, 160);
+    for (const unidad of texto) {
+      const code = unidad.codePointAt(0)!;
+      expect(code >= 0xd800 && code <= 0xdfff).toBe(false);
+    }
+    expect(texto.endsWith("…")).toBe(true);
+    // El emoji entra entero o no entra, pero nunca a medias.
+    expect(texto.includes("\ud83c") && !texto.includes("🎉")).toBe(false);
   });
 
   // El caso exacto que se vio en vivo: sin separador entre bloques, el

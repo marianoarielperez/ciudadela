@@ -61,6 +61,15 @@ export function makeNewsQueries(db: Db) {
   // Invariante del sitio público: una noticia publicada sin fecha no se puede
   // renderizar (Intl revienta con un Date inválido), así que no se muestra.
   const publishedWhere = { status: "published", publishedAt: { not: null } } as const;
+
+  // Función local, no un método del objeto: `publishedPage` la llama, y con
+  // `this.publishedMeta()` bastaría con que alguien desestructurara las queries
+  // para que `this` quedara indefinido en runtime.
+  async function publishedMeta(): Promise<{ total: number; pages: number }> {
+    const total = await db.news.count({ where: publishedWhere });
+    return { total, pages: Math.max(1, Math.ceil(total / NEWS_PAGE_SIZE)) };
+  }
+
   return {
     async latest(count: number): Promise<PublicNewsCard[]> {
       // take negativo no falla en Prisma: devuelve las MÁS VIEJAS en silencio.
@@ -74,9 +83,15 @@ export function makeNewsQueries(db: Db) {
       return (rows as NewsRow[]).map(toCard);
     },
 
+    // Cuántas páginas hay. Se expone aparte para poder acotar la página pedida
+    // ANTES de entrar a la caché paginada (ver resolvePublishedNewsPage).
+    publishedMeta,
+
+    // `page` tiene que llegar ya acotada. El clamp de abajo queda igual como
+    // defensa en profundidad, pero no alcanza para proteger la CLAVE de caché:
+    // esa se deriva del argumento, así que acotar acá adentro sería tarde.
     async publishedPage(page: number) {
-      const total = await db.news.count({ where: publishedWhere });
-      const pages = Math.max(1, Math.ceil(total / NEWS_PAGE_SIZE));
+      const { total, pages } = await publishedMeta();
       // page viene de un query param público (?pagina=abc): NaN daría skip: NaN.
       const wanted = Number.isFinite(page) ? Math.trunc(page) : 1;
       const current = Math.min(Math.max(1, wanted), pages);
@@ -88,6 +103,17 @@ export function makeNewsQueries(db: Db) {
         include: publishedInclude,
       });
       return { items: (rows as NewsRow[]).map(toCard), total, page: current, pages };
+    },
+
+    // Existencia sin cachear: consulta barata por el índice único de `slug`,
+    // que devuelve sólo el id. Filtra por `publishedWhere` igual que el resto —
+    // un borrador NO "existe" para el sitio público.
+    async publishedSlugExists(slug: string): Promise<boolean> {
+      const row = await db.news.findFirst({
+        where: { slug, ...publishedWhere },
+        select: { id: true },
+      });
+      return row !== null;
     },
 
     async bySlug(slug: string): Promise<PublicNewsDetail | null> {
@@ -156,6 +182,24 @@ export const getPublishedNewsPage = unstable_cache(
   ["news-page"],
   { tags: [CACHE_TAGS.news] },
 );
+
+// Sin argumentos: UNA sola entrada de caché para todo el sitio.
+const getPublishedNewsMeta = unstable_cache(() => queries.publishedMeta(), ["news-meta"], {
+  tags: [CACHE_TAGS.news],
+});
+
+// Acota la página pedida contra el total real ANTES de llamar a la versión
+// cacheada. Es el punto del arreglo: `unstable_cache` deriva su clave de los
+// argumentos, así que `getPublishedNewsPage(999999)` creaba una entrada en
+// disco —con revalidate de un año— por cada número que alguien inventara,
+// aunque el contenido devuelto fuera el de la página 1. Pasando por acá, las
+// claves posibles son exactamente las páginas que existen.
+// Mismo patrón que `resolveActivitiesYear` en @/lib/activities/year-param.
+export async function resolvePublishedNewsPage(requested: number): Promise<number> {
+  const { pages } = await getPublishedNewsMeta();
+  const wanted = Number.isFinite(requested) ? Math.trunc(requested) : 1;
+  return Math.min(Math.max(1, wanted), pages);
+}
 // Forma que puede tener un slug persistido: `slugify` sólo produce minúsculas
 // ASCII, dígitos y guiones, y el campo "URL" del panel valida exactamente
 // `^[a-z0-9-]*$` con tope 180 (src/lib/news/schema.ts). Nada fuera de esto
@@ -170,11 +214,18 @@ const bySlugCached = unstable_cache((slug: string) => queries.bySlug(slug), ["ne
   tags: [CACHE_TAGS.news],
 });
 
-// La clave de unstable_cache incluye el argumento: sin este filtro, cada
-// /noticias/<basura> de un crawler sumaba una entrada de caché permanente
-// (y una consulta) por un slug que jamás va a existir.
-export function getNewsBySlug(slug: string): Promise<PublicNewsDetail | null> {
-  if (!isValidNewsSlug(slug)) return Promise.resolve(null);
+// La clave de unstable_cache incluye el argumento, así que cada slug distinto
+// que llegue hasta `bySlugCached` deja una entrada permanente en disco. El
+// filtro de forma descarta lo groseramente inválido, pero NO alcanza: "aaaa",
+// "aaab", "aaac"… lo pasan y son infinitos, así que un crawler podía llenar
+// .next/cache pidiendo slugs inventados. Por eso antes va un chequeo de
+// existencia SIN cachear —un SELECT del id por el índice único de `slug`— y
+// sólo los slugs que de verdad existen llegan a la caché, que queda acotada
+// por el contenido real. Lo caro (fila completa + join del autor) se sigue
+// cacheando.
+export async function getNewsBySlug(slug: string): Promise<PublicNewsDetail | null> {
+  if (!isValidNewsSlug(slug)) return null;
+  if (!(await queries.publishedSlugExists(slug))) return null;
   return bySlugCached(slug);
 }
 

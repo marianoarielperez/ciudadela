@@ -83,6 +83,15 @@ describe("buildWeeklyGrid", () => {
     expect(grid.historic[1]).toHaveLength(1);
   });
 
+  it("no repite la actividad si el día viene duplicado en la columna JSON", () => {
+    // Por el ABM no puede entrar (parseWeekdays deduplica), pero esta función
+    // también recibe lo que haya en la base: un arreglo a mano o un import
+    // futuro pintaban la actividad dos veces en el mismo día.
+    const grid = buildWeeklyGrid([slot({ weekdays: [1, 1, 3] })]);
+    expect(grid.historic[1]).toHaveLength(1);
+    expect(grid.historic[3]).toHaveLength(1);
+  });
+
   // La grilla se arma con Object.fromEntries, así que hereda Object.prototype:
   // una clave del prototipo en la columna JSON `weekdays` resolvía a una función
   // heredada y `.push` tiraba TypeError, con la página pública en 500. Tiene que

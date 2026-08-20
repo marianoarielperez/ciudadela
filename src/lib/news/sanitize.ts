@@ -7,7 +7,14 @@ import sanitizeHtml from "sanitize-html";
 const OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: ["p", "br", "strong", "em", "u", "a", "ul", "ol", "li", "h2", "h3"],
   allowedAttributes: { a: ["href", "rel"] },
-  allowedSchemes: ["http", "https"],
+  // `mailto` y `tel` además de http/https: una noticia de la vecinal linkea un
+  // mail o un teléfono de contacto con toda naturalidad, y el editor deja
+  // escribirlos (pide la URL con un prompt, sin restringir esquema). Sin ellos
+  // sanitize-html borra el href y DEJA el texto: el enlace desaparece sin
+  // ningún aviso ni para el redactor ni para el lector. Ninguno de los dos
+  // ejecuta código — el vector de esta lista es `javascript:`/`data:`, que
+  // siguen afuera.
+  allowedSchemes: ["http", "https", "mailto", "tel"],
   // Sin esto, sanitize-html deja pasar "//host/x": no es XSS, pero es un
   // esquema que nadie eligió permitir y el editor nunca genera. Los links
   // internos ("/noticias/1", "#seccion") siguen funcionando.
@@ -40,5 +47,10 @@ export function newsPlainText(html: string, maxLength = 160): string {
   const spaced = html.replace(BLOCK_BOUNDARY, "$& ");
   const text = sanitizeHtml(spaced, TEXT_ONLY).replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+  // Se corta por PUNTOS DE CÓDIGO, no por unidades UTF-16: `slice` parte al
+  // medio los pares suplentes, y un emoji en el carácter 159 dejaba un suplente
+  // alto suelto viajando al <meta name="description">, al og:description y al
+  // resumen de la tarjeta. `[...text]` itera por punto de código, así que el
+  // emoji entra entero o no entra.
+  return `${[...text].slice(0, maxLength - 1).join("").trimEnd()}…`;
 }

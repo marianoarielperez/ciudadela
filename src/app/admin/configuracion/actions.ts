@@ -77,20 +77,38 @@ export async function updateConfigAction(
   ];
   const ip = await clientIp();
 
-  for (const [key, value] of entries) {
-    const previous = await prisma.configuration.findUnique({ where: { key } });
-    // Un guardado sin cambios no es un evento: si se asentara igual, el día que
-    // haya que reconstruir cuándo se cerró el alta de socios el asiento útil
-    // estaría enterrado entre decenas de "de false a false".
-    if (previous !== null && previous.value === value) continue;
-    // `updatedBy` es la columna que existe desde el Módulo 0 y que hasta hoy no
-    // escribía nadie: sin ella el asiento dice quién tocó qué, pero la fila no
-    // sabe quién la dejó como está.
-    await prisma.configuration.upsert({
-      where: { key },
-      update: { value, updatedBy: actor.actorId },
-      create: { key, value, updatedBy: actor.actorId },
-    });
+  // Las tres claves se escriben en UNA transacción. Sin ella, si la segunda
+  // falla (deadlock, P2024) la primera ya quedó escrita: el alta de socios
+  // podría quedar cerrada en la base mientras el superadmin ve una pantalla de
+  // error y cree que no se guardó nada.
+  const changed = await prisma.$transaction(async (tx) => {
+    const applied: Array<{ key: string; from: unknown; to: boolean | string }> = [];
+    for (const [key, value] of entries) {
+      const previous = await tx.configuration.findUnique({ where: { key } });
+      // Un guardado sin cambios no es un evento: si se asentara igual, el día
+      // que haya que reconstruir cuándo se cerró el alta de socios el asiento
+      // útil estaría enterrado entre decenas de "de false a false".
+      if (previous !== null && previous.value === value) continue;
+      // `updatedBy` es la columna que existe desde el Módulo 0 y que hasta hoy
+      // no escribía nadie: sin ella el asiento dice quién tocó qué, pero la
+      // fila no sabe quién la dejó como está.
+      await tx.configuration.upsert({
+        where: { key },
+        update: { value, updatedBy: actor.actorId },
+        create: { key, value, updatedBy: actor.actorId },
+      });
+      applied.push({ key, from: previous?.value ?? null, to: value });
+    }
+    return applied;
+  });
+
+  // La invalidación va ANTES de auditar y fuera de la transacción: si algo
+  // fallara acá abajo, el peor caso tiene que ser un asiento perdido, no el
+  // sitio público sirviendo para siempre un botón ASOCIATE que ya no
+  // corresponde. Son lecturas cacheadas bajo este tag y nada más las invalida.
+  if (changed.length > 0) updateTag(CACHE_TAGS.config);
+
+  for (const { key, from, to } of changed) {
     await audit({
       userId: actor.actorId,
       action: "config_update",
@@ -99,14 +117,10 @@ export async function updateConfigAction(
       // De qué a qué: el asiento tiene que alcanzar para reconstruir el estado
       // anterior sin ir a buscar otra fila. `null` en `from` es "la clave no
       // existía todavía".
-      detail: { from: previous?.value ?? null, to: value },
+      detail: { from, to },
       ip,
     });
   }
 
-  // Sin esto el sitio público seguiría sirviendo para siempre el estado viejo
-  // del botón ASOCIATE y los datos de contacto: son lecturas cacheadas bajo este
-  // tag y nada más lo invalida.
-  updateTag(CACHE_TAGS.config);
   redirect("/admin/configuracion?guardado=1");
 }

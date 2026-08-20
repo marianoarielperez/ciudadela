@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { NewsCard } from "@/components/public/news-card";
 import { Button } from "@/components/ui/button";
-import { getPublishedNewsPage } from "@/lib/news/query";
+import { getPublishedNewsPage, resolvePublishedNewsPage } from "@/lib/news/query";
 import { siteBaseUrl } from "@/lib/site";
 
 const DESCRIPTION = "Novedades y comunicados de la Asociación Vecinal del Barrio Ciudadela.";
@@ -31,9 +31,10 @@ export async function generateMetadata({
   searchParams,
 }: PageProps<"/noticias">): Promise<Metadata> {
   const sp = await searchParams;
-  // Misma consulta (y misma clave de unstable_cache) que el render: la página
-  // resuelta es la que manda, así el canonical de ?pagina=999 apunta a la real.
-  const { page } = await getPublishedNewsPage(requestedPage(sp.pagina));
+  // La página se resuelve ANTES de consultar (ver resolvePublishedNewsPage):
+  // así el canonical de ?pagina=999 apunta a la real y, sobre todo, la caché
+  // paginada nunca se llama con un número inventado.
+  const page = await resolvePublishedNewsPage(requestedPage(sp.pagina));
   const suffix = page > 1 ? ` — página ${page}` : "";
   return {
     title: `Noticias${suffix} — Vecinal Ciudadela`,
@@ -45,7 +46,8 @@ export async function generateMetadata({
 export default async function NoticiasPage({ searchParams }: PageProps<"/noticias">) {
   const sp = await searchParams;
   const param = sp.pagina;
-  const { items, page, pages, total } = await getPublishedNewsPage(requestedPage(param));
+  const resolved = await resolvePublishedNewsPage(requestedPage(param));
+  const { items, page, pages, total } = await getPublishedNewsPage(resolved);
 
   // Redirigir cuando la URL pedida NO es la canónica de la página que se va a
   // mostrar. Comparar contra el número ya normalizado no alcanza: ?pagina=abc,

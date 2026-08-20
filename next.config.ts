@@ -84,10 +84,17 @@ const nextConfig: NextConfig = {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   experimental: {
-    // El default de Next es 1 MB y la portada de una noticia puede pesar
-    // hasta MAX_COVER_BYTES (5 MB): sin esto el body parser corta ANTES de
-    // que saveNewsCover pueda devolver su mensaje en castellano.
-    serverActions: { bodySizeLimit: "5mb" },
+    // El default de Next es 1 MB y la portada de una noticia puede pesar hasta
+    // MAX_COVER_BYTES (5 MB): sin esto el body parser corta ANTES de que
+    // saveNewsCover pueda devolver su mensaje en castellano.
+    //
+    // Tiene que ser MAYOR que MAX_COVER_BYTES, no igual. El límite de Next se
+    // mide sobre el cuerpo multipart ENTERO —archivo + título + cuerpo de la
+    // noticia + límites MIME + payload de la server action—, así que con "5mb"
+    // justos una portada de 5 MB se pasa por el peso del resto y el operador
+    // recibe un 413 en inglés: exactamente lo que este ajuste quiere evitar.
+    // El margen es para el sobre, no para la imagen.
+    serverActions: { bodySizeLimit: "6mb" },
   },
 };
 

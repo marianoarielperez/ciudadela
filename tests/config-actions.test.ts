@@ -11,12 +11,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // las dos cosas.
 //
 // `vi.hoisted` porque `vi.mock` se iza al tope del archivo.
-const prismaMock = vi.hoisted(() => ({
-  configuration: {
-    findUnique: vi.fn<(args: { where: { key: string } }) => Promise<unknown>>(),
-    upsert: vi.fn(async () => ({})),
-  },
-}));
+const prismaMock = vi.hoisted(() => {
+  const mock = {
+    configuration: {
+      findUnique: vi.fn<(args: { where: { key: string } }) => Promise<unknown>>(),
+      upsert: vi.fn(async () => ({})),
+    },
+    // La action escribe las tres claves en una transacción interactiva. El
+    // doble le pasa al callback el mismo objeto, así los `expect` sobre
+    // `configuration.upsert` siguen viendo las llamadas: lo que se verifica es
+    // QUÉ se escribe, no el aislamiento del motor.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mock)),
+  };
+  return mock;
+});
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/require-admin", () => ({
   requireSuperadmin: vi.fn(async () => ({ ok: true, actorId: 3 })),

@@ -121,7 +121,10 @@ export async function createNewsAction(
     newsId = news.id;
   } catch (e) {
     // La portada ya está en disco: si el INSERT falló, no dejar el huérfano.
-    if (coverImagePath) await deleteNewsCover(coverImagePath);
+    // Best-effort a propósito: si el unlink fallara (EACCES), su excepción
+    // reemplazaría al error de acá y el operador vería un crash genérico en
+    // lugar de "ya existe una noticia con esa URL", que es lo accionable.
+    if (coverImagePath) await deleteCoverBestEffort(coverImagePath);
     if (isUniqueViolation(e)) return { error: DUPLICATE_SLUG };
     throw e;
   }
@@ -181,7 +184,9 @@ export async function updateNewsAction(
       data: { title: parsed.data.title, slug, body, coverImagePath },
     });
   } catch (e) {
-    if (newCover) await deleteNewsCover(newCover);
+    // Best-effort por el mismo motivo que en el alta: el error del filesystem
+    // no puede taparle al operador el error real de la edición.
+    if (newCover) await deleteCoverBestEffort(newCover);
     if (isUniqueViolation(e)) return { error: DUPLICATE_SLUG };
     throw e;
   }

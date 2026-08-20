@@ -38,17 +38,36 @@ const ESCAPE_HATCH = "ALLOW_LOCALHOST_BASE_URL";
 // De ahí la escotilla explícita, que en el VPS no existe.
 export function siteBaseUrl(): URL {
   const raw = process.env.AUTH_URL;
+  // Parseo tolerante: un AUTH_URL sin esquema ("sigev.redaccion.ar") es un
+  // tipeo plausible en el .env del VPS, y `new URL()` ahí tira ERR_INVALID_URL.
+  // Si eso ocurriera dentro de la condición de abajo, el build moriría con ese
+  // error críptico en vez del mensaje redactado que existe para este caso.
+  const parsed = raw ? safeParseUrl(raw) : null;
   if (
     process.env.NODE_ENV === "production" &&
     process.env[ESCAPE_HATCH] !== "1" &&
-    (!raw || LOCAL_HOSTS.has(new URL(raw).hostname))
+    (!raw || !parsed || LOCAL_HOSTS.has(parsed.hostname))
   ) {
+    const problema = !raw
+      ? "no está definida"
+      : !parsed
+        ? `no es una URL válida ("${raw}") — ¿le falta el https:// ?`
+        : `apunta a localhost ("${raw}")`;
     throw new Error(
-      `AUTH_URL ${raw ? `apunta a localhost ("${raw}")` : "no está definida"} en un build de ` +
-        "producción: el sitemap, el robots.txt y todos los canonical saldrían apuntando a " +
-        `localhost. Definí AUTH_URL con el dominio del entorno, o ${ESCAPE_HATCH}=1 si de ` +
-        "verdad es un build local de prueba.",
+      `AUTH_URL ${problema} en un build de producción: el sitemap, el robots.txt y todos los ` +
+        "canonical saldrían apuntando a localhost. Definí AUTH_URL con el dominio del entorno, " +
+        `o ${ESCAPE_HATCH}=1 si de verdad es un build local de prueba.`,
     );
   }
-  return new URL(raw ?? "http://localhost:3000");
+  // Fuera de producción un AUTH_URL roto tampoco puede tumbar el proceso: se
+  // cae al default local, que es lo que el desarrollador esperaba igual.
+  return parsed ?? new URL("http://localhost:3000");
+}
+
+function safeParseUrl(raw: string): URL | null {
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
 }

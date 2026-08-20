@@ -192,3 +192,39 @@ describe("getNewsBySlug", () => {
     }
   });
 });
+
+// Las dos consultas que existen para acotar las CLAVES de caché. Sin ellas,
+// cada ?pagina=N y cada /noticias/<slug-inventado> dejaba una entrada
+// permanente en .next/cache: disco que un anónimo podía llenar a pedido.
+describe("acotamiento de las claves de caché", () => {
+  it("publishedMeta cuenta solo publicadas y nunca devuelve menos de una página", async () => {
+    const vacio = fakeDb([], 0);
+    await expect(makeNewsQueries(vacio.db).publishedMeta()).resolves.toEqual({ total: 0, pages: 1 });
+    expect(vacio.argsFor("count").where).toEqual({
+      status: "published",
+      publishedAt: { not: null },
+    });
+
+    const lleno = fakeDb([], NEWS_PAGE_SIZE * 2 + 1);
+    await expect(makeNewsQueries(lleno.db).publishedMeta()).resolves.toEqual({
+      total: NEWS_PAGE_SIZE * 2 + 1,
+      pages: 3,
+    });
+  });
+
+  it("publishedSlugExists filtra borradores y pide solo el id", async () => {
+    const conFila = fakeDb([row()]);
+    await expect(makeNewsQueries(conFila.db).publishedSlugExists("asamblea")).resolves.toBe(true);
+    const args = conFila.argsFor("findFirst");
+    expect(args.where).toEqual({
+      slug: "asamblea",
+      status: "published",
+      publishedAt: { not: null },
+    });
+    // Solo el id: la fila entera es justamente lo que se quiere seguir cacheando.
+    expect(args.select).toEqual({ id: true });
+
+    const sinFila = fakeDb([]);
+    await expect(makeNewsQueries(sinFila.db).publishedSlugExists("no-existe")).resolves.toBe(false);
+  });
+});

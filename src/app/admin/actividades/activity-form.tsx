@@ -15,8 +15,17 @@ import { ROOM_LABELS, WEEKDAYS, type ActivitySlot } from "@/lib/activities/rules
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 
-export function ActivityForm(props: { mode: "create" } | { mode: "edit"; activity: ActivitySlot }) {
+// `defaultYear` llega calculado desde el servidor con `currentYearAR()` y no se
+// resuelve acá con `new Date().getFullYear()`: esto es un client component, así
+// que ese año saldría de la zona del navegador en la hidratación y de la del
+// proceso en el render del servidor —que en el VPS es UTC—. Entre las 21:00 y
+// la medianoche del 31 de diciembre las dos discrepan: el formulario ofrecería
+// el año siguiente, y encima con un valor distinto en cada lado.
+export function ActivityForm(
+  props: { mode: "create"; defaultYear: number } | { mode: "edit"; activity: ActivitySlot },
+) {
   const editing = props.mode === "edit" ? props.activity : null;
+  const initialYear = props.mode === "edit" ? props.activity.year : props.defaultYear;
   const [state, formAction, pending] = useActionState(
     editing ? updateActivityAction : createActivityAction,
     {},
@@ -26,7 +35,7 @@ export function ActivityForm(props: { mode: "create" } | { mode: "edit"; activit
     room: editing?.room ?? "historic",
     startTime: editing?.startTime ?? "",
     endTime: editing?.endTime ?? "",
-    year: String(editing?.year ?? new Date().getFullYear()),
+    year: String(initialYear),
     // Los dos siguientes son checkboxes: no se cablean con `field()` sino a
     // mano, porque su representación es "está tildado" y no "qué se tipeó".
     // `weekdays` es la lista CSV del grupo; `active` es el "on"/"" que manda el
