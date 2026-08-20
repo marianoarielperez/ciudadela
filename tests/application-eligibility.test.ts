@@ -33,6 +33,33 @@ describe("checkEligibility", () => {
     expect(r).toMatchObject({ ok: false, code: "visit_office" });
     expect((r as { error: string }).error).not.toMatch(/expuls/i);
   });
+  it("fallecimiento y anulación por duplicado → sede, indistinguibles de la expulsión", () => {
+    const expelled = checkEligibility({
+      ...base,
+      member: member({ reentryBlocked: true, withdrawalReason: "expulsion" }),
+    });
+    for (const reason of ["death", "duplicate_annulment"] as const) {
+      const r = checkEligibility({ ...base, member: member({ withdrawalReason: reason }) });
+      expect(r).toEqual(expelled); // mismo objeto: no se puede distinguir desde afuera
+    }
+  });
+  it("expulsión gana a la deuda (precedencia de seguridad)", () => {
+    const r = checkEligibility({
+      ...base,
+      member: member({ reentryBlocked: true, withdrawalReason: "expulsion", debtAtWithdrawal: true }),
+    });
+    expect(r).toMatchObject({ ok: false, code: "visit_office" });
+  });
+  it("la doble señal de expulsión funciona por separado", () => {
+    expect(checkEligibility({ ...base, member: member({ reentryBlocked: true }) })).toMatchObject({
+      ok: false,
+      code: "visit_office",
+    });
+    expect(checkEligibility({ ...base, member: member({ withdrawalReason: "expulsion" }) })).toMatchObject({
+      ok: false,
+      code: "visit_office",
+    });
+  });
   it("baja por mora o con deuda → debt (sede)", () => {
     expect(checkEligibility({ ...base, member: member({ withdrawalReason: "arrears" }) })).toMatchObject({
       ok: false,

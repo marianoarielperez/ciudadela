@@ -7,6 +7,10 @@ import type { Member } from "@/generated/prisma/client";
 
 export const REJECTION_BLOCK_MONTHS = 6; // REG-05
 
+// Un único literal para TODOS los desvíos a la sede: expulsión, fallecimiento y
+// anulación por duplicado deben ser indistinguibles desde afuera.
+const VISIT_OFFICE_MESSAGE = "No podemos procesar tu solicitud por este medio. Acercate a la sede vecinal.";
+
 export type EligibilityBlock =
   | { code: "in_progress"; error: string; applicationId: number }
   | { code: "already_member"; error: string }
@@ -54,11 +58,14 @@ export function checkEligibility(input: {
     // 3. Expulsión (REG-04): genérico, sin nombrar el motivo. Doble señal como
     //    en canReadmit: flag O motivo, cualquiera alcanza.
     if (member.reentryBlocked || member.withdrawalReason === "expulsion") {
-      return {
-        ok: false,
-        code: "visit_office",
-        error: "No podemos procesar tu solicitud por este medio. Acercate a la sede vecinal.",
-      };
+      return { ok: false, code: "visit_office", error: VISIT_OFFICE_MESSAGE };
+    }
+    // 3bis. Fallecimiento o anulación por duplicado (decisión 20/08/2026): un DNI
+    //    vivo contra una ficha de fallecido es error de datos o suplantación, y la
+    //    ficha anulada tiene su gemela real en el padrón. Mismo mensaje genérico
+    //    que la expulsión: no se revela el motivo, lo resuelve la sede.
+    if (member.withdrawalReason === "death" || member.withdrawalReason === "duplicate_annulment") {
+      return { ok: false, code: "visit_office", error: VISIT_OFFICE_MESSAGE };
     }
     // 4. Deuda de tesorería (REG-16, pedido del cliente): mora o deuda al bajar.
     if (member.withdrawalReason === "arrears" || member.debtAtWithdrawal) {
