@@ -19,12 +19,19 @@
 //     image/png, image/webp o application/pdf. Un HTML servido como image/jpeg
 //     con nosniff no se renderiza como página: se rompe la imagen y punto.
 //  2. Una CSP PROPIA de esta respuesta, `default-src 'none'; sandbox` (el patrón
-//     que usa GitHub para el contenido crudo de usuarios). Las CSP múltiples se
-//     intersecan, así que esta sólo puede restringir más que la global de
-//     next.config.ts — que para el resto del sitio permite `script-src
-//     'unsafe-inline'`. Con `sandbox` el documento queda en un origen opaco y
-//     sin scripts aunque el punto 1 fallara.
-//  3. La global ya aporta `object-src 'none'` y `frame-ancestors 'none'`.
+//     que usa GitHub para el contenido crudo de usuarios). OJO con el porqué:
+//     NO es que se "interseque" con la global de next.config.ts. Next copia las
+//     cabeceras de la Response con `setHeader`, que REEMPLAZA — así que acá rige
+//     únicamente esta CSP, y por eso tiene que bastarse sola. Se basta:
+//     `default-src 'none'` ya cubre lo que la global aportaba con `object-src`,
+//     y el framing lo sigue bloqueando `X-Frame-Options: DENY`, que viaja como
+//     cabecera aparte y no la pisa nadie.
+//  3. Alcance real de la capa 2, para no confiarse: cubre el caso del punto 1
+//     (HTML disfrazado) dejándolo en un origen opaco y sin scripts. NO cubre el
+//     JS embebido en un PDF, que corre dentro del visor (PDFium) y no pasa por
+//     `script-src`. Ese JS igual no llega al DOM ni a las cookies de
+//     vecinalciudadela.ar, así que no hay escalada de origen: el riesgo queda en
+//     el visor del navegador, no en la sesión del admin.
 //
 // Con eso, `inline` es seguro y es lo que el trabajo pide: el operador compara
 // la foto del DNI con los datos de la ficha en una pestaña al lado. Forzar
