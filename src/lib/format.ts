@@ -9,6 +9,16 @@ export function formatDateAR(date: Date): string {
   }).format(date)
 }
 
+// Tamaño de archivo legible en es-AR (coma decimal). Base 1024, como reporta el
+// sistema operativo: el operador compara este número con el que ve en su
+// carpeta. Sin decimales en kB (nadie necesita "1,4 kB") y uno solo en MB.
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} kB`
+  const mb = bytes / (1024 * 1024)
+  return `${new Intl.NumberFormat("es-AR", { maximumFractionDigits: 1 }).format(mb)} MB`
+}
+
 export function formatARS(amount: number): string {
   const s = new Intl.NumberFormat("es-AR", {
     style: "currency",

@@ -1,0 +1,218 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import { formatARS, formatBytes, formatDateAR } from "@/lib/format";
+import { requireAdmin } from "@/lib/auth/require-admin";
+import { APPLICATION_STATUS_LABELS, DOCUMENT_TYPE_LABELS } from "@/lib/applications/labels";
+import {
+  CATEGORY_LABELS, NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS,
+} from "@/lib/members/labels";
+import { applicationStatusBadgeVariant } from "@/lib/admin/status-badges";
+import { EmptyState } from "@/components/admin/empty-state";
+import { FormMessage } from "@/components/admin/form-message";
+import { PageHeader } from "@/components/admin/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export const dynamic = "force-dynamic";
+
+export const metadata = { title: "Solicitud — SIGeV" };
+
+function Field({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div>
+      <dt className="text-xs uppercase text-muted-foreground">{label}</dt>
+      <dd className="text-sm">{value || "—"}</dd>
+    </div>
+  );
+}
+
+export default async function SolicitudPage(props: { params: Promise<{ id: string }> }) {
+  // Misma guarda propia que el listado: la ficha muestra el DNI, el domicilio y
+  // las fotos del documento de una persona (Ley 25.326), y `requireAdmin`
+  // resuelve contra la fila viva de User, no contra el token del layout.
+  const actor = await requireAdmin();
+  if (!actor.ok) {
+    return (
+      <div className="space-y-4">
+        <PageHeader title="Solicitud" breadcrumb={[{ label: "Solicitudes", href: "/admin/solicitudes" }]} />
+        <FormMessage kind="error" box>{actor.error}</FormMessage>
+      </div>
+    );
+  }
+
+  const { id } = await props.params;
+  // El id llega de la URL: con "abc" o "1e9" Number() da NaN/no entero y Prisma
+  // tiraría un error técnico en inglés en vez de un 404.
+  const applicationId = Number(id);
+  if (!Number.isInteger(applicationId) || applicationId <= 0) notFound();
+
+  const app = await prisma.application.findUnique({
+    where: { id: applicationId },
+    include: {
+      street: true,
+      member: { select: { id: true, fullName: true } },
+      minute: true,
+      // Ordenadas: la tarjeta muestra UNA (hoy hay una por solicitud), y si
+      // alguna vez hay dos —un preapproval reintentado— tiene que ser la última
+      // y no la que Prisma devuelva primero.
+      subscriptions: { orderBy: { createdAt: "desc" } },
+    },
+  });
+  if (!app) notFound();
+
+  // Los documentos son polimórficos y no tienen FK sobre `ownerId` (docs/04):
+  // se consultan aparte, acotados a este dueño.
+  const [documents, notifications] = await Promise.all([
+    prisma.document.findMany({
+      where: { ownerType: "application", ownerId: applicationId },
+      orderBy: { uploadedAt: "asc" },
+    }),
+    prisma.notification.findMany({
+      where: { applicationId },
+      orderBy: { sentAt: "desc" },
+    }),
+  ]);
+
+  const address = app.street
+    ? `${app.street.name} ${app.streetNumber ?? ""}`.trim()
+    : [app.streetText, app.streetNumber].filter(Boolean).join(" ");
+  const subscription = app.subscriptions[0] ?? null;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        // La ENTIDAD va en el h1 (convención del shell): el nombre del
+        // solicitante, no "Solicitud". La referencia corta va en la miga.
+        title={app.fullName}
+        breadcrumb={[
+          { label: "Solicitudes", href: "/admin/solicitudes" },
+          { label: `Solicitud #${app.id}` },
+        ]}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant={applicationStatusBadgeVariant(app.status)}>
+            {APPLICATION_STATUS_LABELS[app.status]}
+          </Badge>
+          <Badge variant="secondary">Categoría: {CATEGORY_LABELS[app.requestedCategory]}</Badge>
+          {app.memberId !== null && <Badge variant="secondary">Reingreso</Badge>}
+        </div>
+      </PageHeader>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle>Estado</CardTitle></CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-3">
+              <Field label="Estado" value={APPLICATION_STATUS_LABELS[app.status]} />
+              <Field label="Categoría solicitada" value={CATEGORY_LABELS[app.requestedCategory]} />
+              <Field label="Débito automático" value={app.wantsDebit ? "Sí" : "No"} />
+              <Field label="Iniciada" value={formatDateAR(app.createdAt)} />
+              <Field
+                label="Email"
+                value={app.emailVerifiedAt
+                  ? `Verificado el ${formatDateAR(app.emailVerifiedAt)}`
+                  : "Sin verificar"}
+              />
+              <Field label="Resuelta" value={app.decidedAt ? formatDateAR(app.decidedAt) : null} />
+              {app.member && (
+                <div>
+                  <dt className="text-xs uppercase text-muted-foreground">Reingreso</dt>
+                  <dd className="text-sm">
+                    <Link className="text-primary hover:underline" href={`/admin/socios/${app.member.id}`}>
+                      Reingreso de {app.member.fullName}
+                    </Link>
+                  </dd>
+                </div>
+              )}
+              {app.minute && (
+                <div>
+                  <dt className="text-xs uppercase text-muted-foreground">Acta</dt>
+                  <dd className="text-sm">
+                    <Link className="text-primary hover:underline" href={`/admin/actas/${app.minute.id}`}>
+                      Acta N° {app.minute.number}
+                    </Link>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Datos personales</CardTitle></CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-3">
+              <Field label="DNI" value={app.dni} />
+              <Field label="Fecha de nacimiento" value={formatDateAR(app.birthDate)} />
+              <Field label="Estado civil" value={app.civilStatus} />
+              <Field label="Nacionalidad" value={app.nationality} />
+              <Field label="Ocupación" value={app.occupation} />
+              <Field label="Teléfono" value={app.phone} />
+              <Field label="Email" value={app.email} />
+              <Field label="Domicilio" value={address || null} />
+              <Field label="Barrio" value={app.neighborhood} />
+            </dl>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Documentación</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {documents.length === 0 ? (
+              <EmptyState size="card" description="La solicitud todavía no adjuntó documentos." />
+            ) : (
+              documents.map((doc) => (
+                <p key={doc.id} className="text-sm">
+                  {DOCUMENT_TYPE_LABELS[doc.type]} · {formatBytes(doc.size)} ·{" "}
+                  {/* Pestaña nueva: el operador compara la foto con los datos de
+                      esta misma pantalla sin perder el lugar. `rel="noopener"`
+                      porque la ruta sirve un archivo subido por un tercero. */}
+                  <a
+                    className="text-primary hover:underline"
+                    href={`/api/admin/solicitudes/${app.id}/documentos/${doc.id}`}
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    Ver
+                  </a>
+                </p>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Pago y suscripción</CardTitle></CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-3">
+              <Field label="Preapproval de MP" value={app.preapprovalId} />
+              <Field label="Estado de la suscripción" value={subscription?.status} />
+              <Field label="Pago de ingreso (MP)" value={app.mpPaymentIdEntry} />
+              <Field
+                label="Cuota de ingreso"
+                value={app.entryAmount ? formatARS(Number(app.entryAmount)) : null}
+              />
+            </dl>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Notificaciones</CardTitle></CardHeader>
+          <CardContent className="space-y-1">
+            {notifications.length === 0 ? (
+              <EmptyState size="card" description="Sin notificaciones." />
+            ) : (
+              notifications.map((n) => (
+                <p key={String(n.id)} className="text-sm">
+                  {formatDateAR(n.sentAt)} — {n.payloadSummary ?? NOTIFICATION_TYPE_LABELS[n.type]}
+                  {" "}({NOTIFICATION_STATUS_LABELS[n.status]})
+                </p>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

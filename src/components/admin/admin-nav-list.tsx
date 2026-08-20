@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  CalendarDays, Home, Newspaper, ScrollText, Settings, Users,
+  CalendarDays, Home, Inbox, Newspaper, ScrollText, Settings, Users,
 } from "lucide-react";
 
 import { isNavItemActive, type AdminNavGroup, type AdminNavIcon } from "@/lib/admin/nav";
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 // serializable y testeable en node (lucide no carga fuera del bundle cliente).
 const ICONS: Record<AdminNavIcon, typeof Home> = {
   home: Home,
+  inbox: Inbox,
   users: Users,
   "scroll-text": ScrollText,
   newspaper: Newspaper,
