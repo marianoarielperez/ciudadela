@@ -43,8 +43,43 @@ de Datos Personales** (Argentina).
   formularios públicos de los módulos ya construidos solo están protegidos por
   los limitadores de intentos.
 - Webhooks: validación `x-Signature` (MP) y token/secret (Brevo); idempotencia.
-- Cabeceras: CSP, HSTS (vía Cloudflare + Next), `X-Frame-Options` salvo el embed
-  del mapa.
+- Cabeceras: CSP y `Permissions-Policy` las emite Next (`next.config.ts`);
+  **HSTS la termina Cloudflare**, no la app. `X-Frame-Options: DENY` es global y
+  no afecta al embed del mapa (limita quién nos enmarca a nosotros, no a quién
+  enmarcamos); lo que habilita el mapa es `frame-src`.
+
+### El cuerpo de las noticias tiene UN solo control (Módulo 2)
+
+`sanitizeNewsBody` (`src/lib/news/sanitize.ts`) es la única defensa contra XSS
+almacenado en el cuerpo de una noticia: el render público usa
+`dangerouslySetInnerHTML` y la CSP **no puede** atajar lo que se escape, porque
+`script-src` incluye `'unsafe-inline'` —necesario para la hidratación de Next y
+el JSON-LD— y eso habilita también los manejadores de evento inline.
+
+La consecuencia práctica, verificada en la revisión final del Módulo 2: si una
+fila de `news` llega a tener HTML sin sanitizar, se ejecuta. **Todo camino de
+escritura a `news.body` tiene que pasar por `sanitizeNewsBody`** — hoy son las
+dos server actions del ABM y nada más. Una migración, un import o un arreglo
+manual en la base que escriban ese campo directo son XSS almacenado, sin nada
+que los frene. Si en el futuro se quiere una segunda línea de defensa, la vía
+es nonces en la CSP, que obligan a servir todo dinámico y romperían el cacheo
+por tags (decisión documentada en la spec del Módulo 2, §7).
+
+La revisión adversarial de la allowlist no encontró forma de evadirla: más de
+70 payloads (`javascript:` ofuscado con entidades, tabs, nulos y mayúsculas;
+`data:`; protocol-relative; SVG y MathML; mXSS por `<noscript>`/`<template>`;
+escape de atributos) quedaron todos neutralizados, y la sanitización es
+idempotente. Los esquemas permitidos son `http`, `https`, `mailto` y `tel`.
+
+### Portadas de noticias: públicas por diseño, incluso en borrador
+
+`/api/imagenes/noticias/[name]` no consulta el estado de la noticia, así que la
+portada de un **borrador** —o de una noticia despublicada— se sirve a cualquiera
+que conozca la URL. Es una decisión consciente: el nombre es un UUIDv4 que nunca
+aparece en el HTML público mientras la noticia esté en borrador, y agregarle una
+consulta de estado convertiría cada imagen en una lectura a la base. Tenerlo
+presente si alguna vez se prepara un comunicado sensible y se comparte el enlace
+de su imagen antes de publicarlo.
 - Prisma parametriza todo (sin SQL crudo salvo necesidad, y nunca con input directo).
 - Endpoints de cron protegidos por `CRON_SECRET`.
 - Dependencias: `npm audit` en CI básico; sin paquetes abandonados para crypto/auth.
