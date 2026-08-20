@@ -22,6 +22,11 @@ describe("makeTurnstileVerifier", () => {
     const verify = makeTurnstileVerifier(fetchOk(false) as unknown as typeof fetch);
     await expect(verify("tok", null)).resolves.toBe(false);
   });
+  it("rechaza si siteverify contesta no-ok aunque el body diga success", async () => {
+    const f = vi.fn().mockResolvedValue({ ok: false, json: async () => ({ success: true }) });
+    const verify = makeTurnstileVerifier(f as unknown as typeof fetch);
+    await expect(verify("tok", null)).resolves.toBe(false);
+  });
   it("falla CERRADO sin secreto configurado o sin token", async () => {
     delete process.env.TURNSTILE_SECRET_KEY;
     const f = fetchOk(true);
