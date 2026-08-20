@@ -229,7 +229,7 @@ export function CargaForm(props: {
             <FormMessage kind="success" as="span">Guardado ✓</FormMessage>
           )}
           {saveState.saved && !edited && saveState.unchanged && (
-            <FormMessage kind="neutral" as="span">Sin cambios que guardar</FormMessage>
+            <FormMessage kind="neutral" as="span" role="status">Sin cambios que guardar</FormMessage>
           )}
           {saveState.error && <FormMessage kind="error" as="span">{saveState.error}</FormMessage>}
           {/* Se guardó, pero algo quedó pendiente de mano humana: el aviso de la

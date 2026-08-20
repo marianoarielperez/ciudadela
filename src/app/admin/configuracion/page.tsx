@@ -23,7 +23,7 @@ export default async function ConfigPage(props: {
     return (
       <div className="space-y-4">
         <PageHeader title="Configuración" />
-        <FormMessage kind="error">{actor.error}</FormMessage>
+        <FormMessage kind="error" box>{actor.error}</FormMessage>
       </div>
     );
   }

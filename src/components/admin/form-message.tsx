@@ -18,15 +18,22 @@ const BOX_CLASSES = {
 // interrumpe al lector de pantalla (errores y advertencias); `status` espera su
 // turno (confirmaciones); los neutrales no anuncian nada. `as="span"` es para
 // los dos sitios que viven dentro de una fila flex.
-export function FormMessage({ kind, box = false, as: Tag = "p", className, children }: {
+//
+// `role` es la salida de emergencia: pisa el rol que se deduce del `kind`. Hace
+// falta cuando un mensaje neutral SÍ tiene que anunciarse —el "Sin cambios que
+// guardar" de la carga de fichas, donde se guarda con Ctrl+S y sin ese anuncio
+// el operador ciego no distingue "no había nada que guardar" de "el guardado no
+// se disparó"—. Sin la prop, el comportamiento es el de siempre.
+export function FormMessage({ kind, box = false, as: Tag = "p", role: roleOverride, className, children }: {
   kind: "error" | "success" | "warning" | "neutral";
   box?: boolean;
   as?: "p" | "span" | "div";
+  role?: "status" | "alert";
   className?: string;
   children: React.ReactNode;
 }) {
-  const role = kind === "error" || kind === "warning" ? "alert"
-    : kind === "success" ? "status" : undefined;
+  const role = roleOverride ?? (kind === "error" || kind === "warning" ? "alert"
+    : kind === "success" ? "status" : undefined);
   return (
     <Tag
       role={role}

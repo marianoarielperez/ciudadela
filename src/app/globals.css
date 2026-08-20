@@ -72,8 +72,8 @@
   --destructive: oklch(0.577 0.245 27.325);
   /* Feedback post-acción (FormMessage). Antes el verde/ámbar era Tailwind crudo
      copiado a mano; estos son los únicos tonos permitidos en el panel. */
-  --success: #15803D;   /* green-700 — 4.54:1 sobre blanco */
-  --warning: #B45309;   /* amber-700 — 4.52:1 sobre blanco */
+  --success: #15803D;   /* green-700 — 5.02:1 sobre blanco */
+  --warning: #B45309;   /* amber-700 — 5.02:1 sobre blanco */
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);

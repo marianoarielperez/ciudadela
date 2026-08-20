@@ -23,8 +23,8 @@ export default async function EditNewsPage(props: { params: Promise<{ id: string
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Editar noticia"
-        breadcrumb={[{ label: "Noticias", href: "/admin/noticias" }, { label: news.title }]}
+        title={news.title}
+        breadcrumb={[{ label: "Noticias", href: "/admin/noticias" }, { label: "Editar" }]}
         actions={
           <>
             {news.status === "published" && (

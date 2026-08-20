@@ -59,6 +59,8 @@ const groups: { label: string; cards: DashboardCard[] }[] = [
 
 export default async function AdminHomePage() {
   const session = await auth();
+  // Solo para mostrar u ocultar la tarjeta (roles del token, hasta 8 h de atraso
+  // tras una degradación); el control de acceso real vive en la propia ruta.
   const superadmin = isSuperadmin(session?.user.roles ?? []);
   return (
     <div className="space-y-6">

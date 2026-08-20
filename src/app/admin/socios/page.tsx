@@ -2,9 +2,9 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { fetchPadronPage, parsePadronFilters, parsePadronPage } from "@/lib/members/query";
 import { CATEGORY_LABELS, EMAIL_STATUS_LABELS, STATUS_LABELS } from "@/lib/members/labels";
+import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { EmptyState } from "@/components/admin/empty-state";
 import { PageHeader } from "@/components/admin/page-header";
-import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,7 +39,7 @@ export default async function SociosPage(props: {
     const s = qs.toString();
     return s ? `/admin/socios?${s}` : "/admin/socios";
   };
-  const firstShown = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const firstShown = (page - 1) * pageSize + 1;
   const lastShown = (page - 1) * pageSize + rows.length;
 
   return (

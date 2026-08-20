@@ -7,10 +7,10 @@ import {
   NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS, REASON_LABELS, STATUS_LABELS,
 } from "@/lib/members/labels";
 import { verificationTarget } from "@/lib/members/card-edit";
+import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { EmptyState } from "@/components/admin/empty-state";
 import { PageHeader } from "@/components/admin/page-header";
 import { SendVerificationForm } from "@/components/admin/send-verification-form";
-import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

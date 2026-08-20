@@ -31,6 +31,9 @@ type Slug = (typeof SLUGS)[number];
 
 type Screen = {
   title: string;
+  // Hoja del breadcrumb: sustantivo corto, no el h1 repetido. El h1 lleva el
+  // socio ("Dar de baja a Juan Pérez"); la miga solo la acción ("Baja").
+  crumb: string;
   notice?: string;
   // Motivo estatutario por el que la acción no se puede hacer ahora. Si está,
   // se muestra en lugar del formulario.
@@ -53,6 +56,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
     case "baja":
       return {
         title: `Dar de baja a ${member.fullName}`,
+        crumb: "Baja",
         notice: "La baja queda asentada con acta, en el historial y en auditoría. No borra datos.",
         blocked: blockedBy(canWithdraw(member)),
         action: withdrawAction,
@@ -71,6 +75,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
       const probe = (options[0]?.[0] ?? member.category) as MemberCategory;
       return {
         title: `Cambiar categoría de ${member.fullName}`,
+        crumb: "Cambio de categoría",
         notice: `Categoría actual: ${CATEGORY_LABELS[member.category]}. El cambio no interrumpe la antigüedad (Art. 5° ter).`,
         blocked: blockedBy(canChangeCategory(member, probe, elections)),
         action: changeCategoryAction,
@@ -83,6 +88,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
       if (member.status === "suspended") {
         return {
           title: `Levantar la suspensión de ${member.fullName}`,
+          crumb: "Fin de suspensión",
           notice: `Suspendido desde ${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "—"} hasta ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "—"}.`,
           action: endSuspensionAction,
           submitLabel: "Levantar suspensión",
@@ -90,6 +96,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
       }
       return {
         title: `Suspender a ${member.fullName}`,
+        crumb: "Suspensión",
         notice: "La suspensión no puede exceder 180 días (Art. 10 inc. b).",
         blocked: blockedBy(canSuspend(member)),
         action: suspendAction,
@@ -104,6 +111,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
     case "reingreso":
       return {
         title: `Reingreso de ${member.fullName}`,
+        crumb: "Reingreso",
         blocked: blockedBy(canReadmit(member)),
         // REG-16: el reingreso del cesante por mora exige saldar la deuda a
         // valores vigentes. No bloquea la pantalla — el cobro se hace en
@@ -150,7 +158,7 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
         breadcrumb={[
           { label: "Socios", href: "/admin/socios" },
           { label: member.fullName, href: `/admin/socios/${member.id}` },
-          { label: screen.title },
+          { label: screen.crumb },
         ]}
       />
       {screen.notice && <p className="text-sm text-muted-foreground">{screen.notice}</p>}

@@ -28,7 +28,7 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
     <div className="space-y-4">
       <PageHeader
         title={`Acta ${tipoLabel} N° ${minute.number} — ${formatDateAR(minute.date)}`}
-        breadcrumb={[{ label: "Actas", href: "/admin/actas" }, { label: `${tipoLabel} N° ${minute.number}` }]}
+        breadcrumb={[{ label: "Actas", href: "/admin/actas" }, { label: `N° ${minute.number}` }]}
         actions={
           <Button asChild variant="outline">
             <Link href={`/admin/actas/${minute.id}/editar`}>Editar</Link>
@@ -37,14 +37,17 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
       />
       {minute.description && <p>{minute.description}</p>}
       <h2 className="text-lg font-semibold">Movimientos asentados</h2>
-      {minute.movements.length === 0 && <EmptyState size="card" description="Sin movimientos." />}
-      <ul className="space-y-1">
-        {minute.movements.map((mv) => (
-          <li key={mv.id} className="text-sm">
-            {MOVEMENT_LABELS[mv.type]} — <Link className="text-primary hover:underline" href={`/admin/socios/${mv.memberId}`}>{mv.member.fullName}</Link>
-          </li>
-        ))}
-      </ul>
+      {minute.movements.length === 0 ? (
+        <EmptyState size="card" description="Sin movimientos." />
+      ) : (
+        <ul className="space-y-1">
+          {minute.movements.map((mv) => (
+            <li key={mv.id} className="text-sm">
+              {MOVEMENT_LABELS[mv.type]} — <Link className="text-primary hover:underline" href={`/admin/socios/${mv.memberId}`}>{mv.member.fullName}</Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

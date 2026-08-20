@@ -152,7 +152,7 @@ export function DeleteActivityButton({ id, name }: { id: number; name: string })
       >
         {pending ? "Eliminando…" : "Eliminar"}
       </Button>
-      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
+      {state.error && <FormMessage kind="error" as="span">{state.error}</FormMessage>}
     </form>
   );
 }

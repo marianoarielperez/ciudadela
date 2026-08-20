@@ -6,7 +6,7 @@ import { AdmitForm } from "./admit-form";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Alta manual de socio — SIGeV" };
+export const metadata = { title: "Alta manual — SIGeV" };
 
 export default async function NuevoSocioPage() {
   const minutes = (await prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }))

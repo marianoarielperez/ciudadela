@@ -34,7 +34,7 @@ export default async function EditActivityPage(props: { params: Promise<{ id: st
         title={activity.name}
         breadcrumb={[
           { label: "Actividades", href: "/admin/actividades" },
-          { label: activity.name },
+          { label: "Editar" },
         ]}
       />
       <ActivityForm mode="edit" activity={activity} />

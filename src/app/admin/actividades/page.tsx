@@ -27,6 +27,7 @@ export default async function AdminActivitiesPage(props: {
   // fallar por un parámetro mal tipeado a mano.
   const year = yearRaw !== undefined && Number.isInteger(yearRaw) ? yearRaw : undefined;
   const rows = await activitiesQueries.allForAdmin(year);
+  const emptyDescription = `No hay actividades cargadas${year !== undefined ? ` para ${year}` : ""}. Las activas se muestran en la página pública de actividades.`;
   return (
     <div className="space-y-4">
       <PageHeader
@@ -64,7 +65,7 @@ export default async function AdminActivitiesPage(props: {
       </form>
       {rows.length === 0 ? (
         <EmptyState
-          description={`No hay actividades cargadas${year !== undefined ? ` para ${year}` : ""}. Las activas se muestran en la página pública de actividades.`}
+          description={emptyDescription}
           action={
             <Button asChild>
               <Link href="/admin/actividades/nueva">Nueva actividad</Link>
