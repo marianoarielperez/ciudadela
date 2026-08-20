@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { createNewsAction, deleteNewsAction, publishNewsAction, unpublishNewsAction, updateNewsAction } from "./actions";
 import { NewsEditor } from "@/components/admin/news-editor";
 import { useSyncedForm, TextField } from "@/components/admin/synced-fields";
+import { FormMessage } from "@/components/admin/form-message";
 // image-url, NO images: este es un client component y images.ts importa node:fs.
 import { newsImageUrl } from "@/lib/news/image-url";
 // slugify es puro (sin node:*), así que se puede importar acá.
@@ -87,7 +88,7 @@ export function NewsForm(props: { mode: "create" } | { mode: "edit"; news: Edita
         <Label>Contenido</Label>
         <NewsEditor name="body" initialHtml={editing?.body ?? ""} />
       </div>
-      {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={pending}>
           {pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear noticia"}
@@ -132,9 +133,9 @@ export function NewsStateButtons({ news }: { news: EditableNews }) {
         </form>
       </div>
       {(pubState.error || unpubState.error || delState.error) && (
-        <p role="alert" className="text-sm text-destructive">
+        <FormMessage kind="error">
           {pubState.error ?? unpubState.error ?? delState.error}
-        </p>
+        </FormMessage>
       )}
     </div>
   );

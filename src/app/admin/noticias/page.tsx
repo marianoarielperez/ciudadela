@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { newsQueries } from "@/lib/news/query";
 import { formatDateAR } from "@/lib/format";
+import { NEWS_STATUS_LABELS } from "@/lib/news/labels";
+import { newsStatusBadgeVariant } from "@/lib/admin/status-badges";
+import { EmptyState } from "@/components/admin/empty-state";
+import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -8,20 +12,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Noticias — SIGeV" };
 
-const STATUS_LABELS = { draft: "Borrador", published: "Publicada" } as const;
-
 export default async function AdminNewsPage() {
   const rows = await newsQueries.allForAdmin();
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Noticias</h1>
-        <Button asChild><Link href="/admin/noticias/nueva">Nueva noticia</Link></Button>
-      </div>
+      <PageHeader
+        title="Noticias"
+        actions={
+          <Button asChild>
+            <Link href="/admin/noticias/nueva">Nueva noticia</Link>
+          </Button>
+        }
+      />
       {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Todavía no hay noticias. Las publicadas aparecen en la portada del sitio y en /noticias.
-        </p>
+        <EmptyState
+          description="Todavía no hay noticias. Las publicadas aparecen en la portada del sitio y en /noticias."
+          action={
+            <Button asChild>
+              <Link href="/admin/noticias/nueva">Nueva noticia</Link>
+            </Button>
+          }
+        />
       ) : (
         <Table>
           <TableHeader>
@@ -38,7 +49,7 @@ export default async function AdminNewsPage() {
                   <Link className="text-primary hover:underline" href={`/admin/noticias/${n.id}`}>{n.title}</Link>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={n.status === "published" ? "default" : "secondary"}>{STATUS_LABELS[n.status]}</Badge>
+                  <Badge variant={newsStatusBadgeVariant(n.status)}>{NEWS_STATUS_LABELS[n.status]}</Badge>
                 </TableCell>
                 <TableCell>{n.publishedAtIso ? formatDateAR(new Date(n.publishedAtIso)) : "—"}</TableCell>
                 <TableCell>{n.authorName ?? "—"}</TableCell>
