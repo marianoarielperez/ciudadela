@@ -18,9 +18,20 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { canReadmit } from "@/lib/members/rules";
 import { requireOpenBook } from "@/lib/members/service";
+import {
+  type AccountEmailMove, MemberEmailConflictError, MemberWriteError,
+  revokeStaleMemberTokens, sameAddress, syncAccountEmail,
+} from "@/lib/members/write";
 
 export type RecordResult =
-  | { ok: true; applicationId: number; memberId: number; memberNumber: number | null; reentry: boolean }
+  | {
+      ok: true; applicationId: number; memberId: number; memberNumber: number | null; reentry: boolean;
+      /** La dirección de INGRESO que el reingreso le mudó a la cuenta del socio,
+       *  o `null` si no se movió ninguna. Sale de la transacción porque después
+       *  del commit la dirección anterior ya no está en ninguna fila y los avisos
+       *  de mudanza la necesitan (ver `@/lib/members/account-email-notice`). */
+      accountEmailMove: AccountEmailMove | null;
+    }
   | { ok: false; applicationId: number; error: string };
 
 // Los dos estados desde los que una solicitud puede llegar al libro:
@@ -28,10 +39,6 @@ export type RecordResult =
 // Comisión Directiva). Se revalida DENTRO de la transacción: la bandeja es una
 // pantalla masiva y dos admins pueden estar asentando el mismo lote.
 export const RECORDABLE_STATUSES = ["approved_pending_minute", "pending_board"] as const;
-
-function normalizeEmail(value: string | null | undefined): string {
-  return (value ?? "").trim().toLowerCase();
-}
 
 // Del error de Prisma sólo se usa el código y el target: el objeto trae la
 // consulta con los datos del solicitante en claro, y el log de PM2 no está
@@ -81,6 +88,7 @@ export function makeApplicationRecorder(db: PrismaClient) {
 
           let memberId: number;
           let memberNumber: number | null = null;
+          let accountEmailMove: AccountEmailMove | null = null;
           const reentry = app.memberId !== null;
 
           if (app.memberId !== null) {
@@ -98,9 +106,9 @@ export function makeApplicationRecorder(db: PrismaClient) {
             const keepsVerifiedAddress =
               !app.emailVerifiedAt &&
               member.emailStatus === "verified" &&
-              normalizeEmail(member.email) === normalizeEmail(app.email);
+              sameAddress(member.email, app.email);
 
-            await tx.member.update({
+            const updated = await tx.member.update({
               where: { id: member.id },
               data: {
                 ...contactData,
@@ -116,6 +124,28 @@ export function makeApplicationRecorder(db: PrismaClient) {
                 // calcular la deuda a saldar (REG-16).
               },
             });
+            // ── Las DOS invariantes de la dirección, acá y no en otro lado ────
+            // Este es un camino nuevo que escribe `Member` sin pasar por
+            // `updateMember` (su transacción también asienta el acta y el
+            // movimiento), así que repite explícitamente lo que el writer hace
+            // por sus llamadores — es exactamente el olvido contra el que
+            // advierte el encabezado de `@/lib/members/write`. Y acá pesa más
+            // que en la edición del panel: la ficha de un ex socio PUEDE tener
+            // cuenta, y el reingreso le copia encima la dirección declarada en
+            // la solicitud. Sin esto, el socio quedaba con el padrón mostrando
+            // una casilla y el login pidiendo la otra —la vieja, que además le
+            // toma la cuenta por recupero de contraseña— y nadie lo compensaba
+            // después: la invitación de acceso del asiento saltea toda ficha que
+            // ya tenga cuenta.
+            //
+            // `userId` sale de la fila LEÍDA porque el update no lo toca.
+            const after = { email: updated.email, status: updated.status, userId: member.userId };
+            await revokeStaleMemberTokens(tx, member.id, member, after);
+            // Puede abortar la transacción entera con `MemberEmailConflictError`
+            // (la dirección declarada ya es la de otra cuenta): se traduce abajo
+            // a un `{ ok: false }` de ESTA solicitud, sin tumbar el lote.
+            accountEmailMove = await syncAccountEmail(tx, member, after);
+
             // Contracara del cerrojo de la baja: sin esto el socio readmitido
             // tendría el padrón en orden y el portal cerrado.
             if (member.userId) {
@@ -124,6 +154,10 @@ export function makeApplicationRecorder(db: PrismaClient) {
             await tx.movement.create({
               data: {
                 memberId: member.id, type: "readmission", date: minute.date, minuteId: minute.id,
+                // La categoría se pisa con la solicitada: sin `previousCategory`
+                // el adherente que vuelve como activo no deja rastro de con qué
+                // categoría se había ido.
+                previousCategory: member.category,
                 newCategory: app.requestedCategory, createdById: actorId,
                 detail: `Reingreso vía solicitud web #${app.id}`,
               },
@@ -172,9 +206,28 @@ export function makeApplicationRecorder(db: PrismaClient) {
             data: { memberId },
           });
 
-          return { ok: true as const, applicationId, memberId, memberNumber, reentry };
+          return { ok: true as const, applicationId, memberId, memberNumber, reentry, accountEmailMove };
         });
       } catch (e) {
+        // La dirección declarada en la solicitud ya es la de OTRA cuenta de
+        // acceso. La transacción entera volvió atrás —no se asentó nada de esta
+        // solicitud— y el lote sigue con las demás. El mensaje no nombra ni
+        // describe a la otra cuenta: quién es el titular de esa casilla no es
+        // asunto de esta pantalla (mismo criterio que `MEMBER_WRITE_ERRORS`).
+        if (e instanceof MemberEmailConflictError) {
+          return {
+            ok: false, applicationId,
+            error:
+              `El email declarado en la solicitud #${applicationId} ya es el de otra cuenta de acceso ` +
+              `del sistema, así que el reingreso le mudaría el ingreso del socio a una casilla ajena. ` +
+              `No se asentó nada: revisá que la dirección esté bien escrita.`,
+          };
+        }
+        // El otro rechazo del writer (la ficha quedaría sin email) ya trae su
+        // texto de cara al operador escrito por la capa que conoce la regla.
+        if (e instanceof MemberWriteError) {
+          return { ok: false, applicationId, error: `Solicitud #${applicationId}: ${e.message}` };
+        }
         // Los choques de índice único salen de Prisma en inglés y con la
         // consulta adentro. Acá se traducen a lo único que el operador puede
         // hacer con ellos.

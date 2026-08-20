@@ -18,6 +18,7 @@ const tokensMock = vi.hoisted(() => ({
 const mailerMock = vi.hoisted(() => ({
   sendToMember: vi.fn<(input: Record<string, unknown>) => Promise<void>>(),
 }));
+const noticeMock = vi.hoisted(() => ({ announce: vi.fn(async () => ({})) }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/require-admin", () => ({
@@ -30,6 +31,8 @@ vi.mock("@/lib/applications/record", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/applications/record")>()),
   applicationRecorder: recorderMock,
 }));
+vi.mock("@/lib/members/account-email-notice", () => ({ accountEmailNotice: noticeMock }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers([["x-real-ip", "1.2.3.4"]]) }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -37,6 +40,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
+import { revalidatePath } from "next/cache";
 import { recordApplicationsAction } from "@/app/admin/solicitudes/actions";
 import { audit } from "@/lib/audit";
 
@@ -85,6 +89,7 @@ beforeEach(() => {
   mailerMock.sendToMember.mockResolvedValue(undefined);
   recorderMock.recordOne.mockResolvedValue({
     ok: true, applicationId: 1, memberId: 99, memberNumber: 306, reentry: false,
+    accountEmailMove: null,
   });
 });
 
@@ -149,7 +154,10 @@ describe("el acta huérfana del asiento masivo", () => {
       ok: false, applicationId: 1, error: "Baja por expulsión: el reingreso está prohibido.",
     });
     const result = await recordApplicationsAction({}, newMinute());
-    expect(result.error).toMatch(/expulsión/);
+    expect(result.error).toMatch(/No se pudo asentar ninguna/);
+    expect(result.failures).toEqual([
+      { id: 1, error: "Baja por expulsión: el reingreso está prohibido." },
+    ]);
     expect(prismaMock.minute.delete).toHaveBeenCalledWith({ where: { id: 77 } });
     expect(audit).not.toHaveBeenCalled();
   });
@@ -162,11 +170,52 @@ describe("el acta huérfana del asiento masivo", () => {
 
   it("con éxito parcial el acta se queda: ya tiene asientos reales adentro", async () => {
     recorderMock.recordOne
-      .mockResolvedValueOnce({ ok: true, applicationId: 1, memberId: 99, memberNumber: 306, reentry: false })
+      .mockResolvedValueOnce({
+        ok: true, applicationId: 1, memberId: 99, memberNumber: 306, reentry: false, accountEmailMove: null,
+      })
       .mockResolvedValueOnce({ ok: false, applicationId: 2, error: "DNI repetido" });
-    const url = await runExpectingRedirect(newMinute(["1", "2"]));
+    const result = await recordApplicationsAction({}, newMinute(["1", "2"]));
     expect(prismaMock.minute.delete).not.toHaveBeenCalled();
-    expect(url).toBe("/admin/solicitudes?asentadas=1&fallidas=1");
+    expect(result).toEqual({ recorded: 1, failures: [{ id: 2, error: "DNI repetido" }] });
+  });
+});
+
+// "3 quedaron sin asentar: revisalas a mano" es una orden sin los medios: en un
+// lote de 20 el operador no tiene cómo deducir CUÁLES. Los ids y los motivos ya
+// existen en el resultado del recorder, así que vuelven a la pantalla.
+describe("qué solicitudes quedaron sin asentar", () => {
+  it("el éxito parcial no redirige: vuelve con el id y el motivo de cada una", async () => {
+    recorderMock.recordOne
+      .mockResolvedValueOnce({
+        ok: true, applicationId: 1, memberId: 99, memberNumber: 306, reentry: false, accountEmailMove: null,
+      })
+      .mockResolvedValueOnce({ ok: false, applicationId: 2, error: "Ya existe un socio con ese DNI." })
+      .mockResolvedValueOnce({ ok: false, applicationId: 3, error: "Baja por expulsión." });
+    const result = await recordApplicationsAction({}, existingMinute(["1", "2", "3"]));
+
+    expect(result.recorded).toBe(1);
+    expect(result.failures).toEqual([
+      { id: 2, error: "Ya existe un socio con ese DNI." },
+      { id: 3, error: "Baja por expulsión." },
+    ]);
+    // La tabla tiene que mostrar ya asentada la que sí entró.
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/admin/solicitudes");
+  });
+
+  it("el éxito completo sí redirige, conservando los filtros de la bandeja", async () => {
+    const fd = existingMinute();
+    fd.append("filtros", "status=pending_board&q=perez&page=2");
+    const url = await runExpectingRedirect(fd);
+    expect(url).toBe("/admin/solicitudes?q=perez&status=pending_board&page=2&asentadas=1");
+  });
+
+  // El querystring de vuelta llega en el POST: se re-parsea con el parser de la
+  // pantalla y no se concatena crudo.
+  it("ignora lo que no sea un filtro reconocido", async () => {
+    const fd = existingMinute();
+    fd.append("filtros", "status=inventado&otra=cosa");
+    const url = await runExpectingRedirect(fd);
+    expect(url).toBe("/admin/solicitudes?asentadas=1");
   });
 });
 
@@ -196,10 +245,15 @@ describe("el lote y su rastro", () => {
   // Ley 25.326). Y la IP sale de X-Real-IP, como en todo el panel.
   it("audita el lote con ids, el acta y la IP, sin datos personales", async () => {
     recorderMock.recordOne
-      .mockResolvedValueOnce({ ok: true, applicationId: 1, memberId: 99, memberNumber: 306, reentry: false })
-      .mockResolvedValueOnce({ ok: true, applicationId: 2, memberId: 7, memberNumber: null, reentry: true })
+      .mockResolvedValueOnce({
+        ok: true, applicationId: 1, memberId: 99, memberNumber: 306, reentry: false, accountEmailMove: null,
+      })
+      .mockResolvedValueOnce({
+        ok: true, applicationId: 2, memberId: 7, memberNumber: null, reentry: true, accountEmailMove: null,
+      })
       .mockResolvedValueOnce({ ok: false, applicationId: 3, error: "no" });
-    await runExpectingRedirect(existingMinute(["1", "2", "3"]));
+    // Éxito parcial: vuelve por el estado del formulario, no por el redirect.
+    await recordApplicationsAction({}, existingMinute(["1", "2", "3"]));
 
     expect(audit).toHaveBeenCalledWith({
       userId: 3, action: "application_record", entity: "application",
@@ -207,5 +261,61 @@ describe("el lote y su rastro", () => {
       ip: "1.2.3.4",
     });
     expect(JSON.stringify(vi.mocked(audit).mock.calls[0][0])).not.toMatch(/Perez|ana@example/);
+  });
+
+  // El lote manda hasta 50 correos EN SERIE (APPLICATIONS_PAGE_SIZE). Si el
+  // request muere por timeout ahí, los asientos societarios ya están firmes en
+  // la base: con la auditoría detrás de los envíos no quedaría ningún rastro de
+  // quién los hizo (CLAUDE.md: toda acción sensible de admin se registra).
+  it("asienta la auditoría ANTES de empezar a mandar correos", async () => {
+    await runExpectingRedirect(existingMinute());
+    expect(mailerMock.sendToMember).toHaveBeenCalled();
+    expect(vi.mocked(audit).mock.invocationCallOrder[0])
+      .toBeLessThan(mailerMock.sendToMember.mock.invocationCallOrder[0]);
+  });
+});
+
+// La contracara de `syncAccountEmail`: el asiento le mudó al socio la dirección
+// con la que ingresa, y eso no puede pasar en silencio. El envío va DESPUÉS del
+// commit y es best-effort — un SMTP lento no puede transcurrir con la
+// transacción abierta, y un correo no se deshace con un rollback.
+describe("el aviso de mudanza de la dirección de ingreso", () => {
+  const withMove = () => {
+    recorderMock.recordOne.mockResolvedValue({
+      ok: true, applicationId: 1, memberId: 99, memberNumber: null, reentry: true,
+      accountEmailMove: { from: "vieja@example.com", to: "ana@example.com" },
+    });
+  };
+
+  it("le avisa a la casilla anterior con la dirección que la transacción se llevó puesta", async () => {
+    withMove();
+    await runExpectingRedirect(existingMinute());
+    expect(noticeMock.announce).toHaveBeenCalledWith({
+      member: MEMBER, previousEmail: "vieja@example.com", actorId: 3,
+    });
+  });
+
+  it("deja el hecho asentado, con ids y sin una sola dirección", async () => {
+    withMove();
+    await runExpectingRedirect(existingMinute());
+    const entry = vi.mocked(audit).mock.calls[0][0];
+    expect(entry.detail).toMatchObject({ loginEmailMoved: [1] });
+    expect(JSON.stringify(entry)).not.toMatch(/vieja@|ana@example/);
+    // Y el asiento va primero: el aviso es un correo y puede colgarse.
+    expect(vi.mocked(audit).mock.invocationCallOrder[0])
+      .toBeLessThan(noticeMock.announce.mock.invocationCallOrder[0]);
+  });
+
+  it("no lo menciona en la auditoría cuando no se movió ninguna dirección", async () => {
+    await runExpectingRedirect(existingMinute());
+    expect(vi.mocked(audit).mock.calls[0][0].detail).not.toHaveProperty("loginEmailMoved");
+    expect(noticeMock.announce).not.toHaveBeenCalled();
+  });
+
+  it("un fallo del aviso no tumba el asiento ya firme", async () => {
+    withMove();
+    noticeMock.announce.mockRejectedValueOnce(Object.assign(new Error("smtp"), { code: "ECONN" }));
+    const url = await runExpectingRedirect(existingMinute());
+    expect(url).toBe("/admin/solicitudes?asentadas=1");
   });
 });

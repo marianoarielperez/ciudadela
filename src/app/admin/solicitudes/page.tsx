@@ -61,16 +61,18 @@ export default async function SolicitudesPage(props: {
   const recordable = (status: string) => (RECORDABLE_STATUSES as readonly string[]).includes(status);
   const selectableIds = rows.filter((r) => recordable(r.status)).map((r) => r.id);
 
-  // Resultado del asiento anterior, que llega por la URL del redirect.
+  // Resultado del asiento anterior, que llega por la URL del redirect. Sólo el
+  // éxito COMPLETO redirige: el parcial vuelve por el estado del formulario, que
+  // es el único lugar donde entran los motivos de las que no se asentaron.
   const recorded = Number(sp.asentadas);
-  const failedCount = Number(sp.fallidas);
 
   // Los links de paginación conservan los filtros vigentes: sin esto, pasar a la
   // página 2 de una búsqueda devolvería la página 2 de la bandeja entera.
+  const filtersQs = new URLSearchParams(
+    Object.entries(filters).map(([k, v]) => [k, String(v)]),
+  );
   const pageHref = (n: number) => {
-    const qs = new URLSearchParams(
-      Object.entries(filters).map(([k, v]) => [k, String(v)]),
-    );
+    const qs = new URLSearchParams(filtersQs);
     if (n > 1) qs.set("page", String(n));
     const s = qs.toString();
     return s ? `/admin/solicitudes?${s}` : "/admin/solicitudes";
@@ -166,10 +168,8 @@ export default async function SolicitudesPage(props: {
       />
 
       {Number.isInteger(recorded) && recorded > 0 && (
-        <FormMessage kind={failedCount > 0 ? "warning" : "success"} box>
+        <FormMessage kind="success" box>
           {`${recorded} ${recorded === 1 ? "solicitud asentada" : "solicitudes asentadas"} en acta.`}
-          {failedCount > 0 &&
-            ` ${failedCount} ${failedCount === 1 ? "quedó" : "quedaron"} sin asentar: revisalas a mano.`}
         </FormMessage>
       )}
 
@@ -222,6 +222,7 @@ export default async function SolicitudesPage(props: {
               action={recordApplicationsAction}
               minutes={minutes}
               selectableIds={selectableIds}
+              filters={pageHref(page).split("?")[1] ?? ""}
             >
               {table}
             </RecordForm>

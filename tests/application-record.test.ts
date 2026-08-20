@@ -56,6 +56,10 @@ type FakeConfig = {
   // El DNI de Member es UNIQUE: una ficha vieja con ese documento hace que el
   // create explote con P2002, en inglés y en medio de un asiento societario.
   failMemberCreateP2002?: boolean;
+  /** La cuenta de acceso vinculada a la ficha (`member.userId`). */
+  account?: { id: number; email: string };
+  /** Id de OTRA cuenta que ya tiene la dirección declarada en la solicitud. */
+  emailTakenBy?: number;
 };
 
 function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeConfig = {}) {
@@ -71,6 +75,7 @@ function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeC
     applicationUpdates: [] as Row[],
     subscriptionUpdates: [] as Row[],
     userUpdates: [] as Row[],
+    tokenDeletes: [] as Row[],
   };
 
   // Igual que el fake de tests/member-service.test.ts: un passthrough no
@@ -113,9 +118,31 @@ function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeC
       },
     },
     user: {
+      // Dos consultas distintas de `syncAccountEmail`: la cuenta del socio (por
+      // id) y la guarda de colisión (por email).
+      findUnique: async ({ where }: { where: { id?: number; email?: string } }) => {
+        if (where.id !== undefined) {
+          return config.account && config.account.id === where.id ? { ...config.account } : null;
+        }
+        if (where.email !== undefined) {
+          if (config.emailTakenBy !== undefined) return { id: config.emailTakenBy, email: where.email };
+          if (config.account && config.account.email.toLowerCase() === where.email.toLowerCase()) {
+            return { ...config.account };
+          }
+        }
+        return null;
+      },
       update: async ({ where, data }: { where: { id: number }; data: Row }) => {
         state.userUpdates.push({ id: where.id, ...data });
         return { id: where.id, ...data };
+      },
+    },
+    // Lo usan las dos invariantes de la dirección: la revocación de los enlaces
+    // de ficha y la del recupero de la cuenta.
+    actionToken: {
+      deleteMany: async ({ where }: { where: Row }) => {
+        state.tokenDeletes.push(where);
+        return { count: 1 };
       },
     },
     member: {
@@ -338,6 +365,107 @@ describe("el asiento de un REINGRESO", () => {
     await record(db);
     expect(state.memberUpdates[0]).toMatchObject({
       email: "nueva@example.com", emailStatus: "declared", emailVerifiedAt: null,
+    });
+  });
+
+  // La categoría se pisa con la solicitada, así que sin `previousCategory` el
+  // adherente que vuelve como activo no deja rastro de con qué categoría se fue.
+  it("deja asentada en el movimiento la categoría con la que el socio se había ido", async () => {
+    const { db, state } = makeFakeDb({ status: "pending_board", memberId: 7 });
+    await record(db);
+    expect(state.movementCreates[0]).toMatchObject({
+      type: "readmission", previousCategory: "adherent", newCategory: "active",
+    });
+  });
+
+  // ── La dirección de INGRESO en el reingreso ─────────────────────────────────
+  // La ficha de un ex socio PUEDE tener cuenta, y el asiento le copia encima la
+  // dirección declarada en la solicitud. `User.email` es la dirección que puede
+  // TOMAR la cuenta por recupero de contraseña: si se queda en la casilla vieja,
+  // el socio no ingresa con la dirección que muestra el padrón y quien controle
+  // la vieja le restablece la contraseña cuando quiera. Nadie lo compensa
+  // después: la invitación de acceso del asiento saltea toda ficha con cuenta.
+  describe("cuando el ex socio con cuenta vuelve declarando otra dirección", () => {
+    const withAccount = () =>
+      makeFakeDb(
+        { status: "pending_board", memberId: 7, emailVerifiedAt: null, email: "nueva@example.com" },
+        {
+          member: { ...WITHDRAWN_MEMBER, userId: 55, email: "vieja@example.com" },
+          account: { id: 55, email: "vieja@example.com" },
+        },
+      );
+
+    it("le lleva la dirección nueva a la cuenta de acceso, en la misma transacción", async () => {
+      const { db, state } = withAccount();
+      const result = await record(db);
+
+      expect(result).toMatchObject({ ok: true, memberId: 7 });
+      expect(state.userUpdates).toContainEqual({ id: 55, email: "nueva@example.com" });
+      // Y la cuenta se reactiva igual: son dos escrituras distintas sobre User.
+      expect(state.userUpdates).toContainEqual({ id: 55, active: true });
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("revoca los enlaces que la dirección vieja ya no autoriza", async () => {
+      const { db, state } = withAccount();
+      await record(db);
+      // Los de la FICHA (verificación e invitación) y el de RECUPERO de la
+      // cuenta, que cuelga del userId y no del memberId.
+      expect(state.tokenDeletes).toContainEqual({
+        memberId: 7, purpose: { in: ["email_verification", "password_invitation"] }, usedAt: null,
+      });
+      expect(state.tokenDeletes).toContainEqual({
+        userId: 55, purpose: { in: ["password_reset"] }, usedAt: null,
+      });
+    });
+
+    // La dirección anterior no queda en ninguna fila después del commit, así que
+    // el aviso de mudanza (que va por correo, fuera de la transacción) sólo la
+    // puede recibir por acá.
+    it("devuelve la mudanza para que la action pueda avisarla", async () => {
+      const { db } = withAccount();
+      const result = await record(db);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.accountEmailMove).toEqual({ from: "vieja@example.com", to: "nueva@example.com" });
+    });
+
+    it("no mueve nada si la dirección declarada es la misma que ya tenía", async () => {
+      const { db, state } = makeFakeDb(
+        { status: "pending_board", memberId: 7 },
+        {
+          member: { ...WITHDRAWN_MEMBER, userId: 55 },
+          account: { id: 55, email: "ana@example.com" },
+        },
+      );
+      const result = await record(db);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.accountEmailMove).toBeNull();
+      expect(state.userUpdates).toEqual([{ id: 55, active: true }]);
+      expect(state.tokenDeletes).toEqual([]);
+    });
+
+    // La transacción entera vuelve atrás y el LOTE sigue: el rechazo de una no
+    // puede tirar abajo las otras veinte que aprobó la Comisión Directiva.
+    it("rechaza la solicitud sin escribir nada si esa dirección ya es de otra cuenta", async () => {
+      const { db, state } = makeFakeDb(
+        { status: "pending_board", memberId: 7, email: "nueva@example.com" },
+        {
+          member: { ...WITHDRAWN_MEMBER, userId: 55, email: "vieja@example.com" },
+          account: { id: 55, email: "vieja@example.com" },
+          emailTakenBy: 88,
+        },
+      );
+      const result = await record(db);
+
+      expect(result).toMatchObject({ ok: false, applicationId: 42 });
+      if (result.ok) throw new Error("unreachable");
+      expect(result.error).toMatch(/ya es el de otra cuenta de acceso/);
+      // Ni el mensaje nombra a la otra cuenta ni sale el error de Prisma.
+      expect(result.error).not.toMatch(/88|Unique constraint/);
+      expect(state.memberUpdates).toHaveLength(0);
+      expect(state.userUpdates).toHaveLength(0);
+      expect(state.movementCreates).toHaveLength(0);
+      expect(state.applicationUpdates).toHaveLength(0);
     });
   });
 
