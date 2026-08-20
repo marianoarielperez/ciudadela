@@ -91,10 +91,13 @@ export function makeMpGateway(): MpGateway {
     },
     async getPayment(id) {
       const res = await new Payment(mp()).get({ id });
+      if (typeof res.transaction_amount !== "number") {
+        throw new Error(`El pago ${id} no tiene monto en MP.`);
+      }
       return {
         id: String(res.id ?? id),
         status: res.status ?? "unknown",
-        transactionAmount: res.transaction_amount ?? 0,
+        transactionAmount: res.transaction_amount,
         externalReference: res.external_reference ?? null,
       };
     },

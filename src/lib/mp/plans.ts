@@ -24,12 +24,15 @@ export function makeFeeAmountsReader(deps: Deps) {
   return {
     async getFeeAmounts(): Promise<FeeAmounts | null> {
       if (cached && now() - cached.at < FEE_CACHE_TTL_MS) return cached.value;
-      const [activeId, sharedId] = await Promise.all([
-        deps.config.getString(CONFIG_KEYS.mpPlanActiveId),
-        deps.config.getString(CONFIG_KEYS.mpPlanSharedId),
-      ]);
-      if (!activeId || !sharedId) return cached?.value ?? null;
       try {
+        // La lectura de config va DENTRO del try: si Prisma falla queremos el
+        // mismo stale-on-error que si falla MP, no una promesa rechazada.
+        const [activeId, sharedId] = await Promise.all([
+          deps.config.getString(CONFIG_KEYS.mpPlanActiveId),
+          deps.config.getString(CONFIG_KEYS.mpPlanSharedId),
+        ]);
+        // Ids sin configurar no es un error: no hay monto que servir todavía.
+        if (!activeId || !sharedId) return cached?.value ?? null;
         const [active, shared] = await Promise.all([
           deps.gateway.getPlan(activeId),
           deps.gateway.getPlan(sharedId),
@@ -37,8 +40,9 @@ export function makeFeeAmountsReader(deps: Deps) {
         cached = { value: { active: active.amount, shared: shared.amount }, at: now() };
         return cached.value;
       } catch {
-        // MP caído: el último valor bueno sigue siendo mejor que nada. La
-        // divergencia real plan↔local la vigila el sync del M4 (REG-34).
+        // MP caído (o la config ilegible): el último valor bueno sigue siendo
+        // mejor que nada. La divergencia real plan↔local la vigila el sync
+        // del M4 (REG-34).
         return cached?.value ?? null;
       }
     },

@@ -66,6 +66,16 @@ describe("makeFeeAmountsReader", () => {
     await expect(reader.getFeeAmounts()).resolves.toEqual({ active: 6000, shared: 6000 });
   });
 
+  it("sirve el último valor bueno si falla la lectura de config", async () => {
+    let t = 0;
+    const d = deps();
+    const reader = makeFeeAmountsReader({ ...d, now: () => t });
+    await expect(reader.getFeeAmounts()).resolves.toEqual({ active: 6000, shared: 3000 });
+    d.config.getString.mockRejectedValue(new Error("db down"));
+    t += FEE_CACHE_TTL_MS + 1;
+    await expect(reader.getFeeAmounts()).resolves.toEqual({ active: 6000, shared: 3000 });
+  });
+
   it("devuelve null si MP falla y nunca hubo valor bueno", async () => {
     const getPlan: GetPlanMock = vi.fn(async () => {
       throw new Error("mp down");
