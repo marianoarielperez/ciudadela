@@ -87,8 +87,21 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
     apagó, y un POST armado a mano, no vuelven a pasar por el render. Se lee
     **directo** contra `Configuration`, sin la caché de las páginas públicas: es
     una guarda de autorización y un valor viejo dejaría entrar solicitudes con
-    las asociaciones ya cerradas. Va primero de todo, antes incluso del cupo:
-    si ASOCIATE está cerrado no hay nada que racionar.
+    las asociaciones ya cerradas. Va primero de todo por claridad, no por
+    ahorro: la consulta del cupo es una lectura en memoria que no cobra nada
+    (el cobro es el `record` posterior), así que ponerla antes o después no
+    cambia lo que gasta nadie.
+
+    **Ojo, el interruptor no frena lo ya empezado.** Suspende las altas
+    NUEVAS. Una solicitud creada antes del apagado sigue su curso hasta
+    vencer (7 días): puede subir documentos, y si es de las que van con
+    débito, `startPaymentAction` va a crear igual la suscripción en MP y a
+    cobrar la cuota de ingreso, que no es reembolsable. Es deliberado —el
+    vecino que ya empezó tiene derecho a terminar— pero significa que apagar
+    ASOCIATE no corta los cobros de inmediato: la cola se vacía sola en una
+    semana. Si hace falta un corte inmediato (por ejemplo al abrir un
+    re-empadronamiento), hay que rechazar a mano las solicitudes vivas desde
+    la bandeja.
   - El **rate limit por IP (5/h) es de dos fases**: primero se *consulta* si
     queda cupo (sin gastarlo) y recién después del captcha y de zod se *consume*
     el intento. La separación es deliberada: así un captcha vencido —la ficha
@@ -175,7 +188,7 @@ Acciones:
   con `fecha_ingreso` = fecha del acta. Soporta alta masiva (N solicitudes, 1 acta),
   con el patrón anti-acta-huérfana del padrón: si el lote entero falla, el acta
   recién creada se descarta. Al asentar: se completa `MpSubscription.memberId`, la
-  solicitud pasa a `alta_completada`, se copia el domicilio declarado a la ficha
+  solicitud pasa a `completed`, se copia el domicilio declarado a la ficha
   (y a la cuenta de acceso, si tenía) y **recién ahí sale la invitación de
   acceso**, solo si el email quedó verificado.
 - **Reingreso** (la solicitud traía `memberId`): no se crea socio nuevo. Se

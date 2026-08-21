@@ -110,8 +110,15 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // verdad porque el interruptor es el que suspende ASOCIATE durante el
   // re-empadronamiento (M6) y es el paso final del checklist de lanzamiento.
   //
-  // Va ANTES del rate limit: si las asociaciones están cerradas no hay nada que
-  // racionar, y no tiene sentido cobrarle un intento a quien no puede pasar.
+  // Va primero por claridad, no por ahorro: `allows` es una consulta en memoria
+  // que NO cobra el intento (eso lo hace el `record` de más abajo), así que
+  // ponerla antes o después no le gasta cupo a nadie. Se lee mejor con la
+  // pregunta más barata de responder arriba de todo.
+  //
+  // NO frena lo ya empezado: los pasos 4 y 5 operan con el token de retome
+  // sobre solicitudes que YA existen y no chequean el interruptor, a propósito
+  // (ver docs/05 §2). Apagar ASOCIATE cierra las altas nuevas; la cola viva se
+  // vacía sola al vencer, hasta 7 días después.
   //
   // Lectura DIRECTA con `configReader`, no la cacheada `getAsociateActive`: esa
   // existe para las páginas públicas y se invalida por tag, pero acá es una
