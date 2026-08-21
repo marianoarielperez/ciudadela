@@ -27,8 +27,8 @@ import { parseForm } from "@/lib/forms";
 import { checkoutUrlFor } from "@/lib/mp/checkout";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway } from "@/lib/mp/gateway";
+import { subscriptionReason } from "@/lib/mp/reason";
 import { prisma } from "@/lib/prisma";
-import { SITE } from "@/lib/site";
 import { tokens } from "@/lib/tokens";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -106,17 +106,6 @@ function baseUrl(): string {
 // docs/08 (Ley 25.326). Al log va sólo el código.
 function codeOf(e: unknown): string {
   return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
-}
-
-// El `reason` de la suscripción es texto de cara al vecino: aparece en el
-// checkout de MP y, después, en el resumen de su tarjeta. Se arma con el nombre
-// de la asociación adelante —"SOCIO ACTIVO" a secas, en un resumen bancario, no
-// le dice nada a nadie— y el `reason` del plan atrás, que es el que la CD
-// gobierna desde el panel de MP. MP corta el campo en 255 caracteres.
-function subscriptionReason(planReason: string): string {
-  const suffix = planReason.trim();
-  const base = `Cuota societaria ${SITE.shortName}`;
-  return (suffix ? `${base} — ${suffix}` : base).slice(0, 255);
 }
 
 export async function createApplicationAction(_prev: CreateState, formData: FormData): Promise<CreateState> {
