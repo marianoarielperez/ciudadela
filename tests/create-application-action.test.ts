@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Las actions del wizard son endpoints públicos y ANÓNIMOS: no hay `requireAdmin`
-// que las abra, así que lo único que las protege es el orden Turnstile → rate
-// limit → zod → elegibilidad. Este archivo fija ese orden y fija que el asiento
+// que las abra, así que lo único que las protege es el orden interruptor de
+// ASOCIATE → cupo → Turnstile → zod → elegibilidad. Este archivo fija ese orden
+// (incluida la separación en dos fases del cupo) y fija que el asiento
 // de auditoría no se lleve el DNI ni el email (docs/08, Ley 25.326).
 //
 // `vi.hoisted` porque `vi.mock` se iza al tope del archivo: un `const` común
@@ -16,7 +17,7 @@ const mocks = vi.hoisted(() => {
   }
   return {
     DuplicateLiveApplicationError,
-    prisma: { member: { findUnique: vi.fn() } },
+    prisma: { member: { findUnique: vi.fn() }, configuration: { findUnique: vi.fn() } },
     service: {
       create: vi.fn(),
       findLiveByDni: vi.fn(),
@@ -101,6 +102,8 @@ beforeEach(() => {
   mocks.resendLimiter.allows.mockReturnValue(true);
   mocks.resendTargetLimiter.allows.mockReturnValue(true);
   mocks.verifyTurnstile.mockResolvedValue(true);
+  // `asociate_activo` prendido: es la guarda 0 de la creación (docs/05 §2).
+  mocks.prisma.configuration.findUnique.mockResolvedValue({ key: "asociate_activo", value: true });
   mocks.prisma.member.findUnique.mockResolvedValue(null);
   mocks.service.findLiveByDni.mockResolvedValue(null);
   mocks.service.lastRejectionAt.mockResolvedValue(null);
@@ -124,6 +127,36 @@ describe("createApplicationAction", () => {
     expect(mocks.service.findLiveByDni).not.toHaveBeenCalled();
     // Y un captcha vencido no gasta cupo.
     expect(mocks.createLimiter.record).not.toHaveBeenCalled();
+  });
+
+  it("interruptor de ASOCIATE apagado: no crea nada, no gasta cupo y no llama a Turnstile", async () => {
+    // El chequeo de `page.tsx` es de RENDER: no cubre la pestaña que ya estaba
+    // abierta cuando la CD apagó el interruptor ni un POST armado a mano. La
+    // action tiene que decidir sola, y antes que nada (docs/05 §2).
+    mocks.prisma.configuration.findUnique.mockResolvedValue({
+      key: "asociate_activo",
+      value: false,
+    });
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toMatch(/asociaciones en línea están cerradas/i);
+    expect(result.created).toBeUndefined();
+    expect(mocks.service.create).not.toHaveBeenCalled();
+    // Va antes del rate limit: cerrado no hay nada que racionar.
+    expect(mocks.createLimiter.allows).not.toHaveBeenCalled();
+    expect(mocks.createLimiter.record).not.toHaveBeenCalled();
+    expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+    expect(mocks.prisma.member.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("interruptor ausente en `configuration`: se trata como apagado", async () => {
+    // `getBool` compara estricto contra `true`: fila faltante, `null` o el
+    // string "true" son false. Sin fila el wizard no puede quedar abierto.
+    mocks.prisma.configuration.findUnique.mockResolvedValue(null);
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toMatch(/asociaciones en línea están cerradas/i);
+    expect(mocks.service.create).not.toHaveBeenCalled();
   });
 
   it("limitador agotado: corta antes del captcha y de la base", async () => {
@@ -276,6 +309,24 @@ describe("createApplicationAction", () => {
 });
 
 describe("resendResumeLinkAction", () => {
+  it("sigue reenviando con el interruptor de ASOCIATE apagado", async () => {
+    // Decisión deliberada: el interruptor suspende el ALTA de solicitudes
+    // nuevas, no los trámites en curso. Retomar uno que la vecinal ya aceptó
+    // —y que puede tener una suscripción viva en MP— tiene que seguir siendo
+    // posible, igual que los pasos 4 y 5.
+    mocks.prisma.configuration.findUnique.mockResolvedValue({
+      key: "asociate_activo",
+      value: false,
+    });
+    mocks.service.findLiveByDni.mockResolvedValue({ id: 7, email: EMAIL });
+
+    const result = await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: DNI }));
+    await flushAfter();
+
+    expect(result).toEqual({ done: true });
+    expect(mocks.mailer.sendToApplication).toHaveBeenCalledTimes(1);
+  });
+
   it("contesta lo mismo (y sin tocar la base) exista o no la solicitud", async () => {
     const withApp = await resendResumeLinkAction({}, form({ "cf-turnstile-response": "ok", dni: DNI }));
     // La respuesta sale ANTES de buscar: sin esto, el tiempo delataría al DNI

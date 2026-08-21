@@ -51,6 +51,8 @@ type SubmitState = { error?: string; done?: boolean };
 type PayState = { error?: string; redirectUrl?: string; blocked?: true };
 
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
+const ASOCIATE_CLOSED =
+  "Las asociaciones en línea están cerradas en este momento. Para asociarte, acercate a la sede vecinal.";
 const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
 const BAD_BIRTH_DATE = "La fecha de nacimiento no es válida.";
 const IN_PROGRESS = "Ya tenés una solicitud en trámite. Te podemos reenviar por email el enlace para retomarla.";
@@ -100,6 +102,25 @@ function codeOf(e: unknown): string {
 
 export async function createApplicationAction(_prev: CreateState, formData: FormData): Promise<CreateState> {
   const { ip, userAgent } = await requestMeta();
+
+  // Guarda 0: el interruptor de ASOCIATE (docs/05 §2). `page.tsx` lo chequea al
+  // RENDERIZAR, y eso no alcanza: la pestaña que ya estaba abierta cuando la CD
+  // lo apagó, y un POST armado a mano, no vuelven a pasar por el render. Esta
+  // action es un endpoint público y tiene que decidir por sí misma. Importa de
+  // verdad porque el interruptor es el que suspende ASOCIATE durante el
+  // re-empadronamiento (M6) y es el paso final del checklist de lanzamiento.
+  //
+  // Va ANTES del rate limit: si las asociaciones están cerradas no hay nada que
+  // racionar, y no tiene sentido cobrarle un intento a quien no puede pasar.
+  //
+  // Lectura DIRECTA con `configReader`, no la cacheada `getAsociateActive`: esa
+  // existe para las páginas públicas y se invalida por tag, pero acá es una
+  // guarda de autorización y un `true` viejo dejaría crear solicitudes después
+  // de apagar el interruptor. Mismo criterio que el panel (ver el comentario de
+  // src/lib/config.ts sobre caché vs. lectura directa).
+  if (!(await configReader.getBool(CONFIG_KEYS.asociateActivo))) {
+    return { error: ASOCIATE_CLOSED };
+  }
 
   // El orden es `allows` → captcha → formato → `record` → padrón.
   //
@@ -254,6 +275,13 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
 //      Son DOS —por IP y por DNI pedido— porque el techo por origen no protege
 //      a un vecino concreto si el atacante rota de IP (ver los comentarios de
 //      los dos limitadores).
+//
+// A PROPÓSITO no lleva la guarda del interruptor de ASOCIATE: reenviar el enlace
+// de una solicitud que YA existe no es asociarse. El interruptor suspende el
+// alta de solicitudes nuevas; los trámites en curso —incluidos los que ya tienen
+// una suscripción viva en Mercado Pago— tienen que poder terminarse, igual que
+// los pasos 4 y 5, que tampoco lo chequean. Sumarla acá dejaría al vecino sin
+// forma de retomar un trámite que la vecinal ya le aceptó.
 export async function resendResumeLinkAction(_prev: ResendState, formData: FormData): Promise<ResendState> {
   const { ip } = await requestMeta();
 

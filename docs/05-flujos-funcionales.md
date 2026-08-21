@@ -80,11 +80,27 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
 **Paso 3 — Tus datos**
 - Nombre y apellido, DNI, fecha de nacimiento (validar 18+), estado civil,
   nacionalidad, ocupación, teléfono, email (con confirmación de tipeo).
-- Orden de las guardas al enviar: **interruptor de ASOCIATE → Turnstile → rate
-  limit por IP (5/h) → zod → bloqueos por DNI → creación**. Validar la forma
-  (zod) antes de consultar el padrón no debilita el anti-enumeración —para
-  llegar al chequeo hay que haber pasado Turnstile igual— y evita que tres
-  errores de tipeo le quemen al vecino los 5 intentos de la hora.
+- Orden de las guardas al enviar: **interruptor de ASOCIATE → consulta del cupo
+  → Turnstile → zod → consumo del cupo → bloqueos por DNI → creación**.
+  - El **interruptor** (`asociate_activo`) se revalida en la server action, no
+    sólo al renderizar la página: la pestaña que quedó abierta cuando la CD lo
+    apagó, y un POST armado a mano, no vuelven a pasar por el render. Se lee
+    **directo** contra `Configuration`, sin la caché de las páginas públicas: es
+    una guarda de autorización y un valor viejo dejaría entrar solicitudes con
+    las asociaciones ya cerradas. Va primero de todo, antes incluso del cupo:
+    si ASOCIATE está cerrado no hay nada que racionar.
+  - El **rate limit por IP (5/h) es de dos fases**: primero se *consulta* si
+    queda cupo (sin gastarlo) y recién después del captcha y de zod se *consume*
+    el intento. La separación es deliberada: así un captcha vencido —la ficha
+    de Turnstile dura 5 minutos y el paso 3 puede llevar más— y los errores de
+    tipeo (son ~16 campos y el formulario reporta uno por vez) no le queman al
+    vecino los 5 intentos de la hora. El intento se cobra justo antes de la
+    primera consulta al padrón, que es lo único que hay que racionar.
+  - Validar la forma (zod) antes de consultar el padrón no debilita el
+    anti-enumeración: la validez de FORMATO no depende del padrón (es zod sobre
+    el POST, sin consulta), cada intento sigue costando un captcha resuelto —el
+    token de Turnstile es de un solo uso— y todo lo que toca el padrón sigue
+    detrás del captcha y del cupo ya consumido.
 - La creación corre dentro de una transacción que revalida la invariante **"una
   sola solicitud viva por DNI"** (MySQL no tiene índices parciales).
 
@@ -120,16 +136,16 @@ quien golpea el formulario con DNIs ajenos no puede deducir nada del padrón.
   - Se crea la suscripción por API (`/preapproval` con `external_reference` =
     solicitud, ver doc 06) y se redirige al checkout de MP para autorizar.
   - Al volver + webhook de autorización y primer pago OK → estado
-    `aprobada_pendiente_acta` → pantalla y email: "¡Bienvenido/a! Tu solicitud fue
+    `approved_pending_minute` → pantalla y email: "¡Bienvenido/a! Tu solicitud fue
     **aceptada**. El alta formal se asentará en la próxima reunión de la Comisión
     Directiva y ahí quedará registrada tu fecha de ingreso."
     La aceptación llega **siempre por webhook**, nunca por el retorno del
     checkout: el `back_url` solo dice "estamos confirmando tu pago" y sondea el
     estado.
-  - Abandono del checkout: la solicitud queda `pendiente_pago`; el cron manda
+  - Abandono del checkout: la solicitud queda `pending_payment`; el cron manda
     **un** recordatorio con el enlace de retome y a los 7 días expira (§10).
 - Rama sin débito (Adherente que no adhiere):
-  - Envío directo → `pendiente_cd` → email "Tu solicitud fue recibida y será
+  - Envío directo → `pending_board` → email "Tu solicitud fue recibida y será
     tratada por la Comisión Directiva".
 
 **Cuándo sale cada correo** (desvío acordado respecto de la versión original de
@@ -153,7 +169,7 @@ visor de documentos e historial de auditoría. Los documentos se sirven por
 asiento de auditoría **por cada visualización** (Ley 25.326, `docs/08`).
 
 Acciones:
-- **Asentar en acta** (para `aprobada_pendiente_acta` y para aprobar `pendiente_cd`):
+- **Asentar en acta** (para `approved_pending_minute` y para aprobar `pending_board`):
   selección múltiple de solicitudes → elegir/crear Acta (tipo CD, número, fecha) →
   se crean Socio + Membresía (número siguiente del libro abierto) + Movimiento alta
   con `fecha_ingreso` = fecha del acta. Soporta alta masiva (N solicitudes, 1 acta),
@@ -189,7 +205,7 @@ Acciones:
   ficha cuando hay socio, y de la fecha de decisión de la propia solicitud
   rechazada cuando no lo hay.
 - **Solicitud revivida por un pago tardío**: cuando un pago aprobado llega después
-  del vencimiento, la solicitud vuelve a `aprobada_pendiente_acta` (ver `docs/06`
+  del vencimiento, la solicitud vuelve a `approved_pending_minute` (ver `docs/06`
   §4) y queda **marcada**: aviso en el detalle y, cuando la suscripción figura
   cancelada, badge rojo **"Sin débito"** en la bandeja. Al expirar, el cron
   canceló la suscripción, así que hay que rehacerla a mano antes de asentar el
@@ -340,13 +356,17 @@ ${CRON_SECRET}` (comparación timing-safe; sin la variable el endpoint responde
 503). Lo dispara el crontab del VPS, no la app (`docs/03`, bloque copiable en
 `docs/11`). Cada corrida:
 
-1. **Recordatorio de pago** — solicitudes en `pendiente_pago` creadas hace 3 días
+1. **Recordatorio de pago** — solicitudes en `pending_payment` creadas hace 3 días
    o más y sin recordatorio previo: email con el enlace de retome, y se sella la
    fecha para no repetirlo nunca.
-2. **Expiración** — solicitudes en `iniciada` o `pendiente_pago` sin actividad
-   hace 7 días o más: pasan a `vencida` y, si tenían suscripción, se cancela en MP
-   best-effort (si MP falla queda contado, no bloquea la corrida).
-   `aprobada_pendiente_acta` y `pendiente_cd` **no vencen nunca**: ahí la pelota
+2. **Expiración** — solicitudes en `started` o `pending_payment` **creadas hace 7
+   días o más**: pasan a `expired` y, si tenían suscripción, se cancela en MP
+   best-effort (si MP falla queda contado, no bloquea la corrida). El corte es
+   por `createdAt`, **no** por última actividad: el vecino que retoma el trámite
+   el día 6 y sube documentos vence igual en la corrida del día 7. Es
+   deliberado —el plazo es del trámite, no de la sesión— pero conviene tenerlo
+   presente al leer los contadores.
+   `approved_pending_minute` y `pending_board` **no vencen nunca**: ahí la pelota
    la tiene la Comisión Directiva, y al vecino no se le puede caer una solicitud
    por una demora que no es suya.
 3. Devuelve `{reminded, expired, errors}` y deja asiento de auditoría de la

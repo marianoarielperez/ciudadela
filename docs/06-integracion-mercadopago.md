@@ -42,16 +42,26 @@ Cargarlos a mano es explícito y determinista, y el instructivo de `docs/11`
 explica de dónde salen.
 
 El sistema NO fija montos: `src/lib/mp/plans.ts` los **lee por API** (get por id)
-y cachea **24 h** (`unstable_cache`, tag `mp-plans`). Si la API falla y no hay
-caché, el paso 2 del wizard muestra un error y **no deja avanzar**: nunca se
-inventa un monto. Cuando la CD actualiza un plan, el cambio se propaga a las
+y los cachea **24 h**. La caché es una variable **en memoria del módulo** —no
+`unstable_cache` ni ningún tag de Next—: vive dentro del proceso de Node, se
+pierde en cada `pm2 restart` y **no se puede invalidar desde afuera**. Es
+sostenible porque la app corre en **un solo proceso** (`docs/03`); con varias
+instancias cada una tendría su propia copia y podrían mostrar montos distintos.
+Además la caché es **stale-on-error**: si MP (o la lectura de configuración)
+falla, se sigue sirviendo el último valor bueno en vez de romper el paso 2. Si la
+API falla y **nunca** hubo un valor cacheado, el paso 2 del wizard muestra un
+error y **no deja avanzar**: nunca se inventa un monto.
+
+Cuando la CD actualiza un plan, el cambio se propaga a las
 suscripciones asociadas por MP; el sync diario del Módulo 4 detecta la
 divergencia con la tabla local `ValorCuota` y pide al admin registrar el nuevo
 valor con su acta (REG-34).
 
 > Deuda anotada en el Módulo 3: cambiar los ids de plan en `/admin/configuracion`
 > **no invalida** la caché de montos, así que el wizard puede mostrar hasta 24 h
-> el monto del plan anterior. Se cierra en el Módulo 4 junto con la pantalla de
+> el monto del plan anterior. Y como la caché es de proceso, **no alcanza con un
+> `updateTag`**: hoy la única forma de forzar la relectura es reiniciar la app
+> (`pm2 restart sigev`). Se cierra en el Módulo 4 junto con la pantalla de
 > valores de cuota.
 
 ### 2. Suscripciones (débito automático) creadas por el sistema
@@ -69,9 +79,11 @@ estado. La suscripción se registra en `MpSubscription` con su `applicationId`,
 y el `memberId` se completa recién al asentar el alta en acta.
 
 Toda la API de MP se consume detrás de `src/lib/mp/gateway.ts`
-(`makeMpGateway(deps)`): el dominio ve una interfaz propia —`getPlan`,
-`createPreapproval`, `cancelPreapproval`, `getPayment`, `getAuthorizedPayment`—
-y los tests mockean esa interfaz, nunca el SDK ni la red.
+(`makeMpGateway()`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno). El
+dominio ve una interfaz propia de **siete** métodos —`getPlan`,
+`createPreapproval`, `cancelPreapproval`, `updatePreapprovalAmount`
+(el que usa la recategorización), `getPreapproval`, `getPayment` y
+`getAuthorizedPayment`— y los tests mockean esa interfaz, nunca el SDK ni la red.
 
 ### 3. Links de pago puntuales (Checkout Pro) — Módulo 4
 Para cuotas atrasadas, aportes voluntarios y pagos sueltos: `POST /checkout/preferences`

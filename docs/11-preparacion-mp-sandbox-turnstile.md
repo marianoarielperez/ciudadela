@@ -1,6 +1,6 @@
 # 11 — Preparación de Mercado Pago (sandbox) y Cloudflare Turnstile
 
-Instructivo operativo para Mariano. Al terminar vas a tener los **7 valores**
+Instructivo operativo para Mariano. Al terminar vas a tener los **8 valores**
 de la tabla final para pegar en el `.env` local y en el del VPS. Nada de esto
 toca la cuenta real ni mueve plata: todo es en modo prueba.
 
@@ -168,10 +168,11 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 |---|---|---|
 | `MP_ACCESS_TOKEN` | Parte B (Access Token `APP_USR-...` del vendedor de prueba) | `.env` local y del VPS |
 | `MP_WEBHOOK_SECRET` | Parte D (clave secreta del panel de webhooks) | `.env` del VPS (local no recibe webhooks) |
-| `mp_plan_active_id` | Parte C, primer curl | `/admin/configuracion` |
-| `mp_plan_shared_id` | Parte C, segundo curl | `/admin/configuracion` |
+| `mp_plan_active_id` | Parte C, `id` que devuelve el bloque del plan "SOCIO ACTIVO" | `/admin/configuracion` |
+| `mp_plan_shared_id` | Parte C, `id` que devuelve el bloque del plan "SOCIO ADHERENTE/COLABORADOR" | `/admin/configuracion` |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Parte E (o dummy en local) | `.env` local y del VPS |
 | `TURNSTILE_SECRET_KEY` | Parte E (o dummy en local) | `.env` local y del VPS |
+| `CRON_SECRET` | lo generás vos: `openssl rand -hex 32` (cualquier cadena larga y aleatoria sirve) | `.env` del VPS **y** el crontab de la Parte H — los dos tienen que decir lo mismo |
 | `EMAIL_ALLOWLIST` | tus dos casillas de prueba, separadas por coma | `.env` del VPS (se BORRA en el lanzamiento) |
 
 `EMAIL_ALLOWLIST` mientras dure la etapa de pruebas:
@@ -195,8 +196,9 @@ EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
 
 ## Parte H — Crontab del VPS (al desplegar el M3)
 
-El endpoint `/api/cron/applications` manda el recordatorio de pago a los 3 días y
-expira a los 7 las solicitudes abandonadas, cancelando la suscripción en MP. Sin
+El endpoint `/api/cron/applications` manda el recordatorio de pago a las solicitudes
+creadas hace 3 días o más, y expira las creadas hace 7 días o más (el corte va por
+fecha de creación, no por última actividad), cancelando la suscripción en MP. Sin
 crontab **no corre solo**: las solicitudes abandonadas se quedan vivas para
 siempre y el débito de una que nadie completó nunca se cancela.
 

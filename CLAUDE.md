@@ -86,10 +86,12 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 
 ## Patrones que estrenó el Módulo 3 (reutilizables)
 
-- **Servicios externos detrás de una factory propia.** `makeMpGateway(deps)`
-  (`src/lib/mp/gateway.ts`) expone `getPlan`, `createPreapproval`,
-  `cancelPreapproval`, `getPayment`, `getAuthorizedPayment`. El dominio **nunca**
-  ve el SDK de Mercado Pago, y los tests mockean esa interfaz: ni SDK ni red.
+- **Servicios externos detrás de una factory propia.** `makeMpGateway()`
+  (`src/lib/mp/gateway.ts`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno)
+  expone siete métodos: `getPlan`, `createPreapproval`, `cancelPreapproval`,
+  `updatePreapprovalAmount`, `getPreapproval`, `getPayment` y
+  `getAuthorizedPayment`. El dominio **nunca** ve el SDK de Mercado Pago, y los
+  tests mockean esa interfaz: ni SDK ni red.
   Mismo criterio para cualquier proveedor que venga después.
 - **Las guardas globales van en el transporte, no en los llamadores.**
   `EMAIL_ALLOWLIST` envuelve el transporte de Nodemailer, así que cubre wizard,
