@@ -190,9 +190,12 @@ export const passwordResetIpLimiter = createRateLimiter({
  *  el atacante rota de origen. Lo que raciona es la inundación del buzón de un
  *  socio desde el formulario público.
  *
- *  Cinco por hora y no tres: este techo es lo único que le puede gastar los
- *  pedidos a un socio que no pidió nada (Turnstile sigue diferido al M3), así
- *  que conviene que sobre. Es además el que fija cuántos enlaces de recupero
+ *  Cinco por hora y no tres: este techo es lo que le puede gastar los pedidos a
+ *  un socio que no pidió nada, así que conviene que sobre. (Cuando se eligió el
+ *  número era además lo ÚNICO que protegía la casilla, porque el formulario no
+ *  tenía captcha; desde el 21/08/2026 lo tiene, pero Turnstile encarece el
+ *  intento automatizado y no raciona al humano persistente, así que el techo se
+ *  mantiene tal cual.) Es además el que fija cuántos enlaces de recupero
  *  pueden convivir vivos para una misma cuenta, porque emitir ya no revoca el
  *  anterior (ver `auth/password-reset.ts:request`): con media hora de TTL, como
  *  mucho cinco, todos hacia la misma casilla.

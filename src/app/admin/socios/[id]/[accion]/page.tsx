@@ -12,6 +12,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
+import { AUTO_DEBIT_WARNINGS, hasLiveAutoDebit } from "@/lib/members/auto-debit";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "@/lib/members/rules";
 import { electionsOngoing } from "@/lib/members/service";
@@ -51,7 +52,7 @@ function blockedBy(r: { ok: true } | { ok: false; error: string }): string | und
   return r.ok ? undefined : r.error;
 }
 
-function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
+function screenFor(slug: Slug, member: Member, elections: boolean, autoDebit: boolean): Screen {
   switch (slug) {
     case "baja":
       return {
@@ -59,6 +60,11 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
         crumb: "Baja",
         notice: "La baja queda asentada con acta, en el historial y en auditoría. No borra datos.",
         blocked: blockedBy(canWithdraw(member)),
+        // Se muestra aunque la pantalla esté bloqueada, y a propósito: si la
+        // baja ya está hecha y el débito sigue vivo, es todavía más urgente que
+        // el operador lo vea. El aviso no bloquea nada, sólo cuenta lo que este
+        // formulario no hace (ver members/auto-debit.ts).
+        warning: autoDebit ? AUTO_DEBIT_WARNINGS.baja : undefined,
         action: withdrawAction,
         submitLabel: "Registrar baja",
         fields: [
@@ -78,6 +84,9 @@ function screenFor(slug: Slug, member: Member, elections: boolean): Screen {
         crumb: "Cambio de categoría",
         notice: `Categoría actual: ${CATEGORY_LABELS[member.category]}. El cambio no interrumpe la antigüedad (Art. 5° ter).`,
         blocked: blockedBy(canChangeCategory(member, probe, elections)),
+        // La cuota la fija la categoría: cambiarla acá no reajusta el monto que
+        // MP le sigue debitando (ver members/auto-debit.ts).
+        warning: autoDebit ? AUTO_DEBIT_WARNINGS.categoria : undefined,
         action: changeCategoryAction,
         submitLabel: "Cambiar categoría",
         fields: [{ kind: "select", name: "newCategory", label: "Nueva categoría", options }],
@@ -142,14 +151,22 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
   const member = await prisma.member.findUnique({ where: { id: memberId } });
   if (!member) notFound();
 
-  const [minuteRows, elections] = await Promise.all([
+  const [minuteRows, elections, subscriptions] = await Promise.all([
     prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
     electionsOngoing(prisma),
+    // Las dos señales del débito vivo: el flag del padrón viene en la ficha, las
+    // suscripciones que el sistema conoce salen de acá. Por qué hacen falta las
+    // dos, en members/auto-debit.ts.
+    prisma.mpSubscription.findMany({ where: { memberId }, select: { status: true } }),
   ]);
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
-  const screen = screenFor(accion as Slug, member, elections);
+  const autoDebit = hasLiveAutoDebit({
+    autoDebit: member.autoDebit,
+    subscriptionStatuses: subscriptions.map((s) => s.status),
+  });
+  const screen = screenFor(accion as Slug, member, elections, autoDebit);
 
   return (
     <div className="max-w-2xl space-y-4">

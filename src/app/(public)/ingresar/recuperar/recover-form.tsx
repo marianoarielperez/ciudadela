@@ -3,11 +3,12 @@
 import { useActionState, useState } from "react";
 
 import { recoverAction, type RecoverState } from "./actions";
+import { TurnstileWidget } from "@/components/public/turnstile-widget";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function RecoverForm() {
+export function RecoverForm({ siteKey }: { siteKey: string }) {
   const [state, formAction, pending] = useActionState<RecoverState, FormData>(recoverAction, {});
   // React 19 resetea el <form action> cuando la server action termina: con el
   // input NO controlado, un email mal escrito volvería en blanco y habría que
@@ -41,6 +42,15 @@ export function RecoverForm() {
           onChange={(e) => setEmail(e.target.value)}
         />
       </div>
+      {/* Adentro del <form>, que es donde el widget inyecta su input oculto
+          `cf-turnstile-response`. `resetKey={state}` renueva el token después de
+          cada respuesta: es de un solo uso, y si no se renovara, corregir un
+          email mal tipeado fallaría por el captcha y no por el tipeo. */}
+      <TurnstileWidget
+        siteKey={siteKey}
+        resetKey={state}
+        unavailable="No podemos tomar el pedido ahora por un problema de configuración del sitio. Probá más tarde o escribinos."
+      />
       {state.error && (
         <p className="text-sm text-red-600" role="alert">
           {state.error}

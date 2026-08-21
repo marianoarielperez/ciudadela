@@ -29,7 +29,7 @@ export default async function IngresarPage(props: {
           Tu contraseña quedó actualizada. Ingresá con la nueva.
         </p>
       )}
-      <LoginForm />
+      <LoginForm siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? ""} />
     </main>
   )
 }

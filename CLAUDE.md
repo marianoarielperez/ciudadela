@@ -30,7 +30,11 @@ Turnstile (de dónde salen las credenciales y el crontab).
 - **Nodemailer + Brevo SMTP** para emails transaccionales
 - **PM2** en producción, puerto **3006**, detrás de Nginx + Cloudflare
 - PDFs de recibos: `pdf-lib` o `pdfkit` en API route del servidor
-- Captcha: **Cloudflare Turnstile** en todos los formularios públicos
+- Captcha: **Cloudflare Turnstile** en todos los formularios públicos ANÓNIMOS —
+  ASOCIATE (alta y reenvío del enlace de retome), `/ingresar` y
+  `/ingresar/recuperar`—. Los que se abren con un token de un solo uso
+  (`/acceso/[token]`, `/ingresar/restablecer/[token]`, `/verificar/[token]`) no
+  lo llevan: el token ya es la barrera, y no hay nada que enumerar sin él
 
 ## Convenciones
 

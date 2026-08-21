@@ -24,7 +24,8 @@
 // El widget inyecta un `<input type="hidden" name="cf-turnstile-response">`
 // DENTRO del form que lo contiene: por eso el componente va adentro del
 // `<form>` y no al lado (la server action lee exactamente ese nombre, ver
-// `verifyTurnstile` en createApplicationAction / resendResumeLinkAction).
+// `verifyTurnstile` en createApplicationAction / resendResumeLinkAction, y en
+// loginAction / recoverAction).
 //
 // El token es de UN SOLO USO y dura ~5 minutos. Si la action rechaza el envío
 // (error de validación, DNI bloqueado, cupo agotado), el token ya se gastó y el
@@ -93,7 +94,23 @@ function loadTurnstileApi(): Promise<void> {
   return loader;
 }
 
-export function TurnstileWidget({ siteKey, resetKey }: { siteKey: string; resetKey?: unknown }) {
+/** Texto de la degradación explicable cuando el captcha no puede renderizarse.
+ *  Es por formulario porque el remedio es distinto: al que se está asociando se
+ *  lo manda a la sede; al socio que ya tiene cuenta, no. */
+const DEFAULT_UNAVAILABLE =
+  "El formulario no está disponible por un problema de configuración del sitio. " +
+  "Escribinos o acercate a la sede para asociarte.";
+
+export function TurnstileWidget({
+  siteKey,
+  resetKey,
+  unavailable = DEFAULT_UNAVAILABLE,
+}: {
+  siteKey: string;
+  resetKey?: unknown;
+  /** Qué se le dice al visitante si no hay site key o si `api.js` no carga. */
+  unavailable?: string;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const widgetId = useRef<string | null>(null);
   // `scriptFailed` es terminal (no hay captcha posible); `notice` es transitorio
@@ -154,8 +171,7 @@ export function TurnstileWidget({ siteKey, resetKey }: { siteKey: string; resetK
   if (!siteKey || scriptFailed) {
     return (
       <FormMessage kind="error" box>
-        El formulario no está disponible por un problema de configuración del sitio.
-        Escribinos o acercate a la sede para asociarte.
+        {unavailable}
       </FormMessage>
     );
   }
