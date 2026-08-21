@@ -80,27 +80,47 @@ export function Field({
     </div>
   );
 }
-export function NavButtons({
-  onBack,
-  backLabel = "Volver",
-  nextLabel = "Continuar",
-  onNext,
-  nextDisabled,
-  submit,
-  pending,
-  pendingLabel = "Enviando…",
-}: {
+// El botón de avance es UNA de dos cosas, nunca las dos: o envía el `<form>`
+// que lo envuelve (`submit`), o corre un callback en el cliente (`onNext`).
+// La unión discriminada lo vuelve imposible por tipos, y eso NO es prolijidad:
+// `type="submit"` + `onClick` juntos son exactamente la forma del bug que se
+// tragó 11 de 12 subidas en producción (ver la cabecera de `step-documents`).
+// Si el `onClick` toca estado, React flushea el render SINCRÓNICAMENTE dentro
+// del despacho del clic —entre el handler y la activation behavior—, el botón
+// puede quedar `disabled` en ese render, y el navegador entonces NO dispara el
+// submit: el clic se pierde sin un solo request y sin un solo mensaje.
+type NavNextProps =
+  | {
+      /** Envía el `<form>` que envuelve al botón. Sin callback de clic. */
+      submit: true;
+      onNext?: undefined;
+    }
+  | {
+      submit?: false;
+      /** Avance del lado del cliente: no hay formulario que enviar. */
+      onNext: () => void;
+    };
+
+type NavButtonsProps = {
   onBack?: () => void;
   backLabel?: string;
   nextLabel?: string;
-  onNext?: () => void;
   nextDisabled?: boolean;
-  submit?: boolean;
   pending?: boolean;
   /** El paso 5 no "envía": va a Mercado Pago. El rótulo de espera tiene que
    *  decir lo que está pasando, si no el vecino cree que ya mandó la solicitud. */
   pendingLabel?: string;
-}) {
+} & NavNextProps;
+
+export function NavButtons(props: NavButtonsProps) {
+  const {
+    onBack,
+    backLabel = "Volver",
+    nextLabel = "Continuar",
+    nextDisabled,
+    pending,
+    pendingLabel = "Enviando…",
+  } = props;
   return (
     <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {onBack ? (
@@ -118,8 +138,8 @@ export function NavButtons({
         </Link>
       )}
       <Button
-        type={submit ? "submit" : "button"}
-        onClick={onNext}
+        type={props.submit ? "submit" : "button"}
+        onClick={props.submit ? undefined : props.onNext}
         disabled={nextDisabled || pending}
         className={cn(CONTROL_HEIGHT, "font-semibold sm:w-auto sm:px-8")}
       >

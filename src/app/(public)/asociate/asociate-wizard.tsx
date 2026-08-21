@@ -237,15 +237,37 @@ export function AsociateWizard(props: {
   //     duplicado (que el server rechaza igual).
   //   - la API del historial y no el router porque acá NO hay a dónde navegar:
   //     el trámite ya está en pantalla. Una navegación de verdad desmontaría el
-  //     wizard vivo —perdiendo el foco que se acaba de llevar al encabezado del
-  //     paso 4— y volvería a pedirle al server datos que la pantalla ya tiene.
-  //     Lo único que falta es la dirección, y eso es exactamente lo que hace.
-  //     Next soporta `history.pushState/replaceState` nativos en el App Router.
+  //     wizard vivo, perdiendo el foco que se acaba de llevar al encabezado del
+  //     paso 4. Lo único que falta es la dirección, y eso es exactamente lo que
+  //     hace. Next soporta `history.pushState/replaceState` nativos en el App
+  //     Router: los parchea para despachar `ACTION_RESTORE`, que se queda con
+  //     el árbol de router que YA está en memoria (el de `/asociate`) y sólo
+  //     cambia la URL canónica.
   //   - segmento de path y no query string: es una credencial, y la ruta que ya
   //     existe la lleva así. Está en el `disallow` de robots.txt, la página se
   //     sirve con `robots: noindex, nofollow`, y el `Referrer-Policy:
   //     strict-origin-when-cross-origin` de `next.config.ts` impide que el token
   //     viaje en el `Referer` hacia otro sitio.
+  //
+  // MEDIDO en el navegador el 21/08/2026, recorriendo /asociate 1→5 de una sola
+  // sesión, sin recargar: en el trámite entero salieron CUATRO requests, y los
+  // cuatro son POST de server action (`Next-Action`) — creación, dos subidas y
+  // envío sin débito—. Después del `replaceState` no sale ninguna petición RSC,
+  // el wizard no se remonta (los nodos del DOM son los mismos antes y después)
+  // y el foco queda en el `<h1>` "Documentación".
+  //
+  // ⚠ ESO DEPENDE DE UNA INVARIANTE QUE NO ESTÁ ESCRITA EN NINGÚN LADO: ninguna
+  // action del wizard revalida. A partir de acá la URL es la de `retomar` pero
+  // el árbol de router del cliente sigue siendo el de `/asociate`, así que todo
+  // POST de action posterior viaja con esa combinación. Mientras las actions no
+  // llamen `revalidatePath`/`revalidateTag`, Next no adjunta payload de flight a
+  // la respuesta y no hay nada que aplicar. Si alguien le agrega una revalidación
+  // a `uploadDocumentAction`, `submitNoDebitAction` o `startPaymentAction`, el
+  // server va a re-renderizar la ruta `retomar` contra el árbol de `/asociate` y
+  // el wizard vivo puede remontarse en medio del trámite —perdiendo el foco, el
+  // paso y el estado de las ranuras—. Si hace falta revalidar algo ahí, cambiar
+  // ANTES este mecanismo (p. ej. `router.replace` con la pérdida de foco
+  // resuelta), no agregar la revalidación y esperar que aguante.
   const createdToken = createState.created?.resumeToken;
   useEffect(() => {
     if (!createdToken) return;
