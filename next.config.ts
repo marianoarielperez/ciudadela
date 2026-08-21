@@ -33,8 +33,9 @@ import type { NextConfig } from "next";
 //   redirect SÍ se reescribe a https://localhost:3006 y aborta (verificado en
 //   la task 16). Si algo así falla en local, es esta directiva — no el código.
 //
-// Orígenes del Módulo 3 (Mercado Pago + Turnstile). Para activarlos, agregar
-// los strings al array — sin espacios mágicos ni cirugía de comentarios.
+// Orígenes del Módulo 3 (Mercado Pago + Turnstile), ya activos. Viven en
+// arrays y no inline para que sumar o sacar un origen sea agregar un string,
+// sin espacios mágicos ni cirugía de comentarios.
 //
 // Mercado Pago (task 21). Hoy el pago sale del sitio por navegación de PRIMER
 // NIVEL a `https://www.mercadopago.com.ar/subscriptions/checkout?...`
