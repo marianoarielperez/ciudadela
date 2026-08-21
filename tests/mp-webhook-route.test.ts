@@ -386,9 +386,33 @@ describe("POST /api/webhooks/mp — fallo de procesamiento", () => {
     expect(await res.json()).toMatchObject({ error: "processing_failed" });
     const patch = update.mock.calls[0][0];
     expect(patch.where).toMatchObject({ id: BigInt(1) });
-    expect(patch.data).toMatchObject({ error: "MP 500" });
+    // El detalle completo, no sólo el mensaje: el procesador llama a MP y el
+    // SDK lanza el cuerpo de la respuesta, no un `Error`, así que antes esta
+    // columna decía "unknown" en el único caso que importaba diagnosticar.
+    expect(patch.data.error).toContain('message="MP 500"');
+    expect(patch.data.error).toContain("mp:webhook");
+    expect(patch.data.error).toContain("topic=payment");
+    expect(patch.data.error.length).toBeLessThanOrEqual(500);
     // No se marca procesado: el reintento tiene que volver a entrar.
     expect(patch.data.processedAt).toBeUndefined();
+  });
+
+  it("un error del SDK de MP (objeto plano, sin `message` propio de Error) deja status y cause", async () => {
+    // Lo que lanza de verdad `mercadopago`: `throw await response.json()`.
+    process_.mockRejectedValue({
+      message: "Invalid preapproval",
+      error: "bad_request",
+      status: 400,
+      cause: [{ code: 3034, description: "payer_email no puede repetirse" }],
+    });
+
+    const res = await POST(webhookRequest());
+
+    expect(res.status).toBe(500);
+    const patch = update.mock.calls[0][0];
+    expect(patch.data.error).toContain("status=400");
+    expect(patch.data.error).toContain("code=bad_request");
+    expect(patch.data.error).toContain("3034: payer_email no puede repetirse");
   });
 
   it("si además falla el update del error, igual responde 500 (no explota)", async () => {

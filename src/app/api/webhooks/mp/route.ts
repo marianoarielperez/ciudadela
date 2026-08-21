@@ -8,6 +8,7 @@
 import type { NextRequest } from "next/server";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { mpErrorLog } from "@/lib/mp/error-log";
 import { validateMpSignature } from "@/lib/mp/signature";
 import { webhookProcessor } from "@/lib/mp/webhook-processor";
 import type { Prisma, WebhookEvent } from "@/generated/prisma/client";
@@ -147,8 +148,17 @@ export async function POST(req: NextRequest) {
     });
     return Response.json({ result }, { status: 200 });
   } catch (e) {
-    const message = e instanceof Error ? e.message.slice(0, 500) : "unknown";
-    await prisma.webhookEvent.update({ where: { id: event.id }, data: { error: message } }).catch(() => {});
+    // El procesador llama a MP (`getPayment`, `getPreapproval`,
+    // `getAuthorizedPayment`) sin atajar nada: un rechazo de la API cae acá. Y
+    // el SDK NO lanza `Error`, así que `e instanceof Error ? e.message :
+    // "unknown"` escribía literalmente "unknown" en la columna —el mismo agujero
+    // de diagnóstico que en `asociate`—. `mpErrorLog` desarma el cuerpo de MP y
+    // enmascara las direcciones antes de que toquen la base o el log.
+    const detail = mpErrorLog("webhook", { topic, dataId, eventId: String(event.id) }, e);
+    console.error("[mp-webhook] el procesamiento falló —", detail);
+    await prisma.webhookEvent
+      .update({ where: { id: event.id }, data: { error: detail.slice(0, 500) } })
+      .catch(() => {});
     return Response.json({ error: "processing_failed" }, { status: 500 });
   }
 }

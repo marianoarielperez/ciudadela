@@ -18,6 +18,7 @@
 // equivocado que nadie ve fallar.
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import type { MemberCategory } from "@/generated/prisma/client";
+import { mpErrorLog } from "./error-log";
 import { mpGateway, type MpGateway } from "./gateway";
 
 export type FeeAmounts = { active: number; shared: number };
@@ -70,7 +71,15 @@ export function makeFeeAmountsReader(deps: Deps) {
         ]);
         cached = { value: { active: active.amount, shared: shared.amount }, at: now() };
         return cached.value;
-      } catch {
+      } catch (e) {
+        // Se loguea aunque el fallo sea "manejado": este catch servía un valor
+        // viejo EN SILENCIO, así que MP rechazando la lectura de los planes era
+        // literalmente invisible hasta que alguien notaba un monto raro en
+        // pantalla. La línea dice qué pasó; el comportamiento no cambia.
+        console.error(
+          "[mp] no se pudieron leer los montos de los planes (se sirve el último valor bueno) —",
+          mpErrorLog("getPlan", { cached: cached ? "sí" : "no" }, e),
+        );
         // MP caído (o la config ilegible): el último valor bueno sigue siendo
         // mejor que nada. La divergencia que vigila el sync del M4 (REG-34) es
         // otra: plan (API) vs. `ValorCuota` (tabla local), la de la pantalla
