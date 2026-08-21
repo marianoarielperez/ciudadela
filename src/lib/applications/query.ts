@@ -126,7 +126,7 @@ export async function fetchApprovedAfterExpiry(
  *  débito vivo. */
 const ACTIVE_SUBSCRIPTION_STATUS = "authorized";
 
-export type LateEntryNotice = "no_debit" | "verify";
+export type LateEntryNotice = "no_debit" | "unknown" | "verify";
 
 /** Qué se puede AFIRMAR sobre una solicitud que revivió (el pago del ingreso
  *  llegó cuando el cron ya la había vencido).
@@ -141,7 +141,16 @@ export type LateEntryNotice = "no_debit" | "verify";
  *
  *  Por eso el aviso se deriva del estado VIVO de la suscripción y no del
  *  asiento (mismo criterio que `pendingCancellation` en el detalle):
- *  - `cancelled` o sin fila → `"no_debit"`: se puede afirmar que no hay débito.
+ *  - `cancelled` → `"no_debit"`: se puede afirmar que no hay débito.
+ *  - sin fila local → `"unknown"`: NO es lo mismo que `cancelled`. Sin
+ *    `preapprovalId` el cron ni siquiera intenta cancelar
+ *    (`if (!app.preapprovalId) continue;` en `cron.ts`), así que la ausencia
+ *    de fila no prueba nada — ni que el débito esté cancelado ni que siga
+ *    vivo. Es justamente el residual de `createPreapproval` (ver
+ *    `asociate/actions.ts`): sale bien en MP pero la transacción local falla,
+ *    y la solicitud queda con `preapprovalId` null y sin `mp_subscriptions`.
+ *    Mismo criterio que `pendingCancellation`, en el detalle: no saber en qué
+ *    estado está es peor que avisar.
  *  - `authorized` (o cualquier otro estado) → `"verify"`: la cancelación pudo
  *    no haberse aplicado, o el débito ya se rehizo. Hay que MIRAR el panel de
  *    MP antes de tocar nada.
@@ -154,22 +163,39 @@ export function lateEntryNotice(
   subscriptionStatus: string | null | undefined,
 ): LateEntryNotice | null {
   if (!hasLateEntry) return null;
-  return subscriptionStatus == null || subscriptionStatus === "cancelled" ? "no_debit" : "verify";
+  if (subscriptionStatus === "cancelled") return "no_debit";
+  if (subscriptionStatus == null) return "unknown";
+  return "verify";
 }
 
-/** ¿La BANDEJA muestra el badge "Sin débito"?
+/** ¿La BANDEJA muestra el badge rojo "Sin débito"?
  *
- *  Sólo en el caso probado (`"no_debit"`). El caso ambiguo se resuelve mirando
- *  MP, que es una acción del detalle —a un clic— y no algo que se pueda hacer
- *  desde una fila de una tabla: un badge de tres palabras no puede explicar
+ *  Sólo en el caso probado (`"no_debit"`). Ni el ambiguo (`"verify"`) ni el
+ *  desconocido (`"unknown"`) entran acá: los dos se resuelven mirando MP, que
+ *  es una acción del detalle —a un clic— y no algo que se pueda hacer desde
+ *  una fila de una tabla; un badge de tres palabras no puede explicar
  *  "verificá antes de gestionar" sin mentirle a quien lo lee de reojo. El
  *  guardrail que la bandeja necesita es el otro: que nadie asiente en acta EN
- *  LOTE un alta que quedó sin débito. */
+ *  LOTE un alta que quedó sin débito. Ver `showsUnknownDebitBadge` para el
+ *  tercer caso. */
 export function showsNoDebitBadge(
   hasLateEntry: boolean,
   subscriptionStatus: string | null | undefined,
 ): boolean {
   return lateEntryNotice(hasLateEntry, subscriptionStatus) === "no_debit";
+}
+
+/** ¿La BANDEJA muestra el badge tenue "Verificar débito"?
+ *
+ *  El caso `"unknown"`: sin fila local no hay nada probado, y sería peor
+ *  callarlo del todo que ofrecer un aviso que no afirma de más. No es el badge
+ *  rojo de `showsNoDebitBadge` —ahí se mentiría "sin débito" sobre un caso que
+ *  no se sabe— sino uno más tenue que sólo pide mirar. */
+export function showsUnknownDebitBadge(
+  hasLateEntry: boolean,
+  subscriptionStatus: string | null | undefined,
+): boolean {
+  return lateEntryNotice(hasLateEntry, subscriptionStatus) === "unknown";
 }
 
 /** ¿El débito está vivo? Expuesto para el detalle, que lo nombra en el aviso. */

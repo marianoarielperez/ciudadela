@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATIONS_PAGE_SIZE, APPROVED_AFTER_EXPIRY_ACTION, applicationsWhere,
   fetchApprovedAfterExpiry, lateEntryNotice, makeApplicationQueries, parseApplicationFilters,
-  parseApplicationsPage, showsNoDebitBadge, showsReentryBadge, subscriptionIsActive,
+  parseApplicationsPage, showsNoDebitBadge, showsReentryBadge, showsUnknownDebitBadge,
+  subscriptionIsActive,
 } from "@/lib/applications/query";
 
 describe("parseApplicationFilters", () => {
@@ -234,9 +235,13 @@ describe("lateEntryNotice", () => {
     expect(lateEntryNotice(true, "cancelled")).toBe("no_debit");
   });
 
-  it("sin fila de suscripción tampoco hay débito que perder", () => {
-    expect(lateEntryNotice(true, null)).toBe("no_debit");
-    expect(lateEntryNotice(true, undefined)).toBe("no_debit");
+  // El caso de la re-revisión: sin fila local no hay NADA probado. El cron ni
+  // siquiera intenta cancelar sin `preapprovalId` (`cron.ts`), así que un null
+  // no es un "cancelled" disfrazado — es "no se sabe", y por eso es un tercer
+  // valor y no cae en `"no_debit"`.
+  it("sin fila de suscripción no se sabe nada, y NO es lo mismo que cancelada", () => {
+    expect(lateEntryNotice(true, null)).toBe("unknown");
+    expect(lateEntryNotice(true, undefined)).toBe("unknown");
   });
 
   // El caso del fix: la cancelación del cron falló, el preapproval sigue
@@ -255,18 +260,46 @@ describe("lateEntryNotice", () => {
 describe("showsNoDebitBadge", () => {
   it("la bandeja afirma 'Sin débito' sólo con la suscripción cancelada", () => {
     expect(showsNoDebitBadge(true, "cancelled")).toBe(true);
-    expect(showsNoDebitBadge(true, null)).toBe(true);
   });
 
-  // Fix 2 de la re-revisión: el asiento es permanente, así que colgando el badge
-  // de él la fila gritaba "Sin débito" para siempre — también después de que el
-  // operador rehiciera la suscripción. Colgando del estado vivo, se apaga solo.
+  // Fix de esta re-revisión: sin fila local no hay nada probado, así que el
+  // badge rojo —que SÍ afirma "sin débito"— no puede encenderse ahí. Antes del
+  // fix un null caía en `"no_debit"` y la bandeja mentía la misma cancelación
+  // que nadie verificó.
+  it("sin fila de suscripción el badge rojo NO se enciende: no está probado", () => {
+    expect(showsNoDebitBadge(true, null)).toBe(false);
+    expect(showsNoDebitBadge(true, undefined)).toBe(false);
+  });
+
+  // Fix 2 de la re-revisión anterior: el asiento es permanente, así que colgando
+  // el badge de él la fila gritaba "Sin débito" para siempre — también después
+  // de que el operador rehiciera la suscripción. Colgando del estado vivo, se
+  // apaga solo.
   it("una vez que la suscripción vuelve a estar activa, el badge se apaga", () => {
     expect(showsNoDebitBadge(true, "authorized")).toBe(false);
   });
 
   it("sin asiento nunca", () => {
     expect(showsNoDebitBadge(false, "cancelled")).toBe(false);
+    expect(showsNoDebitBadge(false, null)).toBe(false);
+  });
+});
+
+// Tercer badge, más tenue: no afirma que falte el débito, sólo pide mirar.
+describe("showsUnknownDebitBadge", () => {
+  it("se enciende exactamente donde el rojo no puede: sin fila local", () => {
+    expect(showsUnknownDebitBadge(true, null)).toBe(true);
+    expect(showsUnknownDebitBadge(true, undefined)).toBe(true);
+  });
+
+  it("no se enciende ni con la suscripción cancelada ni con una viva", () => {
+    expect(showsUnknownDebitBadge(true, "cancelled")).toBe(false);
+    expect(showsUnknownDebitBadge(true, "authorized")).toBe(false);
+    expect(showsUnknownDebitBadge(true, "paused")).toBe(false);
+  });
+
+  it("sin asiento nunca", () => {
+    expect(showsUnknownDebitBadge(false, null)).toBe(false);
   });
 });
 
@@ -289,8 +322,12 @@ describe("el aviso del pago tardío en pantalla", () => {
   const src = (...parts: string[]) =>
     readFileSync(path.resolve(import.meta.dirname, "..", "src", ...parts), "utf8");
   const detail = src("app", "admin", "solicitudes", "[id]", "page.tsx");
-  const [beforeVerify, afterVerify] = detail.split('{revivedEntry && lateEntry === "verify" && (');
-  const noDebitBlock = beforeVerify.split('{revivedEntry && lateEntry === "no_debit" && (')[1];
+  const [beforeUnknown, afterUnknown] = detail
+    .split('{revivedEntry && lateEntry === "unknown" && (');
+  const [afterUnknownHead, afterVerify] = (afterUnknown ?? "")
+    .split('{revivedEntry && lateEntry === "verify" && (');
+  const noDebitBlock = beforeUnknown.split('{revivedEntry && lateEntry === "no_debit" && (')[1];
+  const unknownBlock = afterUnknownHead;
   const verifyBlock = afterVerify?.split("{pendingCancellation")[0];
 
   it("la rama de la suscripción cancelada es la ÚNICA que afirma que no hay débito", () => {
@@ -310,18 +347,51 @@ describe("el aviso del pago tardío en pantalla", () => {
     expect(verifyBlock).not.toContain("se canceló la");
   });
 
-  it("las dos ramas fechan el pago tardío", () => {
-    for (const block of [noDebitBlock, verifyBlock]) {
+  // El caso de esta re-revisión: sin fila local no hay estado que mostrar
+  // (`subscription` es null) ni preapproval que nombrar, así que la rama no
+  // puede reusar el texto de "verify" —imprimiría `figura como «undefined»»—
+  // ni el de "no_debit" —afirmaría una cancelación que nadie probó—. Tiene que
+  // decir la verdad: no se sabe.
+  it("la rama sin fila local no afirma nada sobre el débito, y manda a mirar en MP", () => {
+    expect(unknownBlock).toBeDefined();
+    expect(unknownBlock).toContain("no se sabe");
+    expect(unknownBlock).toContain("panel de Mercado Pago");
+    // Lo que NO puede decir: ni que quedó sin débito, ni que se canceló, ni el
+    // "figura como «undefined»" que saldría de reusar el texto de "verify"
+    // sobre una suscripción null.
+    expect(unknownBlock).not.toContain("quedó sin débito");
+    expect(unknownBlock).not.toContain("se canceló la");
+    expect(unknownBlock).not.toContain("undefined");
+    // Tampoco nombra un preapproval: en este residual `app.preapprovalId` es
+    // null (ver `asociate/actions.ts`), así que no hay id que mostrar.
+    expect(unknownBlock).not.toContain("app.preapprovalId &&");
+  });
+
+  it("las tres ramas fechan el pago tardío", () => {
+    for (const block of [noDebitBlock, unknownBlock, verifyBlock]) {
       expect(block).toContain("formatDateAR(revivedEntry.createdAt)");
       expect(block).toContain("ya estaba vencida");
     }
   });
 
-  // La bandeja no cuelga el badge del asiento pelado: lo cruza con el estado
-  // vivo que ahora viaja en la fila.
-  it("el badge de la bandeja se deriva del estado vivo de la suscripción", () => {
+  // La bandeja no cuelga los badges del asiento pelado: los cruza con el
+  // estado vivo que ahora viaja en la fila.
+  it("los dos badges de la bandeja se derivan del estado vivo de la suscripción", () => {
     const inbox = src("app", "admin", "solicitudes", "page.tsx");
     expect(inbox).toContain("showsNoDebitBadge(revived.has(app.id), app.subscriptionStatus)");
+    expect(inbox).toContain("showsUnknownDebitBadge(revived.has(app.id), app.subscriptionStatus)");
     expect(inbox).not.toContain("{revived.has(app.id) && (");
+  });
+
+  // El badge tenue no puede ser el mismo componente visual que el rojo: se
+  // afirman cosas distintas.
+  it("el badge del caso desconocido usa un variant distinto al rojo de 'Sin débito'", () => {
+    const inbox = src("app", "admin", "solicitudes", "page.tsx");
+    const unknownBadgeBlock = inbox
+      .split("showsUnknownDebitBadge(revived.has(app.id), app.subscriptionStatus)")[1]
+      ?.split("</TableCell>")[0];
+    expect(unknownBadgeBlock).toBeDefined();
+    expect(unknownBadgeBlock).toContain('variant="outline"');
+    expect(unknownBadgeBlock).not.toContain("destructive");
   });
 });

@@ -291,6 +291,25 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 gestionarla con él antes de asentar el alta.
               </FormMessage>
             )}
+            {revivedEntry && lateEntry === "unknown" && (
+              // Tercer caso, distinto de los otros dos: no hay fila local de
+              // suscripción. Sin `preapprovalId` el cron ni siquiera intentó
+              // cancelar (ver `cron.ts`), así que acá no hay NADA probado —ni
+              // que el débito esté cancelado ni que siga vivo. No se puede
+              // reusar el texto de "verify": no hay estado que mostrar
+              // (`subscription` es null) ni preapproval que nombrar. El aviso
+              // dice la verdad: no se sabe, y hay que mirar en MP antes de
+              // gestionar nada. Mismo criterio que `pendingCancellation`, doce
+              // líneas más arriba: sin fila local también avisa.
+              <FormMessage kind="warning" box>
+                El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
+                solicitud ya estaba vencida, y se aceptó igual. Esta solicitud{" "}
+                <strong>no tiene ninguna suscripción de Mercado Pago registrada</strong> en el
+                sistema, así que no se sabe si quedó algún débito activo. Buscá al vecino por DNI
+                o nombre en el panel de Mercado Pago y confirmá si hay un preapproval abierto
+                antes de gestionar uno nuevo.
+              </FormMessage>
+            )}
             {revivedEntry && lateEntry === "verify" && (
               // La otra mitad del mismo caso: el pago llegó tarde, pero la
               // cancelación que el cron intentó al vencer NO figura aplicada. El
