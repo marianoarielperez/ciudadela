@@ -70,6 +70,19 @@ export type ApplicationSnapshot = {
   fullName: string;
 };
 
+/** Cómo crece la lista de documentos ya subidos del paso 4 cuando el server
+ *  acepta uno más.
+ *
+ *  El frente y el dorso se REEMPLAZAN —el store borra el archivo anterior, así
+ *  que volver a subir el frente no puede dejar dos "Frente del DNI" en la
+ *  lista— y los anexos se ACUMULAN, hasta MAX_ANNEXES (el tope lo hace cumplir
+ *  el server; acá sólo se cuenta). La lista es la que decide si el paso 5 se
+ *  habilita, y `annex` aparece repetido a propósito: la ranura muestra
+ *  "2 archivos" contándolo. */
+export function withUploadedType(prev: DocumentType[], type: DocumentType): DocumentType[] {
+  return type !== "annex" && prev.includes(type) ? prev : [...prev, type];
+}
+
 /** El catálogo catastral guarda cinco calles como "Hernandez , Jose": el espacio
  *  antes de la coma es del CSV de origen y no se toca en la base (el padrón y el
  *  panel citan ese nombre tal cual). Acá se limpia sólo para mostrar — el orden

@@ -11,10 +11,15 @@
 // opera con el token de retome. Por eso a partir del paso 4 no se vuelve atrás:
 // reenviar el paso 3 crearía un duplicado (que el server rechaza igual).
 //
-// Regla del estado de las actions: el de las que CAMBIAN la pantalla del wizard
-// —la subida (habilita "Continuar") y el envío sin débito (lleva a la pantalla
-// de recibida)— vive acá, como ya vivía el del paso 3, y se deriva en el render
-// sin efectos. El de `startPaymentAction`, que se va del sitio, vive en el paso.
+// Regla del estado de las actions: vive acá el de las que CAMBIAN la pantalla
+// del wizard —la creación del paso 3 y el envío sin débito, que lleva a la
+// pantalla de recibida—, y se deriva en el render sin efectos. El de
+// `startPaymentAction`, que se va del sitio, vive en el paso 5.
+//
+// La subida del paso 4 NO: cada ranura corre su propia action con su propio
+// `useActionState` (ver el comentario de `step-documents.tsx` — compartir uno
+// entre tres ranuras es el bug que se tragaba los clics de "Subir"). De ahí
+// sólo sube QUÉ documento entró, para habilitar el paso 5.
 //
 // Criterios de diseño de esta pantalla:
 //
@@ -39,7 +44,7 @@ import { useActionState } from "react";
 import type { ApplicationStatus, DocumentType, MemberCategory } from "@/generated/prisma/client";
 import { requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { cn } from "@/lib/utils";
-import { createApplicationAction, submitNoDebitAction, uploadDocumentAction } from "./actions";
+import { createApplicationAction, submitNoDebitAction } from "./actions";
 import { ApplicationStatusScreen } from "./application-status";
 import { BlockedPanel } from "./blocked-panel";
 import { StepCategory } from "./step-category";
@@ -49,6 +54,7 @@ import { StepPersonal } from "./step-personal";
 import { StepResidence } from "./step-residence";
 import {
   FOCUS_RING,
+  withUploadedType,
   type ApplicationSnapshot,
   type AsociateDraft,
   type CreateState,
@@ -56,7 +62,6 @@ import {
   type LegalTexts,
   type StreetOption,
   type SubmitState,
-  type UploadState,
 } from "./wizard-shared";
 
 // La página de retome importa estos tipos desde acá: se re-exportan para no
@@ -136,10 +141,6 @@ export function AsociateWizard(props: {
     createApplicationAction,
     {},
   );
-  const [uploadState, uploadAction, uploading] = useActionState<UploadState, FormData>(
-    uploadDocumentAction,
-    {},
-  );
   const [submitState, submitAction, submitting] = useActionState<SubmitState, FormData>(
     submitNoDebitAction,
     {},
@@ -189,20 +190,18 @@ export function AsociateWizard(props: {
       : null);
 
   // Documentos ya subidos. Se arranca de lo que trajo el retome y se le suma lo
-  // que va aceptando el server, derivándolo en el render por identidad de la
-  // respuesta (mismo idioma que `dismissed`, sin efectos): `useActionState`
-  // devuelve un objeto nuevo por respuesta, así que un re-render cualquiera no
-  // vuelve a contar el mismo archivo.
+  // que va aceptando el server, que le avisa cada ranura del paso 4 cuando SU
+  // subida entra (ver el comentario de `step-documents.tsx`: el estado de envío
+  // es de cada ranura, acá sólo llega el tipo que entró).
+  //
+  // La lista vive ACÁ y no en el paso porque el paso se desmonta al ir al 5:
+  // guardarla adentro haría que volver a la documentación mostrara "Falta" sobre
+  // documentos que ya están en la base.
   const [uploaded, setUploaded] = useState<DocumentType[]>(
     initial?.application?.uploadedTypes ?? [],
   );
-  const [appliedUpload, setAppliedUpload] = useState<UploadState | null>(null);
-  if (uploadState !== appliedUpload && uploadState.uploaded) {
-    setAppliedUpload(uploadState);
-    const type = uploadState.uploaded.type as DocumentType;
-    // El frente y el dorso se REEMPLAZAN (el store borra el anterior); los
-    // anexos se acumulan hasta MAX_ANNEXES.
-    setUploaded((prev) => (type !== "annex" && prev.includes(type) ? prev : [...prev, type]));
+  function addUploaded(type: DocumentType) {
+    setUploaded((prev) => withUploadedType(prev, type));
   }
 
   // La rama sin débito no cambia de página: cuando la action contesta, la
@@ -223,6 +222,57 @@ export function AsociateWizard(props: {
     setDismissed(createState);
     setStep(next);
   }
+
+  // El token de retome tiene que quedar en la DIRECCIÓN apenas la solicitud
+  // existe. Antes vivía sólo en el estado de React: una recarga —F5, o en iOS
+  // simplemente cambiar de app y volver— borraba el trámite, y al reintentar con
+  // el mismo DNI el vecino chocaba con "ya tenés una solicitud en trámite" y
+  // quedaba trabado. Con el token en la URL, recargar vuelve a cargar la
+  // solicitud donde estaba: `/asociate/retomar/[token]` ya rehidrata desde la
+  // base y cae en el paso que corresponde.
+  //
+  // Es `history.replaceState` y no `router.replace` a propósito:
+  //   - `replaceState` y no `pushState` porque el "atrás" no puede volver al
+  //     paso 3 con el formulario cargado: reenviarlo sólo puede terminar en un
+  //     duplicado (que el server rechaza igual).
+  //   - la API del historial y no el router porque acá NO hay a dónde navegar:
+  //     el trámite ya está en pantalla. Una navegación de verdad desmontaría el
+  //     wizard vivo, perdiendo el foco que se acaba de llevar al encabezado del
+  //     paso 4. Lo único que falta es la dirección, y eso es exactamente lo que
+  //     hace. Next soporta `history.pushState/replaceState` nativos en el App
+  //     Router: los parchea para despachar `ACTION_RESTORE`, que se queda con
+  //     el árbol de router que YA está en memoria (el de `/asociate`) y sólo
+  //     cambia la URL canónica.
+  //   - segmento de path y no query string: es una credencial, y la ruta que ya
+  //     existe la lleva así. Está en el `disallow` de robots.txt, la página se
+  //     sirve con `robots: noindex, nofollow`, y el `Referrer-Policy:
+  //     strict-origin-when-cross-origin` de `next.config.ts` impide que el token
+  //     viaje en el `Referer` hacia otro sitio.
+  //
+  // MEDIDO en el navegador el 21/08/2026, recorriendo /asociate 1→5 de una sola
+  // sesión, sin recargar: en el trámite entero salieron CUATRO requests, y los
+  // cuatro son POST de server action (`Next-Action`) — creación, dos subidas y
+  // envío sin débito—. Después del `replaceState` no sale ninguna petición RSC,
+  // el wizard no se remonta (los nodos del DOM son los mismos antes y después)
+  // y el foco queda en el `<h1>` "Documentación".
+  //
+  // ⚠ ESO DEPENDE DE UNA INVARIANTE QUE NO ESTÁ ESCRITA EN NINGÚN LADO: ninguna
+  // action del wizard revalida. A partir de acá la URL es la de `retomar` pero
+  // el árbol de router del cliente sigue siendo el de `/asociate`, así que todo
+  // POST de action posterior viaja con esa combinación. Mientras las actions no
+  // llamen `revalidatePath`/`revalidateTag`, Next no adjunta payload de flight a
+  // la respuesta y no hay nada que aplicar. Si alguien le agrega una revalidación
+  // a `uploadDocumentAction`, `submitNoDebitAction` o `startPaymentAction`, el
+  // server va a re-renderizar la ruta `retomar` contra el árbol de `/asociate` y
+  // el wizard vivo puede remontarse en medio del trámite —perdiendo el foco, el
+  // paso y el estado de las ranuras—. Si hace falta revalidar algo ahí, cambiar
+  // ANTES este mecanismo (p. ej. `router.replace` con la pérdida de foco
+  // resuelta), no agregar la revalidación y esperar que aguante.
+  const createdToken = createState.created?.resumeToken;
+  useEffect(() => {
+    if (!createdToken) return;
+    window.history.replaceState(null, "", `/asociate/retomar/${encodeURIComponent(createdToken)}`);
+  }, [createdToken]);
 
   // Al cambiar de paso, React reusa el nodo del botón "Continuar": el foco se
   // queda ahí, o sea AL FINAL del paso nuevo, y quien navega con teclado sale
@@ -345,9 +395,7 @@ export function AsociateWizard(props: {
             resumeToken={resumeToken}
             category={application.requestedCategory}
             uploaded={uploaded}
-            state={uploadState}
-            formAction={uploadAction}
-            pending={uploading}
+            onUploaded={addUploaded}
             onNext={() => goTo(5)}
           />
         )}
