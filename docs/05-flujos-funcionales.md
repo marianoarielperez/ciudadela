@@ -41,8 +41,20 @@ estaba.
 ## 2. ASOCIATE (wizard público)
 
 Precondición: `asociate_activo=true` y sin re-empadronamiento en curso.
-Todos los pasos con Turnstile validado y aceptación de términos + consentimiento
-de datos personales (textos en Configuracion).
+Aceptación de términos + consentimiento de datos personales (textos en
+`Configuracion`, **texto plano** editable por el superadmin) y **Turnstile
+validado server-side en el paso 3** — que es el único paso que escribe en la
+base y el único que puede filtrar información del padrón. Los pasos 1 y 2 no
+tocan la base; los 4 y 5 ya operan sobre una solicitud creada y se autentican
+con el token de retome.
+
+**Arquitectura**: `/asociate` es una sola ruta con un componente cliente de 5
+pasos. El paso 3 crea la `Application` y devuelve el **token de retome** (crudo
+solo en el cliente; en la base vive su sha256). Un refresh antes del paso 3
+pierde el progreso — son dos pantallas cortas, se aceptó a cambio de no escribir
+filas basura. A partir del paso 3, `/asociate/retomar/[token]` rehidrata la
+solicitud en el paso que corresponda; ese mismo enlace es el `back_url` del
+checkout de MP y el que viaja en el email de recordatorio de pago.
 
 **Paso 1 — ¿Dónde vivís?**
 - Opción A: "En el Barrio Ciudadela" → buscador de calle con autocompletado sobre
@@ -53,7 +65,10 @@ de datos personales (textos en Configuracion).
 **Paso 2 — Categoría**
 - Si Ciudadela: elegir **ACTIVO** ($X/mes obligatoria, voz y voto, puede ocupar cargos)
   o **ADHERENTE** (cuota voluntaria de $Y, voz sin voto en asambleas, vota en elecciones).
-  Los montos se leen de los Planes de MP (cache diario). Si eligió Adherente,
+  Los montos se leen de los **dos** Planes de MP (caché de 24 h): "SOCIO ACTIVO"
+  y "SOCIO ADHERENTE/COLABORADOR", que adherentes y colaboradores comparten. Si
+  la API de MP no responde y no hay caché, el paso muestra un error y **no deja
+  avanzar**: nunca se inventa un monto. Si eligió Adherente,
   sub-elección: "¿Querés adherir al débito automático de la cuota voluntaria?" Sí/No.
   Si el usuario adherente marca que SÍ va a pagar, mostrar aviso suave: "Sabías que
   por el mismo valor de compromiso podés ser socio ACTIVO con voz y voto? Podés
@@ -65,11 +80,37 @@ de datos personales (textos en Configuracion).
 **Paso 3 — Tus datos**
 - Nombre y apellido, DNI, fecha de nacimiento (validar 18+), estado civil,
   nacionalidad, ocupación, teléfono, email (con confirmación de tipeo).
+- Orden de las guardas al enviar: **interruptor de ASOCIATE → Turnstile → rate
+  limit por IP (5/h) → zod → bloqueos por DNI → creación**. Validar la forma
+  (zod) antes de consultar el padrón no debilita el anti-enumeración —para
+  llegar al chequeo hay que haber pasado Turnstile igual— y evita que tres
+  errores de tipeo le quemen al vecino los 5 intentos de la hora.
+- La creación corre dentro de una transacción que revalida la invariante **"una
+  sola solicitud viva por DNI"** (MySQL no tiene índices parciales).
+
+**Bloqueos por DNI del paso 3** (regla pura y testeada, en este orden):
+
+| Condición | Qué ve el vecino |
+|---|---|
+| Ya tiene una solicitud viva con ese DNI | "Ya tenés una solicitud en trámite" + botón para reenviarse el enlace de retome **al email de aquella solicitud**, que nunca se muestra en pantalla |
+| Socio `vigente` o `suspendido` | "Ya estás asociado/a a la vecinal" (al suspendido no se le revela la suspensión) |
+| Baja por expulsión / `reentryBlocked` (REG-04) | "No podemos procesar tu solicitud por este medio. Acercate a la sede vecinal." — genérico, sin motivo |
+| Baja por **fallecimiento** o **anulación por duplicado** | El **mismo** mensaje genérico de sede (decisión de Mariano, 20/08/2026): un DNI vivo contra una ficha de fallecido es error de datos o suplantación, y la ficha anulada tiene su gemela real en el padrón. Ninguna de las dos cosas se discute por un formulario web |
+| Baja por mora, o con deuda al momento de la baja (REG-16) | "Tenés una deuda pendiente con tesorería. Acercate a la sede vecinal para regularizarla." |
+| Rechazo de menos de 6 meses, sobre la ficha o sobre una solicitud anterior (REG-05) | "No podés presentar una nueva solicitud por el momento" + la fecha exacta a partir de la cual puede reintentar |
+| Cualquier otra baja sin deuda (renuncia, mudanza, no re-empadronado) | **Continúa**: la solicitud guarda el `memberId` y el asiento será un **reingreso** sobre la ficha original, no un socio duplicado (REG-25) |
+| DNI desconocido | Continúa (alta común) |
+
+Los mensajes de "sede" no distinguen expulsión de fallecimiento ni de anulación:
+quien golpea el formulario con DNIs ajenos no puede deducir nada del padrón.
 
 **Paso 4 — Documentación**
 - Upload obligatorio: DNI frente y dorso (foto/imagen). Opcional/according: hasta 2
   anexos (factura de servicios a su nombre, certificado, boleta de inmueble…).
   Para Colaborador, al menos 1 anexo de vinculación es obligatorio.
+- JPG, PNG, WebP o PDF, máximo 10 MB por archivo, validados por **magic bytes**
+  (no por extensión). Se guardan en `UPLOADS_DIR/applications/{id}/` con nombre
+  UUID.
 
 **Paso 5 — Pago / envío**
 - Ramas con débito (Activo, Colaborador, Adherente-con-débito):
@@ -81,30 +122,92 @@ de datos personales (textos en Configuracion).
   - Al volver + webhook de autorización y primer pago OK → estado
     `aprobada_pendiente_acta` → pantalla y email: "¡Bienvenido/a! Tu solicitud fue
     **aceptada**. El alta formal se asentará en la próxima reunión de la Comisión
-    Directiva y ahí quedará registrada tu fecha de ingreso." + email de verificación
-    de domicilio electrónico + invitación a crear contraseña.
-  - Abandono del checkout: la solicitud queda `pendiente_pago` 7 días con email
-    recordatorio con link para retomar; luego expira.
+    Directiva y ahí quedará registrada tu fecha de ingreso."
+    La aceptación llega **siempre por webhook**, nunca por el retorno del
+    checkout: el `back_url` solo dice "estamos confirmando tu pago" y sondea el
+    estado.
+  - Abandono del checkout: la solicitud queda `pendiente_pago`; el cron manda
+    **un** recordatorio con el enlace de retome y a los 7 días expira (§10).
 - Rama sin débito (Adherente que no adhiere):
   - Envío directo → `pendiente_cd` → email "Tu solicitud fue recibida y será
-    tratada por la Comisión Directiva" + verificación de email.
+    tratada por la Comisión Directiva".
 
-## 3. Panel admin — Solicitudes
+**Cuándo sale cada correo** (desvío acordado respecto de la versión original de
+este documento): el **email de verificación del domicilio electrónico es
+inmediato**, al crear la solicitud en el paso 3 (REG-08). La **invitación a crear
+la contraseña NO se manda al aceptar sino al asentar en acta**, porque una cuenta
+de acceso (`User`) no puede existir sin ficha de socio (`Member`): antes del
+asiento no hay a qué colgarla. Ver §3.
 
-Bandeja con filtros por estado. Detalle de solicitud: todos los datos + visor de
-documentos (visualización auditada) + historial.
+## 3. Panel admin — Solicitudes (`/admin/solicitudes`)
+
+Bandeja con filtros por estado y búsqueda por nombre/DNI, paginada a 50 como el
+padrón. Badge **"Reingreso"** mientras la solicitud está viva y matcheó una ficha
+existente (después del asiento el campo `memberId` lo tienen todas, así que deja
+de ser señal: la distinción real la resuelve el detalle mirando el Movimiento).
+
+Detalle `/admin/solicitudes/[id]`: todos los datos, estado de la suscripción MP,
+visor de documentos e historial de auditoría. Los documentos se sirven por
+`GET /api/admin/solicitudes/[id]/documentos/[docId]` con `requireAdmin`,
+`Cache-Control: no-store, private`, `X-Content-Type-Options: nosniff` y un
+asiento de auditoría **por cada visualización** (Ley 25.326, `docs/08`).
 
 Acciones:
 - **Asentar en acta** (para `aprobada_pendiente_acta` y para aprobar `pendiente_cd`):
   selección múltiple de solicitudes → elegir/crear Acta (tipo CD, número, fecha) →
   se crean Socio + Membresía (número siguiente del libro abierto) + Movimiento alta
-  con `fecha_ingreso` = fecha del acta. Soporta alta masiva (N solicitudes, 1 acta).
+  con `fecha_ingreso` = fecha del acta. Soporta alta masiva (N solicitudes, 1 acta),
+  con el patrón anti-acta-huérfana del padrón: si el lote entero falla, el acta
+  recién creada se descarta. Al asentar: se completa `MpSubscription.memberId`, la
+  solicitud pasa a `alta_completada`, se copia el domicilio declarado a la ficha
+  (y a la cuenta de acceso, si tenía) y **recién ahí sale la invitación de
+  acceso**, solo si el email quedó verificado.
+- **Reingreso** (la solicitud traía `memberId`): no se crea socio nuevo. Se
+  reactiva la ficha con la categoría solicitada, `fecha_ingreso` **intacta**
+  (REG-11), Movimiento `reingreso` y reapertura de la cuenta de acceso si la
+  tenía.
+  **Domicilio electrónico**: si la ficha ya tenía **esa misma dirección** en
+  estado `verificado`, la verificación **se conserva** aunque la solicitud nueva
+  venga sin verificar (decisión de Mariano, confirmada el 20/08/2026). El
+  domicilio electrónico ya estaba acreditado ante la vecinal (Art. 5° quater) y
+  degradarlo a `declarado` por no volver a hacer clic dejaría al reingresante sin
+  invitación al portal sin ningún motivo. Si la dirección **cambió**, manda la de
+  la solicitud y hay que verificarla de nuevo.
 - **Recategorizar**: cambia la categoría de la solicitud; si tiene suscripción MP
-  activa y el plan/monto difiere, el sistema actualiza la suscripción por API y
-  registra el cambio. Luego sigue el circuito normal.
-- **Rechazar**: exige acta y deja constancia; si hubo cuota de ingreso debitada,
-  se retiene (REG-12.b) y se cancela la suscripción en MP por API. Setea
-  `rechazo_hasta` = fecha + 6 meses sobre el DNI (REG-05).
+  y el monto de la categoría nueva difiere, actualiza la suscripción por API
+  **antes** de tocar la fila local (si MP falla, la acción se corta entera) y
+  sincroniza el `planId`.
+  **No bloquea por residencia**: la Comisión puede apartarse del criterio de los
+  Art. 5 y 5 bis —el caso caro es "vive fuera del barrio → activo", que da voto y
+  elegibilidad—, pero no en silencio. La pantalla muestra el domicilio declarado y
+  advierte antes de guardar, y la auditoría queda con `residenceMismatch`, para
+  que el acta pueda reflejar que se decidió a sabiendas.
+- **Rechazar**: exige acta y deja constancia (REG-13); si hubo cuota de ingreso
+  debitada, se retiene (REG-12.b, y el email de rechazo lo dice) y se cancela la
+  suscripción en MP por API — si la cancelación falla, la pantalla lo avisa para
+  hacerlo a mano. El bloqueo de 6 meses (REG-05) sale de `rechazo_hasta` sobre la
+  ficha cuando hay socio, y de la fecha de decisión de la propia solicitud
+  rechazada cuando no lo hay.
+- **Solicitud revivida por un pago tardío**: cuando un pago aprobado llega después
+  del vencimiento, la solicitud vuelve a `aprobada_pendiente_acta` (ver `docs/06`
+  §4) y queda **marcada**: aviso en el detalle y, cuando la suscripción figura
+  cancelada, badge rojo **"Sin débito"** en la bandeja. Al expirar, el cron
+  canceló la suscripción, así que hay que rehacerla a mano antes de asentar el
+  alta: el sistema no la re-crea solo.
+
+**Resumen para el acta** (`/admin/solicitudes/resumen?mes=YYYY-MM`): pantalla
+imprimible + export Excel, con **tres** listas (no dos):
+
+1. **Aceptadas pendientes de asiento** — todas las vivas, **sin filtrar por mes**.
+2. **Pendientes de decisión de la CD** — ídem, todas las vivas.
+3. **Asentadas en el mes** — estas sí filtradas, por la fecha real del asiento.
+
+Las dos primeras van sin filtro a propósito: una solicitud aceptada no tiene
+fecha de aceptación (no hay columna, y `updatedAt` se mueve con cualquier
+escritura), y filtrarlas por mes escondería a la que entró en julio y todavía
+espera acta — justo la que no hay que olvidar. El "mes" se calcula en hora
+**argentina**, no UTC: a las 22:30 del 31/08 en Comodoro ya es septiembre en UTC
+y el operador vería un acta vacía.
 
 ## 4. Panel admin — Socios (Libro)
 
@@ -144,9 +247,16 @@ Acciones:
 - Noticias: ABM con editor visual básico e imagen de portada, borrador/publicada.
 - Actividades: ABM del calendario de salones (ver `/actividades` en §1).
 - Actas: ABM (tipo, número, fecha, descripción) + vista de movimientos asociados.
-- Configuración (solo superadmin): interruptor de ASOCIATE (`asociate_activo`) y
-  datos de contacto (teléfono y email que muestra el sitio público). Pendientes de
-  módulos posteriores: `elecciones_en_curso`, textos legales, feriados, usuarios y
+- Configuración (solo superadmin): interruptor de ASOCIATE (`asociate_activo`),
+  datos de contacto (teléfono y email que muestra el sitio público), los **textos
+  legales del wizard** (términos y consentimiento de datos) y los **ids de los dos
+  planes de Mercado Pago**.
+  Los textos legales se guardan y se renderizan como **texto plano** (con saltos
+  de línea respetados), no como HTML: es un desvío deliberado de la spec del
+  Módulo 3 —menos superficie de XSS, y un pliego de condiciones no necesita
+  marcado—. El seed carga un borrador inicial y **no lo repone** si alguien lo
+  vacía a mano: el precio de no pisar las ediciones del superadmin.
+  Pendientes de módulos posteriores: `elecciones_en_curso`, feriados, usuarios y
   roles, salud del sistema.
 
 ## 7. Panel de socio (`/mi`)
@@ -215,3 +325,34 @@ con timestamp (lo que prueba el cumplimiento del plazo) → email de constancia.
 Cada email estatutario crea una Notificacion; los webhooks de Brevo actualizan
 `entregada`/`rebotada`; un rebote en notificación estatutaria genera tarea admin
 "pasar a cartelera" (REG-10) con impresión del aviso y registro de fechas.
+
+**Guarda de pruebas (`EMAIL_ALLOWLIST`)**: mientras la variable esté definida,
+un transporte envolvente bloquea todo envío a direcciones que no estén en la
+lista y lo registra sin escribir la dirección completa en el log. La guarda está
+en el **transporte**, no en cada llamador: cubre wizard, panel y cron por igual,
+y no hay forma de esquivarla agregando una pantalla nueva. Producción **no** la
+define — borrarla es un paso del checklist de lanzamiento de `docs/07`.
+
+## 10. Mantenimiento automático de solicitudes (cron diario)
+
+`POST /api/cron/applications`, protegido por `Authorization: Bearer
+${CRON_SECRET}` (comparación timing-safe; sin la variable el endpoint responde
+503). Lo dispara el crontab del VPS, no la app (`docs/03`, bloque copiable en
+`docs/11`). Cada corrida:
+
+1. **Recordatorio de pago** — solicitudes en `pendiente_pago` creadas hace 3 días
+   o más y sin recordatorio previo: email con el enlace de retome, y se sella la
+   fecha para no repetirlo nunca.
+2. **Expiración** — solicitudes en `iniciada` o `pendiente_pago` sin actividad
+   hace 7 días o más: pasan a `vencida` y, si tenían suscripción, se cancela en MP
+   best-effort (si MP falla queda contado, no bloquea la corrida).
+   `aprobada_pendiente_acta` y `pendiente_cd` **no vencen nunca**: ahí la pelota
+   la tiene la Comisión Directiva, y al vecino no se le puede caer una solicitud
+   por una demora que no es suya.
+3. Devuelve `{reminded, expired, errors}` y deja asiento de auditoría de la
+   corrida — incluso si falló a la mitad, porque ese asiento es el único registro
+   consultable de qué alcanzó a hacer.
+
+La ventana efectiva del recordatorio es **de 3 a 7 días**: quien entra al sistema
+recién al sexto día y medio recibe el aviso y expira en la corrida siguiente, con
+menos de 24 h de margen. Es correcto (nunca expira antes de avisar), pero apretado.

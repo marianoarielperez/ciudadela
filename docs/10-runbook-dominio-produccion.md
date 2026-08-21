@@ -277,6 +277,36 @@ pm2 save
    mysqldump sigev > /root/backup-pre-m2-$(date +%F).sql
    ```
 
+**Específico del Módulo 3 (ASOCIATE + Mercado Pago):**
+
+1. **Migración**: `20260820174523_add_module_3_applications_mp` (tablas
+   `applications`, `documents`, `mp_subscriptions`, `webhook_events` y las
+   columnas nuevas de `action_tokens` y `notifications`). `migrate deploy` la
+   aplica sola. Backup antes, como siempre.
+2. **Variables nuevas en el `.env` del VPS**: `MP_ACCESS_TOKEN`,
+   `MP_WEBHOOK_SECRET`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`,
+   `CRON_SECRET` y —hasta el lanzamiento— `EMAIL_ALLOWLIST`. De dónde sale cada
+   una: `docs/11`.
+   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` **se hornea en el build** como `AUTH_URL`:
+   cambiarla exige re-buildear, no alcanza con reiniciar PM2. Sin ella el widget
+   no monta y **nadie puede completar el paso 3 del wizard**.
+3. **Configuración desde el panel** (no es `.env`): cargar en
+   `/admin/configuracion` los ids de los dos planes de MP (`mp_plan_active_id`,
+   `mp_plan_shared_id`) y revisar los textos legales. Sin los ids, el paso 2 del
+   wizard no muestra montos y no deja avanzar.
+4. **Webhooks de MP** apuntando a `https://vecinalciudadela.ar/api/webhooks/mp`
+   con los tres tópicos (`payments`, `subscription_preapproval`,
+   `subscription_authorized_payment`); el secreto que da el panel es
+   `MP_WEBHOOK_SECRET`. Conviene además limitar por Nginx la tasa de esa ruta.
+5. **Crontab** de `/api/cron/applications` (`docs/11`, Parte H). Sin él, las
+   solicitudes abandonadas no expiran nunca y sus débitos no se cancelan.
+6. **Directorio de documentos**: `mkdir -p /var/sigev/uploads/applications &&
+   chmod 750 /var/sigev/uploads/applications`. La app lo crea sola, pero mejor con
+   los permisos puestos de entrada. `client_max_body_size 15m` en Nginx ya está
+   (uploads de DNI de hasta 10 MB).
+7. **NO tocar `instances` de PM2.** El módulo asume un solo proceso: ver la
+   advertencia de `docs/03` (mutex por DNI y rate limiters en memoria).
+
 ### Verificación post-deploy
 
 ```bash

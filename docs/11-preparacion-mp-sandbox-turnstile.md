@@ -98,12 +98,23 @@ curl -sX POST https://api.mercadopago.com/preapproval_plan -H "Authorization: Be
 Cada llamada devuelve el **`id`** del plan creado (un string tipo
 `2c93808491...`), su nombre y su estado:
 
-- id del primer curl → `mp_plan_active_id`
-- id del segundo curl → `mp_plan_shared_id`
+- id del primer bloque → `mp_plan_active_id`
+- id del segundo bloque → `mp_plan_shared_id`
 
-Estos dos ids **no van al `.env`**: se cargan desde
-`/admin/configuracion` cuando la pantalla nueva esté desplegada (o me los
-pasás y los dejo anotados para ese momento).
+Estos dos ids **no van al `.env`**: se cargan a mano en `/admin/configuracion`
+(solo superadmin; la pantalla existe desde el Módulo 3). No se buscan por nombre
+a propósito: un renombre del plan en el panel de MP dejaría el wizard sin montos
+en silencio.
+
+> **Ya hecho (20/08/2026).** Los dos planes de sandbox están creados y sus ids
+> anotados en el registro del módulo. Al desplegar el M3 hay que **pegarlos en
+> `/admin/configuracion`** — ese paso todavía no se hizo. Si alguna vez hay que
+> rehacerlos (cuenta de prueba nueva, token regenerado), los bloques de arriba
+> siguen sirviendo tal cual.
+>
+> Para producción son **otros dos planes**, creados con las credenciales
+> productivas y con los montos que apruebe la CD: recargar los ids es un paso del
+> checklist de lanzamiento de `docs/07`.
 
 Si falla con **401**, el token está mal copiado o incompleto; con **400**,
 revisá el monto y que no falte ningún campo del `auto_recurring`.
@@ -133,8 +144,15 @@ anotado para ese momento:
 2. Nombre: `SIGeV`. Hostnames: agregá `vecinalciudadela.ar` **y**
    `localhost`. Modo: **Managed** (recomendado).
 3. Al crear te da dos claves:
-   - **Site Key** → `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
-   - **Secret Key** → `TURNSTILE_SECRET_KEY`
+   - **Site Key** → `NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Es **pública**: viaja en el
+     HTML de la página, así que no hace falta cuidarla.
+   - **Secret Key** → `TURNSTILE_SECRET_KEY`. Esta sí es secreta y va **solo** al
+     `.env` del VPS.
+
+> **Ya hecho (20/08/2026).** El widget está creado y la site key cargada. La
+> secret key se rotó después de haberse expuesto en el chat y vive únicamente en
+> el `.env` del VPS: si alguna vez falta, se regenera desde el panel de Turnstile,
+> no se busca en ningún documento.
 
 Para desarrollo local ni siquiera hacen falta: existen las claves dummy
 oficiales que aprueban siempre (ya documentadas en `.env.example`):
@@ -177,12 +195,42 @@ EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
 
 ## Parte H — Crontab del VPS (al desplegar el M3)
 
-Junto con el deploy del módulo, agregar al crontab de root (SSH puerto 2222):
+El endpoint `/api/cron/applications` manda el recordatorio de pago a los 3 días y
+expira a los 7 las solicitudes abandonadas, cancelando la suscripción en MP. Sin
+crontab **no corre solo**: las solicitudes abandonadas se quedan vivas para
+siempre y el débito de una que nadie completó nunca se cancela.
+
+Junto con el deploy del módulo, agregar al crontab de root (SSH puerto 2222,
+`crontab -e`):
 
 ```
-5 8 * * * curl -s -X POST -H "Authorization: Bearer CRON_SECRET_REAL" https://vecinalciudadela.ar/api/cron/applications >> /var/log/sigev-cron.log 2>&1
+# SIGeV — mantenimiento diario de solicitudes (08:05 hora local)
+5 8 * * * curl -s --max-time 900 -X POST -H "Authorization: Bearer CRON_SECRET_REAL" https://vecinalciudadela.ar/api/cron/applications >> /var/log/sigev-cron.log 2>&1
 ```
 
 reemplazando `CRON_SECRET_REAL` por el valor de `CRON_SECRET` del `.env` del
 VPS (definilo ahí si todavía no existe: cualquier string largo aleatorio,
-p. ej. la salida de `openssl rand -hex 32`).
+p. ej. la salida de `openssl rand -hex 32`). Si preferís no dejar el secreto a la
+vista en el crontab, guardalo en un archivo con permisos `600` y leelo:
+
+```
+5 8 * * * curl -s --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/applications >> /var/log/sigev-cron.log 2>&1
+```
+
+> **Por qué `--max-time 900` y no el default.** La **primera** corrida arrastra el
+> backlog acumulado desde el despliegue: cada solicitud vencida con suscripción
+> dispara un `cancelPreapproval` contra Mercado Pago, y van **en serie**. Quince
+> minutos es holgado a propósito.
+>
+> Y si aun así se corta por tiempo, **eso no es un fallo**: lo que la corrida
+> alcanzó a hacer quedó hecho y asentado en la auditoría, y la corrida del día
+> siguiente termina el resto. No la relances a mano en bucle.
+
+Cómo saber que anduvo:
+
+```bash
+tail -5 /var/log/sigev-cron.log     # cada corrida deja {"reminded":N,"expired":N,"errors":N}
+```
+
+Un `401` en el log significa que el `CRON_SECRET` del crontab no coincide con el
+del `.env`; un `503`, que la variable no está definida en el `.env` del VPS.

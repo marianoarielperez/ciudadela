@@ -54,16 +54,46 @@ robots.txt bloquea /admin y /mi y el sitemap lista las noticias publicadas.
 
 ## Módulo 3 — ASOCIATE + Mercado Pago
 Wizard completo (5 pasos, Turnstile, términos, uploads), integración MP
-(planes, `POST /preapproval`, webhooks con `x-Signature`, WebhookEvent),
-estados de solicitud, bandeja admin con asentar-en-acta masivo / recategorizar /
-rechazar (con retención de ingreso y bloqueo 6 meses), creación de Socio+Membresía
-al asentar, emails de resultado.
+(**2 planes** con sus ids en `Configuration`, `POST /preapproval`, webhooks con
+`x-Signature`, `WebhookEvent`), estados de solicitud con expiración por cron,
+bandeja admin con asentar-en-acta masivo / recategorizar / rechazar (con retención
+de ingreso y bloqueo 6 meses), creación de Socio+Membresía al asentar (o reingreso
+sobre la ficha existente), resumen mensual para el acta, emails de resultado y
+guarda `EMAIL_ALLOWLIST`.
 
-CA (en sandbox): un alta ACTIVO de punta a punta — wizard → checkout de prueba →
-webhook → `aprobada_pendiente_acta` → asentada en acta → socio creado con número
-siguiente y `fecha_ingreso` = fecha del acta; un adherente sin débito queda
-`pendiente_cd`; un rechazo cancela la suscripción en MP y bloquea el DNI por 6 meses;
-reintento de webhook duplicado no duplica nada.
+**Estado de los CA al cerrar el módulo (21/08/2026).** Verificados en local, con
+base sembrada y navegador:
+
+- [x] Un adherente **sin débito** queda `pendiente_cd`, recibe el email de
+      recibida y se asienta en acta.
+- [x] Asiento en acta masivo: socio creado con el **número siguiente** del libro
+      abierto y `fecha_ingreso` = fecha del acta; la invitación de acceso **no**
+      sale si el email no está verificado.
+- [x] Bloqueos por DNI: socio vigente ve "ya estás asociado"; baja por mora o con
+      deuda ve "acercate a la sede"; ex socio por renuncia sin deuda completa el
+      wizard y su asiento queda como **reingreso** sobre la ficha original, con la
+      antigüedad intacta.
+- [x] Recategorizar con aviso de residencia y sincronización del plan local.
+- [x] Rechazo con acta, retención del ingreso y bloqueo de 6 meses.
+- [x] Recordatorio a los 3 días y expiración a los 7, corriendo el cron a mano con
+      `CRON_SECRET`.
+- [x] Resumen para acta del mes: tres listas, imprime bien y exporta a Excel.
+- [x] Con `EMAIL_ALLOWLIST` definida, un envío a una casilla ajena queda bloqueado
+      y logueado.
+- [x] Idempotencia del webhook y validación de firma (cobertura de tests; falta
+      el evento real).
+
+**Pendientes de las credenciales de sandbox** (nada de esto se puede probar sin
+`MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` cargados — ver `docs/11`):
+
+- [ ] Alta ACTIVO de punta a punta: wizard → checkout de prueba → webhook →
+      `aprobada_pendiente_acta`. Con esto se verifica de paso que el paso 2 muestre
+      los montos reales de los planes (hoy en local el wizard no pasa del paso 2
+      sin token) y que la URL de "volver al pago" del retome sea la correcta.
+- [ ] Que el cuerpo del webhook de MP traiga efectivamente `body.id`. Si no lo
+      trajera, el fallback que arma la clave de idempotencia pasa a ser crítico.
+- [ ] Rechazo y expiración cancelando una suscripción **real** en MP.
+- [ ] Recategorización contra una suscripción real (hoy solo cubierta con dobles).
 
 Ideas incorporadas durante el desarrollo del Módulo 1: bloqueo del botón ASOCIATE
 según el estado de la persona (socio vigente → avisarle que ya está asociado; ex
@@ -89,6 +119,43 @@ cuotas adeudadas, indicando cuántas debe (notificación fehaciente); resumen di
 a las 9:00 a la Comisión con las novedades del día anterior (no se envía si no
 hubo novedades); export del padrón electoral (REG-31), diferido desde el Módulo 1
 porque depende del dato de deuda real.
+
+### Insumos que deja el Módulo 3 para el Módulo 4
+
+Cosas que se encontraron construyendo el M3, que **no** entraban en su alcance y
+que el M4 tiene que levantar. No son ideas sueltas: cada una tapa un agujero
+concreto.
+
+1. **La conciliación debe barrer preapprovals sin fila local.** Si
+   `createPreapproval` sale bien contra MP y la escritura local falla, queda un
+   débito autorizado del que SIGeV no sabe nada. El único recupero posible es
+   buscar en `GET /preapproval/search` los que tengan `external_reference =
+   solicitud:{id}` y no tengan `MpSubscription`. Hoy el único rastro es un
+   `console.error` en el log de PM2, que rota.
+2. **`payment_rejected` todavía no le avisa a nadie.** El webhook registra el
+   rechazo del débito y la solicitud sigue esperando, pero el socio no recibe el
+   "no pudimos debitar tu cuota; MP va a reintentar" que promete `docs/06` §4.
+   Confirmar que entra en el alcance del M4 junto con el seguimiento de mora.
+3. **Un débito recurrente futuro puede revivir una solicitud vencida.** Comparte
+   el mismo `external_reference` que el pago de ingreso, y `getPayment` no expone
+   ni la fecha ni el tipo de pago, así que hoy no hay forma de distinguirlos.
+   Requiere dos fallos coincidentes (webhook del ingreso perdido + cancelación
+   fallida), pero se cierra solo agregando esos campos al gateway.
+4. **Dos pagos de ingreso reales distintos sobre la misma solicitud** caen hoy en
+   `already_processed`, indistinguibles de un reintento. Recuperable por el
+   payload crudo; candidato a un `result` propio (`duplicate_entry_payment`).
+5. **Cambiar los ids de plan no invalida la caché de montos** (hasta 24 h de
+   retraso): cerrar junto con la pantalla de valores de cuota.
+6. **Una solicitud re-suscripta a mano** (tras revivir por pago tardío) queda
+   describiendo la suscripción nueva con la copia "verificá antes de gestionar".
+   No es alcanzable hoy porque la re-suscripción es manual; si el M4 automatiza el
+   alta de suscripciones, hay que revisar ese texto.
+7. **Recategorizar con `planIdForCategory = null`** re-abre en silencio la
+   divergencia entre el plan local y el de MP. Cerrar con un `planUpdated`
+   explícito, o cortando antes de llamar a MP.
+8. **Una solicitud que llegó con la categoría equivocada y que nadie toca** no
+   queda marcada en ningún lado: `residenceMismatch` solo se computa al
+   recategorizar. Candidato a señal de la bandeja o del resumen.
 
 ## Módulo 5 — Panel de socio
 Login/recupero, mis datos (con re-verificación de email), mi cuenta corriente,
@@ -122,8 +189,13 @@ backup revierte el simulacro.
 Checklist: **cambiar `MP_ACCESS_TOKEN` a las credenciales productivas** (hasta el
 lanzamiento el dominio corre con las de prueba) → **borrar `EMAIL_ALLOWLIST` del `.env`
 del VPS** (mientras esté definida, los avisos a los socios NO salen) →
-webhooks productivos apuntando a `vecinalciudadela.ar` → SPF/DKIM/DMARC del dominio
-(ya autenticado en Brevo) → carga de fichas completa (160 vigentes: 55 activos +
-105 adherentes) → suscripciones preexistentes vinculadas → acta marco de admisión
-digital dictada (REG-12) → textos legales aprobados por CD → activar
-`asociate_activo` → convocar re-empadronamiento dentro de los 90 días.
+webhooks productivos apuntando a `vecinalciudadela.ar` → **recargar en
+`/admin/configuracion` los ids de los dos planes productivos** (`mp_plan_active_id`
+y `mp_plan_shared_id`: los de sandbox no existen en la cuenta real, y sin ellos el
+paso 2 del wizard no muestra montos) → SPF/DKIM/DMARC del dominio (ya autenticado
+en Brevo) → carga de fichas completa (160 vigentes: 55 activos + 105 adherentes) →
+suscripciones preexistentes vinculadas → acta marco de admisión digital dictada
+(REG-12) → **textos legales aprobados por la CD y cargados en
+`/admin/configuracion`** → **crontab de `/api/cron/applications` instalado en el
+VPS** (`docs/11`, Parte H) → activar `asociate_activo` → convocar
+re-empadronamiento dentro de los 90 días.

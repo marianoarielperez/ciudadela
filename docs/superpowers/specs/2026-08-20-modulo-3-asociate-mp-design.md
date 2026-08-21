@@ -414,3 +414,75 @@ Los del plan de etapas (docs/07, en sandbox) más los acordados en la entrevista
 7. Resumen para acta del mes muestra las aceptadas y pendientes, imprime bien y exporta
    a Excel.
 8. Con `EMAIL_ALLOWLIST` definida, un envío a una casilla ajena queda bloqueado y logueado.
+
+## 12. Desvíos acordados durante la ejecución (21/08/2026)
+
+Esta spec se aprobó el 20/08 y se ejecutó en 22 tasks. Lo que cambió en el camino,
+con quién lo decidió y por qué. **La documentación de `docs/` ya refleja todo esto**;
+esta lista existe para que la spec no mienta si alguien la lee sola.
+
+1. **Textos legales en texto PLANO, no HTML** (Task 3). El §2 preveía el pipeline
+   de sanitización de noticias para `terms_text` y `privacy_consent_text`. Se
+   guardan y renderizan como texto plano con saltos de línea respetados: menos
+   superficie de XSS, y un pliego de condiciones no necesita marcado. El seed carga
+   un borrador y **no lo repone** si alguien lo vacía a mano.
+
+2. **`death` y `duplicate_annulment` → "acercate a la sede"** (decisión de Mariano,
+   20/08, Task 7). La tabla de bloqueos del §4 no los contemplaba. Un DNI vivo
+   contra una ficha de fallecido es error de datos o suplantación, y la ficha
+   anulada por duplicado tiene su gemela real en el padrón: ninguna de las dos
+   cosas se resuelve por un formulario web. Usan el **mismo mensaje genérico** que
+   la expulsión, sin revelar el motivo.
+
+3. **Orden de guardas: allows → Turnstile → rate limit → zod → padrón** (decisión
+   del arquitecto, Task 11). La spec ponía el chequeo de elegibilidad antes de
+   validar la forma. Mover zod adelante no debilita el anti-enumeración —para
+   llegar hasta ahí hay que haber pasado Turnstile igual— y evita que tres errores
+   de tipeo le quemen al vecino los 5 intentos de la hora.
+
+4. **Reingreso: la verificación de email SE CONSERVA si la dirección no cambió**
+   (decisión de Mariano confirmada el 20/08, Task 17). El §5 no lo decía. Si la
+   ficha ya tenía **esa misma** dirección en estado `verified`, el asiento no la
+   degrada a `declared` aunque la solicitud nueva venga sin verificar: el domicilio
+   electrónico ya estaba acreditado ante la vecinal (Art. 5° quater), y degradarlo
+   dejaría al reingresante sin invitación al portal por no volver a hacer clic. Si
+   la dirección **cambió**, manda la de la solicitud y hay que verificarla.
+
+5. **Recategorizar NO bloquea por residencia** (Task 18). Avisa en pantalla antes
+   de guardar y deja `residenceMismatch` en la auditoría. La Comisión puede
+   apartarse de los Art. 5 y 5 bis —el caso caro es "vive fuera del barrio →
+   activo", que da voto y elegibilidad—, pero no en silencio: el acta tiene que
+   poder reflejar que se decidió a sabiendas.
+
+6. **El resumen para acta tiene TRES listas, no dos** (Task 19). El §5 preveía
+   "aceptadas pendientes de asiento" y "pendientes de decisión". Se agregó
+   **"asentadas en el mes"**. Y solo esa tercera filtra por mes: una solicitud
+   aceptada no tiene fecha de aceptación (no hay columna, y `updatedAt` se mueve
+   con cualquier escritura), así que filtrar las dos primeras escondería a la que
+   entró en julio y todavía espera acta — justo la que no hay que olvidar. El borde
+   de mes se calcula en hora **argentina**, no UTC.
+
+7. **Un pago que llega DESPUÉS del vencimiento revive la solicitud** (decisión de
+   Mariano, 21/08, Task 20). No estaba previsto: el §7 expiraba y listo, y el
+   webhook tardío se descartaba como `already_processed`. El vecino había
+   autorizado el débito, MP le había cobrado, el cron había cancelado la
+   suscripción y **nadie se enteraba**. Ahora la solicitud vuelve a
+   `approved_pending_minute` con `result = application_approved_after_expiry`, y
+   queda marcada en pantalla (aviso en el detalle, badge "Sin débito" en la
+   bandeja) porque hay que rehacer la suscripción a mano. El pago manda sobre el
+   vencimiento.
+
+8. **La ventana del recordatorio es `[3, 7)` días**, no "a los 3 días" (Task 20).
+   Quien entra al sistema recién al sexto día y medio recibe el aviso y expira en
+   la corrida siguiente, con menos de 24 h de margen. Es correcto —nunca expira
+   antes de avisar— pero apretado; se podría cerrar un día antes.
+
+9. **`data.id` del webhook: allowlist `^[a-z0-9-]{1,64}$`, no "solo dígitos"**
+   (corrección de la Task 14 a una nota de la Task 5). Los `preapproval_id` de MP
+   son hex alfanuméricos de 32 caracteres: el filtro numérico habría rechazado
+   **todos** los webhooks de suscripción.
+
+10. **El instructivo operativo SÍ se commiteó**, como
+    `docs/11-preparacion-mp-sandbox-turnstile.md`. El §10 lo dejaba afuera "si
+    contiene datos sensibles"; no los contiene — las credenciales viven solo en los
+    `.env`, y el documento explica de dónde sacarlas.

@@ -65,25 +65,55 @@ Identidad única de la persona a través de todos los libros.
   `acta_id` (obligatoria salvo `migracion_libro` que hereda el acta de cierre),
   `categoria_anterior`, `categoria_nueva`, `motivo` (catálogo), `detalle`, `creado_por`
 
-### Solicitud (alta web)
-- `id`, datos personales completos del formulario (espejo de Socio), `categoria_solicitada`,
-  `estado`:
-  `iniciada` → `pendiente_pago` (esperando autorización del débito en MP)
-  → `aprobada_pendiente_acta` (débito autorizado y 1er pago OK ⇒ aceptación automática
-     REG-12; falta solo el asiento en acta) → `alta_completada`
-  · rama sin débito (adherente que no adhiere): `pendiente_cd` → `alta_completada` | `rechazada`
-  · acciones de CD sobre `aprobada_pendiente_acta`: confirmar (default), `recategorizada`
-    (cambia categoría + ajusta suscripción MP), `rechazada` (retiene cuota de ingreso, REG-12.b)
-- `preapproval_id` (MP), `mp_payment_id_ingreso`, `acta_id`, `ip`, `user_agent`,
-  `acepto_terminos_at`, `turnstile_ok`
+### Solicitud (alta web) — `Application` / tabla `applications` (Módulo 3)
+- `id`, datos personales completos del formulario (espejo de Socio), `requestedCategory`
+  (`active` | `adherent` | `collaborator`; REG-01, las demás categorías salen del
+  padrón y no de un formulario), `wantsDebit`, `status`:
+  `started` → `pending_payment` (esperando autorización del débito en MP)
+  → `approved_pending_minute` (débito autorizado y 1er pago OK ⇒ aceptación automática
+     REG-12; falta solo el asiento en acta) → `completed`
+  · rama sin débito (adherente que no adhiere): `pending_board` → `completed` | `rejected`
+  · **`expired`**: el cron vence a los 7 días las solicitudes en `started` y
+    `pending_payment` (nunca las que esperan a la CD). Un pago aprobado que llegue
+    después **revive** la solicitud a `approved_pending_minute` (`docs/05` §3).
+  · acciones de CD sobre `approved_pending_minute`: confirmar (default), recategorizar
+    (cambia categoría + ajusta suscripción MP), `rejected` (retiene cuota de ingreso,
+    REG-12.b)
+- `preapprovalId` (UNIQUE), `mpPaymentIdEntry` + `entryAmount` (`Decimal(10,2)`:
+  hasta que exista Pago/Recibo en el Módulo 4, este par **es** el registro de la
+  cuota de ingreso), `emailVerifiedAt`, `minuteId` (acta del asiento o del rechazo),
+  `decidedAt`, `remindedAt`, `ip`, `userAgent`, `acceptedTermsAt`
+- `resumeTokenHash` (Char(64) UNIQUE): sha256 del **token de retome**. El token crudo
+  (32 bytes base64url) vive solo en el cliente del wizard y en el email de
+  recordatorio; nunca se persiste. Es lo que autentica los pasos 4 y 5 y la ruta
+  `/asociate/retomar/[token]`. No tiene TTL propio: lo acota la expiración de la
+  solicitud.
+- `memberId` (nullable): seteado cuando el DNI matcheó una ficha existente sin
+  bloqueo ⇒ el asiento hace **reingreso** sobre esa ficha en vez de duplicar el
+  socio (REG-25). **Ojo**: al asentar se le escribe `memberId` a *toda* solicitud
+  —también a las altas nuevas—, porque de ahí cuelga la verificación tardía de
+  email. Después del asiento el discriminador alta/reingreso es el Movimiento, no
+  este campo.
+- `dni` **no es UNIQUE**: una persona puede tener una rechazada vieja y una viva.
+  La invariante real es "**una sola solicitud viva por DNI**" y se valida en runtime
+  dentro de la transacción de creación (MySQL no tiene índices parciales), con un
+  mutex por DNI dentro del proceso. Ver la nota de despliegue de `docs/03`.
 - Al completarse el alta se crea Socio + Membresia (número siguiente del libro abierto)
-  + Movimiento de alta.
+  + Movimiento de alta, con `fecha_ingreso` = fecha del acta (REG-11).
 
-### Documento
-- `id`, `owner_type` (`solicitud` | `socio` | `presentacion`), `owner_id`,
-  `tipo` (`dni_frente` | `dni_dorso` | `anexo`), `path`, `mime`, `size`,
-  `subido_at`, `validado_por` (nullable), `validado_at`
-- Conservación **permanente** (decisión institucional). Acceso solo admin, auditado.
+### Documento — `Document` / tabla `documents` (Módulo 3)
+- `id`, `ownerType` (`application` | `member` | `presentation`), `ownerId`
+  (polimórfico, sin FK real: la integridad la sostiene la capa de servicio),
+  `type` (`dni_front` | `dni_back` | `annex`), `path` (relativo a `UPLOADS_DIR`:
+  `applications/{id}/{uuid}.{ext}`), `mime`, `size`, `uploadedAt`,
+  `validatedById` (nullable, reservado), `validatedAt`
+- JPG, PNG, WebP o PDF; máximo 10 MB por archivo; contenido validado por **magic
+  bytes**, nunca por extensión.
+- Conservación **permanente** (decisión institucional). Acceso solo admin, auditado
+  en cada visualización.
+- Deuda anotada: no hay `UNIQUE(ownerType, ownerId, type)`, así que dos subidas
+  simultáneas del mismo tipo pueden dejar dos filas. El arreglo de fondo es esa
+  restricción más una migración.
 
 ### Cuota (período devengado)
 - `socio_id`, `periodo` (YYYY-MM), `monto` (valor vigente al devengar),
@@ -107,10 +137,14 @@ Identidad única de la persona a través de todos los libros.
   los medios de pago), `pago_id`, `pdf_path`, `emitido_at`, `enviado_email_at`
 - Numeración asignada en transacción (tabla de secuencia o MAX+1 con lock) — sin huecos.
 
-### SuscripcionMP
-- `socio_id`, `preapproval_id` (UNIQUE), `plan` (`activo` | `adherente` | `colaborador`),
-  `status` (según MP: authorized | paused | cancelled…), `payer_email`,
-  `vinculada_manualmente` (bool, para las preexistentes), `ultimo_sync_at`
+### SuscripcionMP — `MpSubscription` / tabla `mp_subscriptions` (Módulo 3)
+- `preapprovalId` (UNIQUE), `planId` (el id del plan de MP, no un enum: los planes
+  son **dos** y viven en `Configuration`, ver `docs/06`), `status` (el string crudo
+  de MP: `pending` | `authorized` | `paused` | `cancelled`…), `payerEmail`,
+  `linkedManually` (bool, para las preexistentes que vincula el Módulo 4),
+  `lastSyncAt`
+- `applicationId` (nullable): la solicitud que la originó. `memberId` (nullable) se
+  completa **al asentar el alta**: antes del acta no hay socio al que colgarla.
 
 ### ValorCuota (historial, REG-34)
 - `categoria`, `monto`, `vigente_desde`, `acta_id`
@@ -133,12 +167,29 @@ Identidad única de la persona a través de todos los libros.
   (= notificada_at + 30 días, REG-24).
 
 ### Notificacion
-- `socio_id` (nullable para solicitudes), `tipo` (catálogo: verificacion_email,
+- `socio_id` (nullable) y, desde el Módulo 3, **`applicationId`** (nullable): una
+  notificación de solicitud todavía no tiene socio. Los dos son excluyentes en la
+  práctica; el mailer tiene una variante `sendToApplication` que registra la
+  notificación por el segundo camino.
+- `tipo` (catálogo: verificacion_email,
   invitacion_password, resultado_solicitud, reempadronamiento_1, reempadronamiento_2,
   baja_declarada, recordatorio_cuota, alerta_mora, recibo, generica…),
   `via` (`email` | `cartelera`), `enviada_at`, `estado` (`enviada` | `entregada` |
   `rebotada` | `fijada_cartelera` | `cumplida_cartelera`), `brevo_message_id`,
   `cartelera_desde`, `cartelera_hasta` (20 días hábiles, REG-10), `payload_resumen`
+
+### ActionToken (`action_tokens`) — enlaces de un solo uso
+- `purpose` (`email_verification` | invitación de acceso | recupero de
+  contraseña), `tokenHash` (Char(64) UNIQUE, sha256 — el token crudo solo viaja
+  por email), `expiresAt`, `usedAt`.
+- Dueño: `memberId`, `userId` o —desde el Módulo 3— **`applicationId`** (Cascade),
+  para que la verificación de email pueda pertenecer a una solicitud que todavía
+  no es socio. La ruta `/verificar/[token]` resuelve los dos casos: con `memberId`
+  verifica la ficha, con `applicationId` marca `Application.emailVerifiedAt`.
+- La verificación de una solicitud se sella **en cualquier estado** (viva,
+  completada o rechazada): quien hace clic tarde no puede quedar sin
+  verificar. Todo lector que necesite "verificada **y** viva" tiene que filtrar
+  por estado por su cuenta.
 
 ### Usuario / Rol
 - `Usuario`: `email` (UNIQUE), `password_hash` (bcrypt), `socio_id` (nullable),
@@ -203,6 +254,11 @@ Actividad sistemática semanal de un salón de la sede ("Gimnasia mujeres",
 - Implementadas en el Módulo 2 (`src/lib/config.ts`, editables desde
   `/admin/configuracion`, solo superadmin): `asociate_activo` (bool),
   `contact_phone` (string), `contact_email` (string).
+- Agregadas en el Módulo 3, misma pantalla: `terms_text` y
+  `privacy_consent_text` (**texto plano**, se renderizan respetando los saltos de
+  línea — deliberadamente NO HTML, a diferencia de las noticias), y
+  `mp_plan_active_id` / `mp_plan_shared_id` (los ids de los dos planes de Mercado
+  Pago, ver `docs/06`).
 - Las páginas públicas leen estas claves cacheadas por tag: guardar la
   configuración invalida el tag `config` y el sitio refleja el cambio sin
   redeploy (lo mismo hacen los ABM de noticias y actividades con sus tags
@@ -213,10 +269,27 @@ Actividad sistemática semanal de un salón de la sede ("Gimnasia mujeres",
 - Se registra: login, aprobación/rechazo/recategorización de solicitudes, altas/bajas/
   movimientos, registro de pagos en efectivo, anulaciones, visualización de documentos,
   cambios de configuración, cierres de libro.
+- Acciones del Módulo 3: `application_created`, `application_document_view`,
+  `application_record`, `application_recategorize` (lleva `residenceMismatch`),
+  `application_reject`, `application_resume_link_sent`,
+  `application_approved_after_expiry`, `application_accepted_email_failed`,
+  `applications_cron`, `webhook_rejected_signature`.
+- Regla vigente y no negociable: en `detail` van **ids, códigos y flags**; nunca
+  DNI, email ni domicilios (Ley 25.326, `docs/08`).
 
-### WebhookEvent
-- `origen` (`mp` | `brevo`), `event_id_externo` (UNIQUE por origen — idempotencia),
-  `topic`, `payload` (JSON crudo), `recibido_at`, `procesado_at`, `resultado`, `error`
+### WebhookEvent (`webhook_events`)
+- `origin` (`mp` | `brevo`), `externalEventId` — `@@unique([origin, externalEventId])`,
+  que es la idempotencia—, `topic`, `payload` (JSON crudo), `receivedAt`,
+  `processedAt`, `result`, `error`
+- `processedAt` es lo que distingue un reintento inocuo de un reproceso legítimo:
+  evento repetido **con** `processedAt` → `ignored_duplicate`; **sin**
+  `processedAt` (un intento anterior falló) → se reprocesa sobre la misma fila.
+- Valores de `result` del Módulo 3: `application_approved`,
+  `application_approved_after_expiry`, `already_processed`, `payment_rejected`,
+  `payment_ignored`, `subscription_synced`, `authorized_payment_traced`,
+  `no_match`, `unknown_topic`, `ignored_duplicate`.
+- Deuda anotada: no hay política de retención, y `error` podría llegar a embeber
+  un fragmento de respuesta de MP con el email del pagador.
 
 ## Importación inicial (seed del Libro N° 1)
 

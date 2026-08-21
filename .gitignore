@@ -40,6 +40,9 @@ yarn-error.log*
 .vscode/
 .idea/
 .superpowers/
+# Config local de la herramienta (launch.json del dev server): es de la máquina,
+# no del proyecto.
+.claude/
 
 # Next.js / TypeScript
 *.tsbuildinfo
