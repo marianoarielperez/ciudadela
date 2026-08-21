@@ -4,6 +4,18 @@
 // stale-on-error: si MP está caído se sirve el último valor bueno antes que
 // inventar un monto o tirar abajo el wizard. In-memory alcanza: PM2 corre un
 // único proceso (mismo criterio que rate-limiter.ts).
+//
+// ESTA CACHÉ ES PARA MOSTRAR, NO PARA COBRAR. Desde que las suscripciones se
+// crean sin plan asociado (docs/06 §2), el monto que se manda a MP es el que se
+// debita: quien vaya a crear o modificar una suscripción tiene que leer el plan
+// FRESCO con `mpGateway.getPlan` y abortar si falla, no servirse de acá. Ver
+// `startPaymentAction` en `src/app/(public)/asociate/actions.ts` y
+// `recategorizeApplicationAction` en `src/app/admin/solicitudes/actions.ts`
+// (el `PUT` del monto fija lo que MP debita todos los meses).
+//
+// Y ojo con el stale-on-error: una lectura fallida NO tira, devuelve en silencio
+// el último valor bueno. Para mostrar está bien; para cobrar es un débito
+// equivocado que nadie ve fallar.
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import type { MemberCategory } from "@/generated/prisma/client";
 import { mpGateway, type MpGateway } from "./gateway";
@@ -12,11 +24,13 @@ export type FeeAmounts = { active: number; shared: number };
 
 /** El id del plan de MP que le corresponde a una categoría.
  *
- *  Los planes son DOS: "SOCIO ACTIVO" y "SOCIO ADHERENTE/COLABORADOR". La
- *  suscripción se crea contra uno de ellos (`asociate/actions.ts`) y ese id
- *  queda copiado en `MpSubscription.planId`; cuando la Comisión recategoriza y
- *  el monto se mueve, la fila local tiene que seguir al plan nuevo o la
- *  conciliación del M4 (REG-34) va a leer una divergencia que no existe.
+ *  Los planes son DOS: "SOCIO ACTIVO" y "SOCIO ADHERENTE/COLABORADOR", y son el
+ *  REGISTRO del monto, no un vínculo: la suscripción del vecino se crea sin
+ *  `preapproval_plan_id` y COPIA el monto (`asociate/actions.ts`, docs/06 §2).
+ *  El id queda igual en `MpSubscription.planId` como plan de referencia —de
+ *  dónde salió ese monto—; cuando la Comisión recategoriza, la fila local tiene
+ *  que seguir al plan nuevo o la conciliación del M4 (REG-34) va a leer una
+ *  divergencia que no existe.
  *
  *  Devuelve `null` si el id todavía no está configurado: no es un error, es que
  *  no hay plan que apuntar. */
@@ -58,8 +72,11 @@ export function makeFeeAmountsReader(deps: Deps) {
         return cached.value;
       } catch {
         // MP caído (o la config ilegible): el último valor bueno sigue siendo
-        // mejor que nada. La divergencia real plan↔local la vigila el sync
-        // del M4 (REG-34).
+        // mejor que nada. La divergencia que vigila el sync del M4 (REG-34) es
+        // otra: plan (API) vs. `ValorCuota` (tabla local), la de la pantalla
+        // "Valores de cuota". La divergencia suscripción-vs-plan que puede
+        // causar ESTE stale-on-error (advertencia arriba, línea 8) no la
+        // cubre nada todavía: por eso quien cobra no puede usar esta caché.
         return cached?.value ?? null;
       }
     },

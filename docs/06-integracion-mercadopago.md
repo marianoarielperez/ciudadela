@@ -52,10 +52,33 @@ falla, se sigue sirviendo el último valor bueno en vez de romper el paso 2. Si 
 API falla y **nunca** hubo un valor cacheado, el paso 2 del wizard muestra un
 error y **no deja avanzar**: nunca se inventa un monto.
 
-Cuando la CD actualiza un plan, el cambio se propaga a las
-suscripciones asociadas por MP; el sync diario del Módulo 4 detecta la
-divergencia con la tabla local `ValorCuota` y pide al admin registrar el nuevo
-valor con su acta (REG-34).
+**Los planes son el REGISTRO del monto, no un vínculo.** Las suscripciones de los
+vecinos se crean **sin plan asociado** y **copian** el monto (ver §2), así que
+cambiar el plan en el panel de MP **no mueve ninguna suscripción ya creada**.
+Corregido el 21/08/2026: la versión anterior de este documento decía que "el
+cambio se propaga a las suscripciones asociadas por MP", y eso nunca fue cierto
+para SIGeV porque el flujo con plan asociado nunca funcionó (ver §2).
+
+Consecuencia operativa de REG-34: cuando la CD actualiza el valor de la cuota,
+tocar el panel de MP **no alcanza**. El panel de MP pasa a ser el lugar donde se
+declara el monto nuevo (y de donde el wizard lo lee para las altas siguientes);
+para las suscripciones **ya vivas**, SIGeV tiene que empujar el monto nuevo a
+cada una por API con `PUT /preapproval/{id}` — `updatePreapprovalAmount()` ya
+está implementado y en uso en la recategorización, lo que falta es el **lote**.
+Ese lote es alcance del **Módulo 4** (ver `docs/07`). **Hasta que exista, un
+cambio de cuota en MP NO afecta a las suscripciones ya creadas**: las altas
+nuevas salen con el monto nuevo y las viejas siguen debitando el anterior.
+
+Efecto colateral bueno: la actualización queda atada al acta. En vez de "la CD
+toca MP y SIGeV se entera después por un sync que detecta la divergencia", es "el
+admin registra el nuevo valor con su acta y desde ahí se aplica".
+
+> **La caché de montos es para MOSTRAR, no para COBRAR.** Como el monto que se
+> manda a MP es el que se debita (§2), `startPaymentAction` lee el plan
+> **fresco** con `getPlan`, sin pasar por la caché, y si esa lectura falla **no
+> crea la suscripción**: devuelve "probá de nuevo en unos minutos". Es preferible
+> no cobrar a debitarle a un socio un importe que la Comisión ya cambió. La caché
+> sigue siendo la correcta para el paso 2 del wizard, que sólo muestra.
 
 > Deuda anotada en el Módulo 3: cambiar los ids de plan en `/admin/configuracion`
 > **no invalida** la caché de montos, así que el wizard puede mostrar hasta 24 h
@@ -65,18 +88,89 @@ valor con su acta (REG-34).
 > valores de cuota.
 
 ### 2. Suscripciones (débito automático) creadas por el sistema
-En el paso de pago del wizard: `POST /preapproval` asociada al plan de la categoría,
-con:
+
+**SIN plan asociado.** En el paso de pago del wizard, `POST /preapproval` con el
+monto **inline**, no con `preapproval_plan_id`:
+
+```jsonc
+POST https://api.mercadopago.com/preapproval
+{
+  "reason": "Cuota societaria Vecinal Ciudadela — SOCIO ACTIVO",
+  "auto_recurring": {
+    "frequency": 1,
+    "frequency_type": "months",
+    "transaction_amount": 6000,
+    "currency_id": "ARS"
+  },
+  "payer_email": "vecina@ejemplo.com",
+  "external_reference": "solicitud:123",
+  "back_url": "https://vecinalciudadela.ar/asociate/retomar/{token}",
+  "status": "pending"
+}
+```
+
+- `reason` — lo que el vecino ve en el checkout y en el resumen de su tarjeta.
+  Se arma con el nombre de la asociación + el `reason` del plan (que gobierna la
+  CD desde el panel de MP). Obligatorio en las suscripciones sin plan.
+- `auto_recurring.transaction_amount` — **el monto que MP le va a debitar**. Se
+  lee del plan **fresco por API** en el momento de crear la suscripción (§1).
 - `external_reference` = `solicitud:{id}` (luego, para suscripciones de socios
-  existentes: `socio:{id}`)
-- `payer_email` = email declarado
-- `back_url` = retorno al wizard (`/asociate/retomar/{token}`)
+  existentes: `socio:{id}`). **Obligatorio** en las suscripciones sin plan, y es
+  lo que el webhook usa para encontrar la solicitud.
+- `payer_email` = email declarado. Ojo: es el que declaró en el formulario, no
+  necesariamente el de la cuenta de MP con la que se loguea en el checkout.
+- `back_url` = retorno al wizard (`/asociate/retomar/{token}`).
+- `status: "pending"` — es lo que hace que MP devuelva `init_point`.
+
+La respuesta trae `init_point` con la forma
+`https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id={id}`,
+que es exactamente la que reconstruye `src/lib/mp/checkout.ts`.
+
+#### Por qué NO se usa el flujo con plan asociado (no "restaurarlo")
+
+La versión anterior de este documento —escrita **antes** de programar— decía
+`POST /preapproval` "asociada al plan de la categoría". **Es imposible.** Medido
+contra la API real el 21/08/2026, ese cuerpo responde:
+
+```json
+{"message":"card_token_id is required","status":400}
+```
+
+La documentación de MP lo confirma: *"A Subscription with associated plan should
+always be created with its `card_token_id` and in status `Authorized`"*
+([Suscripciones con plan asociado](https://www.mercadopago.com.ar/developers/es/docs/subscriptions/integration-configuration/subscription-associated-plan)).
+O sea, el flujo con plan es **Checkout API**: la tarjeta se tokeniza en el
+navegador **en nuestro sitio** con el SDK JS de MP y la suscripción nace ya
+autorizada. Dos motivos para descartarlo, cualquiera de ellos suficiente:
+
+1. **No hay redirección.** No devuelve pantalla de autorización, así que no hay
+   `init_point` al que mandar al vecino: se cae todo el paso de pago del wizard.
+2. **Nos mete datos de tarjeta.** Aunque el número no toque nuestro servidor,
+   entramos en alcance PCI SAQ A-EP; y además deja afuera "dinero en cuenta",
+   que es un medio que el vecino va a querer usar.
+
+Lo único que se pierde yendo sin plan es la sincronización automática del monto
+plan→suscripción, que **nunca tuvimos** porque este flujo nunca funcionó. Su
+reemplazo (empujar el monto por API) está descripto en §1 y su lote es del M4.
+
+Tampoco sirve el link de checkout del propio plan
+(`subscriptions/checkout?preapproval_plan_id=...`): no admite
+`external_reference`, así que no sabríamos de quién es la suscripción; es un
+link público que permitiría suscribirse sin pasar por el wizard (sin DNI, sin
+domicilio, sin documentos); el `back_url` sería del plan y no de la solicitud; y
+no habría `preapprovalId` que guardar antes de redirigir, con lo que se caen el
+reintento idempotente y la cancelación del cron de vencimiento.
 
 El usuario autoriza en el checkout de MP (dinero en cuenta o tarjeta).
 La autorización y el primer cobro llegan por webhook: **el `back_url` nunca
 acepta una solicitud**, solo muestra "estamos confirmando tu pago" y sondea el
 estado. La suscripción se registra en `MpSubscription` con su `applicationId`,
 y el `memberId` se completa recién al asentar el alta en acta.
+
+`MpSubscription.planId` guarda el plan de **referencia**: de dónde salió el
+monto, **no** el plan al que la suscripción está asociada en MP (no está asociada
+a ninguno). Sirve para saber qué valor se le copió y para que la conciliación del
+M4 no lea divergencias inventadas cuando la Comisión recategoriza.
 
 Toda la API de MP se consume detrás de `src/lib/mp/gateway.ts`
 (`makeMpGateway()`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno). El
@@ -152,6 +246,16 @@ Script que consulta `GET /v1/payments/search` (rango: últimas 72 h) y
 - Pago approved sin registro local → procesarlo igual que un webhook (webhook perdido).
 - Suscripción cancelada/pausada sin reflejar → alerta admin.
 - Divergencia de montos plan vs ValorCuota → alerta admin (REG-34).
+- **Divergencia `auto_recurring.transaction_amount` de una suscripción viva vs. el
+  monto de su plan de referencia (`MpSubscription.planId`) → alerta admin.** Es la
+  divergencia que crea el diseño de §2 y que **nada más detecta**: como las
+  suscripciones copian el monto y no siguen al plan, cualquier lote de
+  actualización que quede a medias (REG-34, Módulo 4), toda alta anterior a un
+  cambio de cuota y toda recategorización que no haya llegado a MP quedan
+  debitando un importe distinto del vigente, sin ningún síntoma. La comparación
+  plan vs. `ValorCuota` de arriba **no la ve**: mira el catálogo, no lo que se
+  cobra. El resultado tiene que ser accionable: listado de preapprovals
+  desalineados con su monto actual y el esperado, para reaplicar el lote.
 - **Preapproval con `external_reference = solicitud:{id}` y sin fila
   `MpSubscription`** → es el único recupero posible de una suscripción huérfana:
   si `createPreapproval` sale bien y la escritura local falla, el vecino tiene un
@@ -175,6 +279,15 @@ Resultado del cron visible en `/admin/salud`.
   la acción se corta entera: al revés, la solicitud diría "activo" mientras el
   débito sigue saliendo por el monto de adherente y nadie lo compensaría. El
   `planId` local se sincroniza con el plan nuevo en la misma operación.
+  **De dónde sale el monto que se escribe**: de una lectura **fresca** del plan
+  nuevo (`getPlan(planIdForCategory(categoría))`), nunca de la caché de 24 h de
+  `plans.ts` — ese `PUT` fija el importe que MP debita todos los meses, y la caché
+  es stale-on-error, o sea que una lectura fallida no falla: devuelve en silencio
+  el último valor bueno y dejaría la suscripción cobrando un monto que la CD ya
+  cambió. Si el plan de la categoría nueva **no está configurado**, o si la lectura
+  del monto falla, la acción **aborta antes de llamar a MP** y no escribe nada
+  (mismo criterio que `startPaymentAction`, §2: mejor no tocar el monto que
+  tocarlo mal).
 - Reembolsos manuales excepcionales: se hacen desde el panel de MP; el webhook de
   `payments` (status refunded) los registra y anula el recibo con nota (Módulo 4).
 

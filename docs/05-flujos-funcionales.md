@@ -269,7 +269,13 @@ y el operador vería un acta vacía.
   "proponer cesantía" que arma el lote para el acta.
 - **Valores de cuota**: pantalla que muestra los montos actuales de los Planes MP
   (API) vs. tabla ValorCuota local; botón "registrar nuevo valor" (con acta) cuando
-  la CD cambió el plan en MP.
+  la CD cambió el plan en MP. Como las suscripciones se crean sin plan asociado y
+  copian el monto (`docs/06` §2), cambiar el valor en MP no se propaga solo a las
+  suscripciones vigentes: la pantalla incluye también la acción "aplicar el nuevo
+  valor de cuota a las suscripciones vigentes" (REG-34) — recorre las suscripciones
+  activas de la categoría, empuja el monto por API a cada una, con progreso,
+  reintento de las que fallen, asiento de auditoría y pantalla de "quedaron N sin
+  actualizar".
 
 ## 6. Panel admin — Noticias, Actividades, Actas, Configuración
 

@@ -6,8 +6,21 @@ import { MercadoPagoConfig, Payment, PreApproval, PreApprovalPlan } from "mercad
 
 export type MpGateway = {
   getPlan(planId: string): Promise<{ id: string; reason: string; amount: number }>;
+  /** Suscripción SIN plan asociado, con pago pendiente: es el ÚNICO flujo de
+   *  `POST /preapproval` que devuelve `init_point` para redirigir al vecino.
+   *
+   *  El flujo CON `preapproval_plan_id` exige `card_token_id` + `status:
+   *  "authorized"` (medido contra la API real el 21/08/2026: responde
+   *  `{"message":"card_token_id is required","status":400}`), o sea el
+   *  formulario de tarjeta en NUESTRO sitio y sin pantalla de autorización de
+   *  MP. Por eso el body lleva `reason` + `auto_recurring` inline y NO lleva
+   *  plan. Ver `docs/06` §2 antes de "restaurarlo".
+   *
+   *  `amount` es el que MP le cobra al vecino: quien llame tiene que leerlo
+   *  fresco, no de una caché (ver `asociate/actions.ts`). */
   createPreapproval(input: {
-    planId: string;
+    reason: string;
+    amount: number;
     payerEmail: string;
     externalReference: string;
     backUrl: string;
@@ -61,8 +74,20 @@ export function makeMpGateway(): MpGateway {
     async createPreapproval(input) {
       const res = await new PreApproval(mp()).create({
         body: {
-          preapproval_plan_id: input.planId,
+          reason: input.reason,
+          // Mensual en ARS y nada más: es la cuota societaria (REG-34), no un
+          // catálogo. Fijarlo acá —y no como parámetro— deja un solo lugar
+          // donde mirar si algún día hay otra periodicidad, y coincide con el
+          // criterio de `updatePreapprovalAmount`, que también fija "ARS".
+          auto_recurring: {
+            frequency: 1,
+            frequency_type: "months",
+            transaction_amount: input.amount,
+            currency_id: "ARS",
+          },
           payer_email: input.payerEmail,
+          // Obligatorio en las suscripciones sin plan, y además es lo que el
+          // webhook usa para encontrar la solicitud (`^solicitud:(\d+)$`).
           external_reference: input.externalReference,
           back_url: input.backUrl,
           status: "pending",

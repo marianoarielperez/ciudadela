@@ -21,6 +21,7 @@ const prismaMock = vi.hoisted(() => ({
   $transaction: vi.fn(),
 }));
 const gatewayMock = vi.hoisted(() => ({
+  getPlan: vi.fn(),
   updatePreapprovalAmount: vi.fn(),
   cancelPreapproval: vi.fn(),
 }));
@@ -104,7 +105,15 @@ beforeEach(() => {
   txMock.mpSubscription.updateMany.mockResolvedValue({ count: 1 });
   gatewayMock.updatePreapprovalAmount.mockResolvedValue(undefined);
   gatewayMock.cancelPreapproval.mockResolvedValue(undefined);
-  feesMock.getFeeAmounts.mockResolvedValue({ active: 5000, shared: 2500 });
+  // Lectura FRESCA del plan nuevo: es de acá de donde tiene que salir el monto
+  // que se le escribe a una suscripción viva, no de la caché de 24 h.
+  gatewayMock.getPlan.mockImplementation(async (id: string) => ({
+    id, reason: id === "PLAN-ACTIVE" ? "SOCIO ACTIVO" : "SOCIO ADHERENTE/COLABORADOR",
+    amount: id === "PLAN-ACTIVE" ? 5000 : 2500,
+  }));
+  // Sigue mockeado aunque la action ya no lo use: si alguien lo vuelve a
+  // enchufar, el test de abajo lo caza en vez de pasar por casualidad.
+  feesMock.getFeeAmounts.mockResolvedValue({ active: 9999, shared: 9999 });
   feesMock.planIdForCategory.mockImplementation(
     async (c: string) => (c === "active" ? "PLAN-ACTIVE" : "PLAN-SHARED"),
   );
@@ -120,7 +129,7 @@ describe("recategorizar una solicitud", () => {
 
     expect(url).toBe("/admin/solicitudes/5");
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
-    expect(feesMock.getFeeAmounts).not.toHaveBeenCalled();
+    expect(gatewayMock.getPlan).not.toHaveBeenCalled();
     expect(txMock.application.update).toHaveBeenCalledWith({
       where: { id: 5 }, data: { requestedCategory: "collaborator" },
     });
@@ -135,6 +144,52 @@ describe("recategorizar una solicitud", () => {
     expect(gatewayMock.updatePreapprovalAmount).toHaveBeenCalledWith("PRE-1", 5000);
     expect(txMock.application.update).toHaveBeenCalled();
     expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ subscriptionUpdated: true });
+  });
+
+  // ── El monto que se escribe sale de una lectura FRESCA ──────────────────────
+  // `updatePreapprovalAmount` fija lo que MP le debita al socio TODOS los meses.
+  // La caché de `plans.ts` es de 24 h y stale-on-error: si MP se cae, no tira,
+  // devuelve el último valor bueno. Servirse de ahí sería escribirle a una
+  // suscripción viva un importe que la Comisión ya cambió, con éxito en pantalla
+  // y sin nada que lo detecte (la conciliación compara plan vs. ValorCuota, no
+  // suscripción vs. plan).
+  it("el monto sale del plan leído fresco, no de la caché de montos", async () => {
+    gatewayMock.getPlan.mockResolvedValue({ id: "PLAN-ACTIVE", reason: "SOCIO ACTIVO", amount: 7400 });
+    await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
+
+    expect(gatewayMock.getPlan).toHaveBeenCalledWith("PLAN-ACTIVE");
+    // 7400, no el 9999 de la caché: si la action volviera a `getFeeAmounts`, acá se ve.
+    expect(gatewayMock.updatePreapprovalAmount).toHaveBeenCalledWith("PRE-1", 7400);
+    expect(feesMock.getFeeAmounts).not.toHaveBeenCalled();
+  });
+
+  it("si el plan no se puede leer, no se toca MP ni se guarda nada", async () => {
+    gatewayMock.getPlan.mockRejectedValue(Object.assign(new Error("MP 500"), { code: "500" }));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await recategorizeApplicationAction({}, recategorize("active"));
+
+    expect(result.error).toMatch(/No pudimos confirmar el valor de la cuota/);
+    // Ni el cuerpo del SDK ni el error crudo llegan a la pantalla.
+    expect(result.error).not.toMatch(/MP 500/);
+    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.mpSubscription.updateMany).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  // Antes se llamaba igual a MP con el monto cacheado y después se salteaba el
+  // update local del `planId`: la divergencia volvía en silencio (deuda #7 de
+  // `docs/07`).
+  it("con el plan de la categoría nueva sin configurar, corta antes de llamar a MP", async () => {
+    feesMock.planIdForCategory.mockResolvedValue(null);
+    const result = await recategorizeApplicationAction({}, recategorize("active"));
+
+    expect(result.error).toMatch(/no está configurado/);
+    expect(gatewayMock.getPlan).not.toHaveBeenCalled();
+    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
   });
 
   // `MpSubscription.planId` se escribía UNA sola vez, al crear la suscripción.
@@ -213,15 +268,6 @@ describe("recategorizar una solicitud", () => {
     expect(result.error).toMatch(/MP no aceptó el cambio de monto/);
     expect(txMock.application.update).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
-  });
-
-  it("sin monto de cuota legible tampoco se guarda", async () => {
-    feesMock.getFeeAmounts.mockResolvedValue(null);
-    const result = await recategorizeApplicationAction({}, recategorize("active"));
-
-    expect(result.error).toMatch(/valor de la cuota/);
-    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
-    expect(txMock.application.update).not.toHaveBeenCalled();
   });
 
   it("una solicitud ya resuelta no se recategoriza", async () => {

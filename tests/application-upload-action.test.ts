@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   },
   service: { findByResumeToken: vi.fn() },
   documentStore: { saveApplicationDocument: vi.fn() },
-  mpGateway: { createPreapproval: vi.fn() },
+  mpGateway: { createPreapproval: vi.fn(), getPlan: vi.fn() },
   configReader: { getString: vi.fn() },
   mailer: { sendToApplication: vi.fn() },
   audit: vi.fn(),
@@ -111,6 +111,7 @@ beforeEach(() => {
   mocks.documentStore.saveApplicationDocument.mockResolvedValue({ id: 1 });
   mocks.mailer.sendToApplication.mockResolvedValue({ messageId: "mid" });
   mocks.configReader.getString.mockResolvedValue("PLAN-123");
+  mocks.mpGateway.getPlan.mockResolvedValue({ id: "PLAN-123", reason: "SOCIO ACTIVO", amount: 6000 });
   mocks.mpGateway.createPreapproval.mockResolvedValue({
     id: "PRE-1", initPoint: "https://mp/checkout/PRE-1", status: "pending",
   });
@@ -294,6 +295,55 @@ describe("startPaymentAction", () => {
     expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
   });
 
+  // Desde que la suscripción se crea SIN plan asociado, el monto que mandamos
+  // es el que MP le debita al vecino todos los meses. Leerlo de la caché de 24 h
+  // de `plans.ts` sería adherirlo a un importe que la Comisión ya cambió, así
+  // que se lee fresco y, si no se puede leer, NO se crea nada.
+  it("el monto sale de una lectura fresca del plan, no de la caché de montos", async () => {
+    withDebit();
+    mocks.mpGateway.getPlan.mockResolvedValue({ id: "PLAN-123", reason: "SOCIO ACTIVO", amount: 9500 });
+    await startPaymentAction({}, tokenForm());
+
+    expect(mocks.mpGateway.getPlan).toHaveBeenCalledWith("PLAN-123");
+    expect(mocks.mpGateway.createPreapproval.mock.calls[0][0].amount).toBe(9500);
+  });
+
+  it("no se puede leer el monto: no se crea la suscripción y el mensaje es en castellano", async () => {
+    withDebit();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mocks.mpGateway.getPlan.mockRejectedValue(new Error("503 upstream"));
+      const result = await startPaymentAction({}, tokenForm());
+
+      expect(result.error).toMatch(/no pudimos confirmar el valor de la cuota/i);
+      expect(result.error).toMatch(/probá de nuevo en unos minutos/i);
+      expect(result.error).not.toMatch(/503|upstream/i);
+      expect(result.redirectUrl).toBeUndefined();
+      // Lo importante: mejor no cobrar que cobrar mal.
+      expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
+      expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("el plan existe pero no tiene monto en MP: tampoco se crea la suscripción", async () => {
+    // `getPlan` tira cuando `auto_recurring.transaction_amount` no es un número:
+    // un plan a medio cargar en el panel de MP no puede terminar en un débito.
+    withDebit();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mocks.mpGateway.getPlan.mockRejectedValue(new Error("El plan PLAN-123 no tiene monto en MP."));
+      const result = await startPaymentAction({}, tokenForm());
+
+      expect(result.error).toMatch(/no pudimos confirmar el valor de la cuota/i);
+      expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
   it("MP caído: no se persiste nada y el mensaje no filtra el error del SDK", async () => {
     withDebit();
     mocks.mpGateway.createPreapproval.mockRejectedValue(new Error("401 invalid access token"));
@@ -343,7 +393,13 @@ describe("startPaymentAction", () => {
 
     expect(result.redirectUrl).toBe("https://mp/checkout/PRE-1");
     const sent = mocks.mpGateway.createPreapproval.mock.calls[0][0];
-    expect(sent.planId).toBe("PLAN-123");
+    // Suscripción SIN plan asociado: el body lleva el monto, no el plan. Con
+    // `preapproval_plan_id` MP exige `card_token_id` y no hay redirección
+    // (medido contra la API real, docs/06 §2).
+    expect(sent.planId).toBeUndefined();
+    expect(sent.amount).toBe(6000);
+    expect(sent.reason).toMatch(/SOCIO ACTIVO/);
+    expect(sent.payerEmail).toBe("vecina@x.com");
     expect(sent.externalReference).toBe("solicitud:7");
     expect(sent.backUrl).toContain(`/asociate/retomar/${TOKEN}`);
     expect(mocks.prisma.application.update).toHaveBeenCalledWith({
