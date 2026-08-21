@@ -106,6 +106,17 @@ function codeOf(e: unknown): string {
   return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
 }
 
+// El `reason` de la suscripción es texto de cara al vecino: aparece en el
+// checkout de MP y, después, en el resumen de su tarjeta. Se arma con el nombre
+// de la asociación adelante —"SOCIO ACTIVO" a secas, en un resumen bancario, no
+// le dice nada a nadie— y el `reason` del plan atrás, que es el que la CD
+// gobierna desde el panel de MP. MP corta el campo en 255 caracteres.
+function subscriptionReason(planReason: string): string {
+  const suffix = planReason.trim();
+  const base = "Cuota societaria Vecinal Ciudadela";
+  return (suffix ? `${base} — ${suffix}` : base).slice(0, 255);
+}
+
 export async function createApplicationAction(_prev: CreateState, formData: FormData): Promise<CreateState> {
   const { ip, userAgent } = await requestMeta();
 
@@ -566,10 +577,40 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
     };
   }
 
+  // Lectura FRESCA del monto, sin caché, y a propósito.
+  //
+  // La suscripción se crea SIN plan asociado (ver el comentario de
+  // `createPreapproval` y `docs/06` §2), así que el monto que mandamos es
+  // literalmente el que MP le va a debitar al vecino todos los meses: el plan
+  // queda como registro del valor, no como vínculo.
+  //
+  // `getFeeAmounts` (src/lib/mp/plans.ts) NO sirve acá: es una caché de 24 h
+  // con stale-on-error, pensada para MOSTRAR el monto en el paso 2. Un valor
+  // viejo ahí es una pantalla desactualizada; acá sería debitarle a un socio un
+  // importe que la Comisión ya cambió, mes a mes, hasta que alguien lo note.
+  //
+  // Y si la lectura falla, NO se crea la suscripción: es preferible un "probá
+  // en unos minutos" a un débito con el monto equivocado. Cobrar mal es peor
+  // que no cobrar.
+  let plan: { id: string; reason: string; amount: number };
+  try {
+    plan = await mpGateway.getPlan(planId);
+  } catch (e) {
+    console.error("[asociate] no se pudo leer el monto del plan", planId, "code:", codeOf(e));
+    return {
+      error:
+        "No pudimos confirmar el valor de la cuota en este momento. Para no adherirte a un débito por un monto equivocado, no iniciamos el pago: probá de nuevo en unos minutos.",
+    };
+  }
+
   let sub: { id: string; initPoint: string; status: string };
   try {
     sub = await mpGateway.createPreapproval({
-      planId,
+      // Lo que el vecino ve en el checkout de MP y en el resumen de su tarjeta.
+      // Sale del `reason` del plan para que lo gobierne la CD desde el panel de
+      // MP, con un respaldo por si el plan viene sin nombre.
+      reason: subscriptionReason(plan.reason),
+      amount: plan.amount,
       payerEmail: app.email,
       externalReference: `solicitud:${app.id}`,
       backUrl: `${baseUrl()}/asociate/retomar/${resumeToken}`,
@@ -601,6 +642,10 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
         where: { id: app.id },
         data: { status: "pending_payment", preapprovalId: sub.id },
       });
+      // `planId` es el plan de REFERENCIA: de dónde salió el monto, no un
+      // vínculo. La suscripción se crea sin `preapproval_plan_id` y lleva el
+      // monto copiado en su propio `auto_recurring`, así que tocar el plan en
+      // MP no la mueve (docs/06 §2).
       await tx.mpSubscription.create({
         data: {
           preapprovalId: sub.id, planId, applicationId: app.id,

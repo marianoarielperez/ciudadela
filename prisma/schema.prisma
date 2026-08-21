@@ -510,6 +510,12 @@ model Document {
 model MpSubscription {
   id             Int          @id @default(autoincrement())
   preapprovalId  String       @unique @map("preapproval_id") @db.VarChar(64)
+  // Plan de REFERENCIA: de dónde salió el monto, NO el plan al que la
+  // suscripción está asociada en MP. Las suscripciones se crean sin
+  // `preapproval_plan_id` (el flujo con plan exige `card_token_id` y no permite
+  // redirigir al vecino, ver docs/06 §2) y llevan el monto copiado en su propio
+  // `auto_recurring`: cambiar el plan en MP no las mueve, hay que empujarles el
+  // monto nuevo una por una con `updatePreapprovalAmount` (REG-34, lote del M4).
   planId         String       @map("plan_id") @db.VarChar(64)
   applicationId  Int?         @map("application_id")
   application    Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)

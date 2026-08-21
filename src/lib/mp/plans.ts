@@ -4,6 +4,12 @@
 // stale-on-error: si MP está caído se sirve el último valor bueno antes que
 // inventar un monto o tirar abajo el wizard. In-memory alcanza: PM2 corre un
 // único proceso (mismo criterio que rate-limiter.ts).
+//
+// ESTA CACHÉ ES PARA MOSTRAR, NO PARA COBRAR. Desde que las suscripciones se
+// crean sin plan asociado (docs/06 §2), el monto que se manda a MP es el que se
+// debita: quien vaya a crear o modificar una suscripción tiene que leer el plan
+// FRESCO con `mpGateway.getPlan` y abortar si falla, no servirse de acá. Ver
+// `startPaymentAction` en `src/app/(public)/asociate/actions.ts`.
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import type { MemberCategory } from "@/generated/prisma/client";
 import { mpGateway, type MpGateway } from "./gateway";
@@ -12,11 +18,13 @@ export type FeeAmounts = { active: number; shared: number };
 
 /** El id del plan de MP que le corresponde a una categoría.
  *
- *  Los planes son DOS: "SOCIO ACTIVO" y "SOCIO ADHERENTE/COLABORADOR". La
- *  suscripción se crea contra uno de ellos (`asociate/actions.ts`) y ese id
- *  queda copiado en `MpSubscription.planId`; cuando la Comisión recategoriza y
- *  el monto se mueve, la fila local tiene que seguir al plan nuevo o la
- *  conciliación del M4 (REG-34) va a leer una divergencia que no existe.
+ *  Los planes son DOS: "SOCIO ACTIVO" y "SOCIO ADHERENTE/COLABORADOR", y son el
+ *  REGISTRO del monto, no un vínculo: la suscripción del vecino se crea sin
+ *  `preapproval_plan_id` y COPIA el monto (`asociate/actions.ts`, docs/06 §2).
+ *  El id queda igual en `MpSubscription.planId` como plan de referencia —de
+ *  dónde salió ese monto—; cuando la Comisión recategoriza, la fila local tiene
+ *  que seguir al plan nuevo o la conciliación del M4 (REG-34) va a leer una
+ *  divergencia que no existe.
  *
  *  Devuelve `null` si el id todavía no está configurado: no es un error, es que
  *  no hay plan que apuntar. */

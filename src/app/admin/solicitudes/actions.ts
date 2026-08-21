@@ -298,11 +298,19 @@ export async function recategorizeApplicationAction(
   const changesAmount = changesFeeAmount(app.requestedCategory, newCategory);
   const subscriptionUpdated = Boolean(app.preapprovalId && changesAmount);
   // El plan nuevo y el viejo, para que la fila local no siga apuntando al plan
-  // que el preapproval ya no cobra: `MpSubscription.planId` se escribe UNA vez
-  // (al crear la suscripción) y sin esto la conciliación del M4 (REG-34) leería
-  // una divergencia inventada —o la "arreglaría" al revés, devolviendo el monto
-  // viejo—. `changesFeeAmount` es true exactamente cuando el plan cambia: los
-  // planes son dos y adherente ↔ colaborador comparten el mismo.
+  // del que ya no salió el monto: `MpSubscription.planId` es el plan de
+  // REFERENCIA (la suscripción no está asociada a ningún plan en MP, docs/06
+  // §2), se escribe UNA vez al crearla, y sin esto la conciliación del M4
+  // (REG-34) leería una divergencia inventada —o la "arreglaría" al revés,
+  // devolviendo el monto viejo—. `changesFeeAmount` es true exactamente cuando
+  // el plan cambia: los planes son dos y adherente ↔ colaborador comparten el
+  // mismo.
+  //
+  // Acá `getFeeAmounts` (cacheado) sigue siendo lo que se usa, y es una
+  // diferencia consciente con `startPaymentAction`: esto es una acción de
+  // admin, sincrónica, sobre una suscripción que YA existe, y su fallo se ve en
+  // pantalla. Igual conviene cerrarlo en el M4 junto con la pantalla de valores
+  // de cuota.
   let newPlanId: string | null = null;
   let oldPlanId: string | null = null;
   if (app.preapprovalId && changesAmount) {

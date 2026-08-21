@@ -107,6 +107,19 @@ bandeja sin-matching, vinculación de suscripciones preexistentes, deudores + pr
 de cesantía (4 cuotas), pantalla de valores de cuota (MP vs local), conciliación
 cron de respaldo, `/admin/salud`.
 
+**Alcance agregado el 21/08/2026 — propagación del valor de cuota (REG-34).**
+Las suscripciones se crean **sin plan asociado** en MP y **copian** el monto
+(`docs/06` §2, corregido tras medirlo contra la API real), así que **cambiar el
+monto en el panel de Mercado Pago ya no se propaga solo a las suscripciones
+vivas**. El M4 tiene que incluir una acción "aplicar el nuevo valor de cuota a
+las suscripciones vigentes": recorre las suscripciones activas de la categoría y
+les empuja el monto por API (`updatePreapprovalAmount`, ya implementado y
+probado), con progreso, reintento de las que fallen, asiento de auditoría y
+pantalla de "quedaron N sin actualizar". Es un lote de decenas o pocos cientos de
+llamadas, hasta 4 veces al año: no es un problema de escala. Queda atado al acta,
+que es más fiel al estatuto que el sync. **Hasta que exista, un cambio de cuota
+en MP sólo afecta a las altas nuevas.**
+
 CA (sandbox): un débito recurrente de prueba genera Pago aplicado a la cuota del
 período + Recibo correlativo enviado por email; un efectivo registrado emite recibo
 imprimible; matar el webhook y correr el cron registra el pago igual; la numeración
@@ -145,7 +158,11 @@ concreto.
    `already_processed`, indistinguibles de un reintento. Recuperable por el
    payload crudo; candidato a un `result` propio (`duplicate_entry_payment`).
 5. **Cambiar los ids de plan no invalida la caché de montos** (hasta 24 h de
-   retraso): cerrar junto con la pantalla de valores de cuota.
+   retraso): cerrar junto con la pantalla de valores de cuota. Acotado el
+   21/08/2026: el camino que **cobra** (`startPaymentAction`) ya no usa la
+   caché —lee el plan fresco y aborta si falla—, así que lo que queda es un
+   monto viejo **en pantalla**, no un débito por el importe equivocado. La
+   recategorización del panel sí sigue leyendo el monto cacheado.
 6. **Una solicitud re-suscripta a mano** (tras revivir por pago tardío) queda
    describiendo la suscripción nueva con la copia "verificá antes de gestionar".
    No es alcanzable hoy porque la re-suscripción es manual; si el M4 automatiza el
