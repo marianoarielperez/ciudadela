@@ -6,6 +6,7 @@ import type { ApplicationStatus, PrismaClient } from "@/generated/prisma/client"
 import { applicationService } from "@/lib/applications/service";
 import { mailer } from "@/lib/email";
 import { paymentReminderEmail } from "@/lib/email/templates";
+import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway, type MpGateway } from "@/lib/mp/gateway";
 import { prisma } from "@/lib/prisma";
 
@@ -174,7 +175,14 @@ export function makeApplicationsCron(deps: Deps) {
             });
           } catch (e) {
             errors++;
-            console.error("[cron] falló la cancelación en MP al expirar", app.id, "code:", codeOf(e));
+            // `codeOf` no sirve para MP: el SDK lanza el cuerpo de la
+            // respuesta, un objeto plano sin `.code` (ver `mp/error-log.ts`).
+            console.error(
+              "[cron] falló la cancelación en MP al expirar —",
+              mpErrorLog("cancelPreapproval", {
+                applicationId: app.id, preapprovalId: app.preapprovalId,
+              }, e),
+            );
           }
         }
       } catch (e) {

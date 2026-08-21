@@ -25,6 +25,7 @@ import {
 } from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
 import { checkoutUrlFor } from "@/lib/mp/checkout";
+import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway } from "@/lib/mp/gateway";
 import { prisma } from "@/lib/prisma";
 import { SITE } from "@/lib/site";
@@ -597,7 +598,10 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
   try {
     plan = await mpGateway.getPlan(planId);
   } catch (e) {
-    console.error("[asociate] no se pudo leer el monto del plan", planId, "code:", codeOf(e));
+    console.error(
+      "[asociate] no se pudo leer el monto del plan —",
+      mpErrorLog("getPlan", { planId, applicationId: app.id }, e),
+    );
     return {
       error:
         "No pudimos confirmar el valor de la cuota en este momento. Para no adherirte a un débito por un monto equivocado, no iniciamos el pago: probá de nuevo en unos minutos.",
@@ -617,9 +621,13 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
       backUrl: `${baseUrl()}/asociate/retomar/${resumeToken}`,
     });
   } catch (e) {
-    // El error del SDK trae el cuerpo de la respuesta de MP (y a veces el token
-    // recortado): al log, nunca a la pantalla.
-    console.error("[asociate] falló createPreapproval para la solicitud", app.id, "code:", codeOf(e));
+    // El error del SDK ES el cuerpo de la respuesta de MP (no un `Error`): lo
+    // desarma `mpErrorLog`, que además enmascara el `payer_email` si viene en
+    // el mensaje. Al log, nunca a la pantalla.
+    console.error(
+      "[asociate] falló la creación de la suscripción —",
+      mpErrorLog("createPreapproval", { applicationId: app.id, planId }, e),
+    );
     return { error: "No pudimos iniciar el pago en Mercado Pago. Probá de nuevo en unos minutos." };
   }
 

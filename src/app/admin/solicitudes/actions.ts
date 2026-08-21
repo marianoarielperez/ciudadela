@@ -36,6 +36,7 @@ import type { RecordResult } from "@/lib/applications/record";
 import { parseApplicationFilters, parseApplicationsPage } from "@/lib/applications/query";
 import { changesFeeAmount, DECIDABLE_STATUSES, isDecidable } from "@/lib/applications/decision";
 import { categoryAllowedForResidence, WEB_CATEGORIES } from "@/lib/applications/wizard";
+import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway } from "@/lib/mp/gateway";
 import { planIdForCategory } from "@/lib/mp/plans";
 
@@ -336,9 +337,12 @@ export async function recategorizeApplicationAction(
       ({ amount } = await mpGateway.getPlan(newPlanId));
       newAmount = amount;
     } catch (e) {
-      // El error del SDK trae el cuerpo de la respuesta de MP: al log, nunca a
-      // la pantalla.
-      console.error("[solicitudes] no se pudo leer el monto del plan", newPlanId, codeOf(e));
+      // El error del SDK ES el cuerpo de la respuesta de MP (un objeto plano,
+      // no un `Error`): lo desarma `mpErrorLog`. Al log, nunca a la pantalla.
+      console.error(
+        "[solicitudes] no se pudo leer el monto del plan —",
+        mpErrorLog("getPlan", { applicationId, planId: newPlanId }, e),
+      );
       return {
         error: "No pudimos confirmar el valor de la cuota en Mercado Pago. Para no dejar el débito por un monto equivocado, no cambiamos nada: probá de nuevo en unos minutos.",
       };
@@ -349,7 +353,16 @@ export async function recategorizeApplicationAction(
     }))?.planId ?? null;
     try {
       await mpGateway.updatePreapprovalAmount(app.preapprovalId, amount);
-    } catch {
+    } catch (e) {
+      // Antes este catch era pelado: MP rechazaba el cambio de monto y en el
+      // log no quedaba NADA —ni el status ni el motivo—, así que el operador
+      // sólo podía reintentar a ciegas.
+      console.error(
+        "[solicitudes] MP no aceptó el cambio de monto de la suscripción —",
+        mpErrorLog("updatePreapprovalAmount", {
+          applicationId, preapprovalId: app.preapprovalId, amount,
+        }, e),
+      );
       return {
         error: "MP no aceptó el cambio de monto de la suscripción. Reintentá o resolvelo desde el panel de MP.",
       };
@@ -491,11 +504,13 @@ export async function rejectApplicationAction(
   if (app.preapprovalId) {
     try {
       await mpGateway.cancelPreapproval(app.preapprovalId);
-    } catch {
+    } catch (e) {
       cancelFailed = true;
       console.error(
-        "[solicitudes] no se pudo cancelar la suscripción de MP: se le sigue debitando al vecino rechazado",
-        applicationId, app.preapprovalId,
+        "[solicitudes] no se pudo cancelar la suscripción de MP: se le sigue debitando al vecino rechazado —",
+        mpErrorLog("cancelPreapproval", {
+          applicationId, preapprovalId: app.preapprovalId,
+        }, e),
       );
     }
     if (!cancelFailed) {
