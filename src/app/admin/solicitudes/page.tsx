@@ -4,7 +4,7 @@ import { formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import {
-  makeApplicationQueries, parseApplicationFilters, parseApplicationsPage,
+  makeApplicationQueries, parseApplicationFilters, parseApplicationsPage, showsReentryBadge,
 } from "@/lib/applications/query";
 import { RECORDABLE_STATUSES } from "@/lib/applications/record";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS } from "@/lib/members/labels";
@@ -139,8 +139,9 @@ export default async function SolicitudesPage(props: {
                 {APPLICATION_STATUS_LABELS[app.status]}
               </Badge>
               {/* Un reingreso no se asienta como alta nueva (REG-25): el
-                  operador tiene que verlo desde la bandeja, sin abrir. */}
-              {app.memberId !== null && (
+                  operador tiene que verlo desde la bandeja, sin abrir. Ya
+                  asentada, la bandeja no lo afirma: ver `showsReentryBadge`. */}
+              {showsReentryBadge(app) && (
                 <Badge variant="secondary" className="ml-1">Reingreso</Badge>
               )}
             </TableCell>

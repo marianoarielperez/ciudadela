@@ -25,7 +25,11 @@ type MemberSlice = Pick<
   "id" | "status" | "withdrawalReason" | "debtAtWithdrawal" | "reentryBlocked" | "rejectedUntil"
 >;
 
-function addMonthsUtc(date: Date, months: number): Date {
+/** Exportada porque el rechazo del panel calcula con ella el `rejectedUntil` de
+ *  la ficha (REG-05): el bloqueo que se ESCRIBE al rechazar y el que se LEE acá
+ *  tienen que salir de la misma aritmética, o el vecino vería una fecha de
+ *  reintento distinta de la que el sistema respeta. */
+export function addMonthsUtc(date: Date, months: number): Date {
   const d = new Date(date.getTime());
   d.setUTCMonth(d.getUTCMonth() + months);
   return d;

@@ -32,6 +32,13 @@ vi.mock("@/lib/applications/record", async (importOriginal) => ({
   applicationRecorder: recorderMock,
 }));
 vi.mock("@/lib/members/account-email-notice", () => ({ accountEmailNotice: noticeMock }));
+// El asiento no toca MP, pero comparte módulo con las decisiones del detalle
+// (recategorizar / rechazar), que sí: sin estos dobles el import arrastra
+// `mp/plans` → `lib/config` → `unstable_cache`, que este `next/cache` no mockea.
+vi.mock("@/lib/mp/gateway", () => ({
+  mpGateway: { updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn() },
+}));
+vi.mock("@/lib/mp/plans", () => ({ getFeeAmounts: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers([["x-real-ip", "1.2.3.4"]]) }));
 vi.mock("next/navigation", () => ({

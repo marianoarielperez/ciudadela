@@ -17,10 +17,12 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { mailer } from "@/lib/email";
-import { portalInvite } from "@/lib/email/templates";
+import { applicationRejectedEmail, portalInvite } from "@/lib/email/templates";
+import { parseForm } from "@/lib/forms";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
 import { accountEmailNotice } from "@/lib/members/account-email-notice";
@@ -28,9 +30,14 @@ import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
 } from "@/lib/members/minute-form";
 import type { AccountEmailMove } from "@/lib/members/write";
+import { addMonthsUtc, REJECTION_BLOCK_MONTHS } from "@/lib/applications/eligibility";
 import { applicationRecorder, RECORDABLE_STATUSES } from "@/lib/applications/record";
 import type { RecordResult } from "@/lib/applications/record";
 import { parseApplicationFilters, parseApplicationsPage } from "@/lib/applications/query";
+import { changesFeeAmount, DECIDABLE_STATUSES, isDecidable } from "@/lib/applications/decision";
+import { WEB_CATEGORIES } from "@/lib/applications/wizard";
+import { mpGateway } from "@/lib/mp/gateway";
+import { getFeeAmounts } from "@/lib/mp/plans";
 
 // Sin `export`: en un módulo "use server" todo lo exportado es un endpoint.
 //
@@ -39,6 +46,9 @@ import { parseApplicationFilters, parseApplicationsPage } from "@/lib/applicatio
 // ordenarle una acción sin darle los medios (en un lote de 20 no hay forma de
 // deducirlo desde la bandeja). La pantalla las lista con link a cada una.
 type State = { error?: string; recorded?: number; failures?: Array<{ id: number; error: string }> };
+
+/** El estado de las dos acciones individuales del detalle. */
+type DecisionState = { error?: string };
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
@@ -224,4 +234,187 @@ export async function recordApplicationsAction(_p: State, formData: FormData): P
   if (backPage > 1) qs.set("page", String(backPage));
   qs.set("asentadas", String(done.length));
   redirect(`/admin/solicitudes?${qs.toString()}`);
+}
+
+// ── Recategorizar (docs/05 §3) ───────────────────────────────────────────────
+// La Comisión corrige la categoría que el vecino eligió en el wizard ANTES de
+// asentarla en el libro. No es un acto societario en sí —la solicitud todavía no
+// es un socio— así que no lleva acta: el acta la lleva el asiento posterior, ya
+// con la categoría corregida. Lo que sí lleva es auditoría y, cuando el monto de
+// la cuota cambia, un viaje a Mercado Pago.
+export async function recategorizeApplicationAction(
+  _p: DecisionState, formData: FormData,
+): Promise<DecisionState> {
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
+
+  const parsed = parseForm(
+    z.object({
+      applicationId: z.coerce.number().int().positive(),
+      newCategory: z.enum(WEB_CATEGORIES, { error: "Elegí la nueva categoría." }),
+    }),
+    formData,
+  );
+  if (!parsed.ok) return { error: parsed.error };
+  const { applicationId, newCategory } = parsed.data;
+
+  const app = await prisma.application.findUnique({ where: { id: applicationId } });
+  if (!app) return { error: "La solicitud no existe." };
+  if (!isDecidable(app.status)) {
+    return { error: "La solicitud ya fue resuelta: no se puede recategorizar." };
+  }
+  if (app.requestedCategory === newCategory) return { error: "La solicitud ya tiene esa categoría." };
+
+  // A propósito NO se corre acá `categoryAllowedForResidence`: esa regla es la
+  // de lo que el vecino puede AUTO-declarar en el wizard (Art. 5 y 5 bis), y la
+  // recategorización es justamente la corrección de la Comisión cuando lo
+  // declarado no se corresponde con la realidad —el caso típico es el domicilio—.
+  // Por eso el circuito contempla adherente ↔ colaborador, que cruza esa línea.
+  // Las categorías que NO se piden por la web siguen cerradas: el enum del
+  // schema es `WEB_CATEGORIES` (cadete, honorario y vitalicio salen del padrón,
+  // no de una solicitud).
+
+  // Si hay suscripción y el monto de la categoría nueva difiere, se actualiza la
+  // suscripción por API (docs/06 §7). MP va ANTES del update local y su fallo
+  // corta la acción: al revés, la ficha quedaría diciendo "activo" mientras el
+  // débito sigue saliendo por el monto de adherente, y nadie lo compensaría.
+  const changesAmount = changesFeeAmount(app.requestedCategory, newCategory);
+  if (app.preapprovalId && changesAmount) {
+    const fees = await getFeeAmounts();
+    if (!fees) return { error: "No pudimos leer el valor de la cuota en MP: reintentá más tarde." };
+    const amount = newCategory === "active" ? fees.active : fees.shared;
+    try {
+      await mpGateway.updatePreapprovalAmount(app.preapprovalId, amount);
+    } catch {
+      return {
+        error: "MP no aceptó el cambio de monto de la suscripción. Reintentá o resolvelo desde el panel de MP.",
+      };
+    }
+  }
+
+  await prisma.application.update({
+    where: { id: applicationId },
+    data: { requestedCategory: newCategory },
+  });
+  await audit({
+    userId: actor.actorId, action: "application_recategorize", entity: "application",
+    entityId: applicationId,
+    // Sólo categorías y banderas: ni el nombre ni el DNI (docs/08, Ley 25.326).
+    detail: {
+      from: app.requestedCategory, to: newCategory,
+      subscriptionUpdated: Boolean(app.preapprovalId && changesAmount),
+    },
+    ip: await clientIp(),
+  });
+  // Fuera del try: `redirect` señaliza con una excepción y un catch se la comería.
+  redirect(`/admin/solicitudes/${applicationId}`);
+}
+
+// ── Rechazar (REG-13, REG-12.b, REG-05) ──────────────────────────────────────
+// El rechazo SÍ es un acto societario: exige constancia en acta (REG-13, sin
+// necesidad de expresar la causa). Además retiene la cuota de ingreso ya
+// debitada (REG-12.b), cancela la suscripción de MP y bloquea al DNI por seis
+// meses (REG-05).
+//
+// El bloqueo tiene dos soportes según haya ficha o no: sobre `Member.rejectedUntil`
+// cuando la solicitud matcheó a un ex socio, y sobre la propia Application
+// rechazada (`lastRejectionAt`) cuando el DNI no está en el padrón. Los dos los
+// lee `checkEligibility`.
+export async function rejectApplicationAction(
+  _p: DecisionState, formData: FormData,
+): Promise<DecisionState> {
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
+
+  const parsed = parseForm(z.object({ applicationId: z.coerce.number().int().positive() }), formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const { applicationId } = parsed.data;
+
+  // El acta se parsea aparte y NUNCA se combina con el schema de arriba:
+  // `minuteSelectionSchema` es un `z.union` y `parseForm` sólo sabe reconocer
+  // campos opcionales sobre un ZodObject con `.shape`.
+  const raw: Record<string, string> = {};
+  for (const [k, v] of formData.entries()) if (typeof v === "string" && v.trim() !== "") raw[k] = v.trim();
+  const sel = minuteSelectionSchema.safeParse(raw);
+  if (!sel.success) {
+    return { error: sel.error.issues[0]?.message ?? "El rechazo exige constancia en acta (Art. 5 inc. 7)." };
+  }
+
+  // Pre-validación anti acta huérfana: si la solicitud ya está resuelta, se
+  // corta ANTES de crear el acta (mismo criterio que el asiento masivo).
+  const app = await prisma.application.findUnique({ where: { id: applicationId } });
+  if (!app) return { error: "La solicitud no existe." };
+  if (!isDecidable(app.status)) return { error: "La solicitud ya fue resuelta." };
+
+  const createdMinute = createsNewMinute(sel.data);
+  let minuteId: number;
+  try {
+    minuteId = await resolveMinuteId(prisma, sel.data, actor.actorId);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "No se pudo resolver el acta." };
+  }
+
+  const decidedAt = new Date();
+  try {
+    await prisma.$transaction(async (tx) => {
+      // `updateMany` con el estado en el WHERE y no `update`: es el cerrojo
+      // contra dos admins resolviendo la misma solicitud desde dos pantallas.
+      const { count } = await tx.application.updateMany({
+        where: { id: applicationId, status: { in: [...DECIDABLE_STATUSES] } },
+        data: { status: "rejected", minuteId, decidedAt },
+      });
+      if (count === 0) throw new Error("La solicitud ya fue resuelta por otro admin.");
+      if (app.memberId) {
+        await tx.member.update({
+          where: { id: app.memberId },
+          data: { rejectedUntil: addMonthsUtc(decidedAt, REJECTION_BLOCK_MONTHS) },
+        });
+      }
+    });
+  } catch (e) {
+    if (createdMinute) await discardUnusedMinute(prisma, minuteId);
+    return { error: e instanceof Error ? e.message : "No se pudo rechazar la solicitud." };
+  }
+
+  // Cancelación de la suscripción y correo: DESPUÉS del commit y best-effort. El
+  // rechazo ya quedó asentado en el acta de la Comisión y NO se revierte porque
+  // MP o el SMTP estén caídos; lo que sí queda es el rastro (`cancelFailed`)
+  // para que alguien lo termine a mano desde el panel de MP.
+  let cancelFailed = false;
+  if (app.preapprovalId) {
+    try {
+      await mpGateway.cancelPreapproval(app.preapprovalId);
+      await prisma.mpSubscription.updateMany({
+        where: { preapprovalId: app.preapprovalId },
+        data: { status: "cancelled", lastSyncAt: new Date() },
+      });
+    } catch {
+      cancelFailed = true;
+      console.error("[solicitudes] no se pudo cancelar la suscripción de MP", applicationId);
+    }
+  }
+  try {
+    await mailer.sendToApplication({
+      applicationId, to: app.email, type: "application_result",
+      // La retención sólo se menciona si hubo débito real (REG-12.b).
+      message: applicationRejectedEmail({ entryFeeRetained: app.mpPaymentIdEntry !== null }),
+      summary: "solicitud rechazada",
+    });
+  } catch (e) {
+    // Del error sólo el código: los de nodemailer traen el sobre SMTP, o sea la
+    // dirección del vecino en claro (docs/08, Ley 25.326).
+    const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
+    console.error("[solicitudes] no se pudo enviar el aviso de rechazo", applicationId, code);
+  }
+
+  await audit({
+    userId: actor.actorId, action: "application_reject", entity: "application",
+    entityId: applicationId,
+    detail: {
+      minuteId, entryFeeRetained: app.mpPaymentIdEntry !== null, cancelFailed,
+      hadMember: app.memberId !== null,
+    },
+    ip: await clientIp(),
+  });
+  redirect(`/admin/solicitudes/${applicationId}`);
 }

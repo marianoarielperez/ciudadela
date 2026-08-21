@@ -69,6 +69,27 @@ export type ApplicationRow = {
   emailVerifiedAt: Date | null;
 };
 
+/** ¿La bandeja puede afirmar "Reingreso" mirando SÓLO esta fila?
+ *
+ *  `memberId` no es el discriminador alta/reingreso. Lo parece —lo es mientras
+ *  la solicitud está viva— pero el asiento le escribe `memberId` a TODA
+ *  solicitud que completa, sea alta nueva o reingreso: es el contrato de la
+ *  Task 15, del que cuelga la verificación tardía de email (`/verificar` busca
+ *  por ahí la ficha a la que propagar el canje). Con lo cual, después del
+ *  asiento, un alta común es indistinguible de un reingreso por ese campo, y la
+ *  bandeja llegó a mostrar "Alta completada · Reingreso" sobre una solicitud que
+ *  acababa de CREAR al socio que decía estar readmitiendo.
+ *
+ *  Antes del asiento el campo sí significa "esta solicitud matcheó una ficha
+ *  existente", que es justo lo que el operador necesita ver desde la bandeja
+ *  para preparar el acta (REG-25). Después, la señal verdadera es el `Movement`
+ *  (`admission` vs `readmission`) y eso es una consulta POR FILA: la bandeja no
+ *  la hace y no afirma nada; el detalle —que ya corre varias consultas— la
+ *  resuelve y muestra la distinción real. */
+export function showsReentryBadge(row: Pick<ApplicationRow, "status" | "memberId">): boolean {
+  return row.memberId !== null && row.status !== "completed";
+}
+
 export type ApplicationsPage = {
   rows: ApplicationRow[];
   total: number;

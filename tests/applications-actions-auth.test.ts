@@ -11,15 +11,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //
 // `vi.hoisted` porque `vi.mock` se iza al tope del archivo.
 const prismaMock = vi.hoisted(() => ({
-  application: { count: vi.fn(), update: vi.fn() },
-  member: { findUnique: vi.fn() },
+  application: { count: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+  member: { findUnique: vi.fn(), update: vi.fn() },
   minute: { findUnique: vi.fn(), create: vi.fn(), delete: vi.fn() },
   movement: { count: vi.fn() },
   book: { count: vi.fn() },
+  mpSubscription: { updateMany: vi.fn() },
+  $transaction: vi.fn(),
 }));
 const recorderMock = vi.hoisted(() => ({ recordOne: vi.fn() }));
 const tokensMock = vi.hoisted(() => ({ issue: vi.fn(), revokeForMember: vi.fn() }));
-const mailerMock = vi.hoisted(() => ({ sendToMember: vi.fn() }));
+const mailerMock = vi.hoisted(() => ({ sendToMember: vi.fn(), sendToApplication: vi.fn() }));
+const gatewayMock = vi.hoisted(() => ({
+  updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn(),
+}));
+const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/require-admin", () => ({
@@ -32,6 +38,10 @@ vi.mock("@/lib/applications/record", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/applications/record")>()),
   applicationRecorder: recorderMock,
 }));
+vi.mock("@/lib/mp/gateway", () => ({ mpGateway: gatewayMock }));
+vi.mock("@/lib/mp/plans", () => feesMock);
+vi.mock("@/lib/members/account-email-notice", () => ({ accountEmailNotice: { announce: vi.fn() } }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -39,7 +49,9 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-import { recordApplicationsAction } from "@/app/admin/solicitudes/actions";
+import {
+  recategorizeApplicationAction, recordApplicationsAction, rejectApplicationAction,
+} from "@/app/admin/solicitudes/actions";
 import { audit } from "@/lib/audit";
 
 const form = (entries: [string, string][]) => {
@@ -88,5 +100,36 @@ describe("autorización de las actions de solicitudes", () => {
   it("la guarda corre antes que la validación del formulario", async () => {
     const result = await recordApplicationsAction({}, new FormData());
     expect(result.error).toBe("Sesión inválida.");
+  });
+
+  // Las dos decisiones del detalle son endpoints igual de públicos, y las dos
+  // salen del sistema: una le cambia el monto del débito a un vecino, la otra
+  // le cancela la suscripción, le retiene la cuota de ingreso y le bloquea el
+  // DNI por seis meses.
+  it("recategorizar: sin sesión no lee la solicitud ni llama a MP", async () => {
+    const result = await recategorizeApplicationAction(
+      {}, form([["applicationId", "5"], ["newCategory", "active"]]),
+    );
+
+    expect(result.error).toBe("Sesión inválida.");
+    expect(prismaMock.application.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.application.update).not.toHaveBeenCalled();
+    expect(feesMock.getFeeAmounts).not.toHaveBeenCalled();
+    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("rechazar: sin sesión no crea acta, no cancela en MP y no manda correo", async () => {
+    const result = await rejectApplicationAction(
+      {}, form([["applicationId", "5"], ["minuteId", "10"]]),
+    );
+
+    expect(result.error).toBe("Sesión inválida.");
+    expect(prismaMock.application.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.minute.create).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(gatewayMock.cancelPreapproval).not.toHaveBeenCalled();
+    expect(mailerMock.sendToApplication).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
   });
 });

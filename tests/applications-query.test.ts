@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATIONS_PAGE_SIZE, applicationsWhere, makeApplicationQueries,
-  parseApplicationFilters, parseApplicationsPage,
+  parseApplicationFilters, parseApplicationsPage, showsReentryBadge,
 } from "@/lib/applications/query";
 
 describe("parseApplicationFilters", () => {
@@ -130,5 +130,34 @@ describe("makeApplicationQueries.fetchPage", () => {
     expect(res.pageCount).toBe(3);
     expect(res.pageSize).toBe(APPLICATIONS_PAGE_SIZE);
     expect(res.rows).toHaveLength(1);
+  });
+});
+
+// El asiento le escribe `memberId` a TODA solicitud que completa (contrato de la
+// Task 15: de ahí cuelga la verificación tardía de email), así que después del
+// asiento ese campo NO distingue un alta de un reingreso. La bandeja llegó a
+// mostrar "Alta completada · Reingreso" sobre una solicitud que acababa de CREAR
+// al socio que decía estar readmitiendo — en la pantalla con la que la Comisión
+// prepara el acta.
+describe("showsReentryBadge", () => {
+  it("una solicitud viva con ficha matcheada SÍ es un reingreso por venir (REG-25)", () => {
+    for (const status of ["pending_payment", "approved_pending_minute", "pending_board"] as const) {
+      expect(showsReentryBadge({ status, memberId: 99 })).toBe(true);
+    }
+  });
+
+  it("sin ficha matcheada nunca", () => {
+    expect(showsReentryBadge({ status: "pending_board", memberId: null })).toBe(false);
+  });
+
+  // Asentada, la bandeja no puede afirmarlo con esta fila: la señal real es el
+  // Movement (`admission` vs `readmission`) y eso es una consulta por fila. El
+  // detalle la hace; el listado se calla.
+  it("una vez asentada, la bandeja no lo afirma", () => {
+    expect(showsReentryBadge({ status: "completed", memberId: 306 })).toBe(false);
+  });
+
+  it("el rechazo conserva la señal: ahí `memberId` sigue siendo la ficha matcheada", () => {
+    expect(showsReentryBadge({ status: "rejected", memberId: 99 })).toBe(true);
   });
 });
