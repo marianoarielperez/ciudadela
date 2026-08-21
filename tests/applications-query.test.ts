@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATIONS_PAGE_SIZE, APPROVED_AFTER_EXPIRY_ACTION, applicationsWhere,
-  fetchApprovedAfterExpiry, makeApplicationQueries, parseApplicationFilters,
-  parseApplicationsPage, showsReentryBadge,
+  fetchApprovedAfterExpiry, lateEntryNotice, makeApplicationQueries, parseApplicationFilters,
+  parseApplicationsPage, showsNoDebitBadge, showsReentryBadge, subscriptionIsActive,
 } from "@/lib/applications/query";
 
 describe("parseApplicationFilters", () => {
@@ -102,10 +104,31 @@ describe("makeApplicationQueries.fetchPage", () => {
     const select = findMany.mock.calls[0][0].select as Record<string, unknown>;
     expect(Object.keys(select).sort()).toEqual([
       "createdAt", "dni", "emailVerifiedAt", "fullName", "id", "memberId",
-      "requestedCategory", "status", "wantsDebit",
+      "requestedCategory", "status", "subscriptions", "wantsDebit",
     ]);
     expect(select).not.toHaveProperty("resumeTokenHash");
     expect(select).not.toHaveProperty("ip");
+    // De la suscripción, SÓLO el estado: `payerEmail` es un dato personal que la
+    // tabla no muestra (docs/08). Y una sola, la última: es para el badge.
+    expect(select.subscriptions).toEqual({
+      select: { status: true }, orderBy: { createdAt: "desc" }, take: 1,
+    });
+  });
+
+  // El badge "Sin débito" no lo puede afirmar el asiento de auditoría solo: hace
+  // falta el estado VIVO de la suscripción, y viene aplanado en la fila para que
+  // ninguna pantalla tenga que repetir el `[0]`.
+  it("aplana la última suscripción en `subscriptionStatus`", async () => {
+    const { db: client } = db(
+      [
+        { id: 1, subscriptions: [{ status: "cancelled" }] },
+        { id: 2, subscriptions: [] },
+      ],
+      2,
+    );
+    const res = await makeApplicationQueries(client).fetchPage({}, 1);
+    expect(res.rows.map((r) => r.subscriptionStatus)).toEqual(["cancelled", null]);
+    expect(res.rows[0]).not.toHaveProperty("subscriptions");
   });
 
   // Un `?page=99` tipeado a mano —o un filtro que achica la bandeja mientras se
@@ -191,5 +214,114 @@ describe("fetchApprovedAfterExpiry", () => {
     const revived = await fetchApprovedAfterExpiry({ auditLog: { findMany } } as never, []);
     expect(revived.size).toBe(0);
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ── El aviso del pago tardío ────────────────────────────────────────────────
+// El asiento prueba UNA cosa: que el pago llegó cuando la solicitud ya estaba
+// vencida. NO prueba que el débito haya quedado cancelado — `cancelPreapproval`
+// es best-effort en el cron y su catch cuenta el error y sigue. Afirmar "quedó
+// sin débito" sobre un preapproval que sigue vivo manda al operador a crear un
+// SEGUNDO débito sobre el mismo vecino.
+describe("lateEntryNotice", () => {
+  it("sin asiento no hay aviso, esté como esté la suscripción", () => {
+    for (const status of [null, "cancelled", "authorized", "paused"]) {
+      expect(lateEntryNotice(false, status)).toBeNull();
+    }
+  });
+
+  it("con la suscripción cancelada SÍ se puede afirmar que no hay débito", () => {
+    expect(lateEntryNotice(true, "cancelled")).toBe("no_debit");
+  });
+
+  it("sin fila de suscripción tampoco hay débito que perder", () => {
+    expect(lateEntryNotice(true, null)).toBe("no_debit");
+    expect(lateEntryNotice(true, undefined)).toBe("no_debit");
+  });
+
+  // El caso del fix: la cancelación del cron falló, el preapproval sigue
+  // cobrando y el aviso NO puede mandar a gestionar un débito nuevo.
+  it("con la suscripción activa el aviso cambia: hay que verificar, no rehacer", () => {
+    expect(lateEntryNotice(true, "authorized")).toBe("verify");
+  });
+
+  it("cualquier otro estado de MP también cae en verificar (lista blanca)", () => {
+    for (const status of ["pending", "paused", "un_estado_nuevo_de_mp"]) {
+      expect(lateEntryNotice(true, status)).toBe("verify");
+    }
+  });
+});
+
+describe("showsNoDebitBadge", () => {
+  it("la bandeja afirma 'Sin débito' sólo con la suscripción cancelada", () => {
+    expect(showsNoDebitBadge(true, "cancelled")).toBe(true);
+    expect(showsNoDebitBadge(true, null)).toBe(true);
+  });
+
+  // Fix 2 de la re-revisión: el asiento es permanente, así que colgando el badge
+  // de él la fila gritaba "Sin débito" para siempre — también después de que el
+  // operador rehiciera la suscripción. Colgando del estado vivo, se apaga solo.
+  it("una vez que la suscripción vuelve a estar activa, el badge se apaga", () => {
+    expect(showsNoDebitBadge(true, "authorized")).toBe(false);
+  });
+
+  it("sin asiento nunca", () => {
+    expect(showsNoDebitBadge(false, "cancelled")).toBe(false);
+  });
+});
+
+describe("subscriptionIsActive", () => {
+  it("sólo `authorized` está cobrando", () => {
+    expect(subscriptionIsActive("authorized")).toBe(true);
+    for (const status of ["pending", "paused", "cancelled", null, undefined]) {
+      expect(subscriptionIsActive(status)).toBe(false);
+    }
+  });
+});
+
+// ── Los dos textos, en la pantalla ──────────────────────────────────────────
+// El helper decide cuál de los dos avisos va; que cada rama diga lo que
+// corresponde es cosa de la página, y es justamente lo que se rompió: el aviso
+// AFIRMABA una cancelación que puede no haber ocurrido. Las dos pantallas son
+// server components que leen prisma, así que se verifica la fuente (mismo
+// criterio estructural que `ADMIN_NAV routes`), no un render.
+describe("el aviso del pago tardío en pantalla", () => {
+  const src = (...parts: string[]) =>
+    readFileSync(path.resolve(import.meta.dirname, "..", "src", ...parts), "utf8");
+  const detail = src("app", "admin", "solicitudes", "[id]", "page.tsx");
+  const [beforeVerify, afterVerify] = detail.split('{revivedEntry && lateEntry === "verify" && (');
+  const noDebitBlock = beforeVerify.split('{revivedEntry && lateEntry === "no_debit" && (')[1];
+  const verifyBlock = afterVerify?.split("{pendingCancellation")[0];
+
+  it("la rama de la suscripción cancelada es la ÚNICA que afirma que no hay débito", () => {
+    expect(noDebitBlock).toBeDefined();
+    expect(noDebitBlock).toContain("quedó sin débito automático");
+    expect(noDebitBlock).toContain("volvé a");
+    // Y nada más en la pantalla lo afirma.
+    expect(detail.split("quedó sin débito automático")).toHaveLength(2);
+  });
+
+  it("la rama de la suscripción viva manda a verificar en MP, no a rehacer el débito", () => {
+    expect(verifyBlock).toBeDefined();
+    expect(verifyBlock).toContain("Verificá el preapproval en el panel de Mercado Pago");
+    expect(verifyBlock).toContain("dos");
+    // Lo que NO puede decir: que quedó sin débito, ni que la cancelación se hizo.
+    expect(verifyBlock).not.toContain("quedó sin débito");
+    expect(verifyBlock).not.toContain("se canceló la");
+  });
+
+  it("las dos ramas fechan el pago tardío", () => {
+    for (const block of [noDebitBlock, verifyBlock]) {
+      expect(block).toContain("formatDateAR(revivedEntry.createdAt)");
+      expect(block).toContain("ya estaba vencida");
+    }
+  });
+
+  // La bandeja no cuelga el badge del asiento pelado: lo cruza con el estado
+  // vivo que ahora viaja en la fila.
+  it("el badge de la bandeja se deriva del estado vivo de la suscripción", () => {
+    const inbox = src("app", "admin", "solicitudes", "page.tsx");
+    expect(inbox).toContain("showsNoDebitBadge(revived.has(app.id), app.subscriptionStatus)");
+    expect(inbox).not.toContain("{revived.has(app.id) && (");
   });
 });

@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import {
   fetchApprovedAfterExpiry, makeApplicationQueries, parseApplicationFilters,
-  parseApplicationsPage, showsReentryBadge,
+  parseApplicationsPage, showsNoDebitBadge, showsReentryBadge,
 } from "@/lib/applications/query";
 import { RECORDABLE_STATUSES } from "@/lib/applications/record";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS } from "@/lib/members/labels";
@@ -56,9 +56,14 @@ export default async function SolicitudesPage(props: {
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
   // Las que revivieron: el pago llegó después del vencimiento, así que se
-  // aceptaron pero el cron ya les había cancelado el débito. Se marcan ACÁ y no
-  // sólo en el detalle porque desde esta misma pantalla se las asienta en acta
-  // en lote, sin abrirlas. Es UNA consulta para toda la página.
+  // aceptaron cuando el cron ya había mandado a cancelarles el débito. Se marcan
+  // ACÁ y no sólo en el detalle porque desde esta misma pantalla se las asienta
+  // en acta en lote, sin abrirlas. Es UNA consulta para toda la página.
+  //
+  // El asiento solo NO alcanza para el badge: prueba que el pago llegó tarde,
+  // no que el débito haya quedado cancelado (la cancelación del cron es
+  // best-effort). Por eso se cruza con el estado vivo de la suscripción, que
+  // viene en la fila — ver `lateEntryNotice` y `showsNoDebitBadge`.
   const revived = await fetchApprovedAfterExpiry(prisma, rows.map((r) => r.id));
 
   // Sólo estas dos pueden llegar al libro; el resto de las filas se listan pero
@@ -150,17 +155,17 @@ export default async function SolicitudesPage(props: {
               {showsReentryBadge(app) && (
                 <Badge variant="secondary" className="ml-1">Reingreso</Badge>
               )}
-              {revived.has(app.id) && (
+              {showsNoDebitBadge(revived.has(app.id), app.subscriptionStatus) && (
                 <Badge
                   variant="destructive"
                   className="ml-1"
-                  title="El pago llegó después del vencimiento: la suscripción fue cancelada al vencer."
+                  title="El pago llegó después del vencimiento: la suscripción figura cancelada."
                 >
                   Sin débito
                   {/* El `title` no lo lee un lector de pantalla sobre un span:
                       el motivo va también como texto. */}
                   <span className="sr-only">
-                    {" "}— el pago llegó después del vencimiento y la suscripción fue cancelada al vencer
+                    {" "}— el pago llegó después del vencimiento y la suscripción figura cancelada
                   </span>
                 </Badge>
               )}

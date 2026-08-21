@@ -8,7 +8,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { ApplicationsCronFailure, applicationsCron, cronPartial } from "@/lib/applications/cron";
 import { audit } from "@/lib/audit";
-import { safeMessage } from "@/lib/mp/webhook-processor";
+import { safeMessage } from "@/lib/log-safe";
 
 // `timingSafeEqual` y `Buffer` exigen Node: en el runtime Edge la guarda no
 // existiría (mismo criterio que el webhook de MP).

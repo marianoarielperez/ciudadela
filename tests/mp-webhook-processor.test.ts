@@ -24,9 +24,14 @@ function deps(payment?: Partial<{ status: string; externalReference: string | nu
   };
   const mailerMock = { sendToApplication: vi.fn().mockResolvedValue({ messageId: "m" }) };
   const auditMock = vi.fn<(entry: unknown) => Promise<void>>(async () => {});
+  // `auditStrict` es el que usa el asiento del pago tardío: ése SÍ propaga el
+  // fallo de inserción, porque es el único asiento del que depende que el caso
+  // se vea en pantalla.
+  const auditStrictMock = vi.fn<(entry: unknown) => Promise<void>>(async () => {});
   return {
     db: db as never, gateway: gateway as never, mailer: mailerMock as never, audit: auditMock as never,
-    application, mpSubscription, gatewayMock: gateway, mailerMock, auditMock,
+    auditStrict: auditStrictMock as never,
+    application, mpSubscription, gatewayMock: gateway, mailerMock, auditMock, auditStrictMock,
   };
 }
 
@@ -72,9 +77,10 @@ describe("webhookProcessor payments", () => {
     expect(second.data).toMatchObject({ status: "approved_pending_minute", mpPaymentIdEntry: "777" });
 
     // El asiento es la única señal que le queda al operador: al expirar, el cron
-    // ya canceló el preapproval y el alta quedó sin débito automático.
-    expect(d.auditMock).toHaveBeenCalledTimes(1);
-    const entry = d.auditMock.mock.calls[0][0] as Record<string, unknown>;
+    // mandó a cancelar el preapproval y el alta puede haber quedado sin débito.
+    // Va por `auditStrict` justamente porque el asiento ES la señal.
+    expect(d.auditStrictMock).toHaveBeenCalledTimes(1);
+    const entry = d.auditStrictMock.mock.calls[0][0] as Record<string, unknown>;
     expect(entry).toMatchObject({
       action: "application_approved_after_expiry",
       entity: "application",
@@ -96,7 +102,7 @@ describe("webhookProcessor payments", () => {
 
     expect(d.application.updateMany).toHaveBeenCalledTimes(2);
     expect(d.mailerMock.sendToApplication).not.toHaveBeenCalled();
-    expect(d.auditMock).not.toHaveBeenCalled();
+    expect(d.auditStrictMock).not.toHaveBeenCalled();
   });
 
   it("el camino normal no cambia: un solo UPDATE, sin asiento de vencida", async () => {
@@ -105,19 +111,30 @@ describe("webhookProcessor payments", () => {
     await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
     // Sin el `count === 0`, el segundo UPDATE ni se intenta.
     expect(d.application.updateMany).toHaveBeenCalledTimes(1);
-    expect(d.auditMock).not.toHaveBeenCalled();
+    expect(d.auditStrictMock).not.toHaveBeenCalled();
   });
 
-  it("si la auditoría de la revivida falla, la aceptación sigue en pie", async () => {
+  // El asiento no se puede reintentar: un throw acá devolvería 500, MP
+  // reintentaría y el reintento cae en `already_processed` (la solicitud ya está
+  // en `approved_pending_minute`), o sea que el asiento NO se reescribiría y
+  // encima el WebhookEvent quedaría sin `result`. Se atrapa y se grita con el id.
+  it("si la auditoría de la revivida falla, la aceptación sigue en pie y el log dice cuál", async () => {
     const d = deps();
     d.application.updateMany
       .mockResolvedValueOnce({ count: 0 })
       .mockResolvedValueOnce({ count: 1 });
-    d.auditMock.mockRejectedValue(new Error("db down"));
+    d.auditStrictMock.mockRejectedValue(new Error("db down a@b.com"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const p = makeWebhookProcessor(d);
     await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe(
       "application_approved_after_expiry",
     );
+    const logged = spy.mock.calls.map((c) => c.join(" ")).join(" | ");
+    expect(logged).toContain("CRÍTICO");
+    expect(logged).toContain("55");
+    // El log de PM2 no está cubierto por docs/08: la dirección se enmascara.
+    expect(logged).not.toContain("a@b.com");
+    spy.mockRestore();
   });
 
   it("pago rechazado → payment_rejected sin transición", async () => {

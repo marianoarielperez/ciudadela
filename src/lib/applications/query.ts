@@ -67,6 +67,11 @@ export type ApplicationRow = {
   memberId: number | null;
   createdAt: Date;
   emailVerifiedAt: Date | null;
+  /** Estado de la ÚLTIMA suscripción de MP de esta solicitud, tal cual lo
+   *  guarda `mp_subscriptions` (`pending` | `authorized` | `paused` |
+   *  `cancelled`…), o `null` si nunca hubo una. Lo necesita el aviso de pago
+   *  tardío: ver `lateEntryNotice`. */
+  subscriptionStatus: string | null;
 };
 
 /** ¿La bandeja puede afirmar "Reingreso" mirando SÓLO esta fila?
@@ -115,6 +120,63 @@ export async function fetchApprovedAfterExpiry(
   return new Set(rows.map((r) => Number(r.entityId)));
 }
 
+/** El único estado de preapproval en el que MP está efectivamente cobrando. El
+ *  catálogo es de MP y puede crecer (`pending`, `paused`, `cancelled`…), así que
+ *  se afirma por lista blanca: cualquier estado desconocido NO cuenta como
+ *  débito vivo. */
+const ACTIVE_SUBSCRIPTION_STATUS = "authorized";
+
+export type LateEntryNotice = "no_debit" | "verify";
+
+/** Qué se puede AFIRMAR sobre una solicitud que revivió (el pago del ingreso
+ *  llegó cuando el cron ya la había vencido).
+ *
+ *  El asiento de auditoría prueba UNA cosa: que el pago llegó tarde. NO prueba
+ *  que el débito automático haya quedado cancelado, y ésa es toda la
+ *  diferencia. `cancelPreapproval`, en el cron, es best-effort: su catch cuenta
+ *  el fallo y sigue. Si esa llamada falló —la misma ventana de inestabilidad de
+ *  MP que hace posible el pago tardío—, el preapproval sigue vivo y cobrando.
+ *  Un aviso que dijera "quedó sin débito, gestionalo de nuevo" mandaría al
+ *  operador a crear un SEGUNDO débito sobre el mismo vecino.
+ *
+ *  Por eso el aviso se deriva del estado VIVO de la suscripción y no del
+ *  asiento (mismo criterio que `pendingCancellation` en el detalle):
+ *  - `cancelled` o sin fila → `"no_debit"`: se puede afirmar que no hay débito.
+ *  - `authorized` (o cualquier otro estado) → `"verify"`: la cancelación pudo
+ *    no haberse aplicado, o el débito ya se rehizo. Hay que MIRAR el panel de
+ *    MP antes de tocar nada.
+ *
+ *  Y como cuelga del estado vivo y no del asiento (que es permanente), el aviso
+ *  cambia solo cuando la suscripción cambia: no se queda gritando para siempre.
+ */
+export function lateEntryNotice(
+  hasLateEntry: boolean,
+  subscriptionStatus: string | null | undefined,
+): LateEntryNotice | null {
+  if (!hasLateEntry) return null;
+  return subscriptionStatus == null || subscriptionStatus === "cancelled" ? "no_debit" : "verify";
+}
+
+/** ¿La BANDEJA muestra el badge "Sin débito"?
+ *
+ *  Sólo en el caso probado (`"no_debit"`). El caso ambiguo se resuelve mirando
+ *  MP, que es una acción del detalle —a un clic— y no algo que se pueda hacer
+ *  desde una fila de una tabla: un badge de tres palabras no puede explicar
+ *  "verificá antes de gestionar" sin mentirle a quien lo lee de reojo. El
+ *  guardrail que la bandeja necesita es el otro: que nadie asiente en acta EN
+ *  LOTE un alta que quedó sin débito. */
+export function showsNoDebitBadge(
+  hasLateEntry: boolean,
+  subscriptionStatus: string | null | undefined,
+): boolean {
+  return lateEntryNotice(hasLateEntry, subscriptionStatus) === "no_debit";
+}
+
+/** ¿El débito está vivo? Expuesto para el detalle, que lo nombra en el aviso. */
+export function subscriptionIsActive(status: string | null | undefined): boolean {
+  return status === ACTIVE_SUBSCRIPTION_STATUS;
+}
+
 export type ApplicationsPage = {
   rows: ApplicationRow[];
   total: number;
@@ -144,9 +206,24 @@ export function makeApplicationQueries(db: Pick<PrismaClient, "application">) {
         select: {
           id: true, fullName: true, dni: true, requestedCategory: true, wantsDebit: true,
           status: true, memberId: true, createdAt: true, emailVerifiedAt: true,
+          // La última suscripción, sólo su estado: el badge "Sin débito" no lo
+          // puede afirmar el asiento de auditoría solo (ver `lateEntryNotice`),
+          // y sin este dato el badge no se apagaría nunca. Es un join sobre 50
+          // filas como mucho, no un N+1. NO se trae `payerEmail`: es un dato
+          // personal que la tabla no muestra (docs/08).
+          subscriptions: { select: { status: true }, orderBy: { createdAt: "desc" }, take: 1 },
         },
       });
-      return { rows, total, page: current, pageCount, pageSize: APPLICATIONS_PAGE_SIZE };
+      return {
+        // La fila se aplana acá y no en la página: `ApplicationRow` es el
+        // contrato que consume la tabla, y un array anidado ahí obligaría a cada
+        // pantalla a repetir el `[0]`.
+        rows: rows.map(({ subscriptions, ...row }) => ({
+          ...row,
+          subscriptionStatus: subscriptions?.[0]?.status ?? null,
+        })),
+        total, page: current, pageCount, pageSize: APPLICATIONS_PAGE_SIZE,
+      };
     },
   };
 }

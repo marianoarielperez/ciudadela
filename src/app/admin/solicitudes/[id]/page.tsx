@@ -5,7 +5,9 @@ import { formatARS, formatBytes, formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { APPLICATION_STATUS_LABELS, DOCUMENT_TYPE_LABELS } from "@/lib/applications/labels";
 import { isDecidable } from "@/lib/applications/decision";
-import { APPROVED_AFTER_EXPIRY_ACTION } from "@/lib/applications/query";
+import {
+  APPROVED_AFTER_EXPIRY_ACTION, lateEntryNotice, subscriptionIsActive,
+} from "@/lib/applications/query";
 import { WEB_CATEGORIES } from "@/lib/applications/wizard";
 import {
   CATEGORY_LABELS, MINUTE_TYPE_LABELS, NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS,
@@ -139,6 +141,12 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
   // va acá. Sin fila local también avisa: no saber en qué estado está es peor.
   const pendingCancellation =
     app.status === "rejected" && app.preapprovalId !== null && subscription?.status !== "cancelled";
+  // Aceptada DESPUÉS de vencida: QUÉ se puede afirmar sobre el débito no lo dice
+  // el asiento —que sólo prueba que el pago llegó tarde— sino el estado vivo de
+  // la suscripción. La cancelación del cron es best-effort: si falló, el
+  // preapproval sigue cobrando y decirle al operador "quedó sin débito, volvé a
+  // gestionarlo" le dejaría DOS débitos al vecino. Ver `lateEntryNotice`.
+  const lateEntry = lateEntryNotice(revivedEntry !== null, subscription?.status);
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
@@ -270,7 +278,7 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 value={app.entryAmount ? formatARS(Number(app.entryAmount)) : null}
               />
             </dl>
-            {revivedEntry && (
+            {revivedEntry && lateEntry === "no_debit" && (
               // Mismo criterio que el aviso de "suscripción sin cancelar": el
               // dato existía sólo en la auditoría y ahí no lo mira nadie. Acá
               // hace falta porque la solicitud se puede asentar en acta desde la
@@ -281,6 +289,28 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 suscripción de Mercado Pago: el vecino pagó el ingreso pero{" "}
                 <strong>quedó sin débito automático</strong>. Revisá la suscripción y volvé a
                 gestionarla con él antes de asentar el alta.
+              </FormMessage>
+            )}
+            {revivedEntry && lateEntry === "verify" && (
+              // La otra mitad del mismo caso: el pago llegó tarde, pero la
+              // cancelación que el cron intentó al vencer NO figura aplicada. El
+              // aviso no puede afirmar que no hay débito —mandaría a crear un
+              // segundo preapproval sobre alguien a quien MP le sigue cobrando—,
+              // así que pide mirar antes de tocar.
+              <FormMessage kind="warning" box>
+                El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
+                solicitud ya estaba vencida, y se aceptó igual. Al vencer se intentó cancelar la
+                suscripción de Mercado Pago, pero{" "}
+                {subscriptionIsActive(subscription?.status)
+                  ? "sigue figurando autorizada"
+                  : `figura como «${subscription?.status}»`}
+                : la cancelación puede no haberse aplicado.{" "}
+                <strong>Verificá el preapproval en el panel de Mercado Pago</strong>
+                {app.preapprovalId && (
+                  <> (<span className="font-mono">{app.preapprovalId}</span>)</>
+                )}{" "}
+                antes de gestionar un débito nuevo: si sigue activo, gestionar otro le dejaría dos
+                débitos al vecino.
               </FormMessage>
             )}
             {pendingCancellation && (

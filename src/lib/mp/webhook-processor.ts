@@ -6,9 +6,10 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { APPROVED_AFTER_EXPIRY_ACTION } from "@/lib/applications/query";
-import { audit } from "@/lib/audit";
+import { audit, auditStrict } from "@/lib/audit";
 import { mailer } from "@/lib/email";
 import { applicationAcceptedEmail } from "@/lib/email/templates";
+import { safeMessage } from "@/lib/log-safe";
 import { prisma } from "@/lib/prisma";
 import { mpGateway, type MpGateway } from "./gateway";
 
@@ -21,6 +22,8 @@ type Deps = {
   gateway: Pick<MpGateway, "getPayment" | "getPreapproval" | "getAuthorizedPayment">;
   mailer: Pick<typeof mailer, "sendToApplication">;
   audit: typeof audit;
+  /** Sólo para el asiento del pago tardío: ver el porqué en `onPayment`. */
+  auditStrict: typeof auditStrict;
 };
 
 // Los errores de nodemailer traen `envelope`, `rejected` y el `response` del
@@ -31,14 +34,6 @@ type Deps = {
 // "unknown", pero se enmascara cualquier dirección antes de salir.
 function codeOf(e: unknown): string {
   return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
-}
-
-// Exportada porque el mismo cuidado hace falta en el catch de
-// `/api/cron/applications`: el mensaje de un error de base o de nodemailer puede
-// traer la dirección del vecino, y el log de PM2 no está cubierto por docs/08.
-export function safeMessage(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e);
-  return raw.replace(/[^\s<>@,;]+@[^\s<>@,;]+/g, "[email]").slice(0, 200);
 }
 
 export function makeWebhookProcessor(deps: Deps) {
@@ -88,17 +83,37 @@ export function makeWebhookProcessor(deps: Deps) {
 
     if (revived) {
       // Asiento propio y result distinguible: la solicitud revivió, pero al
-      // expirar el cron YA canceló el preapproval, así que el alta queda sin
-      // débito automático y alguien tiene que rehacerlo. Sin esto el caso es
-      // invisible. Sin datos personales (docs/08): id de solicitud y de pago.
-      await deps
-        .audit({
+      // expirar el cron intentó cancelar el preapproval, así que el alta puede
+      // haber quedado sin débito automático y alguien tiene que revisarlo. Sin
+      // esto el caso es invisible en pantalla: el estado final es
+      // `approved_pending_minute`, idéntico al de una aceptación normal.
+      // Sin datos personales (docs/08): id de solicitud y de pago.
+      //
+      // `auditStrict` y no `audit()`: éste es el único llamador del procesador
+      // que necesita SABER si el asiento se escribió, porque el asiento ES la
+      // señal del caso. Lo que NO se puede hacer con el fallo es propagarlo: un
+      // throw devolvería 500, MP reintentaría, y el reintento encuentra la
+      // solicitud ya en `approved_pending_minute` → los dos updateMany dan 0 →
+      // `already_processed`. O sea que reintentar no reescribiría el asiento y
+      // encima dejaría el `WebhookEvent` sin `result` ni `processedAt`. Así que
+      // se atrapa y se grita con el id: ese log es lo único que le queda al
+      // operador, junto con el `result` del WebhookEvent —que sí se persiste,
+      // porque devolvemos normalmente— para reconstruir el caso a mano.
+      try {
+        await deps.auditStrict({
           action: APPROVED_AFTER_EXPIRY_ACTION,
           entity: "application",
           entityId: applicationId,
           detail: { paymentId: payment.id },
-        })
-        .catch(() => {});
+        });
+      } catch (e) {
+        console.error(
+          "[mp-webhook] CRÍTICO: la solicitud", applicationId,
+          "revivió con un pago posterior al vencimiento y el asiento NO se pudo escribir:",
+          "ninguna pantalla va a avisar que hay que revisar el débito.",
+          "code:", codeOf(e), "message:", safeMessage(e),
+        );
+      }
     }
 
     const app = await deps.db.application.findUnique({ where: { id: applicationId } });
@@ -170,4 +185,6 @@ export function makeWebhookProcessor(deps: Deps) {
   };
 }
 
-export const webhookProcessor = makeWebhookProcessor({ db: prisma, gateway: mpGateway, mailer, audit });
+export const webhookProcessor = makeWebhookProcessor({
+  db: prisma, gateway: mpGateway, mailer, audit, auditStrict,
+});
