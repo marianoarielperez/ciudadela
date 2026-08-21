@@ -9,7 +9,13 @@
 // crean sin plan asociado (docs/06 §2), el monto que se manda a MP es el que se
 // debita: quien vaya a crear o modificar una suscripción tiene que leer el plan
 // FRESCO con `mpGateway.getPlan` y abortar si falla, no servirse de acá. Ver
-// `startPaymentAction` en `src/app/(public)/asociate/actions.ts`.
+// `startPaymentAction` en `src/app/(public)/asociate/actions.ts` y
+// `recategorizeApplicationAction` en `src/app/admin/solicitudes/actions.ts`
+// (el `PUT` del monto fija lo que MP debita todos los meses).
+//
+// Y ojo con el stale-on-error: una lectura fallida NO tira, devuelve en silencio
+// el último valor bueno. Para mostrar está bien; para cobrar es un débito
+// equivocado que nadie ve fallar.
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import type { MemberCategory } from "@/generated/prisma/client";
 import { mpGateway, type MpGateway } from "./gateway";

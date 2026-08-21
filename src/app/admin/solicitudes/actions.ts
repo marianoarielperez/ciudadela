@@ -37,7 +37,7 @@ import { parseApplicationFilters, parseApplicationsPage } from "@/lib/applicatio
 import { changesFeeAmount, DECIDABLE_STATUSES, isDecidable } from "@/lib/applications/decision";
 import { categoryAllowedForResidence, WEB_CATEGORIES } from "@/lib/applications/wizard";
 import { mpGateway } from "@/lib/mp/gateway";
-import { getFeeAmounts, planIdForCategory } from "@/lib/mp/plans";
+import { planIdForCategory } from "@/lib/mp/plans";
 
 // Sin `export`: en un módulo "use server" todo lo exportado es un endpoint.
 //
@@ -306,18 +306,41 @@ export async function recategorizeApplicationAction(
   // el plan cambia: los planes son dos y adherente ↔ colaborador comparten el
   // mismo.
   //
-  // Acá `getFeeAmounts` (cacheado) sigue siendo lo que se usa, y es una
-  // diferencia consciente con `startPaymentAction`: esto es una acción de
-  // admin, sincrónica, sobre una suscripción que YA existe, y su fallo se ve en
-  // pantalla. Igual conviene cerrarlo en el M4 junto con la pantalla de valores
-  // de cuota.
+  // El monto se lee FRESCO del plan nuevo, igual que en `startPaymentAction` y
+  // por el mismo motivo. `getFeeAmounts` (src/lib/mp/plans.ts) NO sirve acá: es
+  // una caché de 24 h con stale-on-error, o sea que una lectura fallida no
+  // falla —devuelve en silencio el último valor bueno—. Y lo que se escribe con
+  // `updatePreapprovalAmount` no es una pantalla: es el importe que MP le va a
+  // debitar al socio TODOS los meses. Si la Comisión sube la cuota en el panel
+  // de MP y alguien recategoriza dentro de las 24 h, la caché escribiría el
+  // valor viejo sobre una suscripción viva, con éxito en pantalla y sin que
+  // nada lo detecte (la conciliación de docs/06 compara plan contra
+  // `ValorCuota`, nunca suscripción contra plan, y el lote del M4 que lo
+  // corregiría todavía no existe). Mejor no tocar el monto que tocarlo mal.
   let newPlanId: string | null = null;
   let oldPlanId: string | null = null;
   if (app.preapprovalId && changesAmount) {
-    const fees = await getFeeAmounts();
-    if (!fees) return { error: "No pudimos leer el valor de la cuota en MP: reintentá más tarde." };
-    const amount = newCategory === "active" ? fees.active : fees.shared;
+    // Primero el plan: sin id configurado no hay monto que leer NI plan al que
+    // mover la fila local. Antes se llamaba igual a MP con el monto cacheado y
+    // después se salteaba el update local del `planId`, o sea que la
+    // divergencia que este bloque existe para evitar volvía en silencio.
     newPlanId = await planIdForCategory(newCategory);
+    if (!newPlanId) {
+      return {
+        error: "El plan de Mercado Pago de esa categoría no está configurado. Cargalo en Configuración antes de recategorizar.",
+      };
+    }
+    let amount: number;
+    try {
+      ({ amount } = await mpGateway.getPlan(newPlanId));
+    } catch (e) {
+      // El error del SDK trae el cuerpo de la respuesta de MP: al log, nunca a
+      // la pantalla.
+      console.error("[solicitudes] no se pudo leer el monto del plan", newPlanId, codeOf(e));
+      return {
+        error: "No pudimos confirmar el valor de la cuota en Mercado Pago. Para no dejar el débito por un monto equivocado, no cambiamos nada: probá de nuevo en unos minutos.",
+      };
+    }
     oldPlanId = (await prisma.mpSubscription.findUnique({
       where: { preapprovalId: app.preapprovalId },
       select: { planId: true },

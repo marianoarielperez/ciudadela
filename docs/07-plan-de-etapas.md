@@ -159,17 +159,19 @@ concreto.
    payload crudo; candidato a un `result` propio (`duplicate_entry_payment`).
 5. **Cambiar los ids de plan no invalida la caché de montos** (hasta 24 h de
    retraso): cerrar junto con la pantalla de valores de cuota. Acotado el
-   21/08/2026: el camino que **cobra** (`startPaymentAction`) ya no usa la
-   caché —lee el plan fresco y aborta si falla—, así que lo que queda es un
-   monto viejo **en pantalla**, no un débito por el importe equivocado. La
-   recategorización del panel sí sigue leyendo el monto cacheado.
+   21/08/2026: **ningún** camino que escriba un monto en MP usa ya la caché —ni
+   `startPaymentAction` ni la recategorización: las dos leen el plan fresco y
+   abortan si falla—, así que lo que queda es un monto viejo **en pantalla**
+   (paso 2 del wizard), no un débito por el importe equivocado.
 6. **Una solicitud re-suscripta a mano** (tras revivir por pago tardío) queda
    describiendo la suscripción nueva con la copia "verificá antes de gestionar".
    No es alcanzable hoy porque la re-suscripción es manual; si el M4 automatiza el
    alta de suscripciones, hay que revisar ese texto.
-7. **Recategorizar con `planIdForCategory = null`** re-abre en silencio la
-   divergencia entre el plan local y el de MP. Cerrar con un `planUpdated`
-   explícito, o cortando antes de llamar a MP.
+7. ~~**Recategorizar con `planIdForCategory = null`** re-abre en silencio la
+   divergencia entre el plan local y el de MP.~~ **Cerrado el 21/08/2026**: la
+   recategorización resuelve el plan nuevo ANTES de tocar MP y, si no está
+   configurado, corta con un error en pantalla sin llamar a la API ni escribir
+   nada.
 8. **Una solicitud que llegó con la categoría equivocada y que nadie toca** no
    queda marcada en ningún lado: `residenceMismatch` solo se computa al
    recategorizar. Candidato a señal de la bandeja o del resumen.

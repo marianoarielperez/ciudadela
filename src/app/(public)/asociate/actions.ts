@@ -27,6 +27,7 @@ import { parseForm } from "@/lib/forms";
 import { checkoutUrlFor } from "@/lib/mp/checkout";
 import { mpGateway } from "@/lib/mp/gateway";
 import { prisma } from "@/lib/prisma";
+import { SITE } from "@/lib/site";
 import { tokens } from "@/lib/tokens";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -113,7 +114,7 @@ function codeOf(e: unknown): string {
 // gobierna desde el panel de MP. MP corta el campo en 255 caracteres.
 function subscriptionReason(planReason: string): string {
   const suffix = planReason.trim();
-  const base = "Cuota societaria Vecinal Ciudadela";
+  const base = `Cuota societaria ${SITE.shortName}`;
   return (suffix ? `${base} — ${suffix}` : base).slice(0, 255);
 }
 

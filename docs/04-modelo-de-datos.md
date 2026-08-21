@@ -148,9 +148,14 @@ Identidad única de la persona a través de todos los libros.
 
 ### ValorCuota (historial, REG-34)
 - `categoria`, `monto`, `vigente_desde`, `acta_id`
-- Fuente de verdad operativa = Planes de MP; esta tabla es el espejo histórico para
-  cálculo de deudas y reingresos. Se actualiza a mano desde el panel cuando la CD
-  cambia el plan en MP (el sync diario detecta divergencias y avisa).
+- Los planes de MP son el **registro** del monto vigente (de ahí lo leen las altas
+  nuevas); esta tabla es el espejo histórico para cálculo de deudas y reingresos.
+  Se actualiza a mano desde el panel cuando la CD cambia el plan en MP.
+- **El plan NO gobierna a las suscripciones ya creadas** (corregido el
+  21/08/2026): se crean sin plan asociado y **copian** el monto (`docs/06` §2), así
+  que cambiar el plan no mueve ni un débito vivo. Aplicar el valor nuevo a las
+  suscripciones vigentes es una acción explícita del panel, alcance del Módulo 4
+  (REG-34). El sync diario avisa de divergencias, no las corrige.
 
 ### ProcesoReempadronamiento
 - `id`, `libro_id`, `estado` (`preparacion` | `primera_instancia` | `segunda_instancia`

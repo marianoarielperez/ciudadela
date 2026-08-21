@@ -246,6 +246,16 @@ Script que consulta `GET /v1/payments/search` (rango: últimas 72 h) y
 - Pago approved sin registro local → procesarlo igual que un webhook (webhook perdido).
 - Suscripción cancelada/pausada sin reflejar → alerta admin.
 - Divergencia de montos plan vs ValorCuota → alerta admin (REG-34).
+- **Divergencia `auto_recurring.transaction_amount` de una suscripción viva vs. el
+  monto de su plan de referencia (`MpSubscription.planId`) → alerta admin.** Es la
+  divergencia que crea el diseño de §2 y que **nada más detecta**: como las
+  suscripciones copian el monto y no siguen al plan, cualquier lote de
+  actualización que quede a medias (REG-34, Módulo 4), toda alta anterior a un
+  cambio de cuota y toda recategorización que no haya llegado a MP quedan
+  debitando un importe distinto del vigente, sin ningún síntoma. La comparación
+  plan vs. `ValorCuota` de arriba **no la ve**: mira el catálogo, no lo que se
+  cobra. El resultado tiene que ser accionable: listado de preapprovals
+  desalineados con su monto actual y el esperado, para reaplicar el lote.
 - **Preapproval con `external_reference = solicitud:{id}` y sin fila
   `MpSubscription`** → es el único recupero posible de una suscripción huérfana:
   si `createPreapproval` sale bien y la escritura local falla, el vecino tiene un
@@ -269,6 +279,15 @@ Resultado del cron visible en `/admin/salud`.
   la acción se corta entera: al revés, la solicitud diría "activo" mientras el
   débito sigue saliendo por el monto de adherente y nadie lo compensaría. El
   `planId` local se sincroniza con el plan nuevo en la misma operación.
+  **De dónde sale el monto que se escribe**: de una lectura **fresca** del plan
+  nuevo (`getPlan(planIdForCategory(categoría))`), nunca de la caché de 24 h de
+  `plans.ts` — ese `PUT` fija el importe que MP debita todos los meses, y la caché
+  es stale-on-error, o sea que una lectura fallida no falla: devuelve en silencio
+  el último valor bueno y dejaría la suscripción cobrando un monto que la CD ya
+  cambió. Si el plan de la categoría nueva **no está configurado**, o si la lectura
+  del monto falla, la acción **aborta antes de llamar a MP** y no escribe nada
+  (mismo criterio que `startPaymentAction`, §2: mejor no tocar el monto que
+  tocarlo mal).
 - Reembolsos manuales excepcionales: se hacen desde el panel de MP; el webhook de
   `payments` (status refunded) los registra y anula el recibo con nota (Módulo 4).
 
