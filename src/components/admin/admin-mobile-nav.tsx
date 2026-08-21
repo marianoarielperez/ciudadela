@@ -32,7 +32,7 @@ export function AdminMobileNav({ groups, user, signOut }: {
   }
 
   return (
-    <header className="sticky top-0 z-40 flex items-center gap-2 bg-sidebar px-2 py-1.5 lg:hidden">
+    <header className="sticky top-0 z-40 flex items-center gap-2 bg-sidebar px-2 py-1.5 lg:hidden print:hidden">
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger
           className="flex size-11 items-center justify-center rounded-md text-white outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
