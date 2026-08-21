@@ -12,6 +12,16 @@ git pull --ff-only
 # `prisma db seed` corre con `tsx` (tambien devDependency). Podarlas rompe el deploy.
 npm ci
 npx prisma migrate deploy
+# El seed SI corre en cada despliegue, y tiene que correr aca: es idempotente
+# (todos sus upsert llevan `update: {}`, nunca pisan lo que el superadmin edito
+# desde el panel) y es lo unico que crea las claves de `configuration` que
+# estrena cada modulo. Sin este paso, una clave nueva -por ejemplo `terms_text`
+# y `privacy_consent_text` del M3- simplemente no existe en el VPS, y el panel
+# le muestra al operador un formulario vacio donde docs/10 le dice que revise
+# los textos legales.
+#
+# Va ANTES del build a proposito: /asociate se prerenderiza leyendo esos textos.
+npx prisma db seed
 npm run build
 pm2 restart sigev --update-env
 pm2 save

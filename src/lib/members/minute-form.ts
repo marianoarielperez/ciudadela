@@ -67,8 +67,17 @@ export function createsNewMinute(sel: MinuteSelection): boolean {
 // Borra solo si el acta quedó realmente sin usar. El chequeo no es paranoia:
 // entre la creación y el descarte otro admin pudo haberla elegido para su propia
 // acción, y en ese caso el acta ya es parte del libro y no se toca.
+//
+// Son TRES los referentes de `Minute`, no dos. `Application.minuteId` (M3) es el
+// más fácil de pasar por alto porque un RECHAZO no asienta ningún movimiento:
+// el acta del rechazo tiene cero movimientos y cero libros, o sea que "parece"
+// sin usar. Y como la relación es `onDelete: SetNull`, borrarla no falla por
+// clave foránea: deja el rechazo sin constancia en actas, en silencio, contra el
+// Art. 5 inc. 7. Secuencia real: A crea el acta N en un asiento masivo, B la
+// elige desde un desplegable ya renderizado para rechazar una solicitud, el lote
+// de A falla y la compensación de A se lleva puesta la constancia de B.
 export async function discardUnusedMinute(
-  db: Pick<PrismaClient, "minute" | "movement" | "book">,
+  db: Pick<PrismaClient, "minute" | "movement" | "book" | "application">,
   minuteId: number,
 ): Promise<void> {
   try {
@@ -77,6 +86,7 @@ export async function discardUnusedMinute(
       where: { OR: [{ openingMinuteId: minuteId }, { closingMinuteId: minuteId }] },
     });
     if (books) return;
+    if (await db.application.count({ where: { minuteId } })) return;
     await db.minute.delete({ where: { id: minuteId } });
   } catch (err) {
     // El error real que ve el usuario es el de la acción que falló; que el

@@ -53,6 +53,12 @@ type PayState = { error?: string; redirectUrl?: string; blocked?: true };
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const ASOCIATE_CLOSED =
   "Las asociaciones en línea están cerradas en este momento. Para asociarte, acercate a la sede vecinal.";
+// El formulario tiene un checkbox de aceptación OBLIGATORIO. Si los textos que
+// se aceptan no están cargados, aceptarlos no significa nada y `acceptedTermsAt`
+// quedaría grabado contra la nada: no hay constancia de qué aceptó el vecino
+// (docs/08, Ley 25.326). Antes que registrar eso, no se recibe la solicitud.
+const LEGAL_MISSING =
+  "No podemos recibir tu solicitud en este momento: todavía no están publicados los textos que tenés que aceptar (términos y condiciones y consentimiento de datos). Probá más tarde o acercate a la sede vecinal.";
 const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
 const BAD_BIRTH_DATE = "La fecha de nacimiento no es válida.";
 const IN_PROGRESS = "Ya tenés una solicitud en trámite. Te podemos reenviar por email el enlace para retomarla.";
@@ -127,6 +133,33 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // src/lib/config.ts sobre caché vs. lectura directa).
   if (!(await configReader.getBool(CONFIG_KEYS.asociateActivo))) {
     return { error: ASOCIATE_CLOSED };
+  }
+
+  // Guarda 0 bis: los textos legales tienen que EXISTIR.
+  //
+  // Son claves de `configuration` que nacen en el seed y que el superadmin
+  // edita desde /admin/configuracion, o sea que pueden faltar (base recién
+  // migrada, clave borrada). Cuando faltan, el paso 3 del wizard muestra "El
+  // texto todavía no está publicado" justo encima de un checkbox obligatorio
+  // que igual se puede tildar, y el POST se grababa con `acceptedTermsAt`
+  // apuntando a unos términos inexistentes: una aceptación sin objeto, que es
+  // exactamente lo que no puede quedar asentado en la solicitud.
+  //
+  // Lectura DIRECTA por el mismo motivo que la guarda de arriba: `getLegalTexts`
+  // está cacheada para las páginas públicas, y acá se decide si se acepta o no
+  // un POST.
+  const [terms, privacyConsent] = await Promise.all([
+    configReader.getString(CONFIG_KEYS.termsText),
+    configReader.getString(CONFIG_KEYS.privacyConsentText),
+  ]);
+  if (!terms || !privacyConsent) {
+    // Al log, para que se note: esto es una falta de configuración del panel,
+    // no un error del vecino, y nadie más lo va a reportar.
+    console.error(
+      "[asociate] solicitud rechazada: faltan los textos legales",
+      { terms: Boolean(terms), privacyConsent: Boolean(privacyConsent) },
+    );
+    return { error: LEGAL_MISSING };
   }
 
   // El orden es `allows` → captcha → formato → `record` → padrón.

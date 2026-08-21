@@ -13,6 +13,32 @@ export const metadata: Metadata = {
   description: `Asociate a la ${SITE.name} en línea, en cinco pasos.`,
 };
 
+// El monto de la cuota NECESITA un camino de expiración por TIEMPO.
+//
+// Sin esto la página es un prerender del build: `getAsociateActive` y
+// `getLegalTexts` se refrescan porque están tagueadas con CACHE_TAGS.config y
+// `updateConfigAction` las invalida, pero `getFeeAmounts` (src/lib/mp/plans.ts)
+// lee el monto de los planes de Mercado Pago —que la Comisión cambia en el
+// panel de MP, FUERA de SIGeV— y por eso no hay ninguna acción nuestra que
+// pueda invalidar un tag cuando ese monto se mueve. Taguear la lectura no
+// alcanza: el tag no lo dispararía nadie. Sólo el tiempo la expira.
+//
+// Lo que arregla, en concreto:
+//   (a) si MP está caído justo en el render que produjo el prerender,
+//       `fees: null` quedaba horneado PARA SIEMPRE y el wizard se trababa en el
+//       paso 2 sin ninguna forma de recuperarse; ahora se rehace solo.
+//   (b) si la CD sube la cuota en MP (REG-34 la deja mover hasta 4 veces al
+//       año), la página dejaba de anunciar el monto que MP efectivamente
+//       debita — exactamente lo que REG-14 prohíbe.
+//
+// Una hora, y no `force-dynamic`: casi todo lo que renderiza (calles, textos
+// legales, interruptor) es estable, y una consulta a MariaDB por cada visita
+// pública no compra nada. Con este techo el límite real de desactualización del
+// monto pasa a ser el TTL de 24 h del propio lector de `plans.ts` —el mismo que
+// ya rige en /asociate/retomar, que es `force-dynamic`—, en vez de "hasta el
+// próximo `npm run build`".
+export const revalidate = 3600;
+
 export default async function AsociatePage() {
   // La home ya esconde el botón cuando `asociate_activo` está en false, pero la
   // URL es pública y se puede llegar por un enlace viejo o por el buscador:

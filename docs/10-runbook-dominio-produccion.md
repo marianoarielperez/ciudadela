@@ -294,6 +294,12 @@ pm2 save
    `/admin/configuracion` los ids de los dos planes de MP (`mp_plan_active_id`,
    `mp_plan_shared_id`) y revisar los textos legales. Sin los ids, el paso 2 del
    wizard no muestra montos y no deja avanzar.
+   Los textos legales (`terms_text`, `privacy_consent_text`) **llegan sembrados**
+   —`deploy.sh` corre `npx prisma db seed`, que los crea con un BORRADOR y nunca
+   los pisa en corridas posteriores—, así que el formulario aparece con texto
+   para revisar, no vacío. Si igual faltaran, el servidor **rechaza** las
+   solicitudes nuevas (`createApplicationAction`): no se graba una aceptación de
+   términos que no existen.
 4. **Webhooks de MP** apuntando a `https://vecinalciudadela.ar/api/webhooks/mp`
    con los tres tópicos (`payments`, `subscription_preapproval`,
    `subscription_authorized_payment`); el secreto que da el panel es

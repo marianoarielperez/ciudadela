@@ -33,6 +33,10 @@ const mocks = vi.hoisted(() => {
     resendLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
     resendTargetLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
     afterCallbacks: [] as Array<() => unknown>,
+    // Filas de `configuration` que ve la action. Es un mapa y no un valor fijo
+    // porque la creación lee TRES claves (el interruptor y los dos textos
+    // legales) y cada test necesita apagar una sin tocar las otras.
+    configRows: {} as Record<string, unknown>,
   };
 });
 
@@ -102,8 +106,17 @@ beforeEach(() => {
   mocks.resendLimiter.allows.mockReturnValue(true);
   mocks.resendTargetLimiter.allows.mockReturnValue(true);
   mocks.verifyTurnstile.mockResolvedValue(true);
-  // `asociate_activo` prendido: es la guarda 0 de la creación (docs/05 §2).
-  mocks.prisma.configuration.findUnique.mockResolvedValue({ key: "asociate_activo", value: true });
+  // `asociate_activo` prendido (guarda 0, docs/05 §2) y los dos textos legales
+  // publicados (guarda 0 bis): sin ellos no hay nada que aceptar.
+  mocks.configRows = {
+    asociate_activo: true,
+    terms_text: "Términos de prueba",
+    privacy_consent_text: "Consentimiento de prueba",
+  };
+  mocks.prisma.configuration.findUnique.mockImplementation(
+    async ({ where: { key } }: { where: { key: string } }) =>
+      key in mocks.configRows ? { key, value: mocks.configRows[key] } : null,
+  );
   mocks.prisma.member.findUnique.mockResolvedValue(null);
   mocks.service.findLiveByDni.mockResolvedValue(null);
   mocks.service.lastRejectionAt.mockResolvedValue(null);
@@ -133,10 +146,7 @@ describe("createApplicationAction", () => {
     // El chequeo de `page.tsx` es de RENDER: no cubre la pestaña que ya estaba
     // abierta cuando la CD apagó el interruptor ni un POST armado a mano. La
     // action tiene que decidir sola, y antes que nada (docs/05 §2).
-    mocks.prisma.configuration.findUnique.mockResolvedValue({
-      key: "asociate_activo",
-      value: false,
-    });
+    mocks.configRows.asociate_activo = false;
     const result = await createApplicationAction({}, form(VALID));
 
     expect(result.error).toMatch(/asociaciones en línea están cerradas/i);
@@ -152,10 +162,39 @@ describe("createApplicationAction", () => {
   it("interruptor ausente en `configuration`: se trata como apagado", async () => {
     // `getBool` compara estricto contra `true`: fila faltante, `null` o el
     // string "true" son false. Sin fila el wizard no puede quedar abierto.
-    mocks.prisma.configuration.findUnique.mockResolvedValue(null);
+    delete mocks.configRows.asociate_activo;
     const result = await createApplicationAction({}, form(VALID));
 
     expect(result.error).toMatch(/asociaciones en línea están cerradas/i);
+    expect(mocks.service.create).not.toHaveBeenCalled();
+  });
+
+  // El paso 3 del wizard muestra "El texto todavía no está publicado" ARRIBA de
+  // un checkbox obligatorio que igual se puede tildar. Sin esta guarda el POST
+  // se grababa con `acceptedTermsAt` contra unos términos que no existen: una
+  // aceptación sin objeto asentada en la solicitud (docs/08, Ley 25.326).
+  it.each([["terms_text"], ["privacy_consent_text"]])(
+    "falta %s: no se recibe la solicitud",
+    async (missing) => {
+      delete mocks.configRows[missing];
+      const result = await createApplicationAction({}, form(VALID));
+
+      expect(result.error).toMatch(/todavía no están publicados los textos/i);
+      expect(result.created).toBeUndefined();
+      expect(mocks.service.create).not.toHaveBeenCalled();
+      // Corta antes de gastar cupo, de pedir el captcha y de tocar el padrón.
+      expect(mocks.createLimiter.allows).not.toHaveBeenCalled();
+      expect(mocks.createLimiter.record).not.toHaveBeenCalled();
+      expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+      expect(mocks.prisma.member.findUnique).not.toHaveBeenCalled();
+    },
+  );
+
+  it("texto legal en blanco: cuenta como no publicado", async () => {
+    // `getString` normaliza "   " a null, y un pliego vacío no es un pliego.
+    mocks.configRows.terms_text = "   ";
+    const result = await createApplicationAction({}, form(VALID));
+    expect(result.error).toMatch(/todavía no están publicados los textos/i);
     expect(mocks.service.create).not.toHaveBeenCalled();
   });
 

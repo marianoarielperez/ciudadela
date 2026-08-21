@@ -4,25 +4,36 @@ import type { Prisma } from "../src/generated/prisma/client"
 import { BCRYPT_COST } from "../src/lib/auth/password"
 import { prisma } from "../src/lib/prisma"
 
-async function upsertUser(email: string, name: string, password: string, roleNames: string[]) {
+// `password` sólo se usa para CREAR la cuenta; si ya existe no se mira siquiera.
+// Por eso es opcional: el seed corre en cada despliegue (deploy.sh) y exigir la
+// variable incluso cuando la cuenta ya está creada convertiría un `.env` sin
+// `SEED_SUPERADMIN_PASSWORD` en un deploy roto, sin ninguna contrapartida.
+async function upsertUser(
+  email: string,
+  name: string,
+  password: string | undefined,
+  roleNames: string[],
+) {
   const roles = await prisma.role.findMany({ where: { name: { in: roleNames } } })
   const existing = await prisma.user.findUnique({ where: { email } })
   // Nunca pisar la contraseña de un usuario existente
-  const user = existing
-    ? existing
-    : await prisma.user.create({
-        data: {
-          email,
-          name,
-          passwordHash: await bcrypt.hash(password, BCRYPT_COST),
-          // Mismo criterio que los otros dos caminos que escriben una
-          // contraseña: la columna significa "cuándo se escribió ésta". Acá no
-          // hay ninguna sesión que invalidar (la cuenta acaba de nacer), pero
-          // dejarla nula haría que una cuenta creada hoy fuera indistinguible de
-          // las previas a la migración. Ver `@/lib/auth/session-freshness`.
-          passwordChangedAt: new Date(),
-        },
-      })
+  let user = existing
+  if (!user) {
+    if (!password) throw new Error(`Falta la contraseña para crear ${email}`)
+    user = await prisma.user.create({
+      data: {
+        email,
+        name,
+        passwordHash: await bcrypt.hash(password, BCRYPT_COST),
+        // Mismo criterio que los otros dos caminos que escriben una
+        // contraseña: la columna significa "cuándo se escribió ésta". Acá no
+        // hay ninguna sesión que invalidar (la cuenta acaba de nacer), pero
+        // dejarla nula haría que una cuenta creada hoy fuera indistinguible de
+        // las previas a la migración. Ver `@/lib/auth/session-freshness`.
+        passwordChangedAt: new Date(),
+      },
+    })
+  }
   for (const role of roles) {
     await prisma.userRole.upsert({
       where: { userId_roleId: { userId: user.id, roleId: role.id } },
@@ -65,9 +76,12 @@ async function main() {
     await prisma.role.upsert({ where: { name }, update: {}, create: { name } })
   }
 
+  const superEmail = "marianoaperez@yahoo.com.ar"
   const superPass = process.env.SEED_SUPERADMIN_PASSWORD
-  if (!superPass) throw new Error("SEED_SUPERADMIN_PASSWORD no está definida")
-  await upsertUser("marianoaperez@yahoo.com.ar", "Mariano Perez", superPass, ["superadmin", "admin"])
+  if (!superPass && !(await prisma.user.findUnique({ where: { email: superEmail } }))) {
+    throw new Error("SEED_SUPERADMIN_PASSWORD no está definida")
+  }
+  await upsertUser(superEmail, "Mariano Perez", superPass, ["superadmin", "admin"])
 
   if (process.env.SEED_TEST_USERS === "true") {
     // Las cuentas de prueba tienen contraseña conocida: en producción serían
@@ -82,8 +96,9 @@ async function main() {
   }
 
   // `update: {}` en todas: son valores INICIALES, no valores impuestos. El seed
-  // se vuelve a correr en cada despliegue y pisar acá borraría el teléfono de
-  // contacto o el texto legal que el superadmin cargó desde el panel.
+  // se vuelve a correr en cada despliegue (`npx prisma db seed`, paso explícito
+  // de deploy.sh) y pisar acá borraría el teléfono de contacto o el texto legal
+  // que el superadmin cargó desde el panel.
   const defaults: Record<string, Prisma.InputJsonValue> = {
     asociate_activo: false,
     elecciones_en_curso: false,

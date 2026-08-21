@@ -85,9 +85,22 @@ async function runExpectingRedirect(fd: FormData): Promise<string> {
   }
 }
 
+// `application.count` lo llaman DOS cosas distintas de este flujo y hay que
+// poder moverlas por separado: la pre-validación anti acta huérfana ("¿alguna de
+// las elegidas está lista para asentar?") y la guarda de `discardUnusedMinute`
+// ("¿alguna solicitud quedó apoyada en esta acta?"). Se distinguen por el
+// `where`: la segunda es la única que filtra por `minuteId`.
+let recordableCount = 1;
+let applicationsOnMinute = 0;
+
 beforeEach(() => {
   vi.clearAllMocks();
-  prismaMock.application.count.mockResolvedValue(1);
+  recordableCount = 1;
+  applicationsOnMinute = 0;
+  prismaMock.application.count.mockImplementation(
+    async ({ where }: { where: Record<string, unknown> }) =>
+      "minuteId" in where ? applicationsOnMinute : recordableCount,
+  );
   prismaMock.minute.findUnique.mockResolvedValue({ id: 10 });
   prismaMock.minute.create.mockResolvedValue({ id: 77 });
   prismaMock.movement.count.mockResolvedValue(0);
@@ -146,7 +159,7 @@ describe("a quién le llega la invitación de acceso", () => {
 
 describe("el acta huérfana del asiento masivo", () => {
   it("no llega a crear el acta si ninguna de las elegidas es asentable", async () => {
-    prismaMock.application.count.mockResolvedValue(0);
+    recordableCount = 0;
     const result = await recordApplicationsAction({}, newMinute(["1", "2"]));
     expect(result.error).toMatch(/Ninguna de las solicitudes elegidas/);
     expect(prismaMock.minute.create).not.toHaveBeenCalled();
@@ -172,6 +185,20 @@ describe("el acta huérfana del asiento masivo", () => {
   it("no descarta un acta EXISTENTE que eligió el operador", async () => {
     recorderMock.recordOne.mockResolvedValue({ ok: false, applicationId: 1, error: "no" });
     await recordApplicationsAction({}, existingMinute());
+    expect(prismaMock.minute.delete).not.toHaveBeenCalled();
+  });
+
+  // El tercer referente de `Minute`, el que no deja rastro en `movements`: un
+  // RECHAZO (REG-13) apunta a su acta desde `Application.minuteId` y no asienta
+  // ningún movimiento. Y la relación es `onDelete: SetNull`, así que borrar el
+  // acta no falla: le saca la constancia al rechazo de otro admin, en silencio.
+  it("no descarta el acta que otro admin ya usó para un rechazo", async () => {
+    applicationsOnMinute = 1;
+    recorderMock.recordOne.mockResolvedValue({
+      ok: false, applicationId: 1, error: "Baja por expulsión: el reingreso está prohibido.",
+    });
+    const result = await recordApplicationsAction({}, newMinute());
+    expect(result.error).toMatch(/No se pudo asentar ninguna/);
     expect(prismaMock.minute.delete).not.toHaveBeenCalled();
   });
 
