@@ -1289,8 +1289,12 @@ DATABASE_URL="mysql://sigev:<DBPASS>@localhost:3306/sigev"
 AUTH_SECRET="<openssl rand -base64 32>"
 AUTH_URL=https://sigev.redaccion.ar
 SEED_SUPERADMIN_PASSWORD="<elegir>"
-# "true" SOLO en staging - en produccion DEBE ser "false" (el seed lo rechaza)
-SEED_TEST_USERS="true"
+# [CORREGIDO 21/08/2026] Este comentario decia "en produccion DEBE ser 'false'
+# (el seed lo rechaza)" y era FALSO: el rechazo se apoyaba en NODE_ENV=production,
+# variable que deploy.sh nunca setea. Hoy las cuentas de prueba exigen el opt-in
+# explicito SEED_ALLOW_TEST_USERS="true" (prisma/seed-guard.ts) y en el VPS NO
+# debe existir ninguna de las dos lineas. Ver docs/10, seccion 4.0.
+SEED_TEST_USERS="false"
 SEED_TEST_PASSWORD="<elegir>"
 UPLOADS_DIR=/var/sigev/uploads
 EOF

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs"
 import type { Prisma } from "../src/generated/prisma/client"
 import { BCRYPT_COST } from "../src/lib/auth/password"
 import { prisma } from "../src/lib/prisma"
+import { resolveTestUsers, TEST_USERS_OPT_IN } from "./seed-guard"
 
 // `password` sólo se usa para CREAR la cuenta; si ya existe no se mira siquiera.
 // Por eso es opcional: el seed corre en cada despliegue (deploy.sh) y exigir la
@@ -34,14 +35,36 @@ async function upsertUser(
       },
     })
   }
-  for (const role of roles) {
-    await prisma.userRole.upsert({
-      where: { userId_roleId: { userId: user.id, roleId: role.id } },
-      update: {},
-      create: { userId: user.id, roleId: role.id },
-    })
+  if (!existing) {
+    for (const role of roles) {
+      await prisma.userRole.create({ data: { userId: user.id, roleId: role.id } })
+    }
+    console.log(`new  usuario ${email} [${roles.map((r) => r.name).join(", ")}]`)
+    return user
   }
-  console.log(`${existing ? "ok  " : "new "} usuario ${email} [${roleNames.join(", ")}]`)
+
+  // La cuenta YA existía: los roles NO se vuelven a otorgar. El seed corre en
+  // cada despliegue (deploy.sh), así que re-upsertear los roles haría que una
+  // revocación deliberada —degradar al superadmin, por ejemplo— volviera sola
+  // en el próximo deploy, en silencio. Un deploy no es el lugar donde se
+  // decide quién es admin.
+  //
+  // Lo que sí se hace es AVISAR: si falta un rol (revocación deliberada, o un
+  // rol nuevo que estrena un módulo) queda escrito en el log del deploy. Para
+  // otorgarlo hay que hacerlo a mano desde /admin/usuarios.
+  const current = await prisma.userRole.findMany({
+    where: { userId: user.id, roleId: { in: roles.map((r) => r.id) } },
+    select: { roleId: true },
+  })
+  const held = new Set(current.map((r) => r.roleId))
+  const missing = roles.filter((r) => !held.has(r.id)).map((r) => r.name)
+  console.log(
+    `ok   usuario ${email} [${roles
+      .filter((r) => held.has(r.id))
+      .map((r) => r.name)
+      .join(", ")}]` +
+      (missing.length > 0 ? ` — AVISO: sin ${missing.join(", ")} (el seed no los re-otorga)` : ""),
+  )
   return user
 }
 
@@ -83,16 +106,18 @@ async function main() {
   }
   await upsertUser(superEmail, "Mariano Perez", superPass, ["superadmin", "admin"])
 
-  if (process.env.SEED_TEST_USERS === "true") {
-    // Las cuentas de prueba tienen contraseña conocida: en producción serían
-    // una puerta abierta. Preferimos romper el deploy antes que crearlas.
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("SEED_TEST_USERS=true está prohibido en producción")
-    }
+  // Las cuentas de prueba tienen contraseña conocida y una de ellas es admin:
+  // sobre la base real serían un backdoor. La decisión —opt-in explícito, falla
+  // cerrado— vive en `seed-guard.ts`, con el porqué completo.
+  const testUsers = resolveTestUsers()
+  if (testUsers.create) {
     const testPass = process.env.SEED_TEST_PASSWORD
-    if (!testPass) throw new Error("SEED_TEST_USERS=true pero falta SEED_TEST_PASSWORD")
+    if (!testPass) throw new Error(`${TEST_USERS_OPT_IN}="true" pero falta SEED_TEST_PASSWORD`)
     await upsertUser("admin.prueba@sigev.local", "Admin de Prueba", testPass, ["admin"])
     await upsertUser("socio.prueba@sigev.local", "Socio de Prueba", testPass, ["socio"])
+  } else {
+    // Log explícito: el silencio no distingue "no se crearon" de "no se miró".
+    console.log(`skip cuentas de prueba: ${testUsers.reason}`)
   }
 
   // `update: {}` en todas: son valores INICIALES, no valores impuestos. El seed

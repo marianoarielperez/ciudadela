@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
 // Content-Security-Policy del sitio. Notas de cada decisión:
 //
@@ -117,4 +118,41 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Guarda de BUILD para las dos claves de Turnstile. Desde el M3 el captcha no
+// gobierna sólo el wizard de /asociate: también /ingresar y /ingresar/recuperar.
+// Si falta `NEXT_PUBLIC_TURNSTILE_SITE_KEY` el widget no monta y el formulario
+// no tiene token que mandar; si falta `TURNSTILE_SECRET_KEY` la verificación
+// falla cerrado (`src/lib/turnstile.ts`) y el login se rechaza. Con cualquiera
+// de las dos ausente, TODO admin y TODO socio quedan afuera del panel, con el
+// recupero de contraseña también bloqueado: no hay camino de vuelta desde el
+// navegador, sólo por SSH.
+//
+// Por qué en el BUILD y no al arrancar: romper el arranque dejaría al proceso
+// en crash-loop y se llevaría puesto el sitio público y los webhooks de MP
+// —mucho más daño que el que se quiere evitar—. Fallar en `npm run build`, en
+// cambio, es gratis: `deploy.sh` corre con `set -e`, así que el deploy se corta
+// ANTES del `pm2 restart` y la versión que ya está sirviendo ni se entera.
+// El VPS buildea con el mismo `.env` que después usa en runtime, así que este
+// chequeo cubre el caso real (un despliegue con la variable faltante).
+//
+// En dev las claves de prueba públicas de Cloudflare sirven (ver `.env.example`):
+// site key `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`.
+function assertTurnstileKeys() {
+  const missing = ["NEXT_PUBLIC_TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"].filter(
+    (name) => !process.env[name],
+  );
+  if (missing.length === 0) return;
+  throw new Error(
+    `Turnstile sin configurar: falta ${missing.join(" y ")} en el .env. ` +
+      "El captcha protege /ingresar y /ingresar/recuperar además de /asociate: un build sin " +
+      "estas claves deja a todo admin y socio afuera del panel, sin recupero de contraseña. " +
+      "En desarrollo usá las claves de prueba de Cloudflare (ver .env.example).",
+  );
+}
+
+// Forma de función para recibir la fase: la guarda corre SOLO en `next build`.
+// `next start` (PM2) carga este mismo archivo y no debe poder morir acá.
+export default function config(phase: string): NextConfig {
+  if (phase === PHASE_PRODUCTION_BUILD) assertTurnstileKeys();
+  return nextConfig;
+}

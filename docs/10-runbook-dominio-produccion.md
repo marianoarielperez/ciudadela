@@ -241,6 +241,39 @@ Tres cosas que no avisan si están mal:
 
 ## 4. Despliegue en el VPS
 
+### 4.0 Antes del PRIMER `deploy.sh` (una sola vez, obligatorio)
+
+`deploy.sh` corre `npx prisma db seed` en cada despliegue. Antes de que eso pase
+por primera vez sobre la base con los 283 socios reales, verificá a mano que el
+`.env` del VPS no pida las cuentas de prueba:
+
+```bash
+grep -n 'SEED_TEST_USERS\|SEED_ALLOW_TEST_USERS' /root/dev/ciudadela/.env
+```
+
+**Lo que tiene que devolver**: nada, o a lo sumo `SEED_TEST_USERS="false"`.
+`SEED_ALLOW_TEST_USERS` no debe aparecer. Si aparece `SEED_TEST_USERS="true"`
+—que es lo que dejó escrito el plan del Módulo 0 cuando se creó ese `.env`—,
+borrá la línea o ponela en `"false"`.
+
+Por qué importa: `admin.prueba@sigev.local` es una cuenta **con rol admin y
+contraseña conocida** (`SEED_TEST_PASSWORD`). Sembrarla en producción es un
+backdoor de administrador sobre el padrón real.
+
+Hoy el código ya falla cerrado —las cuentas de prueba exigen el opt-in explícito
+`SEED_ALLOW_TEST_USERS="true"` (`prisma/seed-guard.ts`) y `deploy.sh` además
+corre el seed con `NODE_ENV=production`, que las prohíbe aunque el opt-in
+estuviera—, así que el `grep` es la tercera capa, no la única. Se hace igual:
+es un chequeo de diez segundos contra el peor resultado posible.
+
+> Nota histórica: `docs/superpowers/plans/2026-08-17-modulo-0-base.md` (Step 4)
+> escribió ese `.env` con `SEED_TEST_USERS="true"` y el comentario «en
+> produccion DEBE ser "false" (el seed lo rechaza)». El rechazo **no ocurría**:
+> se apoyaba en `NODE_ENV === "production"`, variable que `deploy.sh` nunca
+> setea. Corregido el 21/08/2026.
+
+### 4.1 El deploy
+
 Además del `git pull`, el deploy completo es lo que hace `deploy.sh`:
 
 ```bash
@@ -253,6 +286,7 @@ que equivale a:
 git pull --ff-only
 npm ci                      # sin --omit=dev: prisma y tsx son devDependencies
 npx prisma migrate deploy   # el Módulo 2 trae 20260819185852_add_module_2_news_activities
+NODE_ENV=production npx prisma db seed   # claves nuevas de `configuration`; ver 4.0
 npm run build               # acá se hornea AUTH_URL
 pm2 restart sigev --update-env
 pm2 save
@@ -287,9 +321,27 @@ pm2 save
    `MP_WEBHOOK_SECRET`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`,
    `CRON_SECRET` y —hasta el lanzamiento— `EMAIL_ALLOWLIST`. De dónde sale cada
    una: `docs/11`.
-   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` **se hornea en el build** como `AUTH_URL`:
-   cambiarla exige re-buildear, no alcanza con reiniciar PM2. Sin ella el widget
-   no monta y **nadie puede completar el paso 3 del wizard**.
+   **Las dos claves de Turnstile cierran el panel, no sólo el wizard.** Desde el
+   commit `43d7150` el captcha gobierna también `/ingresar` y
+   `/ingresar/recuperar`, además del paso 3 de `/asociate`:
+   - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` **se hornea en el build** como `AUTH_URL`
+     (cambiarla exige re-buildear; reiniciar PM2 no alcanza). Si falta, el
+     widget no monta y el formulario no tiene token que mandar.
+   - `TURNSTILE_SECRET_KEY` es de runtime y **falla cerrado**: sin secreto, la
+     verificación devuelve `false` y el login se rechaza.
+
+   Con cualquiera de las dos ausente, **todo admin y todo socio quedan afuera
+   del panel**, y el recupero de contraseña también está bloqueado — no hay
+   camino de vuelta desde el navegador, sólo por SSH.
+
+   Por eso `npm run build` **falla a propósito** si falta cualquiera de las dos
+   (guarda en `next.config.ts`, sólo en la fase de build): el deploy se corta
+   antes del `pm2 restart` y la versión que ya está sirviendo no se toca. La
+   guarda NO corre al arrancar —un crash-loop se llevaría puesto el sitio
+   público y los webhooks de MP, más daño que el que evita—, así que un
+   `pm2 restart` con el `.env` mutilado sigue siendo posible: verificá igual con
+   `grep TURNSTILE /root/dev/ciudadela/.env` (dos líneas, con valor) y probá
+   `/ingresar` en el post-deploy.
 3. **Configuración desde el panel** (no es `.env`): cargar en
    `/admin/configuracion` los ids de los dos planes de MP (`mp_plan_active_id`,
    `mp_plan_shared_id`) y revisar los textos legales. Sin los ids, el paso 2 del

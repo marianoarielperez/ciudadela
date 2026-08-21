@@ -21,7 +21,14 @@ npx prisma migrate deploy
 # los textos legales.
 #
 # Va ANTES del build a proposito: /asociate se prerenderiza leyendo esos textos.
-npx prisma db seed
+#
+# NODE_ENV=production SOLO en esta linea (no exportada: `npm ci` de arriba tiene
+# que seguir instalando las devDependencies). Es cinturon y tirantes: la guarda
+# real de las cuentas de prueba es el opt-in explicito SEED_ALLOW_TEST_USERS
+# (ver prisma/seed-guard.ts), que ya falla cerrado sin esta variable; con
+# NODE_ENV=production ademas el seed ROMPE el deploy si alguien activara el
+# opt-in en el .env del VPS, en vez de crear un admin con contrasena conocida.
+NODE_ENV=production npx prisma db seed
 npm run build
 pm2 restart sigev --update-env
 pm2 save
