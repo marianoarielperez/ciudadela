@@ -236,3 +236,122 @@ tail -5 /var/log/sigev-cron.log     # cada corrida deja {"reminded":N,"expired":
 
 Un `401` en el log significa que el `CRON_SECRET` del crontab no coincide con el
 del `.env`; un `503`, que la variable no está definida en el `.env` del VPS.
+
+---
+
+## Parte I — Lo que se aprendió probando de verdad (21/08/2026)
+
+Esta parte NO es teoría: son los tropiezos reales de la primera prueba de punta
+a punta, en el orden en que aparecieron. Está acá para que la próxima vez
+—producción— no se repitan.
+
+### 1. Las dos puntas tienen que ser del mismo mundo
+
+El error que más tiempo costó. Se usaron las **credenciales de prueba de la
+cuenta REAL** (`TEST-...` de `av.ciudadela@gmail.com`), que es justo lo que la
+Parte B advierte que no hay que hacer. Con eso, el que cobra es una cuenta real
+y ninguna cuenta de prueba puede pagarle:
+
+> *Algo salió mal… Una de las partes con la que intentás hacer el pago es de prueba.*
+
+Y no alcanza con que el comprador sea de prueba: **el `payer_email` que viaja en
+la suscripción también cuenta**. Poner ahí un correo real con un vendedor de
+prueba da, en la creación:
+
+```
+status=400 message="Both payer and collector must be real or test users"
+```
+
+Regla: vendedor de prueba ⇒ el correo del postulante en el formulario tiene que
+ser el de la **cuenta de prueba compradora**. Consecuencia práctica: en sandbox
+**no se puede verificar el circuito de correo**, porque esas casillas no reciben.
+Se verifica aparte, con una dirección de la allowlist y sin pago.
+
+### 2. Los planes pertenecen a la cuenta que los creó
+
+Cambiar el `MP_ACCESS_TOKEN` invalida los ids de `mp_plan_active_id` /
+`mp_plan_shared_id`: hay que **rehacer los dos planes** con el token nuevo y
+recargar los ids en `/admin/configuracion`. Lo mismo vale para la clave del
+webhook, que es por aplicación.
+
+Corolario para el lanzamiento: el trabajo de sandbox es descartable. Al pasar a
+producción se repite entero — planes, ids y webhook.
+
+### 3. Mercado Pago corta el `reason` en 60 caracteres
+
+No en 255, como decía el código. Pasarse no recorta: **rechaza el pedido entero**
+con `{"message":"reason has more than 60 characters","status":400}`, y el vecino
+ve "no pudimos iniciar el pago". Lo aplica `src/lib/mp/reason.ts`, con tope en
+caracteres y en bytes.
+
+También: **MP se come la barra** `/`. `SOCIO ADHERENTE/COLABORADOR` se muestra
+`SOCIO ADHERENTECOLABORADOR` en el resumen de la tarjeta. Por eso el plan pasó a
+llamarse `SOCIO ADHERENTE - COLABORADOR`.
+
+### 4. El `back_url` tiene que ser público
+
+`http://localhost:3000` devuelve
+`{"message":"Invalid value for back_url, must be a valid URL","status":400}`.
+Sale de `AUTH_URL`, que se lee **al ejecutar**, no al compilar.
+
+### 5. Autorizar no es cobrar
+
+El evento `subscription_preapproval` sincroniza la suscripción a `authorized`
+pero **deja la solicitud en `pending_payment`**. La que la acepta es la
+notificación de **`payment`** (`application_approved`). Son dos eventos
+distintos y hacen falta los dos.
+
+### 6. El simulador del panel siempre va a fallar
+
+Manda `data.id: 123456`, que no existe. La respuesta correcta es 500 con
+`The preapproval with id 123456 does not exist`. Lo que ese simulador prueba es
+que la URL responde y que **la firma valida** (si no, sería 401). No prueba el
+procesamiento.
+
+### 7. Cómo disparar una notificación firmada a mano
+
+Sirve cuando MP no entrega (ver el punto 8). Reemplazá `DATA_ID` y el `type`
+(`payment` o `subscription_preapproval`):
+
+```bash
+cd /root/dev/ciudadela && SECRET=$(grep -E '^MP_WEBHOOK_SECRET=' .env | cut -d= -f2- | tr -d '"'"'" ) && DATA_ID=PEGAR_ID && REQ_ID="manual-$(date +%s)" && TS=$(date +%s) && V1=$(printf '%s' "id:${DATA_ID};request-id:${REQ_ID};ts:${TS};" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}') && curl -sS -X POST "https://vecinalciudadela.ar/api/webhooks/mp?data.id=${DATA_ID}&type=payment" -H "Content-Type: application/json" -H "x-request-id: ${REQ_ID}" -H "x-signature: ts=${TS},v1=${V1}" -d "{\"type\":\"payment\",\"action\":\"payment.updated\",\"data\":{\"id\":\"${DATA_ID}\"}}" -w '\nHTTP %{http_code}\n'
+```
+
+Para encontrar el id del cobro de una suscripción (la búsqueda de pagos por
+`external_reference` NO lo encuentra: MP no indexa así los de suscripción):
+
+```bash
+curl -sS "https://api.mercadopago.com/authorized_payments/search?preapproval_id=PEGAR_PREAPPROVAL" -H "Authorization: Bearer $MP_TOKEN"
+```
+
+Devuelve `payment.id`, que es el que va como `DATA_ID` con `type=payment`.
+
+### 8. PENDIENTE: MP no entregó las notificaciones solo
+
+En la prueba del 21/08/2026 el pago se acreditó y la suscripción quedó
+`authorized` **del lado de MP**, pero no llegó ninguna notificación a
+`/api/webhooks/mp`. Las dos que sí llegaron fueron disparadas a mano con el
+bloque del punto 7, y el sistema las procesó correcto
+(`subscription_synced`, `application_approved`).
+
+**Hay que resolverlo antes de abrir ASOCIATE**, porque en producción todo el
+avance automático depende de esa entrega. Dos causas a descartar, en orden:
+
+1. Limitación conocida del sandbox con cuentas de prueba.
+2. El webhook quedó configurado en OTRA aplicación (durante la prueba hubo dos:
+   la de la cuenta real y la del vendedor de prueba).
+
+Se mira en el panel de la aplicación → Webhooks → historial de entregas.
+
+### 9. Diagnóstico: leer el mensaje, no suponer
+
+El kit de MP hace `throw` del cuerpo crudo de la respuesta, que **no es un
+`Error`**: los helpers que leen `.code` devuelven `unknown`. `mpErrorLog`
+(`src/lib/mp/error-log.ts`) lo desarma y deja una línea con operación, HTTP,
+mensaje y causa, con el correo enmascarado. Antes de tenerlo se quemaron tres
+hipótesis equivocadas seguidas; con él, el motivo apareció en la primera línea.
+
+```bash
+pm2 flush sigev   # el log de PM2 NO se vacía al reiniciar: sin esto se mezcla lo viejo
+pm2 logs sigev --lines 30 --nostream --raw | grep -i "mp:" | tail -3
+```
