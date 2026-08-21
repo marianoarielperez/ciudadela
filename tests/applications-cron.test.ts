@@ -182,6 +182,21 @@ describe("makeApplicationsCron — recordatorio de pago", () => {
     expect(db.application.update).not.toHaveBeenCalled();
   });
 
+  it("si el correo salió y falla el sellado, el log NO dice que falló el recordatorio", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const tokens = makeTokens();
+    tokens.commitResumeToken.mockRejectedValue(new Error("db down"));
+    const { cron } = build({ db: makeDb({ toRemind: [row({ id: 9 })] }), tokens });
+
+    const result = await cron.run();
+
+    expect(result.reminded).toBe(0);
+    expect(result.errors).toBe(1);
+    const logged = spy.mock.calls.flat().map(String).join(" ");
+    expect(logged).toContain("SÍ salió");
+    expect(logged).not.toContain("falló el recordatorio de pago");
+  });
+
   it("el log del fallo de email lleva sólo el código, nunca el objeto de nodemailer", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const send = vi.fn(async () => {
@@ -354,5 +369,25 @@ describe("POST /api/cron/applications", () => {
     const res = await POST(request(`Bearer ${SECRET}`));
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("la base se cayó");
+  });
+
+  // Si se cae el paso 2, el paso 1 ya mandó correos REALES. Sin asiento, esa
+  // corrida no queda registrada en ningún lado: el 500 dice que algo se rompió,
+  // no qué alcanzó a hacer.
+  it("si el paso 2 explota, el resumen de lo que sí se hizo queda asentado igual", async () => {
+    findMany
+      .mockResolvedValueOnce([{ id: 5, email: "vecino@example.com" }]) // paso 1
+      .mockRejectedValueOnce(new Error("la base se cayó")); // paso 2
+
+    const res = await POST(request(`Bearer ${SECRET}`));
+
+    expect(res.status).toBe(500);
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "applications_cron",
+        entity: "application",
+        detail: { reminded: 1, expired: 0, errors: 0, failed: true },
+      }),
+    );
   });
 });

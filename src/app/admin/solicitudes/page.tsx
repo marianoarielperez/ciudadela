@@ -4,7 +4,8 @@ import { formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import {
-  makeApplicationQueries, parseApplicationFilters, parseApplicationsPage, showsReentryBadge,
+  fetchApprovedAfterExpiry, makeApplicationQueries, parseApplicationFilters,
+  parseApplicationsPage, showsReentryBadge,
 } from "@/lib/applications/query";
 import { RECORDABLE_STATUSES } from "@/lib/applications/record";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS } from "@/lib/members/labels";
@@ -54,6 +55,11 @@ export default async function SolicitudesPage(props: {
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
+  // Las que revivieron: el pago llegó después del vencimiento, así que se
+  // aceptaron pero el cron ya les había cancelado el débito. Se marcan ACÁ y no
+  // sólo en el detalle porque desde esta misma pantalla se las asienta en acta
+  // en lote, sin abrirlas. Es UNA consulta para toda la página.
+  const revived = await fetchApprovedAfterExpiry(prisma, rows.map((r) => r.id));
 
   // Sólo estas dos pueden llegar al libro; el resto de las filas se listan pero
   // no se pueden tildar. Con ninguna asentable en la página, el formulario de
@@ -143,6 +149,20 @@ export default async function SolicitudesPage(props: {
                   asentada, la bandeja no lo afirma: ver `showsReentryBadge`. */}
               {showsReentryBadge(app) && (
                 <Badge variant="secondary" className="ml-1">Reingreso</Badge>
+              )}
+              {revived.has(app.id) && (
+                <Badge
+                  variant="destructive"
+                  className="ml-1"
+                  title="El pago llegó después del vencimiento: la suscripción fue cancelada al vencer."
+                >
+                  Sin débito
+                  {/* El `title` no lo lee un lector de pantalla sobre un span:
+                      el motivo va también como texto. */}
+                  <span className="sr-only">
+                    {" "}— el pago llegó después del vencimiento y la suscripción fue cancelada al vencer
+                  </span>
+                </Badge>
               )}
             </TableCell>
             <TableCell>{formatDateAR(app.createdAt)}</TableCell>

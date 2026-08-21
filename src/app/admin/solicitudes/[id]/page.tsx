@@ -5,6 +5,7 @@ import { formatARS, formatBytes, formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { APPLICATION_STATUS_LABELS, DOCUMENT_TYPE_LABELS } from "@/lib/applications/labels";
 import { isDecidable } from "@/lib/applications/decision";
+import { APPROVED_AFTER_EXPIRY_ACTION } from "@/lib/applications/query";
 import { WEB_CATEGORIES } from "@/lib/applications/wizard";
 import {
   CATEGORY_LABELS, MINUTE_TYPE_LABELS, NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS,
@@ -69,7 +70,7 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
   // Los documentos son polimórficos y no tienen FK sobre `ownerId` (docs/04):
   // se consultan aparte, acotados a este dueño.
   const decidable = isDecidable(app.status);
-  const [documents, notifications, minuteRows, recordedMovement] = await Promise.all([
+  const [documents, notifications, minuteRows, recordedMovement, revivedEntry] = await Promise.all([
     prisma.document.findMany({
       where: { ownerType: "application", ownerId: applicationId },
       orderBy: { uploadedAt: "asc" },
@@ -101,6 +102,20 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
           select: { type: true },
         })
       : Promise.resolve(null),
+    // ── Aceptada DESPUÉS de vencida ───────────────────────────────────────────
+    // El estado final es `approved_pending_minute`, igual que el de una
+    // aceptación normal: la única señal de que el pago llegó tarde —y de que al
+    // expirar se canceló el débito— es este asiento. Va por el índice
+    // `[entity, entityId]` de `audit_log`.
+    prisma.auditLog.findFirst({
+      where: {
+        action: APPROVED_AFTER_EXPIRY_ACTION,
+        entity: "application",
+        entityId: String(applicationId),
+      },
+      orderBy: { id: "desc" },
+      select: { createdAt: true },
+    }),
   ]);
 
   // Tres estados y no dos. Viva, `memberId` sí significa "matcheó una ficha
@@ -255,6 +270,19 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 value={app.entryAmount ? formatARS(Number(app.entryAmount)) : null}
               />
             </dl>
+            {revivedEntry && (
+              // Mismo criterio que el aviso de "suscripción sin cancelar": el
+              // dato existía sólo en la auditoría y ahí no lo mira nadie. Acá
+              // hace falta porque la solicitud se puede asentar en acta desde la
+              // bandeja sin abrir esta pantalla, y el alta quedaría sin débito.
+              <FormMessage kind="warning" box>
+                El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
+                solicitud ya estaba vencida, y se aceptó igual. Al vencer se canceló la
+                suscripción de Mercado Pago: el vecino pagó el ingreso pero{" "}
+                <strong>quedó sin débito automático</strong>. Revisá la suscripción y volvé a
+                gestionarla con él antes de asentar el alta.
+              </FormMessage>
+            )}
             {pendingCancellation && (
               <FormMessage kind="warning" box>
                 La solicitud está rechazada pero la suscripción de Mercado Pago no figura

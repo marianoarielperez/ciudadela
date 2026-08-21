@@ -49,6 +49,77 @@ describe("webhookProcessor payments", () => {
     await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("already_processed");
     expect(d.mailerMock.sendToApplication).not.toHaveBeenCalled();
   });
+  // ── El pago que llega DESPUÉS del vencimiento ──────────────────────────────
+  // El cron expira a los 7 días; si MP demora o reintenta el aviso del primer
+  // pago, la solicitud ya está `expired`. Antes eso devolvía `already_processed`
+  // —indistinguible de un reintento— y el vecino quedaba pagado y afuera.
+  it("pago aprobado sobre una solicitud VENCIDA → revive, con result y asiento distinguibles", async () => {
+    const d = deps();
+    // El primer UPDATE (desde pending_payment) no encuentra nada; el segundo
+    // (desde expired) sí.
+    d.application.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    const p = makeWebhookProcessor(d);
+
+    await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe(
+      "application_approved_after_expiry",
+    );
+
+    expect(d.application.updateMany).toHaveBeenCalledTimes(2);
+    const second = d.application.updateMany.mock.calls[1][0];
+    expect(second.where).toMatchObject({ id: 55, status: "expired" });
+    expect(second.data).toMatchObject({ status: "approved_pending_minute", mpPaymentIdEntry: "777" });
+
+    // El asiento es la única señal que le queda al operador: al expirar, el cron
+    // ya canceló el preapproval y el alta quedó sin débito automático.
+    expect(d.auditMock).toHaveBeenCalledTimes(1);
+    const entry = d.auditMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      action: "application_approved_after_expiry",
+      entity: "application",
+      entityId: 55,
+    });
+    expect(JSON.stringify(entry)).not.toContain("a@b.com");
+    expect(JSON.stringify(entry)).not.toContain("Ana");
+    // Y el vecino igual recibe la bienvenida: pagó y está aceptado.
+    expect(d.mailerMock.sendToApplication).toHaveBeenCalledTimes(1);
+  });
+
+  it("el reintento del MISMO evento sobre la revivida sigue sin efectos", async () => {
+    const d = deps();
+    // Ya está en approved_pending_minute: ninguno de los dos UPDATE la agarra.
+    d.application.updateMany.mockResolvedValue({ count: 0 });
+    const p = makeWebhookProcessor(d);
+
+    await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("already_processed");
+
+    expect(d.application.updateMany).toHaveBeenCalledTimes(2);
+    expect(d.mailerMock.sendToApplication).not.toHaveBeenCalled();
+    expect(d.auditMock).not.toHaveBeenCalled();
+  });
+
+  it("el camino normal no cambia: un solo UPDATE, sin asiento de vencida", async () => {
+    const d = deps();
+    const p = makeWebhookProcessor(d);
+    await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
+    // Sin el `count === 0`, el segundo UPDATE ni se intenta.
+    expect(d.application.updateMany).toHaveBeenCalledTimes(1);
+    expect(d.auditMock).not.toHaveBeenCalled();
+  });
+
+  it("si la auditoría de la revivida falla, la aceptación sigue en pie", async () => {
+    const d = deps();
+    d.application.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    d.auditMock.mockRejectedValue(new Error("db down"));
+    const p = makeWebhookProcessor(d);
+    await expect(p.process({ topic: "payment", dataId: "777" })).resolves.toBe(
+      "application_approved_after_expiry",
+    );
+  });
+
   it("pago rechazado → payment_rejected sin transición", async () => {
     const d = deps({ status: "rejected" });
     const p = makeWebhookProcessor(d);

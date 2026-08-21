@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  APPLICATIONS_PAGE_SIZE, applicationsWhere, makeApplicationQueries,
-  parseApplicationFilters, parseApplicationsPage, showsReentryBadge,
+  APPLICATIONS_PAGE_SIZE, APPROVED_AFTER_EXPIRY_ACTION, applicationsWhere,
+  fetchApprovedAfterExpiry, makeApplicationQueries, parseApplicationFilters,
+  parseApplicationsPage, showsReentryBadge,
 } from "@/lib/applications/query";
 
 describe("parseApplicationFilters", () => {
@@ -159,5 +160,36 @@ describe("showsReentryBadge", () => {
 
   it("el rechazo conserva la señal: ahí `memberId` sigue siendo la ficha matcheada", () => {
     expect(showsReentryBadge({ status: "rejected", memberId: 99 })).toBe(true);
+  });
+});
+
+// El aviso de la bandeja cuelga de este asiento y de nada más: el estado final
+// de una solicitud revivida es `approved_pending_minute`, idéntico al de una
+// aceptación normal con su débito en pie.
+describe("fetchApprovedAfterExpiry", () => {
+  it("marca sólo las que tienen el asiento, con UNA consulta para toda la página", async () => {
+    const findMany = vi.fn(async () => [{ entityId: "7" }, { entityId: "9" }]);
+    const db = { auditLog: { findMany } } as never;
+
+    const revived = await fetchApprovedAfterExpiry(db, [7, 8, 9]);
+
+    expect([...revived].sort()).toEqual([7, 9]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const [args] = findMany.mock.calls[0] as unknown as [{ where: Record<string, unknown> }];
+    expect(args).toMatchObject({
+      where: {
+        action: APPROVED_AFTER_EXPIRY_ACTION,
+        entity: "application",
+        // `entityId` es VARCHAR en `audit_log`: con números el IN no matchea.
+        entityId: { in: ["7", "8", "9"] },
+      },
+    });
+  });
+
+  it("con una página vacía no consulta nada", async () => {
+    const findMany = vi.fn(async () => []);
+    const revived = await fetchApprovedAfterExpiry({ auditLog: { findMany } } as never, []);
+    expect(revived.size).toBe(0);
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

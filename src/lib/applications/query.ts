@@ -90,6 +90,31 @@ export function showsReentryBadge(row: Pick<ApplicationRow, "status" | "memberId
   return row.memberId !== null && row.status !== "completed";
 }
 
+/** Acción de auditoría que marca la solicitud aceptada DESPUÉS de haber vencido
+ *  (el webhook del primer pago llegó cuando el cron ya la había expirado). Vive
+ *  acá —módulo puro, sin prisma— porque la escribe el procesador de webhooks y
+ *  la leen la bandeja y el detalle: si el string se desincroniza, el aviso
+ *  desaparece de la pantalla sin que nada falle. */
+export const APPROVED_AFTER_EXPIRY_ACTION = "application_approved_after_expiry";
+
+/** Cuáles de estas solicitudes revivieron. UNA consulta para toda la página
+ *  (nada de N+1): el índice `[entity, entityId]` de `audit_log` la cubre. */
+export async function fetchApprovedAfterExpiry(
+  db: Pick<PrismaClient, "auditLog">,
+  ids: number[],
+): Promise<Set<number>> {
+  if (ids.length === 0) return new Set();
+  const rows = await db.auditLog.findMany({
+    where: {
+      action: APPROVED_AFTER_EXPIRY_ACTION,
+      entity: "application",
+      entityId: { in: ids.map(String) },
+    },
+    select: { entityId: true },
+  });
+  return new Set(rows.map((r) => Number(r.entityId)));
+}
+
 export type ApplicationsPage = {
   rows: ApplicationRow[];
   total: number;
