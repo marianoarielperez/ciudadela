@@ -4,7 +4,7 @@
 import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
-  | "home" | "users" | "scroll-text" | "newspaper" | "calendar-days" | "settings";
+  | "home" | "inbox" | "users" | "scroll-text" | "newspaper" | "calendar-days" | "settings";
 
 export type AdminNavItem = {
   href: string;
@@ -22,6 +22,9 @@ export const ADMIN_NAV: AdminNavGroup[] = [
   {
     label: "Gestión",
     items: [
+      // Primero la bandeja: es el trabajo diario del panel (lo que entró y hay
+      // que resolver), y el padrón es la consulta.
+      { href: "/admin/solicitudes", label: "Solicitudes", icon: "inbox" },
       { href: "/admin/socios", label: "Socios", icon: "users" },
       { href: "/admin/actas", label: "Actas", icon: "scroll-text" },
     ],

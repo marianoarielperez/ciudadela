@@ -1918,7 +1918,12 @@ type CreateState = {
 ```
 
 y `resendResumeLinkAction(prev: ResendState, formData: FormData): Promise<ResendState>` con `ResendState = { error?: string; done?: boolean }` (respuesta SIEMPRE genérica, anti-enumeración).
-- Produces (service.ts): `rotateResumeToken(applicationId: number): Promise<string>` — genera token nuevo, pisa `resumeTokenHash`, devuelve el crudo (el enlace viejo y el estado de un cliente anterior quedan inválidos: correcto, el último pedido manda).
+- Produces (service.ts): ~~`rotateResumeToken(applicationId)`~~ — **SUPERADO durante
+  la ejecución (fix de la Task 11, commit `66a49eb`)**: rotar antes de enviar dejaba
+  al vecino sin el enlace que ya tenía cuando el SMTP fallaba, y cada reintento lo
+  volvía a romper. Lo reemplazan `mintResumeToken(): { raw, hash }` (no toca la base)
+  y `commitResumeToken(applicationId, hash)`, en el orden **acuñar → enviar →
+  persistir**. El código es la fuente de verdad; esta sección queda como registro.
 - Consumes: `verifyTurnstile`, `applicationCreateLimiter`, `resumeResendLimiter`, `checkEligibility`, `applicationService`, `tokens.issue({ applicationId })`, `mailer.sendToApplication`, `verificationEmail`, `verifyUrl`, `applicationResumeEmail`, `parseForm`, `civilDateUtc`, `audit`.
 
 - [ ] **Step 1: Tests de los helpers puros (fallan)**
@@ -3947,16 +3952,20 @@ export function makeApplicationsCron(deps: {
 ```
 
 - [ ] **Step 1: Tests (fallan)** — casos:
-1. `pending_payment` creada hace 4 días sin `remindedAt` → el cron llama `rotateResumeToken`, manda `paymentReminderEmail` con la URL rotada y sella `remindedAt`; una segunda corrida NO re-manda (ya tiene `remindedAt`).
+1. `pending_payment` creada hace 4 días sin `remindedAt` → el cron acuña un token con `mintResumeToken()`, manda `paymentReminderEmail` con esa URL, y SOLO si el envío salió bien hace `commitResumeToken` y sella `remindedAt`; una segunda corrida NO re-manda (ya tiene `remindedAt`). Si el SMTP falla, NO se commitea: el enlace que el vecino ya tiene sigue vivo.
 2. `started` de hace 8 días → `expired`; `pending_payment` de hace 8 días con `preapprovalId` → `expired` + `cancelPreapproval` llamado + suscripción local `cancelled`.
 3. `cancelPreapproval` que lanza → la solicitud IGUAL expira y `errors` cuenta 1.
 4. solicitudes recientes → intactas.
 
 **Nota (fijar en el código):** el cron no conoce el token crudo (solo hay
-hash), así que el enlace del recordatorio SOLO puede armarse rotando:
-`rotateResumeToken(app.id)`. El costo es que una pestaña vieja del vecino
-queda inválida — aceptable a los 3 días de inactividad, y el propio email le
-da el enlace nuevo. Dejar este razonamiento como comentario.
+hash), así que el enlace del recordatorio hay que acuñarlo de nuevo. El orden
+es **acuñar → enviar → recién ahí persistir** (`mintResumeToken` +
+`commitResumeToken`, Task 11): si se persistiera primero y el SMTP fallara, le
+habríamos matado al vecino el enlace que ya tenía sin poder darle uno nuevo —
+exactamente el defecto que se corrigió en el reenvío manual. El costo aceptado
+es que, cuando el envío SÍ sale, una pestaña vieja queda inválida; a los 3 días
+de inactividad y con el enlace nuevo en el correo, es razonable. Dejar este
+razonamiento como comentario.
 
 - [ ] **Step 2: Implementar `cron.ts`**
 
@@ -3980,14 +3989,16 @@ type Deps = {
   db: Pick<PrismaClient, "application" | "mpSubscription">;
   gateway: Pick<MpGateway, "cancelPreapproval">;
   mailer: { sendToApplication: typeof mailer.sendToApplication };
-  rotateResumeToken?: (applicationId: number) => Promise<string>;
+  mintResumeToken?: () => { raw: string; hash: string };
+  commitResumeToken?: (applicationId: number, hash: string) => Promise<void>;
   baseUrl: string;
   now?: () => Date;
 };
 
 export function makeApplicationsCron(deps: Deps) {
   const now = deps.now ?? (() => new Date());
-  const rotate = deps.rotateResumeToken ?? applicationService.rotateResumeToken;
+  const mint = deps.mintResumeToken ?? applicationService.mintResumeToken;
+  const commit = deps.commitResumeToken ?? applicationService.commitResumeToken;
   return {
     async run() {
       let reminded = 0, expired = 0, errors = 0;
@@ -4002,12 +4013,15 @@ export function makeApplicationsCron(deps: Deps) {
       });
       for (const app of toRemind) {
         try {
-          const raw = await rotate(app.id);
+          // Acuñar → enviar → persistir. Si el envío falla, el enlace que el
+          // vecino ya tiene sigue siendo válido (ver nota del Step 1).
+          const { raw, hash } = mint();
           await deps.mailer.sendToApplication({
             applicationId: app.id, to: app.email, type: "fee_reminder",
             message: paymentReminderEmail({ url: `${deps.baseUrl}/asociate/retomar/${raw}` }),
             summary: "recordatorio de pago pendiente",
           });
+          await commit(app.id, hash);
           await deps.db.application.update({ where: { id: app.id }, data: { remindedAt: t } });
           reminded++;
         } catch (e) {

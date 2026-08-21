@@ -10,6 +10,10 @@ export const CONFIG_KEYS = {
   asociateActivo: "asociate_activo",
   contactPhone: "contact_phone",
   contactEmail: "contact_email",
+  termsText: "terms_text",
+  privacyConsentText: "privacy_consent_text",
+  mpPlanActiveId: "mp_plan_active_id",
+  mpPlanSharedId: "mp_plan_shared_id",
 } as const;
 
 type Db = Pick<PrismaClient, "configuration">;
@@ -48,5 +52,21 @@ export const getContactInfo = unstable_cache(
     email: await configReader.getString(CONFIG_KEYS.contactEmail),
   }),
   ["config-contact"],
+  { tags: [CACHE_TAGS.config] },
+);
+
+// Textos legales del wizard ASOCIATE (M3). Se guardan como texto PLANO y se
+// renderizan con `whitespace-pre-line`: nunca HTML del admin al DOM. Es un
+// desvío deliberado de la spec §2 —menos superficie de XSS, y el superadmin no
+// necesita marcado para un pliego de condiciones— y por eso el lector devuelve
+// el string tal cual, sin sanitizar nada aguas abajo.
+export type LegalTexts = { terms: string | null; privacyConsent: string | null };
+
+export const getLegalTexts = unstable_cache(
+  async (): Promise<LegalTexts> => ({
+    terms: await configReader.getString(CONFIG_KEYS.termsText),
+    privacyConsent: await configReader.getString(CONFIG_KEYS.privacyConsentText),
+  }),
+  ["config-legal"],
   { tags: [CACHE_TAGS.config] },
 );

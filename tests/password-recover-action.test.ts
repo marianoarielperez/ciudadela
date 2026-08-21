@@ -48,6 +48,15 @@ vi.mock("@/lib/tokens", () => ({ hashToken: (raw: string) => `hash:${raw}` }));
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
+// El pedido de recupero exige Turnstile (decisión del 21/08/2026): sin este
+// mock, `verifyTurnstile` sale a la red de verdad y falla CERRADO, o sea que
+// TODOS los casos de abajo terminarían en el error del captcha. El captcha
+// resuelto es la precondición de todo lo que este archivo mide, no lo que mide:
+// que un token inválido no toque la base ni gaste cupo se ejercita en
+// tests/public-forms-captcha.test.ts.
+const { verifyTurnstileMock } = vi.hoisted(() => ({ verifyTurnstileMock: vi.fn(async () => true) }));
+vi.mock("@/lib/turnstile", () => ({ verifyTurnstile: verifyTurnstileMock }));
+
 type SentMail = { to: string; subject: string; text: string; html: string };
 const sendMock = vi.fn(async (msg: SentMail) => ({ messageId: `mid:${msg.to}` as string | null }));
 
@@ -62,11 +71,14 @@ type MockedFn = ReturnType<typeof vi.fn>;
 function formDataFor(email: string) {
   const fd = new FormData();
   fd.set("email", email);
+  // El input oculto que inyecta el widget dentro del <form>.
+  fd.set("cf-turnstile-response", "captcha-ok");
   return fd;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  verifyTurnstileMock.mockResolvedValue(true);
   afterCalls.length = 0;
   sendMock.mockResolvedValue({ messageId: "mid-1" });
   (passwordResetIpLimiter.allows as MockedFn).mockReturnValue(true);

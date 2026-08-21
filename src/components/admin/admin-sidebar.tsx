@@ -36,6 +36,10 @@ export function AdminSidebar({ groups, initialCollapsed, user, signOutExpanded, 
     <aside
       className={cn(
         "sticky top-0 hidden h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex",
+        // La hoja impresa no lleva el mapa del panel: el resumen para acta
+        // (/admin/solicitudes/resumen) se lleva en papel a la reunión de la
+        // Comisión y la lateral se comía un tercio del ancho útil.
+        "print:hidden",
         collapsed ? "w-14" : "w-[230px]",
       )}
     >

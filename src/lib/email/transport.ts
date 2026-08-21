@@ -31,6 +31,32 @@ function makeConsoleTransport(): MailTransport {
   };
 }
 
+/** Guarda de STAGING (spec M3 §6): con EMAIL_ALLOWLIST definida, ningún correo
+ *  sale hacia una casilla no listada. Vive en el transporte y no en los
+ *  call-sites para cubrir wizard, panel y cron por igual. El error viaja como
+ *  excepción: los call-sites ya compensan un fallo de envío (queman token,
+ *  devuelven cupo), y un bloqueo silencioso escondería que la prueba no probó
+ *  nada. El log NO incluye la dirección (docs/08). */
+export function parseAllowlist(csv: string | undefined): Set<string> | null {
+  if (!csv) return null;
+  const items = csv.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s !== "");
+  return items.length > 0 ? new Set(items) : null;
+}
+
+export function makeAllowlistTransport(inner: MailTransport, allowlist: Set<string>): MailTransport {
+  return {
+    async send(msg) {
+      if (!allowlist.has(msg.to.trim().toLowerCase())) {
+        console.warn("[mail:allowlist] envío bloqueado por EMAIL_ALLOWLIST");
+        throw new Error("Envíos de email restringidos en este entorno (EMAIL_ALLOWLIST).");
+      }
+      return inner.send(msg);
+    },
+  };
+}
+
 export function getTransport(): MailTransport {
-  return makeBrevoTransport() ?? makeConsoleTransport();
+  const inner = makeBrevoTransport() ?? makeConsoleTransport();
+  const allowlist = parseAllowlist(process.env.EMAIL_ALLOWLIST);
+  return allowlist ? makeAllowlistTransport(inner, allowlist) : inner;
 }

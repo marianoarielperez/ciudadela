@@ -17,7 +17,7 @@ const prismaMock = vi.hoisted(() => {
       findUnique: vi.fn<(args: { where: { key: string } }) => Promise<unknown>>(),
       upsert: vi.fn(async () => ({})),
     },
-    // La action escribe las tres claves en una transacción interactiva. El
+    // La action escribe todas las claves en una transacción interactiva. El
     // doble le pasa al callback el mismo objeto, así los `expect` sobre
     // `configuration.upsert` siguen viendo las llamadas: lo que se verifica es
     // QUÉ se escribe, no el aislamiento del motor.
@@ -50,11 +50,30 @@ const form = (entries: Record<string, string>) => {
 };
 
 // Lo que el formulario manda cuando el superadmin prende el botón y carga los
-// dos contactos.
+// dos contactos, los dos textos legales y los dos ids de plan de MP.
 const filled = {
   asociateActivo: "on",
   contactPhone: "297 4 123456",
   contactEmail: "vecinal@ejemplo.com",
+  termsText: "Términos y condiciones\n\n1. Primera cláusula.",
+  privacyConsentText: "Consentimiento Ley 25.326\n\nSegundo párrafo.",
+  mpPlanActiveId: "2c9380849abcd0001",
+  mpPlanSharedId: "2c9380849abcd0002",
+};
+
+// Cuántas claves escribe un guardado completo partiendo de una base vacía.
+const KEYS = Object.keys(filled).length;
+
+// La base ya escrita con exactamente lo que manda `filled`: sirve para los casos
+// de "no cambió nada". El checkbox se guarda como boolean, el resto como string.
+const storedFilled: Record<string, unknown> = {
+  [CONFIG_KEYS.asociateActivo]: true,
+  [CONFIG_KEYS.contactPhone]: filled.contactPhone,
+  [CONFIG_KEYS.contactEmail]: filled.contactEmail,
+  [CONFIG_KEYS.termsText]: filled.termsText,
+  [CONFIG_KEYS.privacyConsentText]: filled.privacyConsentText,
+  [CONFIG_KEYS.mpPlanActiveId]: filled.mpPlanActiveId,
+  [CONFIG_KEYS.mpPlanSharedId]: filled.mpPlanSharedId,
 };
 
 /** Fija lo que hay guardado hoy, por clave. Una clave ausente del mapa devuelve
@@ -72,9 +91,9 @@ describe("updateConfigAction", () => {
     prismaMock.configuration.upsert.mockImplementation(async () => ({}));
   });
 
-  it("escribe las tres claves con el superadmin en updated_by", async () => {
+  it("escribe todas las claves con el superadmin en updated_by", async () => {
     await updateConfigAction({}, form(filled));
-    expect(prismaMock.configuration.upsert).toHaveBeenCalledTimes(3);
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledTimes(KEYS);
     expect(prismaMock.configuration.upsert).toHaveBeenCalledWith({
       where: { key: CONFIG_KEYS.asociateActivo },
       update: { value: true, updatedBy: 3 },
@@ -90,6 +109,48 @@ describe("updateConfigAction", () => {
       update: { value: "vecinal@ejemplo.com", updatedBy: 3 },
       create: { key: CONFIG_KEYS.contactEmail, value: "vecinal@ejemplo.com", updatedBy: 3 },
     });
+    // El texto legal se guarda TAL CUAL, con sus saltos de línea: el wizard lo
+    // muestra con `whitespace-pre-line` y aplanarlo acá le rompería el formato.
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith({
+      where: { key: CONFIG_KEYS.termsText },
+      update: { value: filled.termsText, updatedBy: 3 },
+      create: { key: CONFIG_KEYS.termsText, value: filled.termsText, updatedBy: 3 },
+    });
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith({
+      where: { key: CONFIG_KEYS.privacyConsentText },
+      update: { value: filled.privacyConsentText, updatedBy: 3 },
+      create: {
+        key: CONFIG_KEYS.privacyConsentText,
+        value: filled.privacyConsentText,
+        updatedBy: 3,
+      },
+    });
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: CONFIG_KEYS.mpPlanActiveId },
+        update: { value: filled.mpPlanActiveId, updatedBy: 3 },
+      }),
+    );
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: CONFIG_KEYS.mpPlanSharedId },
+        update: { value: filled.mpPlanSharedId, updatedBy: 3 },
+      }),
+    );
+  });
+
+  // `parseForm` recorta las puntas de todo lo que llega, pero un pliego de
+  // condiciones sin sus saltos de línea es un párrafo ilegible: el wizard lo
+  // muestra con `whitespace-pre-line` y depende de que lleguen enteros.
+  it("guarda el texto legal con sus saltos de línea internos", async () => {
+    const texto = "Términos\n\n1. Primera.\n2. Segunda.";
+    await updateConfigAction({}, form({ ...filled, termsText: `\n${texto}\n  ` }));
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: CONFIG_KEYS.termsText },
+        update: { value: texto, updatedBy: 3 },
+      }),
+    );
   });
 
   it("audita de qué valor a qué valor cambió cada clave, con la IP de x-real-ip", async () => {
@@ -120,11 +181,7 @@ describe("updateConfigAction", () => {
   });
 
   it("un guardado sin cambios no escribe ni deja asiento", async () => {
-    stored({
-      [CONFIG_KEYS.asociateActivo]: true,
-      [CONFIG_KEYS.contactPhone]: "297 4 123456",
-      [CONFIG_KEYS.contactEmail]: "vecinal@ejemplo.com",
-    });
+    stored(storedFilled);
     const result = await updateConfigAction({}, form(filled));
     expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
@@ -133,12 +190,8 @@ describe("updateConfigAction", () => {
     expect(redirect).toHaveBeenCalledWith("/admin/configuracion?guardado=1");
   });
 
-  it("toca solo la clave que cambió y deja las otras dos quietas", async () => {
-    stored({
-      [CONFIG_KEYS.asociateActivo]: true,
-      [CONFIG_KEYS.contactPhone]: "297 4 123456",
-      [CONFIG_KEYS.contactEmail]: "vecinal@ejemplo.com",
-    });
+  it("toca solo la clave que cambió y deja las otras quietas", async () => {
+    stored(storedFilled);
     await updateConfigAction({}, form({ ...filled, contactEmail: "otro@ejemplo.com" }));
     expect(prismaMock.configuration.upsert).toHaveBeenCalledTimes(1);
     expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(
@@ -217,6 +270,28 @@ describe("updateConfigAction", () => {
     expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
   });
 
+  it("rechaza un texto legal de más de 20.000 caracteres en castellano", async () => {
+    const largo = "a".repeat(20001);
+    expect((await updateConfigAction({}, form({ ...filled, termsText: largo }))).error).toBe(
+      "Los términos no pueden superar los 20.000 caracteres.",
+    );
+    expect(
+      (await updateConfigAction({}, form({ ...filled, privacyConsentText: largo }))).error,
+    ).toBe("El consentimiento no puede superar los 20.000 caracteres.");
+    expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un id de plan de MP de más de 64 caracteres en castellano", async () => {
+    const largo = "2".repeat(65);
+    expect((await updateConfigAction({}, form({ ...filled, mpPlanActiveId: largo }))).error).toBe(
+      "El id de plan no puede superar los 64 caracteres.",
+    );
+    expect((await updateConfigAction({}, form({ ...filled, mpPlanSharedId: largo }))).error).toBe(
+      "El id de plan no puede superar los 64 caracteres.",
+    );
+    expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
+  });
+
   it("un valor de checkbox que no es 'on' se rechaza en castellano", async () => {
     const result = await updateConfigAction({}, form({ ...filled, asociateActivo: "true" }));
     expect(result.error).toBe("Valor inválido para el botón ASOCIATE.");
@@ -224,10 +299,10 @@ describe("updateConfigAction", () => {
   });
 
   // La clave ausente NO es lo mismo que el valor vacío para zod (`undefined` vs
-  // `""`), y los tres campos son opcionales justamente para que los dos casos
+  // `""`), y TODOS los campos son opcionales justamente para que los dos casos
   // signifiquen "sin valor" sin caer nunca en "Invalid input: expected string,
   // received undefined".
-  it.each(["asociateActivo", "contactPhone", "contactEmail"] as const)(
+  it.each(Object.keys(filled))(
     "un POST sin el campo %s se acepta como 'sin valor' y no muestra el default de zod",
     async (missing) => {
       const entries = { ...filled } as Record<string, string>;
@@ -243,6 +318,10 @@ describe("updateConfigAction", () => {
       { ...filled, contactEmail: "no-es-un-mail" },
       { ...filled, contactPhone: "9".repeat(41) },
       { ...filled, asociateActivo: "true" },
+      { ...filled, termsText: "a".repeat(20001) },
+      { ...filled, privacyConsentText: "a".repeat(20001) },
+      { ...filled, mpPlanActiveId: "2".repeat(65) },
+      { ...filled, mpPlanSharedId: "2".repeat(65) },
     ];
     for (const c of cases) {
       const result = await updateConfigAction({}, form(c));

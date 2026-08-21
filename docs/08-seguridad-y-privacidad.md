@@ -38,10 +38,14 @@ de Datos Personales** (Argentina).
   además hay un techo absoluto de **7 días** de sesión aunque se siga usando
   (ver `docs/04-modelo-de-datos.md`, entidad Usuario/Rol).
 - Formularios públicos: Cloudflare Turnstile + rate limiting por IP (especialmente
-  el endpoint DNI+apellido: 5 intentos/15 min). **Turnstile queda diferido al
-  Módulo 3** (se integra junto con el wizard de ASOCIATE); hasta entonces los
-  formularios públicos de los módulos ya construidos solo están protegidos por
-  los limitadores de intentos.
+  el endpoint DNI+apellido: 5 intentos/15 min). Turnstile se difirió al Módulo 3 y
+  ahí quedó cerrado: cubre el wizard de ASOCIATE y el reenvío del enlace de retome
+  (Módulo 3) y, desde el 21/08/2026, también `/ingresar` y `/ingresar/recuperar`,
+  que hasta entonces sólo tenían los limitadores de intentos. Los formularios que
+  se abren con un token de un solo uso (`/acceso/[token]`,
+  `/ingresar/restablecer/[token]`, `/verificar/[token]`) **no** llevan captcha: el
+  token es la barrera, y sin él no hay nada que enumerar. En todos los casos el
+  captcha se SUMA a los limitadores; no reemplaza a ninguno.
 - Webhooks: validación `x-Signature` (MP) y token/secret (Brevo); idempotencia.
 - Cabeceras: CSP y `Permissions-Policy` las emite Next (`next.config.ts`);
   **HSTS la termina Cloudflare**, no la app. `X-Frame-Options: DENY` es global y

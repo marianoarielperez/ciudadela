@@ -52,9 +52,9 @@ describe("DASHBOARD_GROUPS vs ADMIN_NAV", () => {
 
   it("allows roadmap cards without href as extras", () => {
     // No es un requisito, es la constancia de que el invariante los tolera:
-    // "Solicitudes" y "Tesorería" son secciones futuras sin ruta todavía.
+    // "Tesorería" es una sección futura sin ruta todavía. ("Solicitudes" lo era
+    // hasta el M3; desde la Task 16 tiene bandeja y salió de esta lista.)
     const roadmap = allCards.filter((c) => !c.href).map((c) => c.title);
-    expect(roadmap).toContain("Solicitudes");
     expect(roadmap).toContain("Tesorería");
   });
 });

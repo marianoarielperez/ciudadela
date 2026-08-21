@@ -23,7 +23,12 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
   {
     label: "Gestión",
     cards: [
-      { title: "Solicitudes", description: "Altas de socios pendientes de revisión y aprobación." },
+      {
+        title: "Solicitudes",
+        description: "Altas de socios pendientes de revisión y aprobación.",
+        href: "/admin/solicitudes",
+        cta: "Ver la bandeja",
+      },
       { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios", cta: "Ver el padrón" },
       {
         title: "Actas",

@@ -37,7 +37,7 @@ function button(url: string, label: string): string {
  *  porque hay dos plantillas que la arman (la invitación del circuito de alta y
  *  la confirmación de la dirección nueva de una cuenta ya creada) y mandar el
  *  token a la ruta equivocada le daría al socio un enlace muerto. */
-function verifyUrl(baseUrl: string, token: string): string {
+export function verifyUrl(baseUrl: string, token: string): string {
   return `${baseUrl}/verificar/${token}`;
 }
 
@@ -213,5 +213,101 @@ ${button(url, "Confirmar mi email")}
 <p>El enlace vence en 7 días. Tu contraseña no cambia: seguís usando la misma.</p>
 <p>Si no esperabas este correo, ignoralo y avisale a la vecinal: puede ser un error de carga.</p>`),
     },
+  };
+}
+
+// ── Módulo 3: circuito de la solicitud de alta ────────────────────────────────
+//
+// Criterio de nombres (mismo razonamiento que arriba): la ACEPTADA y la
+// RECIBIDA sí saludan por nombre — la dirección la tipeó la propia persona en
+// el wizard y confirmó el tipeo, no hay operador en el medio—. La RECHAZADA no
+// saluda ni da causa: el estatuto no la exige (Art. 5 inc. 7) y el correo no
+// tiene por qué cargar más datos que el hecho.
+
+/** Aceptación automática (REG-12): el débito se autorizó y el primer pago entró. */
+export function applicationAcceptedEmail(opts: { name: string }): Rendered {
+  return {
+    subject: "¡Tu solicitud fue aceptada! — Vecinal Ciudadela",
+    text: `Hola ${opts.name}:
+
+¡Bienvenido/a! Tu solicitud de asociación fue aceptada.
+
+El alta formal se asentará en la próxima reunión de la Comisión Directiva, y la fecha de esa acta será tu fecha de ingreso como socio/a.
+
+Te enviamos aparte un correo para verificar tu dirección de email: confirmala para poder recibir el acceso al portal de socios apenas se asiente tu alta.${SIGNATURE}`,
+    html: layout("¡Tu solicitud fue aceptada!", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>¡Bienvenido/a! Tu solicitud de asociación fue <strong>aceptada</strong>.</p>
+<p>El alta formal se asentará en la próxima reunión de la Comisión Directiva, y la fecha de esa acta será tu <strong>fecha de ingreso</strong> como socio/a.</p>
+<p>Te enviamos aparte un correo para verificar tu dirección de email: confirmala para poder recibir el acceso al portal de socios apenas se asiente tu alta.</p>`),
+  };
+}
+
+/** Rama sin débito (adherente que no adhiere): la CD la trata en reunión. */
+export function applicationReceivedEmail(opts: { name: string }): Rendered {
+  return {
+    subject: "Recibimos tu solicitud — Vecinal Ciudadela",
+    text: `Hola ${opts.name}:
+
+Tu solicitud de asociación fue recibida y será tratada por la Comisión Directiva en su próxima reunión. Te vamos a avisar por este medio el resultado.
+
+Te enviamos aparte un correo para verificar tu dirección de email.${SIGNATURE}`,
+    html: layout("Recibimos tu solicitud", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>Tu solicitud de asociación fue recibida y será tratada por la Comisión Directiva en su próxima reunión. Te vamos a avisar por este medio el resultado.</p>
+<p>Te enviamos aparte un correo para verificar tu dirección de email.</p>`),
+  };
+}
+
+/** Rechazo (REG-13): sin expresión de causa. La retención del ingreso solo se
+ *  menciona si hubo débito (REG-12.b), citando los términos aceptados. */
+export function applicationRejectedEmail(opts: { entryFeeRetained: boolean }): Rendered {
+  const retained = opts.entryFeeRetained
+    ? `\n\nLa cuota de ingreso abonada no es reembolsable, conforme a los términos y condiciones aceptados al enviar la solicitud.`
+    : "";
+  const retainedHtml = opts.entryFeeRetained
+    ? `<p>La cuota de ingreso abonada <strong>no es reembolsable</strong>, conforme a los términos y condiciones aceptados al enviar la solicitud.</p>`
+    : "";
+  return {
+    subject: "Sobre tu solicitud de asociación — Vecinal Ciudadela",
+    text: `Te escribimos por tu solicitud de asociación a la ${ORG}.
+
+La Comisión Directiva resolvió no hacer lugar a la solicitud.${retained}
+
+Según el estatuto, podés presentar una nueva solicitud pasados 6 (seis) meses de esta resolución. Ante cualquier consulta, acercate a la sede vecinal.${SIGNATURE}`,
+    html: layout("Sobre tu solicitud de asociación", `<p>Te escribimos por tu solicitud de asociación a la ${esc(ORG)}.</p>
+<p>La Comisión Directiva resolvió no hacer lugar a la solicitud.</p>
+${retainedHtml}
+<p>Según el estatuto, podés presentar una nueva solicitud pasados 6 (seis) meses de esta resolución. Ante cualquier consulta, acercate a la sede vecinal.</p>`),
+  };
+}
+
+/** Reenvío del enlace de retome ("ya tenés una solicitud en trámite"). */
+export function applicationResumeEmail(opts: { url: string }): Rendered {
+  return {
+    subject: "Retomá tu solicitud — Vecinal Ciudadela",
+    text: `Pediste retomar tu solicitud de asociación a la ${ORG}. Abrí este enlace para continuarla donde la dejaste:
+
+${opts.url}
+
+Si no fuiste vos, ignorá este correo.${SIGNATURE}`,
+    html: layout("Retomá tu solicitud", `<p>Pediste retomar tu solicitud de asociación a la ${esc(ORG)}. Hacé clic para continuarla donde la dejaste:</p>
+${button(opts.url, "Retomar mi solicitud")}
+<p>Si no fuiste vos, ignorá este correo.</p>`),
+  };
+}
+
+/** Recordatorio del cron (día 3 de pending_payment): el checkout quedó a medias. */
+export function paymentReminderEmail(opts: { url: string }): Rendered {
+  return {
+    subject: "Tu solicitud está esperando el pago — Vecinal Ciudadela",
+    text: `Tu solicitud de asociación a la ${ORG} quedó pendiente de autorizar el débito automático en Mercado Pago.
+
+Podés retomarla desde este enlace:
+
+${opts.url}
+
+Si no completás el pago, la solicitud vence a los 7 días de iniciada y vas a tener que empezar de nuevo.${SIGNATURE}`,
+    html: layout("Tu solicitud está esperando el pago", `<p>Tu solicitud de asociación a la ${esc(ORG)} quedó pendiente de autorizar el débito automático en Mercado Pago.</p>
+${button(opts.url, "Retomar y completar el pago")}
+<p>Si no completás el pago, la solicitud <strong>vence a los 7 días</strong> de iniciada y vas a tener que empezar de nuevo.</p>`),
   };
 }

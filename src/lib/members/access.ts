@@ -133,6 +133,51 @@ type AccessDb = Pick<
   "$transaction" | "actionToken" | "member" | "role" | "user" | "userRole"
 >;
 
+/** Lo que la verificación ESCRIBE sobre la ficha, una vez que las guardas ya
+ *  dijeron que sí: marca la dirección como verificada y, si el socio todavía no
+ *  tiene cuenta, revoca sus enlaces vivos y emite la invitación de contraseña.
+ *
+ *  Está afuera del factory —y recibe el `tx`— porque tiene DOS puntas y ninguna
+ *  puede quedarse a mitad de camino:
+ *
+ *   1. `verifyEmail` de acá abajo: el token de la FICHA (circuito del M1).
+ *   2. El canje TARDÍO del token de una SOLICITUD cuya alta ya se asentó
+ *      (`/verificar/[token]/actions.ts`). Ese enlace vive 7 días y el vecino
+ *      puede abrirlo DESPUÉS del asiento: la ficha nace con la dirección
+ *      `declared` —por eso el asiento no le manda la invitación— y sin esto la
+ *      verificación moría en la solicitud, dejando al socio sin acceso al portal
+ *      y sin un segundo asiento que disparara nada.
+ *
+ *  Las guardas de estado son de cada punta y corren ANTES (la baja en las dos;
+ *  además, del lado de la solicitud, que la ficha siga teniendo la misma
+ *  dirección que autorizó el enlace). Acá adentro no hay ninguna decisión: sólo
+ *  la escritura, para que las dos puntas escriban exactamente lo mismo.
+ *
+ *  No toca los campos que vigila la invariante de tokens (`email` y `status`),
+ *  así que no hay nada que revocar por el update: lo que sí revoca es la
+ *  emisión de la invitación. */
+export async function applyEmailVerification(
+  tx: Pick<PrismaClient, "actionToken" | "member">,
+  member: Pick<Member, "id" | "userId">,
+  now: Date,
+): Promise<{ memberId: number; invite: string | null }> {
+  await tx.member.update({
+    where: { id: member.id },
+    data: { emailStatus: "verified", emailVerifiedAt: now },
+  });
+
+  if (member.userId) return { memberId: member.id, invite: null };
+
+  // Un enlace vivo por socio: si emitimos sin revocar, el correo anterior (o un
+  // reenvío que cruzó por el medio) queda como segundo camino válido para crear
+  // la contraseña de esta cuenta durante 7 días. El token que se acaba de
+  // consumir ya tiene `usedAt`, así que sobrevive como rastro.
+  const tokens = makeTokens(tx);
+  await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES);
+  const invite = await tokens.issue({ purpose: "password_invitation", memberId: member.id, now });
+  return { memberId: member.id, invite };
+}
+
 export function makeMemberAccess(db: AccessDb) {
   /** Corre el canje en una transacción y traduce el aborto en `{ ok: false }`. */
   async function redeem<T>(run: (tx: Parameters<Parameters<AccessDb["$transaction"]>[0]>[0]) => Promise<T>) {
@@ -164,24 +209,10 @@ export function makeMemberAccess(db: AccessDb) {
         if (!allowed.ok) return { ok: false as const, error: allowed.error };
         if (!member.email) throw new AccessAbort(ACCESS_ERRORS.noEmail);
 
-        // Escritura de `Member` dentro de la capa dueña del dato. No toca los
-        // campos que vigila la invariante de tokens (`email` y `status`), así
-        // que no hay nada que revocar por este update: lo que sí revocamos es
-        // por la emisión de la invitación, unas líneas más abajo.
-        await tx.member.update({
-          where: { id: member.id },
-          data: { emailStatus: "verified", emailVerifiedAt: now },
-        });
-
-        if (member.userId) return { ok: true as const, memberId: member.id, invite: null };
-
-        // Un enlace vivo por socio: si emitimos sin revocar, el correo anterior
-        // (o un reenvío que cruzó por el medio) queda como segundo camino válido
-        // para crear la contraseña de esta cuenta durante 7 días. El token que
-        // acabamos de consumir ya tiene `usedAt`, así que sobrevive como rastro.
-        await tokens.revokeForMember(member.id, MEMBER_EMAIL_TOKEN_PURPOSES);
-        const invite = await tokens.issue({ purpose: "password_invitation", memberId: member.id, now });
-        return { ok: true as const, memberId: member.id, invite };
+        // Escritura de `Member` dentro de la capa dueña del dato, y compartida
+        // con el canje tardío del token de una solicitud: ver
+        // `applyEmailVerification`.
+        return { ok: true as const, ...(await applyEmailVerification(tx, member, now)) };
       });
     },
 

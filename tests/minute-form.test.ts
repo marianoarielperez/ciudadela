@@ -111,11 +111,12 @@ describe("createsNewMinute", () => {
 });
 
 describe("discardUnusedMinute", () => {
-  function makeDb(counts: { movements: number; books: number }) {
+  function makeDb(counts: { movements: number; books: number; applications?: number }) {
     const deleted: number[] = [];
     const db = {
       movement: { count: async () => counts.movements },
       book: { count: async () => counts.books },
+      application: { count: async () => counts.applications ?? 0 },
       minute: {
         delete: async ({ where }: { where: { id: number } }) => {
           deleted.push(where.id);
@@ -144,10 +145,21 @@ describe("discardUnusedMinute", () => {
     expect(deleted).toEqual([]);
   });
 
+  // Un RECHAZO no asienta movimientos: su acta tiene cero movimientos y cero
+  // libros, asi que sin este tercer chequeo "parece" sin usar. Y como
+  // `Application.minuteId` es `onDelete: SetNull`, el borrado no falla: se lleva
+  // la constancia en actas del rechazo en silencio (Art. 5 inc. 7).
+  it("keeps a minute that already backs a decided application", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, applications: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
   it("never throws: the caller already has a real error to report", async () => {
     const db = {
       movement: { count: async () => { throw new Error("db down"); } },
       book: { count: async () => 0 },
+      application: { count: async () => 0 },
       minute: { delete: async () => ({ id: 1 }) },
     };
     await expect(discardUnusedMinute(db as never, 42)).resolves.toBeUndefined();

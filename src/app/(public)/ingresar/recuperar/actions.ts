@@ -14,6 +14,10 @@
 //  3. Los cupos: se consultan y se registran ANTES de mirar si la cuenta existe,
 //     con la dirección normalizada, para que el intento número cuatro conteste
 //     igual en los dos casos.
+//
+// El captcha se SUMA a los tres, no reemplaza a ninguno: Turnstile encarece el
+// intento automatizado, pero no dice nada sobre qué direcciones están
+// registradas, que es de lo que hablan los tres frentes de arriba.
 import { headers } from "next/headers";
 import { after } from "next/server";
 import { z } from "zod";
@@ -25,6 +29,7 @@ import { getTransport } from "@/lib/email/transport";
 import { parseForm } from "@/lib/forms";
 import { hashToken } from "@/lib/tokens";
 import { prisma } from "@/lib/prisma";
+import { verifyTurnstile } from "@/lib/turnstile";
 
 export type RecoverState = { done?: boolean; error?: string };
 
@@ -33,6 +38,7 @@ export type RecoverState = { done?: boolean; error?: string };
 const schema = z.object({ email: z.email("Escribí un email válido.") });
 const DONE: RecoverState = { done: true };
 const TOO_MANY = "Ya pediste el enlace varias veces. Esperá un rato antes de reintentar.";
+const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
 
 /** Todo lo que toca la cuenta corre acá, después de responder. Nada de lo que
  *  pase adentro puede cambiar lo que ve el visitante: ni el resultado, ni el
@@ -131,6 +137,26 @@ export async function recoverAction(_prev: RecoverState, formData: FormData): Pr
     await audit({ action: "password_reset_blocked", detail: { scope: "email", email }, ip });
     return { error: TOO_MANY };
   }
+  // El captcha va acá: después de consultar los cupos y ANTES de registrarlos.
+  //
+  // Dónde NO puede ir, y por qué. `verifyTurnstile` es una llamada de red de
+  // cientos de milisegundos: si corriera en cualquier punto que dependa de la
+  // cuenta, su latencia se sumaría sólo a uno de los dos casos y volvería
+  // medible desde afuera la diferencia que el frente 2 (`after()`) existe para
+  // borrar. Acá no depende de nada: todavía no se miró la base —lo único que se
+  // consultó son limitadores en memoria, con la dirección TIPEADA como clave, no
+  // con lo que la base sepa de ella—, así que el mismo costo se le cobra al
+  // pedido de una casilla registrada y al de una inexistente. Meterlo adentro de
+  // `deliver()` tampoco serviría: sería invisible para el visitante, sí, pero
+  // dejaría que un bot gaste cupos y dispare envíos sin resolver nada.
+  //
+  // Después de `allows` para no regalarle una llamada a siteverify por intento a
+  // un origen que ya está bloqueado; antes de `record` para que un token vencido
+  // —dura ~5 minutos— no le queme al vecino uno de sus pedidos por hora (mismo
+  // criterio que `createApplicationAction`).
+  const captcha = await verifyTurnstile(String(formData.get("cf-turnstile-response") ?? ""), ip);
+  if (!captcha) return { error: NO_CAPTCHA };
+
   passwordResetIpLimiter.record(ip);
   passwordResetEmailLimiter.record(email);
 

@@ -16,12 +16,25 @@ import { makeTokens, MEMBER_EMAIL_TOKEN_PURPOSES } from "@/lib/tokens";
 /** Lo único que la invariante necesita mirar del socio. */
 export type TokenRelevantMember = Pick<Member, "email" | "status">;
 
-// El modo carga guarda el email en minúsculas y varias fichas del padrón
-// importado lo tienen con mayúsculas: normalizar la dirección no es cambiarla,
-// así que no revoca (y tampoco baja la verificación, ver `buildPatch`).
-function sameAddress(a: string | null, b: string | null): boolean {
-  if (!a || !b) return !a && !b; // sin dirección de un lado: iguales sólo si tampoco hay del otro
-  return a.toLowerCase() === b.toLowerCase();
+/** ¿Son la misma dirección? Sin distinguir mayúsculas ni espacios al borde.
+ *
+ *  El modo carga guarda el email en minúsculas, varias fichas del padrón
+ *  importado lo tienen con mayúsculas y una solicitud web puede traerlo con un
+ *  espacio pegado del copiar y pegar: normalizar la dirección no es cambiarla,
+ *  así que no revoca (y tampoco baja la verificación, ver `buildPatch`). El trim
+ *  además coincide con lo que `syncAccountEmail` termina ESCRIBIENDO en la
+ *  cuenta (`.toLowerCase().trim()`): comparar con un criterio y escribir con
+ *  otro dejaba la puerta a una "mudanza" hacia la misma casilla.
+ *
+ *  Se exporta porque el asiento en acta (`@/lib/applications/record`) hace la
+ *  misma pregunta para decidir si un reingreso conserva la verificación de la
+ *  ficha. Dos definiciones de "misma dirección" serían dos criterios distintos
+ *  sobre el mismo hecho. */
+export function sameAddress(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = a?.trim().toLowerCase() ?? "";
+  const y = b?.trim().toLowerCase() ?? "";
+  if (!x || !y) return !x && !y; // sin dirección de un lado: iguales sólo si tampoco hay del otro
+  return x === y;
 }
 
 /** ¿Los enlaces vivos de este socio dejaron de estar autorizados?
@@ -148,8 +161,16 @@ function isUniqueViolation(e: unknown): boolean {
  *
  *  Y dos en los que ABORTA la edición entera, con un mensaje para el operador:
  *  la dirección nueva ya es de otra cuenta (ver la guarda de colisión más
- *  abajo), y la ficha se quedaría SIN dirección. */
-async function syncAccountEmail(
+ *  abajo), y la ficha se quedaría SIN dirección.
+ *
+ *  Exportada por el mismo motivo que `revokeStaleMemberTokens`: el asiento en
+ *  acta de un REINGRESO (`@/lib/applications/record`) escribe `Member` sin poder
+ *  pasar por `updateMember` —su transacción también asienta el acta y el
+ *  movimiento— y le copia a la ficha la dirección declarada en la solicitud. Sin
+ *  esta llamada, un ex socio con cuenta que vuelve declarando otra casilla
+ *  quedaba con el padrón diciendo una dirección y el login pidiendo otra, y con
+ *  la casilla vieja todavía capaz de tomarle la cuenta por recupero. */
+export async function syncAccountEmail(
   tx: Pick<PrismaClient, "actionToken" | "user">,
   before: Pick<Member, "email">,
   after: Pick<Member, "email" | "userId">,

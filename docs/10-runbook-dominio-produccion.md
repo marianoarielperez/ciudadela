@@ -241,6 +241,39 @@ Tres cosas que no avisan si están mal:
 
 ## 4. Despliegue en el VPS
 
+### 4.0 Antes del PRIMER `deploy.sh` (una sola vez, obligatorio)
+
+`deploy.sh` corre `npx prisma db seed` en cada despliegue. Antes de que eso pase
+por primera vez sobre la base con los 283 socios reales, verificá a mano que el
+`.env` del VPS no pida las cuentas de prueba:
+
+```bash
+grep -n 'SEED_TEST_USERS\|SEED_ALLOW_TEST_USERS' /root/dev/ciudadela/.env
+```
+
+**Lo que tiene que devolver**: nada, o a lo sumo `SEED_TEST_USERS="false"`.
+`SEED_ALLOW_TEST_USERS` no debe aparecer. Si aparece `SEED_TEST_USERS="true"`
+—que es lo que dejó escrito el plan del Módulo 0 cuando se creó ese `.env`—,
+borrá la línea o ponela en `"false"`.
+
+Por qué importa: `admin.prueba@sigev.local` es una cuenta **con rol admin y
+contraseña conocida** (`SEED_TEST_PASSWORD`). Sembrarla en producción es un
+backdoor de administrador sobre el padrón real.
+
+Hoy el código ya falla cerrado —las cuentas de prueba exigen el opt-in explícito
+`SEED_ALLOW_TEST_USERS="true"` (`prisma/seed-guard.ts`) y `deploy.sh` además
+corre el seed con `NODE_ENV=production`, que las prohíbe aunque el opt-in
+estuviera—, así que el `grep` es la tercera capa, no la única. Se hace igual:
+es un chequeo de diez segundos contra el peor resultado posible.
+
+> Nota histórica: `docs/superpowers/plans/2026-08-17-modulo-0-base.md` (Step 4)
+> escribió ese `.env` con `SEED_TEST_USERS="true"` y el comentario «en
+> produccion DEBE ser "false" (el seed lo rechaza)». El rechazo **no ocurría**:
+> se apoyaba en `NODE_ENV === "production"`, variable que `deploy.sh` nunca
+> setea. Corregido el 21/08/2026.
+
+### 4.1 El deploy
+
 Además del `git pull`, el deploy completo es lo que hace `deploy.sh`:
 
 ```bash
@@ -253,6 +286,7 @@ que equivale a:
 git pull --ff-only
 npm ci                      # sin --omit=dev: prisma y tsx son devDependencies
 npx prisma migrate deploy   # el Módulo 2 trae 20260819185852_add_module_2_news_activities
+NODE_ENV=production npx prisma db seed   # claves nuevas de `configuration`; ver 4.0
 npm run build               # acá se hornea AUTH_URL
 pm2 restart sigev --update-env
 pm2 save
@@ -276,6 +310,60 @@ pm2 save
    ```bash
    mysqldump sigev > /root/backup-pre-m2-$(date +%F).sql
    ```
+
+**Específico del Módulo 3 (ASOCIATE + Mercado Pago):**
+
+1. **Migración**: `20260820174523_add_module_3_applications_mp` (tablas
+   `applications`, `documents`, `mp_subscriptions`, `webhook_events` y las
+   columnas nuevas de `action_tokens` y `notifications`). `migrate deploy` la
+   aplica sola. Backup antes, como siempre.
+2. **Variables nuevas en el `.env` del VPS**: `MP_ACCESS_TOKEN`,
+   `MP_WEBHOOK_SECRET`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`,
+   `CRON_SECRET` y —hasta el lanzamiento— `EMAIL_ALLOWLIST`. De dónde sale cada
+   una: `docs/11`.
+   **Las dos claves de Turnstile cierran el panel, no sólo el wizard.** Desde el
+   commit `43d7150` el captcha gobierna también `/ingresar` y
+   `/ingresar/recuperar`, además del paso 3 de `/asociate`:
+   - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` **se hornea en el build** como `AUTH_URL`
+     (cambiarla exige re-buildear; reiniciar PM2 no alcanza). Si falta, el
+     widget no monta y el formulario no tiene token que mandar.
+   - `TURNSTILE_SECRET_KEY` es de runtime y **falla cerrado**: sin secreto, la
+     verificación devuelve `false` y el login se rechaza.
+
+   Con cualquiera de las dos ausente, **todo admin y todo socio quedan afuera
+   del panel**, y el recupero de contraseña también está bloqueado — no hay
+   camino de vuelta desde el navegador, sólo por SSH.
+
+   Por eso `npm run build` **falla a propósito** si falta cualquiera de las dos
+   (guarda en `next.config.ts`, sólo en la fase de build): el deploy se corta
+   antes del `pm2 restart` y la versión que ya está sirviendo no se toca. La
+   guarda NO corre al arrancar —un crash-loop se llevaría puesto el sitio
+   público y los webhooks de MP, más daño que el que evita—, así que un
+   `pm2 restart` con el `.env` mutilado sigue siendo posible: verificá igual con
+   `grep TURNSTILE /root/dev/ciudadela/.env` (dos líneas, con valor) y probá
+   `/ingresar` en el post-deploy.
+3. **Configuración desde el panel** (no es `.env`): cargar en
+   `/admin/configuracion` los ids de los dos planes de MP (`mp_plan_active_id`,
+   `mp_plan_shared_id`) y revisar los textos legales. Sin los ids, el paso 2 del
+   wizard no muestra montos y no deja avanzar.
+   Los textos legales (`terms_text`, `privacy_consent_text`) **llegan sembrados**
+   —`deploy.sh` corre `npx prisma db seed`, que los crea con un BORRADOR y nunca
+   los pisa en corridas posteriores—, así que el formulario aparece con texto
+   para revisar, no vacío. Si igual faltaran, el servidor **rechaza** las
+   solicitudes nuevas (`createApplicationAction`): no se graba una aceptación de
+   términos que no existen.
+4. **Webhooks de MP** apuntando a `https://vecinalciudadela.ar/api/webhooks/mp`
+   con los tres tópicos (`payments`, `subscription_preapproval`,
+   `subscription_authorized_payment`); el secreto que da el panel es
+   `MP_WEBHOOK_SECRET`. Conviene además limitar por Nginx la tasa de esa ruta.
+5. **Crontab** de `/api/cron/applications` (`docs/11`, Parte H). Sin él, las
+   solicitudes abandonadas no expiran nunca y sus débitos no se cancelan.
+6. **Directorio de documentos**: `mkdir -p /var/sigev/uploads/applications &&
+   chmod 750 /var/sigev/uploads/applications`. La app lo crea sola, pero mejor con
+   los permisos puestos de entrada. `client_max_body_size 15m` en Nginx ya está
+   (uploads de DNI de hasta 10 MB).
+7. **NO tocar `instances` de PM2.** El módulo asume un solo proceso: ver la
+   advertencia de `docs/03` (mutex por DNI y rate limiters en memoria).
 
 ### Verificación post-deploy
 

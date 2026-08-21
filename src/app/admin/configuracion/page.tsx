@@ -29,10 +29,22 @@ export default async function ConfigPage(props: {
   }
 
   const sp = await props.searchParams;
-  const [asociateActivo, contactPhone, contactEmail] = await Promise.all([
+  const [
+    asociateActivo,
+    contactPhone,
+    contactEmail,
+    termsText,
+    privacyConsentText,
+    mpPlanActiveId,
+    mpPlanSharedId,
+  ] = await Promise.all([
     configReader.getBool(CONFIG_KEYS.asociateActivo),
     configReader.getString(CONFIG_KEYS.contactPhone),
     configReader.getString(CONFIG_KEYS.contactEmail),
+    configReader.getString(CONFIG_KEYS.termsText),
+    configReader.getString(CONFIG_KEYS.privacyConsentText),
+    configReader.getString(CONFIG_KEYS.mpPlanActiveId),
+    configReader.getString(CONFIG_KEYS.mpPlanSharedId),
   ]);
 
   return (
@@ -48,6 +60,10 @@ export default async function ConfigPage(props: {
           asociateActivo,
           contactPhone: contactPhone ?? "",
           contactEmail: contactEmail ?? "",
+          termsText: termsText ?? "",
+          privacyConsentText: privacyConsentText ?? "",
+          mpPlanActiveId: mpPlanActiveId ?? "",
+          mpPlanSharedId: mpPlanSharedId ?? "",
         }}
       />
     </div>

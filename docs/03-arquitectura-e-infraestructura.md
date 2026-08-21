@@ -72,6 +72,30 @@ Git-based, igual al patrón establecido en el VPS:
 3. Nginx: server block que proxya el dominio al 3006 (`proxy_pass http://localhost:3006`),
    con `client_max_body_size 15m` (uploads de DNI).
 
+### ⚠️ PM2 corre en UN SOLO PROCESO, y eso es una premisa del código
+
+**No clusterizar** (`instances > 1`, `exec_mode: cluster`) sin antes mover a la
+base las exclusiones que hoy viven en memoria del proceso:
+
+- La invariante "**una sola solicitud viva por DNI**" (Módulo 3) se sostiene con
+  un mutex **por proceso** dentro de la transacción de creación. Con dos
+  instancias, dos envíos simultáneos del mismo DNI entran a la vez y crean dos
+  solicitudes vivas: MySQL no tiene índices parciales, así que no hay red abajo.
+  El arreglo de fondo es una columna única mantenida por la app (o un lock
+  distribuido), y hay que hacerlo **antes** de subir `instances`.
+- Los **rate limiters** de los formularios públicos (Turnstile, retome, recupero
+  de contraseña) también son en memoria: con N instancias, el techo real pasa a
+  ser N veces el configurado.
+
+Un `pm2 scale` hecho de apuro un día de carga rompe las dos cosas en silencio:
+nada falla, nada se loguea, y el efecto es una solicitud duplicada o un límite
+que no limita. A la escala de la vecinal (~300 socios) un proceso sobra.
+
+También se apoya en un solo proceso la protección del endpoint de webhooks:
+conviene además **limitar por Nginx** las peticiones a `/api/webhooks/mp`. El
+filtro de cabeceras y firma que hace la app frena escáneres, pero no reemplaza un
+límite de tasa real.
+
 ### Variables que se hornean en el build (revisar ANTES de `npm run build`)
 
 `AUTH_URL` no se lee en cada request: queda fija dentro del build porque de ahí salen
@@ -90,6 +114,12 @@ Antes de buildear en el VPS, verificar en su `.env`:
 - `UPLOADS_DIR=/var/sigev/uploads`. Si falta, el código cae en silencio a `./uploads`
   dentro del directorio de la app: las portadas de noticias se escriben ahí y se
   pierden en el próximo deploy, sin ningún error visible.
+- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` = la site key del widget de Cloudflare Turnstile
+  (Módulo 3). Todo lo `NEXT_PUBLIC_*` se hornea en el bundle del cliente: si falta
+  o está mal al buildear, el widget del **paso 3 del wizard ASOCIATE** no se
+  renderiza y **nadie puede enviar una solicitud** —la action rechaza el POST sin
+  token de captcha—. Como `AUTH_URL`, cambiarla obliga a re-buildear: reiniciar PM2
+  no alcanza. La `TURNSTILE_SECRET_KEY`, en cambio, se lee en runtime.
 
 ### Verificación post-deploy
 
@@ -107,17 +137,27 @@ prenderla ahí.
 
 | Frecuencia | Tarea |
 |---|---|
+| Diario 08:05 | **`POST /api/cron/applications`** (Módulo 3, ya en uso): recordatorio de pago a las solicitudes creadas hace 3 días o más, y expiración de las creadas hace 7 días o más (el corte es por `createdAt`, no por última actividad), con cancelación de la suscripción MP. Bloque copiable en `docs/11` |
 | Diario 03:00 | Conciliación MP de respaldo (script Node: consulta pagos y suscripciones por API, detecta lo que los webhooks no registraron) |
 | Diario 04:00 | Backup: `mysqldump sigev` + `tar` de `/var/sigev/uploads` → cifrado GPG simétrico → `rclone` a Google Drive de la vecinal (av.ciudadela@gmail.com). Retención 30 días. Complementa los snapshots de Contabo |
 | Diario 08:00 | Generación de cuotas devengadas del período (día 1 de cada mes), recordatorios de vencimiento, alertas de mora, avisos de vencimiento de plazos de re-empadronamiento |
 | Mensual | Detección de candidatos a vitalicio (REG-06) |
 
 Los scripts viven en `scripts/` del repo y se ejecutan con `node`; los que necesiten
-la app usan endpoints `/api/cron/*` protegidos por `CRON_SECRET`.
+la app usan endpoints `/api/cron/*` protegidos por `CRON_SECRET` (sin la variable,
+el endpoint responde 503 en vez de correr sin guarda).
+
+**La PRIMERA corrida de `/api/cron/applications` puede tardar mucho**: arrastra el
+backlog de solicitudes vencidas acumuladas desde el despliegue, y cada expiración
+con suscripción hace un `cancelPreapproval` contra MP, en serie. Por eso el `curl`
+del crontab lleva `--max-time` generoso, y **un timeout no es un fallo**: la
+corrida siguiente termina lo que quedó. Ver el bloque de `docs/11`.
 
 ## Almacenamiento de archivos
 
-- `UPLOADS_DIR=/var/sigev/uploads`, estructura `{solicitudes|socios|reempadronamiento}/{id}/`.
+- `UPLOADS_DIR=/var/sigev/uploads`, estructura `{applications|members|presentations}/{id}/`
+  (nombres en inglés, igual que el enum `DocumentOwner`; el Módulo 3 estrenó
+  `applications/`).
 - Nombres de archivo aleatorios (UUID) + extensión validada (jpg/png/webp/pdf, máx 10 MB c/u).
 - Se sirven ÚNICAMENTE por API route autenticada que verifica rol y registra el acceso
   en auditoría. Jamás bajo `public/`.

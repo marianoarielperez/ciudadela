@@ -22,7 +22,13 @@ beforeEach(() => {
 describe("robots.txt", () => {
   // Estas rutas no son "poco interesantes para el SEO": son el panel con datos
   // personales de socios (Ley 25.326) y las URLs que LLEVAN un token adentro.
-  const PRIVATE = ["/admin", "/mi", "/api", "/ingresar", "/verificar", "/acceso", "/redirigir"];
+  const PRIVATE = [
+    "/admin", "/mi", "/api", "/ingresar", "/verificar", "/acceso",
+    // El retome del wizard ASOCIATE lleva el token en la URL. Ojo: es el prefijo
+    // LARGO, no "/asociate" — esa página es pública y tiene que indexarse.
+    "/asociate/retomar",
+    "/redirigir",
+  ];
 
   it("bloquea el panel, el área de socio y las rutas con token", () => {
     const { disallow } = robots().rules as { disallow: string[] };

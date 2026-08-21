@@ -6,9 +6,11 @@
 // Por eso el disallow no es solo SEO: además del panel (`/admin`) y del panel
 // de socio (`/mi`), que muestran datos personales alcanzados por la Ley 25.326,
 // cubre las rutas cuya URL ES un secreto (`/verificar/<token>`,
-// `/acceso/<token>`, `/ingresar/restablecer/<token>`): indexadas, el token
-// quedaría publicado. Cada entrada es un prefijo, así que `/ingresar` alcanza
-// para las tres pantallas que cuelgan de ahí.
+// `/acceso/<token>`, `/ingresar/restablecer/<token>`,
+// `/asociate/retomar/<token>`): indexadas, el token quedaría publicado. Cada
+// entrada es un prefijo, así que `/ingresar` alcanza para las tres pantallas que
+// cuelgan de ahí — y `/asociate/retomar` cierra sólo el retome, porque
+// `/asociate` en sí es una página pública que queremos en el índice.
 import type { MetadataRoute } from "next";
 import { siteBaseUrl } from "@/lib/site";
 
@@ -28,6 +30,7 @@ export default function robots(): MetadataRoute.Robots {
         "/ingresar",
         "/verificar",
         "/acceso",
+        "/asociate/retomar",
         "/redirigir",
       ],
     },

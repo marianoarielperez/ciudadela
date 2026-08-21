@@ -40,6 +40,14 @@ yarn-error.log*
 .vscode/
 .idea/
 .superpowers/
+# Config local de la herramienta: `launch.json` describe el dev server de ESTA
+# máquina, no del proyecto. Se ignora sólo ese archivo, no `.claude/` entero:
+# `settings.json` (permisos, hooks) sí es config de proyecto y tiene que poder
+# commitearse el día que la agreguemos.
+.claude/launch.json
+# Permisos por máquina que Claude Code escribe solo; `settings.json` (config
+# del proyecto, compartida) SÍ se commitea.
+.claude/settings.local.json
 
 # Next.js / TypeScript
 *.tsbuildinfo

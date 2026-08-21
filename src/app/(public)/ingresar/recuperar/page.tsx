@@ -20,7 +20,7 @@ export default function RecuperarPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <RecoverForm />
+          <RecoverForm siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? ""} />
           <p className="text-center text-sm">
             <Link href="/ingresar" className="text-primary hover:underline">
               Volver al ingreso

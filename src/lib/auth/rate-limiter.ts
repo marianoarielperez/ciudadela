@@ -148,6 +148,24 @@ export const publicTokenLimiter = createRateLimiter({
   windowMs: PUBLIC_TOKEN_WINDOW_MS,
 })
 
+export const APPLICATION_STATUS_LIMIT = 240
+
+/** Sondeo del estado de la solicitud ("estamos confirmando tu pago…"), por IP.
+ *
+ *  Limitador propio y NO `publicTokenLimiter` por el criterio que ese mismo
+ *  limitador documenta: raciona los POST, y deja fuera las lecturas por índice
+ *  porque "limitarlo castigaría al que refresca". Esto es exactamente eso —un
+ *  SELECT por `resume_token_hash`, sin escritura y sin bcrypt—, pero se hace 24
+ *  veces por espera: con el presupuesto de los POST, volver del checkout de MP
+ *  le comía al vecino los intentos que necesita para subir un documento o
+ *  reenviar la solicitud. Doscientos cuarenta por hora son diez esperas
+ *  completas por origen; sigue habiendo techo para el que automatice el sondeo,
+ *  y alcanza para varios vecinos detrás del mismo CGNAT. */
+export const applicationStatusLimiter = createRateLimiter({
+  limit: APPLICATION_STATUS_LIMIT,
+  windowMs: 60 * 60_000,
+})
+
 export const PASSWORD_RESET_WINDOW_MS = 60 * 60_000
 export const PASSWORD_RESET_IP_LIMIT = 10
 export const PASSWORD_RESET_EMAIL_LIMIT = 5
@@ -172,9 +190,12 @@ export const passwordResetIpLimiter = createRateLimiter({
  *  el atacante rota de origen. Lo que raciona es la inundación del buzón de un
  *  socio desde el formulario público.
  *
- *  Cinco por hora y no tres: este techo es lo único que le puede gastar los
- *  pedidos a un socio que no pidió nada (Turnstile sigue diferido al M3), así
- *  que conviene que sobre. Es además el que fija cuántos enlaces de recupero
+ *  Cinco por hora y no tres: este techo es lo que le puede gastar los pedidos a
+ *  un socio que no pidió nada, así que conviene que sobre. (Cuando se eligió el
+ *  número era además lo ÚNICO que protegía la casilla, porque el formulario no
+ *  tenía captcha; desde el 21/08/2026 lo tiene, pero Turnstile encarece el
+ *  intento automatizado y no raciona al humano persistente, así que el techo se
+ *  mantiene tal cual.) Es además el que fija cuántos enlaces de recupero
  *  pueden convivir vivos para una misma cuenta, porque emitir ya no revoca el
  *  anterior (ver `auth/password-reset.ts:request`): con media hora de TTL, como
  *  mucho cinco, todos hacia la misma casilla.
@@ -188,4 +209,40 @@ export const passwordResetIpLimiter = createRateLimiter({
 export const passwordResetEmailLimiter = createRateLimiter({
   limit: PASSWORD_RESET_EMAIL_LIMIT,
   windowMs: PASSWORD_RESET_WINDOW_MS,
+})
+
+export const APPLICATION_WINDOW_MS = 60 * 60_000
+export const APPLICATION_CREATE_LIMIT = 5
+export const RESUME_RESEND_LIMIT = 3
+
+/** Creación de solicitudes ASOCIATE, por IP. Detrás de Turnstile, pero el
+ *  captcha no raciona el volumen de un humano persistente: cinco solicitudes
+ *  por hora desde un mismo origen alcanzan para cualquier hogar (CGNAT
+ *  incluido) y frenan el llenado masivo del padrón de solicitudes. Es además
+ *  la única puerta del chequeo de elegibilidad por DNI (anti-enumeración,
+ *  spec M3 §4). */
+export const applicationCreateLimiter = createRateLimiter({
+  limit: APPLICATION_CREATE_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
+})
+
+/** Reenvío del link de retome ("ya tenés una solicitud en trámite"), por IP:
+ *  dispara un correo hacia afuera desde un formulario anónimo, mismo criterio
+ *  que el recupero de contraseña. */
+export const resumeResendLimiter = createRateLimiter({
+  limit: RESUME_RESEND_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
+})
+
+/** Reenvío del enlace de retome, por DNI pedido. Espejo de
+ *  `passwordResetEmailLimiter`: el techo por IP no protege a un solicitante
+ *  concreto si el atacante rota de origen, y acá el objetivo es identificable
+ *  (el DNI es dato semi-público). El daño que raciona es doble: inundarle el
+ *  buzón y, con el Fix del envío-antes-de-persistir, hacerlo pelear contra un
+ *  enlace que se le mueve. Se consulta y se registra SIEMPRE, exista o no la
+ *  solicitud: contar sólo los pedidos que terminan en envío haría que el
+ *  techo mismo revele si ese DNI tiene trámite abierto. */
+export const resumeResendTargetLimiter = createRateLimiter({
+  limit: RESUME_RESEND_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
 })

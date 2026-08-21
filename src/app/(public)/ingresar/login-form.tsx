@@ -4,11 +4,12 @@ import Link from "next/link"
 import { useActionState } from "react"
 
 import { loginAction, type LoginState } from "./actions"
+import { TurnstileWidget } from "@/components/public/turnstile-widget"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-export function LoginForm() {
+export function LoginForm({ siteKey }: { siteKey: string }) {
   const [state, formAction, pending] = useActionState<LoginState, FormData>(loginAction, {})
   return (
     <form action={formAction} className="space-y-4">
@@ -20,6 +21,16 @@ export function LoginForm() {
         <Label htmlFor="password">Contraseña</Label>
         <Input id="password" name="password" type="password" autoComplete="current-password" required />
       </div>
+      {/* Adentro del <form>: el widget inyecta ahí su input oculto
+          `cf-turnstile-response`, que es lo que lee la action. El `resetKey` es
+          el estado de la action —un objeto nuevo por respuesta— porque el token
+          es de UN SOLO USO: sin esto, después de errar la contraseña una vez,
+          el segundo intento fallaría por el captcha y no por la clave. */}
+      <TurnstileWidget
+        siteKey={siteKey}
+        resetKey={state}
+        unavailable="No podés ingresar ahora por un problema de configuración del sitio. Probá más tarde o escribinos."
+      />
       {state.error && (
         <p className="text-sm text-red-600" role="alert">
           {state.error}

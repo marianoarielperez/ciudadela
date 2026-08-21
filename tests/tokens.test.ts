@@ -137,6 +137,30 @@ describe("tokens", () => {
     expect(await svc.consume(raw, "password_invitation", now)).not.toBeNull();
     expect(await svc.peek(raw, "password_invitation", now)).toBeNull();
   });
+
+  // El enlace que ya no sirve no dice de qué circuito venía, y el texto genérico
+  // manda a pedir un reenvío que para una SOLICITUD no existe (ese token se
+  // emite una sola vez, al crearla). `ownerOf` es lo único que permite elegir el
+  // texto: lee el dueño aunque el token esté usado o vencido.
+  it("ownerOf still tells whose a used or an expired token was", async () => {
+    const used = await svc.issue({ purpose: "email_verification", applicationId: 55, now });
+    await svc.consume(used, "email_verification", now);
+    expect(await svc.peek(used, "email_verification", now)).toBeNull();
+    expect(await svc.ownerOf(used, "email_verification")).toEqual({ memberId: null, applicationId: 55 });
+
+    const expired = await svc.issue({ purpose: "email_verification", memberId: 7, now });
+    const later = new Date(now.getTime() + TOKEN_TTL.email_verification + 1);
+    expect(await svc.peek(expired, "email_verification", later)).toBeNull();
+    expect(await svc.ownerOf(expired, "email_verification")).toEqual({ memberId: 7, applicationId: null });
+  });
+
+  // Y no es una puerta de atrás: no cruza propósitos y no inventa dueños.
+  it("ownerOf ignores a token of another purpose and one that never existed", async () => {
+    const raw = await svc.issue({ purpose: "password_reset", userId: 3, now });
+    expect(await svc.ownerOf(raw, "email_verification")).toBeNull();
+    expect(await svc.ownerOf("no-existe", "email_verification")).toBeNull();
+  });
+
   // Un token va atado al memberId y no a la dirección a la que se mandó: si el
   // email del socio cambia, el enlace que quedó en el buzón viejo seguiría
   // verificando —y creando la contraseña de— esa cuenta. Revocar es lo que
