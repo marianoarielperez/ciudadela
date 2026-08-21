@@ -25,7 +25,7 @@ const mailerMock = vi.hoisted(() => ({ sendToMember: vi.fn(), sendToApplication:
 const gatewayMock = vi.hoisted(() => ({
   updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn(),
 }));
-const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn() }));
+const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn(), planIdForCategory: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/require-admin", () => ({

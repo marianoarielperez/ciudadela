@@ -7,23 +7,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //
 // `vi.hoisted` porque `vi.mock` se iza al tope del archivo.
 const txMock = vi.hoisted(() => ({
-  application: { updateMany: vi.fn() },
+  application: { updateMany: vi.fn(), update: vi.fn() },
   member: { update: vi.fn() },
+  mpSubscription: { updateMany: vi.fn() },
 }));
 const prismaMock = vi.hoisted(() => ({
-  application: { findUnique: vi.fn(), update: vi.fn(), count: vi.fn() },
+  application: { findUnique: vi.fn(), count: vi.fn() },
   member: { findUnique: vi.fn(), update: vi.fn() },
   minute: { findUnique: vi.fn(), create: vi.fn(), delete: vi.fn() },
   movement: { count: vi.fn(async () => 0) },
   book: { count: vi.fn(async () => 0) },
-  mpSubscription: { updateMany: vi.fn() },
+  mpSubscription: { updateMany: vi.fn(), findUnique: vi.fn() },
   $transaction: vi.fn(),
 }));
 const gatewayMock = vi.hoisted(() => ({
   updatePreapprovalAmount: vi.fn(),
   cancelPreapproval: vi.fn(),
 }));
-const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn() }));
+const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn(), planIdForCategory: vi.fn() }));
 const mailerMock = vi.hoisted(() => ({ sendToApplication: vi.fn(), sendToMember: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
@@ -87,20 +88,26 @@ async function runExpectingRedirect(action: Action, fd: FormData): Promise<strin
 beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.application.findUnique.mockResolvedValue({ ...APP });
-  prismaMock.application.update.mockResolvedValue({});
   prismaMock.minute.findUnique.mockResolvedValue({ id: 10 });
   prismaMock.minute.create.mockResolvedValue({ id: 77 });
   prismaMock.movement.count.mockResolvedValue(0);
   prismaMock.book.count.mockResolvedValue(0);
   prismaMock.mpSubscription.updateMany.mockResolvedValue({ count: 1 });
+  // La fila local nace apuntando al plan que se usó al firmar la suscripción.
+  prismaMock.mpSubscription.findUnique.mockResolvedValue({ planId: "PLAN-SHARED" });
   prismaMock.$transaction.mockImplementation(
     async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock),
   );
   txMock.application.updateMany.mockResolvedValue({ count: 1 });
   txMock.member.update.mockResolvedValue({});
+  txMock.application.update.mockResolvedValue({});
+  txMock.mpSubscription.updateMany.mockResolvedValue({ count: 1 });
   gatewayMock.updatePreapprovalAmount.mockResolvedValue(undefined);
   gatewayMock.cancelPreapproval.mockResolvedValue(undefined);
   feesMock.getFeeAmounts.mockResolvedValue({ active: 5000, shared: 2500 });
+  feesMock.planIdForCategory.mockImplementation(
+    async (c: string) => (c === "active" ? "PLAN-ACTIVE" : "PLAN-SHARED"),
+  );
   mailerMock.sendToApplication.mockResolvedValue({ messageId: "mid" });
 });
 
@@ -114,7 +121,7 @@ describe("recategorizar una solicitud", () => {
     expect(url).toBe("/admin/solicitudes/5");
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
     expect(feesMock.getFeeAmounts).not.toHaveBeenCalled();
-    expect(prismaMock.application.update).toHaveBeenCalledWith({
+    expect(txMock.application.update).toHaveBeenCalledWith({
       where: { id: 5 }, data: { requestedCategory: "collaborator" },
     });
     expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({
@@ -126,8 +133,66 @@ describe("recategorizar una solicitud", () => {
     await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
 
     expect(gatewayMock.updatePreapprovalAmount).toHaveBeenCalledWith("PRE-1", 5000);
-    expect(prismaMock.application.update).toHaveBeenCalled();
+    expect(txMock.application.update).toHaveBeenCalled();
     expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ subscriptionUpdated: true });
+  });
+
+  // `MpSubscription.planId` se escribía UNA sola vez, al crear la suscripción.
+  // Sin esto, después de recategorizar la fila local dice el plan viejo mientras
+  // el preapproval cobra el monto nuevo, y la conciliación del M4 (REG-34) lee
+  // una divergencia que no existe —o la "arregla" al revés—.
+  it("mueve la fila local al plan nuevo en la MISMA transacción que la solicitud", async () => {
+    await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
+
+    expect(txMock.mpSubscription.updateMany).toHaveBeenCalledWith({
+      where: { preapprovalId: "PRE-1" },
+      data: expect.objectContaining({ planId: "PLAN-ACTIVE", lastSyncAt: expect.any(Date) }),
+    });
+    // El corte queda documentado en el rastro: qué preapproval y de qué plan venía.
+    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({
+      preapprovalId: "PRE-1", oldPlanId: "PLAN-SHARED",
+    });
+  });
+
+  it("adherente → colaborador no toca la fila local: es el mismo plan", async () => {
+    await runExpectingRedirect(recategorizeApplicationAction, recategorize("collaborator"));
+
+    expect(txMock.mpSubscription.updateMany).not.toHaveBeenCalled();
+    expect(feesMock.planIdForCategory).not.toHaveBeenCalled();
+    expect(vi.mocked(audit).mock.calls[0][0].detail).not.toHaveProperty("preapprovalId");
+  });
+
+  // ── La residencia se asienta, no se bloquea ─────────────────────────────────
+  // Una guarda dura mataría la corrección legítima (no hay pantalla para
+  // corregirle el domicilio a una solicitud), pero el desvío peligroso —no
+  // residente → `active`, que da voto y elegibilidad— no puede quedar mudo.
+  it("con `streetId` del catastro, activo respeta el domicilio declarado", async () => {
+    await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
+    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ residenceMismatch: false });
+  });
+
+  it("quien declaró vivir FUERA del barrio pasa a activo igual, pero queda asentado", async () => {
+    prismaMock.application.findUnique.mockResolvedValue({
+      ...APP, streetId: null, streetText: "Rivadavia", neighborhood: "Km 8",
+      requestedCategory: "collaborator",
+    });
+    await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
+
+    expect(txMock.application.update).toHaveBeenCalled();
+    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ residenceMismatch: true });
+  });
+
+  // MP ya aceptó el monto nuevo: si el guardado local se cae, lo que no puede
+  // pasar es que se pierda cuál es el preapproval que quedó desalineado.
+  it("si el guardado local falla, la action lo dice y no audita un cambio que no ocurrió", async () => {
+    prismaMock.$transaction.mockRejectedValue(Object.assign(new Error("db"), { code: "P1001" }));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await recategorizeApplicationAction({}, recategorize("active"));
+
+    expect(result.error).toMatch(/No pudimos guardar la categoría nueva/);
+    expect(audit).not.toHaveBeenCalled();
+    expect(spy.mock.calls[0]).toContain("PRE-1");
+    spy.mockRestore();
   });
 
   it("sin suscripción firmada no hay nada que actualizar en MP", async () => {
@@ -135,7 +200,7 @@ describe("recategorizar una solicitud", () => {
     await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
 
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
-    expect(prismaMock.application.update).toHaveBeenCalled();
+    expect(txMock.application.update).toHaveBeenCalled();
   });
 
   // Al revés —guardar primero y avisarle a MP después— la solicitud diría
@@ -146,7 +211,7 @@ describe("recategorizar una solicitud", () => {
     const result = await recategorizeApplicationAction({}, recategorize("active"));
 
     expect(result.error).toMatch(/MP no aceptó el cambio de monto/);
-    expect(prismaMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });
 
@@ -156,7 +221,7 @@ describe("recategorizar una solicitud", () => {
 
     expect(result.error).toMatch(/valor de la cuota/);
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
-    expect(prismaMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
   });
 
   it("una solicitud ya resuelta no se recategoriza", async () => {
@@ -164,13 +229,13 @@ describe("recategorizar una solicitud", () => {
     const result = await recategorizeApplicationAction({}, recategorize("active"));
 
     expect(result.error).toMatch(/ya fue resuelta/);
-    expect(prismaMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
   });
 
   it("recategorizar a la misma categoría no hace nada", async () => {
     const result = await recategorizeApplicationAction({}, recategorize("adherent"));
     expect(result.error).toMatch(/ya tiene esa categoría/);
-    expect(prismaMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
   });
 
   // Cadete, honorario y vitalicio no se piden por la web (REG-01): las otorga la
@@ -178,7 +243,7 @@ describe("recategorizar una solicitud", () => {
   it("no acepta una categoría que no se solicita por la web", async () => {
     const result = await recategorizeApplicationAction({}, recategorize("honorary"));
     expect(result.error).toMatch(/categoría/i);
-    expect(prismaMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
   });
 });
 
@@ -252,9 +317,38 @@ describe("rechazar una solicitud", () => {
 
     expect(url).toBe("/admin/solicitudes/5");
     expect(prismaMock.mpSubscription.updateMany).not.toHaveBeenCalled();
-    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ cancelFailed: true });
+    // Con el id del preapproval: es lo único que permite terminar la
+    // cancelación a mano desde el panel de MP. Sin él, `cancelFailed: true`
+    // avisa que hay algo roto sin decir QUÉ cancelar, mientras al vecino
+    // rechazado le siguen debitando la cuota.
+    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({
+      cancelFailed: true, preapprovalId: "PRE-1",
+    });
     // Y el vecino igual se entera.
     expect(mailerMock.sendToApplication).toHaveBeenCalled();
+  });
+
+  // Los dos pasos van en `try` separados: `cancelFailed` significa "en MP le
+  // siguen cobrando". Si lo que falló fue el update local, MP ya dejó de cobrar
+  // y marcarlo mandaría al operador a cancelar algo ya cancelado.
+  it("un fallo del update local NO se disfraza de cancelación fallida", async () => {
+    prismaMock.mpSubscription.updateMany.mockRejectedValue(new Error("db"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await runExpectingRedirect(rejectApplicationAction, rejectWithMinute());
+
+    expect(gatewayMock.cancelPreapproval).toHaveBeenCalledWith("PRE-1");
+    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ cancelFailed: false });
+    spy.mockRestore();
+  });
+
+  it("sin suscripción firmada el rastro lo dice con un null explícito", async () => {
+    prismaMock.application.findUnique.mockResolvedValue({ ...APP, preapprovalId: null });
+    await runExpectingRedirect(rejectApplicationAction, rejectWithMinute());
+
+    expect(gatewayMock.cancelPreapproval).not.toHaveBeenCalled();
+    expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({
+      cancelFailed: false, preapprovalId: null,
+    });
   });
 
   it("con el SMTP caído el rechazo también queda firme", async () => {
@@ -302,7 +396,10 @@ describe("rechazar una solicitud", () => {
 
     expect(audit).toHaveBeenCalledWith({
       userId: 3, action: "application_reject", entity: "application", entityId: 5,
-      detail: { minuteId: 10, entryFeeRetained: true, cancelFailed: false, hadMember: false },
+      detail: {
+        minuteId: 10, entryFeeRetained: true, cancelFailed: false, hadMember: false,
+        preapprovalId: "PRE-1",
+      },
       ip: "1.2.3.4",
     });
     expect(JSON.stringify(vi.mocked(audit).mock.calls[0][0])).not.toMatch(/Perez|ana@example|30111222/);

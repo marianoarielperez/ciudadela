@@ -18,6 +18,7 @@ import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { changesFeeAmount } from "@/lib/applications/decision";
+import { categoryAllowedForResidence } from "@/lib/applications/wizard";
 import type { MemberCategory } from "@/generated/prisma/client";
 
 type State = { error?: string };
@@ -28,9 +29,15 @@ export function DecisionForms(props: {
   reject: Action;
   applicationId: number;
   currentCategory: MemberCategory;
-  /** Las categorías web que ESTA solicitud puede tomar, ya filtradas por la
-   *  residencia declarada (Art. 5 y 5 bis) y sin la actual. */
+  /** Las tres categorías que se piden por la web (`WEB_CATEGORIES`) menos la
+   *  actual. NO están filtradas por la residencia declarada: la Comisión puede
+   *  apartarse de Art. 5 / 5 bis —es su facultad de corrección— y lo que hace
+   *  la pantalla es advertirlo, no impedirlo. Cadete, honorario y vitalicio no
+   *  entran acá: no se solicitan (REG-01). */
   options: [MemberCategory, string][];
+  /** Lo que la solicitud DECLARÓ: `true` si eligió una calle del catastro del
+   *  barrio, `false` si declaró calle y barrio de afuera. */
+  livesInBarrio: boolean;
   hasSubscription: boolean;
   minutes: MinuteOption[];
 }) {
@@ -48,6 +55,14 @@ export function DecisionForms(props: {
   const willUpdateMp =
     props.hasSubscription && changesFeeAmount(props.currentCategory, category as MemberCategory);
 
+  // La misma regla que el wizard usa para lo que el vecino puede AUTO-declarar
+  // (Art. 5 y 5 bis), acá como advertencia y no como guarda: la Comisión puede
+  // apartarse, pero no en silencio. El caso caro es "vive fuera del barrio →
+  // activo", que da voto y elegibilidad a quien el estatuto no se los da.
+  const residenceMismatch =
+    category !== ""
+    && !categoryAllowedForResidence(category as MemberCategory, props.livesInBarrio);
+
   return (
     <div className="space-y-6">
       {props.options.length > 0 && (
@@ -59,7 +74,9 @@ export function DecisionForms(props: {
               id="newCategory"
               name="newCategory"
               required
-              className="h-9 rounded-md border px-2 text-sm"
+              // Tokens del shell y no `border` pelado: en modo oscuro un select
+              // sin `border-input` ni fondo propio se ve plano contra la Card.
+              className="h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >
@@ -71,6 +88,23 @@ export function DecisionForms(props: {
               {recategorizePending ? "Guardando…" : "Cambiar categoría"}
             </Button>
           </div>
+          {/* El domicilio DECLARADO, acá y no sólo en la tarjeta de datos: es el
+              dato contra el que se lee la categoría que se está por elegir.
+              `role="none"`: es ayuda estática del campo, no la respuesta a una
+              acción, y no tiene que interrumpir al lector de pantalla. */}
+          <FormMessage kind="neutral" role="none">
+            Domicilio declarado:{" "}
+            {props.livesInBarrio ? "en el barrio Ciudadela" : "fuera del barrio"}.
+          </FormMessage>
+          {residenceMismatch && (
+            <FormMessage kind="warning">
+              Esa categoría no corresponde al domicilio declarado (Art. 5 y 5 bis:{" "}
+              {props.livesInBarrio
+                ? "quien vive en el barrio se asocia como activo o adherente"
+                : "quien vive fuera del barrio sólo puede ser colaborador"}).
+              Podés hacerlo igual: la decisión queda asentada en la auditoría.
+            </FormMessage>
+          )}
           {willUpdateMp && (
             <FormMessage kind="warning">
               Se actualizará el monto de la suscripción en Mercado Pago.
@@ -80,8 +114,11 @@ export function DecisionForms(props: {
         </form>
       )}
 
-      <details className="rounded-md border p-3">
-        <summary className="cursor-pointer text-sm font-medium">Rechazar solicitud…</summary>
+      <details className="rounded-md border px-3 pb-3">
+        {/* El padding vertical va en el <summary> y no en el <details>: así el
+            área clickeable llega a los 44px del shell (20px de línea + 2×12).
+            Sin `display:flex` a propósito, que le sacaría el triangulito. */}
+        <summary className="cursor-pointer py-3 text-sm font-medium">Rechazar solicitud…</summary>
         <form action={rejectAction} className="mt-3 space-y-3">
           <input type="hidden" name="applicationId" value={props.applicationId} />
           <p className="text-sm text-muted-foreground">

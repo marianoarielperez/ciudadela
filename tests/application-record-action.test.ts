@@ -38,7 +38,7 @@ vi.mock("@/lib/members/account-email-notice", () => ({ accountEmailNotice: notic
 vi.mock("@/lib/mp/gateway", () => ({
   mpGateway: { updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn() },
 }));
-vi.mock("@/lib/mp/plans", () => ({ getFeeAmounts: vi.fn() }));
+vi.mock("@/lib/mp/plans", () => ({ getFeeAmounts: vi.fn(), planIdForCategory: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers([["x-real-ip", "1.2.3.4"]]) }));
 vi.mock("next/navigation", () => ({

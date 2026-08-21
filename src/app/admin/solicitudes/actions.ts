@@ -35,9 +35,9 @@ import { applicationRecorder, RECORDABLE_STATUSES } from "@/lib/applications/rec
 import type { RecordResult } from "@/lib/applications/record";
 import { parseApplicationFilters, parseApplicationsPage } from "@/lib/applications/query";
 import { changesFeeAmount, DECIDABLE_STATUSES, isDecidable } from "@/lib/applications/decision";
-import { WEB_CATEGORIES } from "@/lib/applications/wizard";
+import { categoryAllowedForResidence, WEB_CATEGORIES } from "@/lib/applications/wizard";
 import { mpGateway } from "@/lib/mp/gateway";
-import { getFeeAmounts } from "@/lib/mp/plans";
+import { getFeeAmounts, planIdForCategory } from "@/lib/mp/plans";
 
 // Sin `export`: en un módulo "use server" todo lo exportado es un endpoint.
 //
@@ -49,6 +49,13 @@ type State = { error?: string; recorded?: number; failures?: Array<{ id: number;
 
 /** El estado de las dos acciones individuales del detalle. */
 type DecisionState = { error?: string };
+
+/** El `code` de un error, y NADA más: los de nodemailer traen el sobre SMTP y
+ *  los de Prisma el registro entero, o sea datos personales en claro al log
+ *  (docs/08, Ley 25.326). */
+function codeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
+}
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como en el login: el resto de las cabeceras de IP las puede
@@ -87,8 +94,7 @@ async function inviteRecordedMembers(memberIds: number[]): Promise<void> {
         memberId: member.id, to: member.email, type: "password_invitation", message, summary,
       });
     } catch (e) {
-      const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
-      console.error("[solicitudes] no se pudo enviar la invitación de acceso", id, code);
+      console.error("[solicitudes] no se pudo enviar la invitación de acceso", id, codeOf(e));
     }
   }
 }
@@ -115,8 +121,7 @@ async function announceLoginEmailMoves(
       if (!member) continue;
       await accountEmailNotice.announce({ member, previousEmail: move.from, actorId });
     } catch (e) {
-      const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
-      console.error("[solicitudes] falló el aviso de mudanza de la dirección de ingreso", memberId, code);
+      console.error("[solicitudes] falló el aviso de mudanza de la dirección de ingreso", memberId, codeOf(e));
     }
   }
 }
@@ -265,24 +270,50 @@ export async function recategorizeApplicationAction(
   }
   if (app.requestedCategory === newCategory) return { error: "La solicitud ya tiene esa categoría." };
 
-  // A propósito NO se corre acá `categoryAllowedForResidence`: esa regla es la
-  // de lo que el vecino puede AUTO-declarar en el wizard (Art. 5 y 5 bis), y la
+  // ── La residencia se ASIENTA, no se bloquea ─────────────────────────────────
+  // `categoryAllowedForResidence` es la regla de lo que el vecino puede
+  // AUTO-declarar en el wizard (Art. 5 y 5 bis). Acá NO bloquea: la
   // recategorización es justamente la corrección de la Comisión cuando lo
-  // declarado no se corresponde con la realidad —el caso típico es el domicilio—.
-  // Por eso el circuito contempla adherente ↔ colaborador, que cruza esa línea.
+  // declarado no se corresponde con la realidad, y hoy no hay pantalla para
+  // corregirle el domicilio a una solicitud —una guarda dura mataría la
+  // corrección legítima—. Pero el desvío peligroso (no residente declarado →
+  // `active`, que da voto y elegibilidad) tampoco puede quedar en silencio: la
+  // pantalla lo advierte antes de guardar y acá queda en la auditoría, para que
+  // el acta pueda reflejar que la Comisión decidió eso a sabiendas.
+  //
+  // La residencia sale de la propia solicitud: `streetId` es una calle del
+  // catastro del barrio, y sin ella lo declarado fue `streetText` +
+  // `neighborhood` (ver `asociate/actions.ts`, donde se escriben excluyentes).
+  //
   // Las categorías que NO se piden por la web siguen cerradas: el enum del
   // schema es `WEB_CATEGORIES` (cadete, honorario y vitalicio salen del padrón,
   // no de una solicitud).
+  const livesInBarrio = app.streetId !== null;
+  const residenceMismatch = !categoryAllowedForResidence(newCategory, livesInBarrio);
 
   // Si hay suscripción y el monto de la categoría nueva difiere, se actualiza la
   // suscripción por API (docs/06 §7). MP va ANTES del update local y su fallo
   // corta la acción: al revés, la ficha quedaría diciendo "activo" mientras el
   // débito sigue saliendo por el monto de adherente, y nadie lo compensaría.
   const changesAmount = changesFeeAmount(app.requestedCategory, newCategory);
+  const subscriptionUpdated = Boolean(app.preapprovalId && changesAmount);
+  // El plan nuevo y el viejo, para que la fila local no siga apuntando al plan
+  // que el preapproval ya no cobra: `MpSubscription.planId` se escribe UNA vez
+  // (al crear la suscripción) y sin esto la conciliación del M4 (REG-34) leería
+  // una divergencia inventada —o la "arreglaría" al revés, devolviendo el monto
+  // viejo—. `changesFeeAmount` es true exactamente cuando el plan cambia: los
+  // planes son dos y adherente ↔ colaborador comparten el mismo.
+  let newPlanId: string | null = null;
+  let oldPlanId: string | null = null;
   if (app.preapprovalId && changesAmount) {
     const fees = await getFeeAmounts();
     if (!fees) return { error: "No pudimos leer el valor de la cuota en MP: reintentá más tarde." };
     const amount = newCategory === "active" ? fees.active : fees.shared;
+    newPlanId = await planIdForCategory(newCategory);
+    oldPlanId = (await prisma.mpSubscription.findUnique({
+      where: { preapprovalId: app.preapprovalId },
+      select: { planId: true },
+    }))?.planId ?? null;
     try {
       await mpGateway.updatePreapprovalAmount(app.preapprovalId, amount);
     } catch {
@@ -292,17 +323,46 @@ export async function recategorizeApplicationAction(
     }
   }
 
-  await prisma.application.update({
-    where: { id: applicationId },
-    data: { requestedCategory: newCategory },
-  });
+  // Los dos writes locales van juntos o no va ninguno: una solicitud "activa"
+  // con la fila de suscripción apuntando al plan de adherente es exactamente la
+  // divergencia que este bloque existe para evitar.
+  //
+  // Envuelto porque MP YA aceptó el monto nuevo: si el guardado local falla, el
+  // débito sale por el monto de la categoría nueva y la base no lo sabe. Al log
+  // va el id del preapproval, que no es dato personal y es lo único que permite
+  // reconciliarlo a mano (mismo criterio que `asociate/actions.ts`).
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.application.update({
+        where: { id: applicationId },
+        data: { requestedCategory: newCategory },
+      });
+      if (app.preapprovalId && newPlanId) {
+        await tx.mpSubscription.updateMany({
+          where: { preapprovalId: app.preapprovalId },
+          data: { planId: newPlanId, lastSyncAt: new Date() },
+        });
+      }
+    });
+  } catch (e) {
+    console.error(
+      "[solicitudes] recategorización: MP aceptó el monto nuevo pero el guardado local falló",
+      applicationId, app.preapprovalId, codeOf(e),
+    );
+    return { error: "No pudimos guardar la categoría nueva. Reintentá en unos minutos." };
+  }
+
   await audit({
     userId: actor.actorId, action: "application_recategorize", entity: "application",
     entityId: applicationId,
-    // Sólo categorías y banderas: ni el nombre ni el DNI (docs/08, Ley 25.326).
+    // Sólo categorías, ids de MP y banderas: ni el nombre ni el DNI ni el
+    // domicilio (docs/08, Ley 25.326). `residenceMismatch` no es dato personal:
+    // es la marca de que la Comisión se apartó de Art. 5 / 5 bis a sabiendas.
     detail: {
       from: app.requestedCategory, to: newCategory,
-      subscriptionUpdated: Boolean(app.preapprovalId && changesAmount),
+      subscriptionUpdated,
+      residenceMismatch,
+      ...(subscriptionUpdated ? { preapprovalId: app.preapprovalId, oldPlanId } : {}),
     },
     ip: await clientIp(),
   });
@@ -380,17 +440,43 @@ export async function rejectApplicationAction(
   // rechazo ya quedó asentado en el acta de la Comisión y NO se revierte porque
   // MP o el SMTP estén caídos; lo que sí queda es el rastro (`cancelFailed`)
   // para que alguien lo termine a mano desde el panel de MP.
+  //
+  // Los dos pasos van en `try` SEPARADOS: `cancelFailed` significa "en MP le
+  // siguen debitando la cuota al vecino rechazado" y es lo que la pantalla
+  // levanta para pedir la cancelación a mano. Si el que falla es el update
+  // local, MP ya dejó de cobrar y marcarlo mandaría al operador a cancelar algo
+  // que ya está cancelado.
+  //
+  // Al log y a la auditoría va el id del preapproval: no es dato personal y es
+  // lo único que permite reconciliar a mano (mismo criterio que
+  // `asociate/actions.ts`, donde la suscripción viva sin registrar se loguea
+  // igual). Sin él, `cancelFailed: true` le dice al operador que hay algo roto
+  // sin decirle QUÉ cancelar.
   let cancelFailed = false;
   if (app.preapprovalId) {
     try {
       await mpGateway.cancelPreapproval(app.preapprovalId);
-      await prisma.mpSubscription.updateMany({
-        where: { preapprovalId: app.preapprovalId },
-        data: { status: "cancelled", lastSyncAt: new Date() },
-      });
     } catch {
       cancelFailed = true;
-      console.error("[solicitudes] no se pudo cancelar la suscripción de MP", applicationId);
+      console.error(
+        "[solicitudes] no se pudo cancelar la suscripción de MP: se le sigue debitando al vecino rechazado",
+        applicationId, app.preapprovalId,
+      );
+    }
+    if (!cancelFailed) {
+      try {
+        await prisma.mpSubscription.updateMany({
+          where: { preapprovalId: app.preapprovalId },
+          data: { status: "cancelled", lastSyncAt: new Date() },
+        });
+      } catch (e) {
+        // MP ya no cobra; lo que quedó viejo es la fila local. Lo endereza la
+        // conciliación del M4 (REG-34).
+        console.error(
+          "[solicitudes] MP canceló la suscripción pero el estado local no se actualizó",
+          applicationId, app.preapprovalId, codeOf(e),
+        );
+      }
     }
   }
   try {
@@ -403,8 +489,7 @@ export async function rejectApplicationAction(
   } catch (e) {
     // Del error sólo el código: los de nodemailer traen el sobre SMTP, o sea la
     // dirección del vecino en claro (docs/08, Ley 25.326).
-    const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
-    console.error("[solicitudes] no se pudo enviar el aviso de rechazo", applicationId, code);
+    console.error("[solicitudes] no se pudo enviar el aviso de rechazo", applicationId, codeOf(e));
   }
 
   await audit({
@@ -413,6 +498,10 @@ export async function rejectApplicationAction(
     detail: {
       minuteId, entryFeeRetained: app.mpPaymentIdEntry !== null, cancelFailed,
       hadMember: app.memberId !== null,
+      // El preapproval que se mandó a cancelar. Con `cancelFailed: true` es el
+      // único dato que permite terminar la cancelación a mano desde el panel de
+      // MP; no es dato personal.
+      preapprovalId: app.preapprovalId,
     },
     ip: await clientIp(),
   });

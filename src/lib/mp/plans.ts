@@ -5,9 +5,26 @@
 // inventar un monto o tirar abajo el wizard. In-memory alcanza: PM2 corre un
 // único proceso (mismo criterio que rate-limiter.ts).
 import { CONFIG_KEYS, configReader } from "@/lib/config";
+import type { MemberCategory } from "@/generated/prisma/client";
 import { mpGateway, type MpGateway } from "./gateway";
 
 export type FeeAmounts = { active: number; shared: number };
+
+/** El id del plan de MP que le corresponde a una categoría.
+ *
+ *  Los planes son DOS: "SOCIO ACTIVO" y "SOCIO ADHERENTE/COLABORADOR". La
+ *  suscripción se crea contra uno de ellos (`asociate/actions.ts`) y ese id
+ *  queda copiado en `MpSubscription.planId`; cuando la Comisión recategoriza y
+ *  el monto se mueve, la fila local tiene que seguir al plan nuevo o la
+ *  conciliación del M4 (REG-34) va a leer una divergencia que no existe.
+ *
+ *  Devuelve `null` si el id todavía no está configurado: no es un error, es que
+ *  no hay plan que apuntar. */
+export async function planIdForCategory(category: MemberCategory): Promise<string | null> {
+  return configReader.getString(
+    category === "active" ? CONFIG_KEYS.mpPlanActiveId : CONFIG_KEYS.mpPlanSharedId,
+  );
+}
 
 export const FEE_CACHE_TTL_MS = 24 * 60 * 60_000;
 

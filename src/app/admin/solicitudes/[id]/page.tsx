@@ -103,17 +103,27 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
       : Promise.resolve(null),
   ]);
 
-  // Viva, `memberId` sí significa "matcheó una ficha existente" y el reingreso
-  // está por venir. Asentada, manda el movimiento; si no apareciera (un asiento
-  // anterior a este circuito, un dato migrado) la pantalla no afirma nada.
-  const reentry = app.status === "completed"
-    ? recordedMovement?.type === "readmission"
+  // Tres estados y no dos. Viva, `memberId` sí significa "matcheó una ficha
+  // existente" y el reingreso está por venir. Asentada, manda el movimiento; y
+  // si no apareciera (un asiento anterior a este circuito, un dato migrado)
+  // queda `null`: la pantalla NO sabe si fue alta o reingreso, y decir "Socio"
+  // ahí sería afirmar que fue un alta sin tener con qué.
+  const reentry: boolean | null = app.status === "completed"
+    ? (recordedMovement ? recordedMovement.type === "readmission" : null)
     : app.memberId !== null;
 
   const address = app.street
     ? `${app.street.name} ${app.streetNumber ?? ""}`.trim()
     : [app.streetText, app.streetNumber].filter(Boolean).join(" ");
   const subscription = app.subscriptions[0] ?? null;
+  // Al rechazar se manda a cancelar la suscripción, pero eso es best-effort: si
+  // MP estaba caído el rechazo quedó firme igual y al vecino le SIGUEN debitando
+  // la cuota (además de la de ingreso, que se retiene). El único rastro era la
+  // auditoría y un console.error, y ninguno de los dos llega a un humano. Esta
+  // es la pantalla que el admin abre para revisar la solicitud, así que el aviso
+  // va acá. Sin fila local también avisa: no saber en qué estado está es peor.
+  const pendingCancellation =
+    app.status === "rejected" && app.preapprovalId !== null && subscription?.status !== "cancelled";
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
@@ -140,7 +150,7 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
             {APPLICATION_STATUS_LABELS[app.status]}
           </Badge>
           <Badge variant="secondary">Categoría: {CATEGORY_LABELS[app.requestedCategory]}</Badge>
-          {reentry && <Badge variant="secondary">Reingreso</Badge>}
+          {reentry === true && <Badge variant="secondary">Reingreso</Badge>}
         </div>
       </PageHeader>
 
@@ -162,14 +172,16 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
               <Field label="Resuelta" value={app.decidedAt ? formatDateAR(app.decidedAt) : null} />
               {app.member && (
                 // La ficha vinculada se nombra por lo que REALMENTE es: la que
-                // el alta creó, o la del ex socio que reingresa.
+                // el alta creó, la del ex socio que reingresa, o —cuando no hay
+                // movimiento que lo diga— sólo "ficha vinculada", que es lo
+                // único que la pantalla puede sostener.
                 <div>
                   <dt className="text-xs uppercase text-muted-foreground">
-                    {reentry ? "Reingreso" : "Socio"}
+                    {reentry === true ? "Reingreso" : reentry === false ? "Socio" : "Ficha vinculada"}
                   </dt>
                   <dd className="text-sm">
                     <Link className="text-primary hover:underline" href={`/admin/socios/${app.member.id}`}>
-                      {reentry ? `Reingreso de ${app.member.fullName}` : app.member.fullName}
+                      {reentry === true ? `Reingreso de ${app.member.fullName}` : app.member.fullName}
                     </Link>
                   </dd>
                 </div>
@@ -233,7 +245,7 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
 
         <Card>
           <CardHeader><CardTitle>Pago y suscripción</CardTitle></CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             <dl className="grid grid-cols-2 gap-3">
               <Field label="Preapproval de MP" value={app.preapprovalId} />
               <Field label="Estado de la suscripción" value={subscription?.status} />
@@ -243,6 +255,14 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 value={app.entryAmount ? formatARS(Number(app.entryAmount)) : null}
               />
             </dl>
+            {pendingCancellation && (
+              <FormMessage kind="warning" box>
+                La solicitud está rechazada pero la suscripción de Mercado Pago no figura
+                cancelada: puede seguir debitándole la cuota al vecino. Cancelá el preapproval{" "}
+                <span className="font-mono">{app.preapprovalId}</span> a mano desde el panel de
+                Mercado Pago.
+              </FormMessage>
+            )}
           </CardContent>
         </Card>
 
@@ -258,6 +278,10 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 applicationId={app.id}
                 currentCategory={app.requestedCategory}
                 options={categoryOptions}
+                // `streetId` es una calle del catastro del barrio; sin ella, lo
+                // declarado fue calle + barrio de afuera (los dos juegos de
+                // campos se escriben excluyentes en el wizard).
+                livesInBarrio={app.streetId !== null}
                 hasSubscription={app.preapprovalId !== null}
                 minutes={minutes}
               />
