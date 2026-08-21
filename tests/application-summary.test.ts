@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  buildSummaryExportRow, formatMonthParam, makeSummaryQueries, monthLabelAR,
-  monthRangeUtc, parseMonthParam, SUMMARY_EXPORT_COLUMNS,
+  arMonthRangeUtc, buildSummaryExportRow, formatMonthParam, makeSummaryQueries, monthLabelAR,
+  parseMonthParam, summaryExportColumns,
 } from "@/lib/applications/summary";
 
 // El mes que la pantalla resuelve es el mes CIVIL argentino, no el UTC. A las
@@ -74,25 +74,25 @@ describe("formatMonthParam", () => {
 // 00:00 del 1° en Comodoro son las 03:00 UTC. Con bordes en 00:00 UTC, una
 // solicitud asentada el 31/08 a las 22:00 (01:00Z del 1/9) caería en el acta de
 // septiembre — o sea, en la reunión equivocada.
-describe("monthRangeUtc", () => {
+describe("arMonthRangeUtc", () => {
   it("va del 1° 00:00 AR al 1° del mes siguiente 00:00 AR", () => {
-    const { from, to } = monthRangeUtc(2026, 8);
+    const { from, to } = arMonthRangeUtc(2026, 8);
     expect(from.toISOString()).toBe("2026-08-01T03:00:00.000Z");
     expect(to.toISOString()).toBe("2026-09-01T03:00:00.000Z");
   });
 
   it("cruza el año en diciembre", () => {
-    const { from, to } = monthRangeUtc(2026, 12);
+    const { from, to } = arMonthRangeUtc(2026, 12);
     expect(from.toISOString()).toBe("2026-12-01T03:00:00.000Z");
     expect(to.toISOString()).toBe("2027-01-01T03:00:00.000Z");
   });
 
   it("respeta los febreros bisiestos sin contarlos a mano", () => {
-    expect(monthRangeUtc(2028, 2).to.toISOString()).toBe("2028-03-01T03:00:00.000Z");
+    expect(arMonthRangeUtc(2028, 2).to.toISOString()).toBe("2028-03-01T03:00:00.000Z");
   });
 
   it("el borde superior es exclusivo y no deja huecos entre meses", () => {
-    expect(monthRangeUtc(2026, 8).to.getTime()).toBe(monthRangeUtc(2026, 9).from.getTime());
+    expect(arMonthRangeUtc(2026, 8).to.getTime()).toBe(arMonthRangeUtc(2026, 9).from.getTime());
   });
 });
 
@@ -141,7 +141,7 @@ function db(over: {
   };
 }
 
-const RANGE = monthRangeUtc(2026, 8);
+const RANGE = arMonthRangeUtc(2026, 8);
 
 describe("makeSummaryQueries.fetchSummary — las tres listas", () => {
   it("las dos listas vivas NO llevan filtro de mes: son las que la próxima reunión debe tratar", async () => {
@@ -312,11 +312,22 @@ describe("buildSummaryExportRow", () => {
   });
 
   it("las columnas del Excel son las mismas seis de la pantalla, y la fecha es fecha", () => {
-    expect(SUMMARY_EXPORT_COLUMNS.map((c) => c.key))
+    const columns = summaryExportColumns("fecha_solicitud");
+    expect(columns.map((c) => c.key))
       .toEqual(["name", "dni", "cat", "debit", "reentry", "date"]);
-    const date = SUMMARY_EXPORT_COLUMNS.find((c) => c.key === "date")!;
+    const date = columns.find((c) => c.key === "date")!;
     expect(date.style?.numFmt).toBe("dd/mm/yyyy");
     // El DNI es una cadena de dígitos, no una cantidad.
-    expect(SUMMARY_EXPORT_COLUMNS.find((c) => c.key === "dni")!.style?.numFmt).toBe("@");
+    expect(columns.find((c) => c.key === "dni")!.style?.numFmt).toBe("@");
+  });
+
+  // El significado de la fecha cambia según la lista (pedida vs. asentada), y
+  // las tres hojas no pueden decir "fecha" a secas: mismo criterio que usa la
+  // pantalla (`Section` en page.tsx) para el encabezado de esa columna.
+  it("el encabezado de la fecha lo decide quien arma la hoja, no una etiqueta fija", () => {
+    expect(summaryExportColumns("fecha_solicitud").find((c) => c.key === "date")!.header)
+      .toBe("fecha_solicitud");
+    expect(summaryExportColumns("fecha_asentada").find((c) => c.key === "date")!.header)
+      .toBe("fecha_asentada");
   });
 });

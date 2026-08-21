@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import {
-  formatMonthParam, makeSummaryQueries, monthLabelAR, monthRangeUtc, parseMonthParam,
+  arMonthRangeUtc, formatMonthParam, makeSummaryQueries, monthLabelAR, parseMonthParam,
   reentryLabel, type SummaryRow,
 } from "@/lib/applications/summary";
 import { CATEGORY_LABELS } from "@/lib/members/labels";
@@ -39,7 +39,7 @@ export default async function ResumenPage(props: {
   const sp = await props.searchParams;
   const month = parseMonthParam(sp.mes, new Date());
   const monthValue = formatMonthParam(month);
-  const range = monthRangeUtc(month.year, month.month);
+  const range = arMonthRangeUtc(month.year, month.month);
   const { accepted, pendingBoard, recordedInMonth } =
     await makeSummaryQueries(prisma).fetchSummary(range);
 

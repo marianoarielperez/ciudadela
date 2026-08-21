@@ -24,7 +24,12 @@ import { CATEGORY_LABELS } from "@/lib/members/labels";
 //
 // Tres listas, cero ambigüedad.
 
-/** Argentina es UTC-3 todo el año (sin DST): el corrimiento es una constante. */
+/** Argentina es UTC-3 todo el año (sin DST): el corrimiento es una constante.
+ *  Conviven DOS relojes para la misma zona: éste (una resta fija) y el que usa
+ *  `Intl` con la zona IANA, en `monthLabelAR` (más abajo, en este archivo) y en
+ *  `formatDateAR` (`src/lib/format.ts`, el que pinta las fechas de la pantalla
+ *  en `page.tsx`). Hoy coinciden porque Argentina no tiene horario de verano;
+ *  si volviera, divergirían — moveé los dos call sites juntos. */
 const AR_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 const TZ = "America/Argentina/Buenos_Aires";
@@ -66,11 +71,11 @@ export function formatMonthParam({ year, month }: MonthSelection): string {
 
 export type MonthRange = { from: Date; to: Date };
 
-/** Los bordes son instantes UTC, pero del mes CIVIL argentino: 00:00 del 1° en
- *  Comodoro son las 03:00 UTC. Con bordes en 00:00 UTC, una solicitud asentada
- *  el 31/08 a las 22:00 (01:00Z del 1/9) caería en el acta de septiembre — o
- *  sea, en la reunión equivocada. `to` es exclusivo. */
-export function monthRangeUtc(year: number, month: number): MonthRange {
+/** El mes civil ARGENTINO expresado como un par de instantes UTC — no un mes
+ *  UTC: 00:00 del 1° en Comodoro son las 03:00 UTC. Con bordes en 00:00 UTC,
+ *  una solicitud asentada el 31/08 a las 22:00 (01:00Z del 1/9) caería en el
+ *  acta de septiembre — o sea, en la reunión equivocada. `to` es exclusivo. */
+export function arMonthRangeUtc(year: number, month: number): MonthRange {
   return {
     from: new Date(Date.UTC(year, month - 1, 1, 3)),
     to: new Date(Date.UTC(year, month, 1, 3)),
@@ -80,7 +85,7 @@ export function monthRangeUtc(year: number, month: number): MonthRange {
 /** "agosto de 2026", para el encabezado de la sección y el nombre del archivo. */
 export function monthLabelAR(sel: MonthSelection): string {
   return new Intl.DateTimeFormat("es-AR", { timeZone: TZ, month: "long", year: "numeric" })
-    .format(monthRangeUtc(sel.year, sel.month).from);
+    .format(arMonthRangeUtc(sel.year, sel.month).from);
 }
 
 // ── Las filas ────────────────────────────────────────────────────────────────
@@ -212,18 +217,27 @@ function toRow(r: RawRow): Omit<SummaryRow, "reentry"> {
 // Construcción pura: nada de acá toca la base ni ExcelJS. La route arma el
 // Workbook con `SUMMARY_EXPORT_COLUMNS` y llena filas con `buildSummaryExportRow`.
 
-export const SUMMARY_EXPORT_COLUMNS = [
-  { header: "apellido_nombre", key: "name", width: 32 },
-  // numFmt "@" (texto): el DNI es una cadena de dígitos, no una cantidad. Sin
-  // esto Excel lo marca con el triángulo verde "número guardado como texto".
-  { header: "dni", key: "dni", width: 12, style: { numFmt: "@" } },
-  { header: "categoria", key: "cat", width: 14 },
-  { header: "debito_automatico", key: "debit", width: 16 },
-  { header: "reingreso", key: "reentry", width: 12 },
-  // Fecha nativa y no texto DD/MM/AAAA: un texto ordena mal en Excel (compara
-  // el día antes que el año) y el acta se arma ordenando. Ver members/export.ts.
-  { header: "fecha", key: "date", width: 14, style: { numFmt: "dd/mm/yyyy" } },
-] as const;
+// La columna de fecha no se llama "fecha" a secas: la pantalla alterna el
+// encabezado entre "Solicitud" y "Asentada" según la lista (ver `Section` en
+// `page.tsx`), porque el significado de la fecha cambia — en las dos listas
+// vivas es cuándo se pidió, en las asentadas es cuándo se asentó. Un `fecha`
+// genérico en las tres hojas escondería esa diferencia en el Excel. La route
+// pasa el mismo criterio que usa la pantalla.
+export function summaryExportColumns(dateHeader: string) {
+  return [
+    { header: "apellido_nombre", key: "name", width: 32 },
+    // numFmt "@" (texto): el DNI es una cadena de dígitos, no una cantidad. Sin
+    // esto Excel lo marca con el triángulo verde "número guardado como texto".
+    { header: "dni", key: "dni", width: 12, style: { numFmt: "@" } },
+    { header: "categoria", key: "cat", width: 14 },
+    { header: "debito_automatico", key: "debit", width: 16 },
+    { header: "reingreso", key: "reentry", width: 12 },
+    // Fecha nativa y no texto DD/MM/AAAA: un texto ordena mal en Excel
+    // (compara el día antes que el año) y el acta se arma ordenando. Ver
+    // members/export.ts.
+    { header: dateHeader, key: "date", width: 14, style: { numFmt: "dd/mm/yyyy" } },
+  ] as const;
+}
 
 export type SummaryExportRow = {
   name: string; dni: string; cat: string; debit: string; reentry: string; date: Date;

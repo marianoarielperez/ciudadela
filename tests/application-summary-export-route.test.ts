@@ -119,8 +119,20 @@ describe("GET /api/admin/solicitudes/resumen-export — pedido autorizado", () =
     const buffer = Buffer.from(await res.arrayBuffer());
 
     const wb = await loadWorkbook(buffer);
-    expect(wb.worksheets.map((w) => w.name))
-      .toEqual(["Pendientes de asiento", "Pendientes CD", "Asentadas"]);
+    expect(wb.worksheets.map((w) => w.name)).toEqual([
+      "Pendientes de asiento (todas)", "Pendientes CD (todas)", "Asentadas 2026-08",
+    ]);
+  });
+
+  // Ninguna hoja puede pasar el límite de Excel (31 caracteres) sin importar
+  // el mes elegido.
+  it("los nombres de hoja nunca superan los 31 caracteres de Excel", async () => {
+    const res = await GET(requestWithQuery({ mes: "2026-08" }));
+    const wb = await loadWorkbook(Buffer.from(await res.arrayBuffer()));
+
+    for (const ws of wb.worksheets) {
+      expect(ws.name.length).toBeLessThanOrEqual(31);
+    }
   });
 
   // La fecha tiene que llegar a Excel como FECHA: si sale como texto
@@ -131,11 +143,26 @@ describe("GET /api/admin/solicitudes/resumen-export — pedido autorizado", () =
     const res = await GET(requestWithQuery({ mes: "2026-08" }));
     const wb = await loadWorkbook(Buffer.from(await res.arrayBuffer()));
 
-    const ws = wb.getWorksheet("Pendientes de asiento")!;
+    const ws = wb.getWorksheet("Pendientes de asiento (todas)")!;
     expect(ws.getRow(1).values).toContain("apellido_nombre");
     const cell = ws.getRow(2).getCell(6);
     expect(cell.value).toBeInstanceOf(Date);
     expect(cell.numFmt).toBe("dd/mm/yyyy");
+  });
+
+  // La pantalla alterna el encabezado de la columna de fecha entre "Solicitud"
+  // y "Asentada" según la lista (ver `Section` en page.tsx); las tres hojas no
+  // pueden decir "fecha" a secas, y el criterio tiene que ser el mismo.
+  it("el encabezado de la columna de fecha distingue solicitud de asiento, igual que la pantalla", async () => {
+    (prisma.application.findMany as MockedFn).mockResolvedValue([applicationRow()]);
+
+    const res = await GET(requestWithQuery({ mes: "2026-08" }));
+    const wb = await loadWorkbook(Buffer.from(await res.arrayBuffer()));
+
+    const dateHeader = (sheet: string) => wb.getWorksheet(sheet)!.getRow(1).getCell(6).value;
+    expect(dateHeader("Pendientes de asiento (todas)")).toBe("fecha_solicitud");
+    expect(dateHeader("Pendientes CD (todas)")).toBe("fecha_solicitud");
+    expect(dateHeader("Asentadas 2026-08")).toBe("fecha_asentada");
   });
 
   it("writes an audit entry with the month and the per-list counts — never the row data", async () => {

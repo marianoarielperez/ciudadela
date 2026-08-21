@@ -9,8 +9,8 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import {
-  buildSummaryExportRow, formatMonthParam, makeSummaryQueries, monthRangeUtc,
-  parseMonthParam, SUMMARY_EXPORT_COLUMNS, type SummaryRow,
+  arMonthRangeUtc, buildSummaryExportRow, formatMonthParam, makeSummaryQueries,
+  parseMonthParam, summaryExportColumns, type SummaryRow,
 } from "@/lib/applications/summary";
 
 export async function GET(req: NextRequest) {
@@ -24,14 +24,19 @@ export async function GET(req: NextRequest) {
   const month = parseMonthParam(req.nextUrl.searchParams.get("mes") ?? undefined, new Date());
   const monthValue = formatMonthParam(month);
   const summary = await makeSummaryQueries(prisma)
-    .fetchSummary(monthRangeUtc(month.year, month.month));
+    .fetchSummary(arMonthRangeUtc(month.year, month.month));
 
   const wb = new ExcelJS.Workbook();
   // Los nombres de hoja de Excel no admiten : \ / ? * [ ] y se cortan a 31
-  // caracteres: por eso son cortos y no repiten el título largo de la pantalla.
-  addSheet(wb, "Pendientes de asiento", summary.accepted);
-  addSheet(wb, "Pendientes CD", summary.pendingBoard);
-  addSheet(wb, "Asentadas", summary.recordedInMonth);
+  // caracteres. Las dos primeras dicen "(todas)": son las listas vivas, sin
+  // filtro de mes — la pantalla lo explica en un párrafo, pero el Excel viaja
+  // solo (reenviado, guardado aparte) y el nombre de archivo lleva el mes de
+  // TODAS las hojas (`resumen-solicitudes-2026-08.xlsx`). Sin la aclaración,
+  // "Pendientes de asiento" en un archivo estampado 2026-08 se lee como
+  // "pendientes de agosto", que es falso. La tercera sí es del mes, y lo dice.
+  addSheet(wb, "Pendientes de asiento (todas)", summary.accepted, "fecha_solicitud");
+  addSheet(wb, "Pendientes CD (todas)", summary.pendingBoard, "fecha_solicitud");
+  addSheet(wb, `Asentadas ${monthValue}`, summary.recordedInMonth, "fecha_asentada");
 
   const buffer = await wb.xlsx.writeBuffer();
 
@@ -70,9 +75,9 @@ export async function GET(req: NextRequest) {
   });
 }
 
-function addSheet(wb: ExcelJS.Workbook, name: string, rows: SummaryRow[]) {
+function addSheet(wb: ExcelJS.Workbook, name: string, rows: SummaryRow[], dateHeader: string) {
   const ws = wb.addWorksheet(name);
-  ws.columns = [...SUMMARY_EXPORT_COLUMNS];
+  ws.columns = [...summaryExportColumns(dateHeader)];
   ws.getRow(1).font = { bold: true };
   // La hoja se crea aunque la lista esté vacía: el archivo siempre trae las
   // tres, y una hoja con sólo el encabezado dice "esta lista está vacía", que
