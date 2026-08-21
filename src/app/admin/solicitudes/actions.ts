@@ -319,6 +319,7 @@ export async function recategorizeApplicationAction(
   // corregiría todavía no existe). Mejor no tocar el monto que tocarlo mal.
   let newPlanId: string | null = null;
   let oldPlanId: string | null = null;
+  let newAmount: number | null = null;
   if (app.preapprovalId && changesAmount) {
     // Primero el plan: sin id configurado no hay monto que leer NI plan al que
     // mover la fila local. Antes se llamaba igual a MP con el monto cacheado y
@@ -327,12 +328,13 @@ export async function recategorizeApplicationAction(
     newPlanId = await planIdForCategory(newCategory);
     if (!newPlanId) {
       return {
-        error: "El plan de Mercado Pago de esa categoría no está configurado. Cargalo en Configuración antes de recategorizar.",
+        error: "El plan de Mercado Pago de esa categoría no está configurado. Pedile al superadmin que lo cargue en Configuración antes de recategorizar.",
       };
     }
     let amount: number;
     try {
       ({ amount } = await mpGateway.getPlan(newPlanId));
+      newAmount = amount;
     } catch (e) {
       // El error del SDK trae el cuerpo de la respuesta de MP: al log, nunca a
       // la pantalla.
@@ -393,7 +395,9 @@ export async function recategorizeApplicationAction(
       from: app.requestedCategory, to: newCategory,
       subscriptionUpdated,
       residenceMismatch,
-      ...(subscriptionUpdated ? { preapprovalId: app.preapprovalId, oldPlanId } : {}),
+      ...(subscriptionUpdated
+        ? { preapprovalId: app.preapprovalId, oldPlanId, amount: newAmount }
+        : {}),
     },
     ip: await clientIp(),
   });

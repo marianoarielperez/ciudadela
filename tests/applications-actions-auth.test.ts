@@ -23,7 +23,7 @@ const recorderMock = vi.hoisted(() => ({ recordOne: vi.fn() }));
 const tokensMock = vi.hoisted(() => ({ issue: vi.fn(), revokeForMember: vi.fn() }));
 const mailerMock = vi.hoisted(() => ({ sendToMember: vi.fn(), sendToApplication: vi.fn() }));
 const gatewayMock = vi.hoisted(() => ({
-  updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn(),
+  updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn(), getPlan: vi.fn(),
 }));
 const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn(), planIdForCategory: vi.fn() }));
 
@@ -114,7 +114,7 @@ describe("autorización de las actions de solicitudes", () => {
     expect(result.error).toBe("Sesión inválida.");
     expect(prismaMock.application.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.application.update).not.toHaveBeenCalled();
-    expect(feesMock.getFeeAmounts).not.toHaveBeenCalled();
+    expect(gatewayMock.getPlan).not.toHaveBeenCalled();
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });

@@ -72,8 +72,11 @@ export function makeFeeAmountsReader(deps: Deps) {
         return cached.value;
       } catch {
         // MP caído (o la config ilegible): el último valor bueno sigue siendo
-        // mejor que nada. La divergencia real plan↔local la vigila el sync
-        // del M4 (REG-34).
+        // mejor que nada. La divergencia que vigila el sync del M4 (REG-34) es
+        // otra: plan (API) vs. `ValorCuota` (tabla local), la de la pantalla
+        // "Valores de cuota". La divergencia suscripción-vs-plan que puede
+        // causar ESTE stale-on-error (advertencia arriba, línea 8) no la
+        // cubre nada todavía: por eso quien cobra no puede usar esta caché.
         return cached?.value ?? null;
       }
     },
