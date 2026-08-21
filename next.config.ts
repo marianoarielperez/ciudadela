@@ -19,12 +19,12 @@ import type { NextConfig } from "next";
 //   imagen en blanco.
 // - font-src 'self': next/font hospeda las tipografías en /_next/static, no
 //   hay pedidos a Google Fonts.
-// - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen.
-// - frame-src: hoy SOLO el embed de OpenStreetMap de /ubicacion; en el M3 se
-//   le suman los iframes de Checkout Pro / Bricks (MP_FRAME) y el widget de
-//   Turnstile. Ojo: un iframe bloqueado por CSP no rompe nada visible, deja un
-//   recuadro vacío en silencio — si se cambia el proveedor de mapa hay que
-//   tocar acá.
+// - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen;
+//   más la API de Mercado Pago para el SDK del navegador (MP_CONNECT).
+// - frame-src: el embed de OpenStreetMap de /ubicacion, el widget de Turnstile
+//   y los iframes de Checkout Pro / Bricks (MP_FRAME). Ojo: un iframe bloqueado
+//   por CSP no rompe nada visible, deja un recuadro vacío en silencio — si se
+//   cambia el proveedor de mapa o el de captcha hay que tocar acá.
 // - frame-ancestors 'none' + X-Frame-Options: DENY: la segunda es para los
 //   navegadores viejos que no leen frame-ancestors.
 // - upgrade-insecure-requests: en prod todo va por HTTPS detrás de Cloudflare.
@@ -35,9 +35,20 @@ import type { NextConfig } from "next";
 //
 // Orígenes del Módulo 3 (Mercado Pago + Turnstile). Para activarlos, agregar
 // los strings al array — sin espacios mágicos ni cirugía de comentarios.
-const MP_SCRIPT: string[] = []; // M3: "https://sdk.mercadopago.com", "https://http2.mlstatic.com"
-const MP_CONNECT: string[] = []; // M3: "https://api.mercadopago.com"
-const MP_FRAME: string[] = []; // M3: "https://www.mercadopago.com.ar"
+//
+// Mercado Pago (task 21). Hoy el pago sale del sitio por navegación de PRIMER
+// NIVEL a `https://www.mercadopago.com.ar/subscriptions/checkout?...`
+// (`checkoutUrlFor`, usado como href y como redirect), y una navegación no la
+// gobierna la CSP: los tres orígenes están declarados para que el SDK embebido
+// —Bricks / el botón de suscripción, que sí monta script + iframe— funcione sin
+// que haya que redescubrir esta lista por un recuadro vacío. `http2.mlstatic.com`
+// es el CDN desde donde el SDK carga sus propios chunks.
+const MP_SCRIPT: string[] = ["https://sdk.mercadopago.com", "https://http2.mlstatic.com"];
+// Los llamados a la API de MP salen del SERVIDOR (`src/lib/mp/gateway.ts`), que
+// no pasa por la CSP; esto habilita al SDK del navegador, que consulta la misma
+// API para validar el formulario antes de enviarlo.
+const MP_CONNECT: string[] = ["https://api.mercadopago.com"];
+const MP_FRAME: string[] = ["https://www.mercadopago.com.ar"];
 // Turnstile ya está EN USO (task 12: el wizard ASOCIATE y el reenvío del enlace
 // de retome montan el widget). `script-src` para `api.js` y `frame-src` para el
 // iframe del desafío: sin los dos, el widget queda en blanco y todo envío falla
