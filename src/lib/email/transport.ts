@@ -62,7 +62,12 @@ export function makeAllowlistTransport(inner: MailTransport, allowlist: Set<stri
     async send(msg) {
       if (!allowlist.has(msg.to.trim().toLowerCase())) {
         console.warn("[mail:allowlist] envío bloqueado por EMAIL_ALLOWLIST");
-        throw new Error("Envíos de email restringidos en este entorno (EMAIL_ALLOWLIST).");
+        // `code` propio: sin él, `codeOf()` en los call-sites cae a "unknown" y
+        // no se puede distinguir "bloqueado por este entorno" de "SMTP caído".
+        throw Object.assign(
+          new Error("Envíos de email restringidos en este entorno (EMAIL_ALLOWLIST)."),
+          { code: "EMAIL_ALLOWLIST" },
+        );
       }
       return inner.send(msg);
     },

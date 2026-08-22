@@ -35,4 +35,15 @@ describe("makeAllowlistTransport", () => {
     );
     expect(send).not.toHaveBeenCalled();
   });
+
+  // El `code` deja que un llamador (p. ej. `codeOf()` en receipt-email.ts)
+  // distinga "bloqueado por este entorno" de "SMTP caído" sin parsear el
+  // mensaje. No puede confundirse con un código real de transporte.
+  it("el bloqueo trae un code propio, no 'unknown'", async () => {
+    const { transport } = innerMock();
+    const t = makeAllowlistTransport(transport, allow);
+    await expect(t.send({ to: "otro@x.com", subject: "s", text: "t", html: "h" })).rejects.toMatchObject({
+      code: "EMAIL_ALLOWLIST",
+    });
+  });
 });

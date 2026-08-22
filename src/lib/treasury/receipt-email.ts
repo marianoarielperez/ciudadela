@@ -9,7 +9,13 @@ import { treasuryService } from "./service";
 
 type Mailer = Pick<typeof mailer, "sendToMember">;
 
-export type ReceiptEmailResult = { sent: true } | { sent: false; reason: "no_email" | "error"; code?: string };
+export type ReceiptEmailResult =
+  | { sent: true }
+  | { sent: false; reason: "no_email" }
+  // Negativa de negocio, no un error de transporte: reason propio para que
+  // Task 12 la distinga por tipo sin parsear `code`.
+  | { sent: false; reason: "voided" }
+  | { sent: false; reason: "error"; code?: string };
 
 // Solo `code`: el error de nodemailer trae la dirección en claro (docs/08).
 function codeOf(e: unknown): string {
@@ -36,7 +42,7 @@ export function makeReceiptEmailer(deps: {
       if (!r) return { sent: false, reason: "error", code: "not_found" };
       // Un recibo anulado no se manda: el PDF que saldría ya no representa nada
       // cobrado, y el socio no tiene cómo saberlo desde el adjunto.
-      if (r.voidedAt) return { sent: false, reason: "error", code: "voided" };
+      if (r.voidedAt) return { sent: false, reason: "voided" };
       const member = r.payment.member;
       if (!member?.email || member.emailStatus === "bounced") return { sent: false, reason: "no_email" };
       try {
@@ -67,12 +73,21 @@ export function makeReceiptEmailer(deps: {
           },
           summary: `recibo ${r.number}`,
         });
-        await deps.db.receipt.update({ where: { id: r.id }, data: { emailedAt: new Date() } });
-        return { sent: true };
       } catch (e) {
         console.error("[treasury] no se pudo enviar el recibo por email", receiptId, codeOf(e));
         return { sent: false, reason: "error", code: codeOf(e) };
       }
+      // El envío ya volvió bien y el mailer ya escribió la Notification (la
+      // acreditación fehaciente, Art. 5° quater): `emailedAt` es apenas un
+      // sello de conveniencia para la pantalla. Si este UPDATE falla no hay
+      // que devolver `sent: false` — el socio ya tiene el recibo en la
+      // bandeja y un reenvío desde Task 12 le duplicaría el PDF.
+      try {
+        await deps.db.receipt.update({ where: { id: r.id }, data: { emailedAt: new Date() } });
+      } catch (e) {
+        console.error("[treasury] el recibo se envió pero no se pudo sellar emailedAt", receiptId, codeOf(e));
+      }
+      return { sent: true };
     },
   };
 }

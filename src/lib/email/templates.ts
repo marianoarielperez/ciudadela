@@ -327,10 +327,10 @@ Registramos tu pago y te enviamos el recibo N° ${opts.number}.
 Concepto: ${opts.concept}
 Importe: ${amount}
 
-El recibo en PDF va adjunto a este correo. Si no corresponde, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
+El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
     html: layout(`Recibo ${opts.number}`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
 <p>Registramos tu pago y te enviamos el recibo <strong>N° ${esc(opts.number)}</strong>.</p>
 <p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>
-<p>El recibo en PDF va adjunto a este correo. Si no corresponde, respondé este mensaje o acercate a la sede.</p>`),
+<p>El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.</p>`),
   };
 }
