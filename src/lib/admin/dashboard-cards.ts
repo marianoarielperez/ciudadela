@@ -31,12 +31,17 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
       },
       { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios", cta: "Ver el padrón" },
       {
+        title: "Tesorería",
+        description: "Cuotas, deudores, efectivo y recibos.",
+        href: "/admin/tesoreria",
+        cta: "Abrir tesorería",
+      },
+      {
         title: "Actas",
         description: "Actas de Comisión Directiva y Asamblea donde se asientan los movimientos.",
         href: "/admin/actas",
         cta: "Ver las actas",
       },
-      { title: "Tesorería", description: "Cuotas, pagos y conciliación con Mercado Pago." },
     ],
   },
   {

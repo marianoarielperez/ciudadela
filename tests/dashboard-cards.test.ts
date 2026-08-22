@@ -51,10 +51,12 @@ describe("DASHBOARD_GROUPS vs ADMIN_NAV", () => {
   });
 
   it("allows roadmap cards without href as extras", () => {
-    // No es un requisito, es la constancia de que el invariante los tolera:
-    // "Tesorería" es una sección futura sin ruta todavía. ("Solicitudes" lo era
-    // hasta el M3; desde la Task 16 tiene bandeja y salió de esta lista.)
-    const roadmap = allCards.filter((c) => !c.href).map((c) => c.title);
-    expect(roadmap).toContain("Tesorería");
+    // No es un requisito, es la constancia de que el invariante los tolera: una
+    // tarjeta sin `href` es una sección futura y se muestra como "Próximamente",
+    // así que tampoco puede traer CTA (no habría adónde ir). Hoy la lista está
+    // vacía —"Solicitudes" salió en el M3 y "Tesorería" en el M4—, y este test
+    // es lo que va a seguir cubriendo a la próxima que entre.
+    const roadmap = allCards.filter((c) => !c.href);
+    for (const card of roadmap) expect(card.cta, card.title).toBeUndefined();
   });
 });
