@@ -326,7 +326,7 @@ curl -sS "https://api.mercadopago.com/authorized_payments/search?preapproval_id=
 
 Devuelve `payment.id`, que es el que va como `DATA_ID` con `type=payment`.
 
-### 8. PENDIENTE: MP no entregó las notificaciones solo
+### 8. RESUELTO: en sandbox MP no entrega notificaciones; en producción sí
 
 En la prueba del 21/08/2026 el pago se acreditó y la suscripción quedó
 `authorized` **del lado de MP**, pero no llegó ninguna notificación a
@@ -334,14 +334,19 @@ En la prueba del 21/08/2026 el pago se acreditó y la suscripción quedó
 bloque del punto 7, y el sistema las procesó correcto
 (`subscription_synced`, `application_approved`).
 
-**Hay que resolverlo antes de abrir ASOCIATE**, porque en producción todo el
-avance automático depende de esa entrega. Dos causas a descartar, en orden:
+**Contestado el 22/08/2026 a las 00:53 con un piloto real en producción.** Un
+vecino se asoció con credenciales productivas y Mercado Pago **entregó las tres
+notificaciones por su cuenta** (`subscription_preapproval`, `payment`,
+`subscription_preapproval`), sin ningún disparo manual: la solicitud pasó sola a
+`approved_pending_minute`.
 
-1. Limitación conocida del sandbox con cuentas de prueba.
-2. El webhook quedó configurado en OTRA aplicación (durante la prueba hubo dos:
-   la de la cuenta real y la del vendedor de prueba).
+Era la causa 1 — limitación del sandbox con cuentas de prueba. No hay nada que
+arreglar en el código.
 
-Se mira en el panel de la aplicación → Webhooks → historial de entregas.
+Consecuencia práctica: **el circuito automático no se puede validar en sandbox**.
+Ahí hay que disparar las notificaciones a mano con el bloque del punto 7, y eso
+prueba el procesamiento pero no la entrega. La entrega solo se comprueba en
+producción.
 
 ### 9. Diagnóstico: leer el mensaje, no suponer
 
