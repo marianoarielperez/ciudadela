@@ -33,6 +33,21 @@ const CONCEPT_TYPE: Record<CashConcept, PaymentType> = {
 
 const MAX_FEES_PER_PAYMENT = 60;
 
+// `Payment.amount` es Decimal(10,2): 99.999.999,99 es el techo del tipo. Se
+// valida ANTES de la transacción para que el operador lea un mensaje en es-AR y
+// no el error crudo de Prisma desde adentro del $transaction.
+const MAX_AMOUNT = 99_999_999.99;
+
+// `Receipt.concept` es VarChar(200). Un pago de 60 cuotas no contiguas describe
+// una lista más larga que eso, así que se recorta antes de escribir: el recibo
+// se emite igual y el detalle completo sigue estando en las cuotas del pago.
+// Puntos suspensivos ASCII y no "…": el PDF usa fuentes WinAnsi.
+const CONCEPT_MAX = 200;
+
+function fitConcept(concept: string): string {
+  return concept.length <= CONCEPT_MAX ? concept : `${concept.slice(0, CONCEPT_MAX - 3)}...`;
+}
+
 // Año de la serie en hora Argentina (un efectivo cargado el 31/12 a las 22:00
 // AR es todavía del año viejo aunque en UTC ya sea 1° de enero). Sale del
 // período corriente y no de un `Intl` propio: `periods.ts` es el único lugar
@@ -58,12 +73,7 @@ export function makeTreasuryService(deps: Deps) {
     const r = await db.receipt.findUnique({
       where: { id: receiptId },
       include: {
-        payment: {
-          include: {
-            fees: { select: { period: true } },
-            member: { include: { memberships: { include: { book: true } } } },
-          },
-        },
+        payment: { include: { member: { include: { memberships: { include: { book: true } } } } } },
       },
     });
     if (!r) throw new TreasuryError("El recibo no existe.");
@@ -74,7 +84,11 @@ export function makeTreasuryService(deps: Deps) {
       issuedAt: r.issuedAt,
       memberName: member?.fullName ?? "—",
       memberNumber: open?.memberNumber ?? null,
-      concept: paymentConcept(r.payment.type, r.payment.fees.map((f) => f.period)),
+      // El concepto sale de la fila del recibo, no de `payment.fees`: al anular,
+      // esas cuotas se despegan del pago (o se borran, si eran futuras) y
+      // recalcularlo degradaba "Cuota social · agosto a octubre 2026 (3 cuotas)"
+      // a un "Cuota social" pelado, sin forma de recuperar el detalle.
+      concept: r.concept,
       methodLabel: PAYMENT_TYPE_LABELS[r.payment.type],
       amount: Number(r.payment.amount),
       voided: r.voidedAt ? { reason: r.voidReason ?? "" } : null,
@@ -138,7 +152,12 @@ export function makeTreasuryService(deps: Deps) {
           if (!Number.isFinite(free) || free <= 0) throw new TreasuryError("Ingresá el monto del aporte.");
           amount = Math.round(free * 100) / 100;
         }
+        if (amount > MAX_AMOUNT) {
+          throw new TreasuryError("El monto supera el máximo que admite el sistema ($ 99.999.999,99).");
+        }
 
+        // El concepto se congela al emitir: es lo que dice el recibo para siempre.
+        const concept = fitConcept(paymentConcept(CONCEPT_TYPE[input.concept], periods));
         const year = seriesYear(at);
         const created = await db.$transaction(async (tx) => {
           const payment = await tx.payment.create({
@@ -156,15 +175,27 @@ export function makeTreasuryService(deps: Deps) {
           }
           const existingToPay = periods.filter((p) => !toCreate.includes(p));
           if (existingToPay.length > 0) {
-            await tx.fee.updateMany({
-              where: { memberId: member.id, period: { in: existingToPay } },
+            // `status: "pending"` no es redundante con la lectura de arriba: acota
+            // el UPDATE a lo que sigue pendiente AHORA. Y se controla el `count`
+            // porque un `where` que no matchea no falla, solo actualiza cero filas:
+            // sin este chequeo, un pago podía quedar cobrado sin cuotas imputadas.
+            const imputed = await tx.fee.updateMany({
+              where: { memberId: member.id, period: { in: existingToPay }, status: "pending" },
               data: { status: "paid", paymentId: payment.id },
             });
+            if (imputed.count !== existingToPay.length) {
+              throw new TreasuryError(
+                "Las cuotas del socio cambiaron mientras se registraba el pago. Revisá la cuenta y volvé a intentarlo.",
+              );
+            }
           }
           const seq = await nextReceiptSeq(tx, year);
           const number = formatReceiptNumber(year, seq);
           const receipt = await tx.receipt.create({
-            data: { number, year, seq, paymentId: payment.id, pdfPath: receiptRelativePath(number), issuedAt: at },
+            data: {
+              number, year, seq, paymentId: payment.id, concept,
+              pdfPath: receiptRelativePath(number), issuedAt: at,
+            },
           });
           return { paymentId: payment.id, receiptId: receipt.id, number };
         });
@@ -176,25 +207,42 @@ export function makeTreasuryService(deps: Deps) {
 
     async voidReceipt(input: { receiptId: number; actorId: number; reason: string }) {
       const at = now();
-      const r = await db.receipt.findUnique({
+      // Lectura mínima, solo para saber sobre qué socio serializar. El socio de un
+      // pago no cambia nunca, así que leerlo afuera del mutex no abre ninguna
+      // ventana; la foto de la que dependen las ESCRITURAS se toma adentro.
+      const head = await db.receipt.findUnique({
         where: { id: input.receiptId },
-        include: { payment: { include: { fees: { select: { id: true, period: true } } } } },
+        select: { payment: { select: { memberId: true } } },
       });
-      if (!r) throw new TreasuryError("El recibo no existe.");
-      if (r.voidedAt) throw new TreasuryError("El recibo ya está anulado.");
-      const memberId = r.payment.memberId;
+      if (!head) throw new TreasuryError("El recibo no existe.");
+      const memberId = head.payment.memberId;
       return memberMutex.run(`member:${memberId ?? 0}`, async () => {
+        // Recién acá se lee el recibo con sus cuotas, y recién acá se controla que
+        // no esté anulado: si la lectura vivía afuera, dos anulaciones simultáneas
+        // pasaban las dos el control y la segunda escribía sobre una foto vieja.
+        const r = await db.receipt.findUnique({
+          where: { id: input.receiptId },
+          include: { payment: { include: { fees: { select: { id: true, period: true } } } } },
+        });
+        if (!r) throw new TreasuryError("El recibo no existe.");
+        if (r.voidedAt) throw new TreasuryError("El recibo ya está anulado.");
         const { toPending, toDelete } = revertFees(r.payment.fees.map((f) => f.period), currentPeriod(at));
+        let periodsReverted = 0;
         await db.$transaction(async (tx) => {
           if (memberId !== null && toPending.length > 0) {
-            await tx.fee.updateMany({
-              where: { memberId, period: { in: toPending } },
+            // `paymentId` en el `where` es la guarda que impide devolver a pendiente
+            // una cuota que ya se reimputó a OTRO pago con recibo válido: sin él,
+            // (memberId, period) alcanzaba para pisar dinero cobrado por otro lado.
+            const reverted = await tx.fee.updateMany({
+              where: { memberId, paymentId: r.payment.id, period: { in: toPending } },
               data: { status: "pending", paymentId: null },
             });
+            periodsReverted += reverted.count;
           }
           if (toDelete.length > 0) {
             const ids = r.payment.fees.filter((f) => toDelete.includes(f.period)).map((f) => f.id);
-            await tx.fee.deleteMany({ where: { id: { in: ids } } });
+            const deleted = await tx.fee.deleteMany({ where: { id: { in: ids } } });
+            periodsReverted += deleted.count;
           }
           await tx.payment.update({ where: { id: r.payment.id }, data: { status: "voided" } });
           await tx.receipt.update({
@@ -204,7 +252,8 @@ export function makeTreasuryService(deps: Deps) {
         });
         // El PDF se regenera con la marca ANULADO; si falla, se regenera al pedirlo.
         await writePdfBestEffort(r.id, r.pdfPath ?? receiptRelativePath(r.number));
-        return { paymentId: r.payment.id, number: r.number, periodsReverted: toPending.length + toDelete.length };
+        // El número devuelto es lo que se hizo, no lo que se pensaba hacer.
+        return { paymentId: r.payment.id, number: r.number, periodsReverted };
       });
     },
 

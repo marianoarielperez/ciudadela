@@ -689,6 +689,11 @@ model Receipt {
   seq        Int
   paymentId  Int       @unique @map("payment_id")
   payment    Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  // El concepto se congela acá al emitir. Un recibo es un registro institucional:
+  // dice lo que se cobró en el momento en que se emitió, y no puede cambiar porque
+  // después se anule o se reimputen las cuotas. Derivarlo de `payment.fees` lo
+  // borraba: al anular, esas filas se despegan del pago y el detalle se perdía.
+  concept    String    @db.VarChar(200)
   pdfPath    String?   @map("pdf_path") @db.VarChar(255)
   issuedAt   DateTime  @default(now()) @map("issued_at")
   emailedAt  DateTime? @map("emailed_at")

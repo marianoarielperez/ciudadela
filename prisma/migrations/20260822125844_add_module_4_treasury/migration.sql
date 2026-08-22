@@ -68,6 +68,7 @@ CREATE TABLE `receipts` (
     `year` SMALLINT NOT NULL,
     `seq` INTEGER NOT NULL,
     `payment_id` INTEGER NOT NULL,
+    `concept` VARCHAR(200) NOT NULL,
     `pdf_path` VARCHAR(255) NULL,
     `issued_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `emailed_at` DATETIME(3) NULL,

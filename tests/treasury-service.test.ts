@@ -5,18 +5,38 @@ import { makeTreasuryService, TreasuryError } from "@/lib/treasury/service";
 
 type Fee = { id: number; memberId: number; period: string; status: string; origin: string; paymentId: number | null };
 type Row = Record<string, unknown> & { id: number };
+type FeeWhere = { memberId: number; period: { in: string[] }; paymentId?: number; status?: string };
 
 function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
-  const state = { fees: opts.fees.map((f) => ({ ...f })), payments: [] as Row[], receipts: [] as Row[], seq: 0 };
+  const state = {
+    fees: opts.fees.map((f) => ({ ...f })),
+    payments: [] as Row[],
+    receipts: [] as Row[],
+    seq: 0,
+    // Los `where` de cada updateMany sobre cuotas, para poder afirmar CON QUÉ se
+    // acotó el UPDATE y no solo qué quedó en la tabla.
+    feeUpdateWheres: [] as FeeWhere[],
+    // Gancho para simular que otra operación tocó la tabla entre la foto que lee
+    // el servicio y las escrituras de su transacción.
+    beforeTransaction: null as null | (() => void),
+  };
   const tx = {
     member: { findUnique: vi.fn(async () => opts.member) },
     fee: {
       findMany: vi.fn(async (args: { where: { memberId: number } }) =>
         state.fees.filter((f) => f.memberId === args.where.memberId)),
-      updateMany: vi.fn(async (args: { where: { memberId: number; period: { in: string[] } }; data: Record<string, unknown> }) => {
+      updateMany: vi.fn(async (args: { where: FeeWhere; data: Record<string, unknown> }) => {
+        state.feeUpdateWheres.push(args.where);
         let count = 0;
         for (const f of state.fees) {
-          if (f.memberId === args.where.memberId && args.where.period.in.includes(f.period)) { Object.assign(f, args.data); count++; }
+          if (f.memberId !== args.where.memberId) continue;
+          if (!args.where.period.in.includes(f.period)) continue;
+          // El fake honra los filtros opcionales: si no lo hiciera, afirmar que el
+          // servicio los manda no probaría nada sobre lo que hace la base.
+          if (args.where.paymentId !== undefined && f.paymentId !== args.where.paymentId) continue;
+          if (args.where.status !== undefined && f.status !== args.where.status) continue;
+          Object.assign(f, args.data);
+          count++;
         }
         return { count };
       }),
@@ -66,7 +86,14 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
     $executeRaw: vi.fn(async () => { state.seq++; return 1; }),
     receiptSequence: { findUniqueOrThrow: vi.fn(async () => ({ year: 2026, last: state.seq })) },
   };
-  const db = { ...tx, $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)) };
+  const db = {
+    ...tx,
+    $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
+      state.beforeTransaction?.();
+      state.beforeTransaction = null;
+      return fn(tx);
+    }),
+  };
   return { db: db as never, state };
 }
 
@@ -101,8 +128,49 @@ describe("registerCashPayment", () => {
     expect(r.pdfWritten).toBe(true);
     expect(state.fees.filter((f) => f.status === "paid").map((f) => f.period)).toEqual(["2024-10", "2024-11", "2024-12"]);
     expect(state.payments[0]).toMatchObject({ type: "cash", amount: "18000.00", registeredById: 1 });
-    expect(state.receipts[0]).toMatchObject({ number: "2026-00001", year: 2026, seq: 1, pdfPath: "2026/2026-00001.pdf" });
+    expect(state.receipts[0]).toMatchObject({
+      number: "2026-00001", year: 2026, seq: 1, pdfPath: "2026/2026-00001.pdf", concept: "Cuota social · octubre a diciembre 2024 (3 cuotas)",
+    });
     expect(writePdf).toHaveBeenCalledWith("2026/2026-00001.pdf", expect.any(Uint8Array));
+    // Qué se le pasó al renderizador, no solo que se lo llamó: acá vive el
+    // concepto, y sin esta afirmación el PDF puede salir vacío sin que nada falle.
+    expect(renderPdf).toHaveBeenCalledWith({
+      number: "2026-00001",
+      issuedAt: now(),
+      memberName: "Socio",
+      memberNumber: 144,
+      concept: "Cuota social · octubre a diciembre 2024 (3 cuotas)",
+      methodLabel: "Efectivo",
+      amount: 18000,
+      voided: null,
+    });
+  });
+
+  it("rechaza un monto que no entra en la columna", async () => {
+    const { db } = fakeDb({ member: { ...active(3), category: "adherent" }, fees: [] });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    await expect(svc.registerCashPayment({ memberId: 3, actorId: 1, concept: "voluntary", amount: 100_000_000 }))
+      .rejects.toThrow(/máximo que admite el sistema/);
+  });
+
+  it("recorta el concepto al largo de la columna", async () => {
+    // 60 cuotas no contiguas describen una lista muchísimo más larga que los 200
+    // caracteres de `Receipt.concept`: el recibo se emite igual, recortado.
+    const periods = Array.from({ length: 60 }, (_, i) => {
+      const months = i * 2;
+      return `${2010 + Math.floor(months / 12)}-${String((months % 12) + 1).padStart(2, "0")}`;
+    });
+    const { db, state } = fakeDb({
+      member: active(9),
+      fees: periods.map((period, i) => (
+        { id: i + 1, memberId: 9, period, status: "pending", origin: "import", paymentId: null })),
+    });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    await svc.registerCashPayment({ memberId: 9, actorId: 1, concept: "fees", count: 60 });
+    const concept = state.receipts[0].concept as string;
+    expect(concept).toHaveLength(200);
+    expect(concept.endsWith("...")).toBe(true);
+    expect(renderPdf).toHaveBeenCalledWith(expect.objectContaining({ concept }));
   });
 
   it("un socio al día crea la cuota del período corriente", async () => {
@@ -156,6 +224,8 @@ describe("registerCashPayment", () => {
 });
 
 describe("voidReceipt", () => {
+  beforeEach(() => { renderPdf.mockClear(); writePdf.mockClear(); });
+
   it("anula el recibo, marca el pago voided; las cuotas vuelven a pendiente y las futuras se borran", async () => {
     const { db, state } = fakeDb({ member: active(4), fees: [
       { id: 1, memberId: 4, period: "2026-08", status: "pending", origin: "accrual", paymentId: null },
@@ -170,6 +240,81 @@ describe("voidReceipt", () => {
     expect(state.payments[0]).toMatchObject({ status: "voided" });
     expect(state.fees.map((f) => [f.period, f.status, f.paymentId]))
       .toEqual([["2026-08", "pending", null], ["2026-09", "pending", null]]);
+    // El revert se acota al pago del recibo, no solo a (socio, período).
+    expect(state.feeUpdateWheres.at(-1)).toMatchObject({ memberId: 4, paymentId: r.paymentId });
+  });
+
+  it("el recibo anulado conserva el concepto que decía al emitirse", async () => {
+    const { db, state } = fakeDb({ member: active(4), fees: [
+      { id: 1, memberId: 4, period: "2026-08", status: "pending", origin: "accrual", paymentId: null },
+    ] });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    const r = await svc.registerCashPayment({ memberId: 4, actorId: 1, concept: "fees", count: 3 });
+    const concept = "Cuota social · agosto a octubre 2026 (3 cuotas)";
+    expect(state.receipts[0]).toMatchObject({ concept });
+
+    renderPdf.mockClear();
+    await svc.voidReceipt({ receiptId: r.receiptId, actorId: 2, reason: "Cargado por error" });
+    // Anular despega las cuotas del pago; el detalle tiene que sobrevivir igual.
+    expect(renderPdf).toHaveBeenCalledWith(expect.objectContaining({
+      number: "2026-00001", concept, voided: { reason: "Cargado por error" },
+    }));
+    expect(await svc.receiptPdfData(r.receiptId)).toMatchObject({ concept });
+  });
+
+  it("dos anulaciones simultáneas: solo una prospera", async () => {
+    const { db, state } = fakeDb({ member: active(4), fees: [
+      { id: 1, memberId: 4, period: "2026-08", status: "pending", origin: "accrual", paymentId: null },
+    ] });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    const r = await svc.registerCashPayment({ memberId: 4, actorId: 1, concept: "fees", count: 1 });
+    const outcomes = await Promise.allSettled([
+      svc.voidReceipt({ receiptId: r.receiptId, actorId: 2, reason: "uno" }),
+      svc.voidReceipt({ receiptId: r.receiptId, actorId: 3, reason: "dos" }),
+    ]);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.filter((o) => o.status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(TreasuryError);
+    expect(state.fees).toEqual([
+      { id: 1, memberId: 4, period: "2026-08", status: "pending", origin: "accrual", paymentId: null },
+    ]);
+  });
+
+  it("no devuelve a pendiente una cuota que ya se reimputó a otro pago", async () => {
+    const { db, state } = fakeDb({ member: active(4), fees: [
+      { id: 1, memberId: 4, period: "2026-08", status: "pending", origin: "accrual", paymentId: null },
+    ] });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    const r = await svc.registerCashPayment({ memberId: 4, actorId: 1, concept: "fees", count: 1 });
+    // Entre la foto que lee la anulación y sus escrituras, la cuota pasa a otro
+    // pago (con su propio recibo válido). Pisarla dejaría plata cobrada como deuda.
+    state.beforeTransaction = () => { state.fees[0].paymentId = 99; };
+    const v = await svc.voidReceipt({ receiptId: r.receiptId, actorId: 2, reason: "x" });
+    expect(v.periodsReverted).toBe(0);
+    expect(state.fees[0]).toMatchObject({ period: "2026-08", status: "paid", paymentId: 99 });
+  });
+
+  it("receiptPdfData arma los datos y regenerateReceiptPdf reescribe el archivo", async () => {
+    const { db } = fakeDb({ member: { ...active(3), category: "adherent" }, fees: [] });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    const r = await svc.registerCashPayment({ memberId: 3, actorId: 1, concept: "voluntary", amount: 2500 });
+    expect(await svc.receiptPdfData(r.receiptId)).toEqual({
+      number: "2026-00001",
+      issuedAt: now(),
+      memberName: "Socio",
+      memberNumber: 3,
+      concept: "Aporte voluntario",
+      methodLabel: "Aporte voluntario",
+      amount: 2500,
+      voided: null,
+    });
+    renderPdf.mockClear();
+    writePdf.mockClear();
+    const bytes = await svc.regenerateReceiptPdf(r.receiptId);
+    expect(renderPdf).toHaveBeenCalledWith(expect.objectContaining({ concept: "Aporte voluntario" }));
+    expect(writePdf).toHaveBeenCalledWith("2026/2026-00001.pdf", bytes);
+    await expect(svc.receiptPdfData(999)).rejects.toThrow(/no existe/);
   });
 
   it("no anula dos veces", async () => {
