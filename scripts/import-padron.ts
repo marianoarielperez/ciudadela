@@ -1,5 +1,5 @@
 // Idempotent import of datos/padron_socios.xlsx into Book 1.
-// Run: npx tsx scripts/import-padron.ts [--update-existing]
+// Run: npx tsx scripts/import-padron.ts [--update-existing] [--prune --yes]
 //
 // Por defecto SOLO crea los socios que faltan: los que ya están en la base no se
 // tocan. Es a propósito. Una vez que la Comisión empiece a completar las fichas a
@@ -12,6 +12,12 @@
 // invariante de `memberWriter`, así que las filas cuyo email choque con otra
 // cuenta de acceso —o que dejarían sin email a un socio que ya tiene cuenta— NO
 // se escriben (ver el bloque del loop).
+//
+// El padrón definitivo es el Excel (decisión del 21/08/2026): si una ficha
+// dejó de figurar ahí, es que la Comisión la sacó del libro. --prune la borra
+// de la base, pero SOLO si no tiene nada colgando que haya producido el
+// sistema, y SOLO si los totales de control del archivo dan — un Excel truncado
+// borraría socios buenos. Es destructivo, así que además pide --yes.
 //
 // Esta es la carga fundacional del Libro de Socios: todo el sistema se construye
 // encima. Ante cualquier ambigüedad el script ABORTA en vez de adivinar; nunca
@@ -39,15 +45,18 @@ const SHEET_NAME = "socios";
 // Totales de control del Libro N° 1 tal como está el papel. Son constantes (y no
 // literales sueltos) porque el reporte los imprime Y la validación los compara:
 // tocar uno solo dejaría el reporte diciendo "esperado N" mientras valida otra cosa.
-const EXPECTED_ROWS = 283;
+const EXPECTED_ROWS = 278;
 const EXPECTED_ACTIVE = 160;
 const EXPECTED_WITHDRAWN = EXPECTED_ROWS - EXPECTED_ACTIVE;
 // Números de socio que el libro nunca usó (fichas anuladas o nunca asignadas).
 // Se compara el CONJUNTO, no la cantidad: si se completara el 21 y desapareciera
-// otro, el total seguiría dando 22 y el cambio pasaría inadvertido.
+// otro, el total seguiría dando 28 y el cambio pasaría inadvertido.
+// Los seis últimos (118, 141, 158, 239, 287, 288) los sumó el padrón definitivo
+// del 21/08/2026: son las fichas que la Comisión sacó del libro y que --prune
+// borra de la base.
 const EXPECTED_GAPS = [
-  21, 71, 72, 73, 93, 94, 95, 97, 125, 132, 147, 199, 208, 214, 221, 222, 223, 224,
-  238, 245, 254, 263,
+  21, 71, 72, 73, 93, 94, 95, 97, 118, 125, 132, 141, 147, 158, 199, 208, 214,
+  221, 222, 223, 224, 238, 239, 245, 254, 263, 287, 288,
 ] as const;
 
 const EXPECTED_HEADERS = [
@@ -208,21 +217,38 @@ function resolveColumns(headerRow: ExcelJS.Row): Map<string, number> {
 }
 
 const UPDATE_FLAG = "--update-existing";
+const PRUNE_FLAG = "--prune";
+const YES_FLAG = "--yes";
+const KNOWN_FLAGS = [UPDATE_FLAG, PRUNE_FLAG, YES_FLAG];
+
+// El detalle del movimiento de admisión que crea ESTE script. Es constante
+// porque la poda lo usa para reconocer un socio "solo importado": un socio con
+// cualquier otro movimiento tiene trabajo hecho a mano encima y no se borra.
+const IMPORT_ADMISSION_DETAIL = "import Libro 1 (acta física no digitalizada)";
 
 // Si el proceso muere en medio del loop, el reporte nunca se escribe: este contador
 // vive afuera para que el handler de error pueda decir hasta dónde llegó.
 const progress = {
   created: 0, updated: 0, unchanged: 0, conflicts: 0, missingEmail: 0, loginEmailMoved: 0,
-  memberships: 0, movements: 0,
+  memberships: 0, movements: 0, pruned: 0,
 };
 
 async function main() {
-  const updateExisting = process.argv.slice(2).includes(UPDATE_FLAG);
-  const unknownArgs = process.argv.slice(2).filter((a) => a !== UPDATE_FLAG);
+  const args = process.argv.slice(2);
+  const updateExisting = args.includes(UPDATE_FLAG);
+  const prune = args.includes(PRUNE_FLAG);
+  const unknownArgs = args.filter((a) => !KNOWN_FLAGS.includes(a));
   if (unknownArgs.length > 0) {
     throw new PadronDataError(
-      `Argumento desconocido: ${unknownArgs.join(", ")}. Único flag válido: ${UPDATE_FLAG}`,
+      `Argumento desconocido: ${unknownArgs.join(", ")}. Flags válidos: ${KNOWN_FLAGS.join(", ")}`,
     );
+  }
+  // Borrar socios no puede salir de un tab-completion desprolijo.
+  if (prune && !args.includes(YES_FLAG)) {
+    throw new PadronDataError(`${PRUNE_FLAG} borra socios de la base: confirmá con ${YES_FLAG}`);
+  }
+  if (args.includes(YES_FLAG) && !prune) {
+    throw new PadronDataError(`${YES_FLAG} solo tiene sentido junto con ${PRUNE_FLAG}`);
   }
 
   if (existsSync(LOCK)) {
@@ -342,6 +368,25 @@ async function main() {
   });
   const warnings = mapped.flatMap((m) => m.warnings);
 
+  // Los totales de control salen del Excel y no de la base, así que se calculan
+  // ACÁ, antes de escribir nada: la poda los necesita para decidir si el archivo
+  // que tiene delante es el padrón entero o uno truncado. El reporte los imprime
+  // más abajo, ya con los conteos leídos de la base.
+  const total = mapped.length;
+  const vigentes = mapped.filter((m) => m.member.status === "active").length;
+  const bajas = total - vigentes;
+  const numbers = new Set(mapped.map((m) => m.memberNumber));
+  const maxN = Math.max(...numbers);
+  const gaps: number[] = [];
+  for (let i = 1; i <= maxN; i++) if (!numbers.has(i)) gaps.push(i);
+
+  const gapSet = new Set(gaps);
+  const expectedGapSet = new Set<number>(EXPECTED_GAPS);
+  const newGaps = gaps.filter((g) => !expectedGapSet.has(g));
+  const filledGaps = EXPECTED_GAPS.filter((g) => !gapSet.has(g));
+  const gapsOk = newGaps.length === 0 && filledGaps.length === 0;
+  const controlTotalsOk = total === EXPECTED_ROWS && vigentes === EXPECTED_ACTIVE && gapsOk;
+
   const minJoined = mapped.reduce((min, m) => (m.member.joinedAt < min ? m.member.joinedAt : min), mapped[0].member.joinedAt);
   const book = await prisma.book.upsert({
     where: { number: 1 },
@@ -432,7 +477,7 @@ async function main() {
         await tx.movement.create({
           data: {
             memberId: member.id, type: "admission", date: m.member.joinedAt,
-            newCategory: m.member.category, detail: "import Libro 1 (acta física no digitalizada)",
+            newCategory: m.member.category, detail: IMPORT_ADMISSION_DETAIL,
           },
         });
       });
@@ -442,19 +487,111 @@ async function main() {
     }
   }
 
-  const total = mapped.length;
-  const vigentes = mapped.filter((m) => m.member.status === "active").length;
-  const bajas = total - vigentes;
-  const numbers = new Set(mapped.map((m) => m.memberNumber));
-  const maxN = Math.max(...numbers);
-  const gaps: number[] = [];
-  for (let i = 1; i <= maxN; i++) if (!numbers.has(i)) gaps.push(i);
+  // ── Poda (--prune --yes): socios del libro que ya no están en el Excel ─────
+  // Se borra FÍSICAMENTE, así que antes hay que estar seguro de dos cosas.
+  //
+  // Primero, que el Excel es el padrón entero: si viniera truncado, todos los
+  // socios que faltan parecerían fichas dadas de baja. Por eso la poda exige
+  // que los totales de control den; si el padrón cambió de verdad, se actualizan
+  // las constantes de arriba (que es lo que hay que hacer igual) y recién ahí
+  // se poda.
+  //
+  // Segundo, que el socio no tenga NADA colgando que haya producido el sistema.
+  // El esquema no protege: `fees` es Cascade (se borrarían las cuotas sin
+  // decir nada), `payments`, `applications` y `mpSubscriptions` son SetNull (un
+  // pago cobrado quedaría sin socio, y con él su recibo), y una cuenta de acceso
+  // quedaría viva apuntando a una ficha que ya no existe. Si aparece cualquiera
+  // de esos casos se aborta SIN borrar a nadie y se resuelve a mano.
+  const pruned: number[] = [];
+  const prunedCollateral = { notifications: 0, tokens: 0, movements: 0 };
+  if (prune) {
+    if (!controlTotalsOk) {
+      throw new PadronDataError(
+        [
+          `${PRUNE_FLAG} borra socios y los totales de control del Excel no dan: no se poda nada.`,
+          `  filas ${total} (esperado ${EXPECTED_ROWS}) | vigentes ${vigentes} (esperado ${EXPECTED_ACTIVE})`,
+          newGaps.length > 0 ? `  huecos NUEVOS (no esperados): ${newGaps.join(", ")}` : null,
+          filledGaps.length > 0 ? `  huecos que se completaron: ${filledGaps.join(", ")}` : null,
+          "  Si el padrón cambió de verdad, actualizá EXPECTED_ROWS / EXPECTED_ACTIVE / EXPECTED_GAPS y volvé a correr.",
+        ].filter((l): l is string => l !== null).join("\n"),
+      );
+    }
 
-  const gapSet = new Set(gaps);
-  const expectedGapSet = new Set<number>(EXPECTED_GAPS);
-  const newGaps = gaps.filter((g) => !expectedGapSet.has(g));
-  const filledGaps = EXPECTED_GAPS.filter((g) => !gapSet.has(g));
-  const gapsOk = newGaps.length === 0 && filledGaps.length === 0;
+    const stale = await prisma.membership.findMany({
+      where: { bookId: book.id, memberNumber: { notIn: [...numbers] } },
+      include: {
+        member: {
+          include: {
+            _count: {
+              select: {
+                applications: true, mpSubscriptions: true, payments: true, fees: true, memberships: true,
+              },
+            },
+            movements: { select: { type: true, detail: true } },
+            user: { select: { id: true } },
+          },
+        },
+      },
+    });
+
+    const blocked = stale.flatMap((s) => {
+      const c = s.member._count;
+      const reasons: string[] = [];
+      if (s.member.user) reasons.push("tiene cuenta de acceso");
+      if (c.applications > 0) reasons.push(`${c.applications} solicitud(es)`);
+      if (c.mpSubscriptions > 0) reasons.push(`${c.mpSubscriptions} suscripción(es) de Mercado Pago`);
+      if (c.payments > 0) reasons.push(`${c.payments} pago(s)`);
+      if (c.fees > 0) reasons.push(`${c.fees} cuota(s)`);
+      // Membresía en otro libro: borrar al socio dejaría esa otra ficha rota (y
+      // la FK, que es Restrict, haría fallar el borrado a mitad de camino).
+      if (c.memberships > 1) reasons.push(`membresía en ${c.memberships - 1} libro(s) más`);
+      // Cualquier movimiento que no sea la admisión que escribió este import es
+      // trabajo hecho desde el panel (una baja asentada, un cambio de categoría).
+      const handMade = s.member.movements.filter(
+        (mv) => !(mv.type === "admission" && mv.detail === IMPORT_ADMISSION_DETAIL),
+      );
+      if (handMade.length > 0) reasons.push(`${handMade.length} movimiento(s) cargados a mano`);
+      return reasons.length > 0 ? [`  socio ${s.memberNumber}: ${reasons.join(", ")}`] : [];
+    });
+    if (blocked.length > 0) {
+      throw new PadronDataError(
+        [
+          "No se puede podar: estos socios ya no están en el Excel pero tienen datos del sistema.",
+          "No se borró a nadie. Resolvelos a mano desde el panel (o volvelos a poner en el Excel):",
+          ...blocked,
+        ].join("\n"),
+      );
+    }
+
+    for (const s of stale) {
+      // Notificaciones, tokens y el asiento de admisión del import se van con el
+      // socio: son derivados suyos y sin la ficha no significan nada. Se cuentan
+      // en el reporte para que el borrado no sea silencioso.
+      // Los contadores se suman DESPUÉS del commit y no adentro del callback:
+      // si la transacción se reintentara, adentro contarían dos veces.
+      const collateral = await prisma.$transaction(async (tx) => {
+        const n = await tx.notification.deleteMany({ where: { memberId: s.memberId } });
+        const t = await tx.actionToken.deleteMany({ where: { memberId: s.memberId } });
+        const mv = await tx.movement.deleteMany({ where: { memberId: s.memberId } });
+        await tx.membership.delete({ where: { id: s.id } });
+        await tx.member.delete({ where: { id: s.memberId } });
+        return { notifications: n.count, tokens: t.count, movements: mv.count };
+      });
+      prunedCollateral.notifications += collateral.notifications;
+      prunedCollateral.tokens += collateral.tokens;
+      prunedCollateral.movements += collateral.movements;
+      pruned.push(s.memberNumber);
+      progress.pruned++;
+    }
+    if (pruned.length > 0) {
+      // El asiento lleva números de socio: no son dato personal (a diferencia
+      // del DNI o del nombre) y son lo único que permite reconstruir qué se borró.
+      await audit({
+        action: "padron_prune", entity: "book", entityId: book.id,
+        detail: { memberNumbers: pruned, ...prunedCollateral },
+      });
+    }
+  }
 
   // Conteos leídos de la base (no de los contadores del loop): es lo que hay que
   // mirar para confirmar que cada socio quedó con su membresía y su admisión.
@@ -486,6 +623,13 @@ async function main() {
       + (progress.missingEmail > 0 ? ` | NO actualizados por quedar sin email teniendo cuenta: ${progress.missingEmail}` : "")
       + (progress.loginEmailMoved > 0 ? ` | socios cuya direccion de INGRESO se mudo sin aviso por correo: ${progress.loginEmailMoved}` : ""),
     `memberships creadas: ${progress.memberships} | movements de admision creados: ${progress.movements}`,
+    prune
+      ? `podados (${pruned.length}): ${pruned.join(", ") || "ninguno"}`
+        + (pruned.length > 0
+          ? ` | con ellos se borraron ${prunedCollateral.movements} movimientos, `
+            + `${prunedCollateral.notifications} notificaciones y ${prunedCollateral.tokens} enlaces`
+          : "")
+      : `poda: no se pidio (${PRUNE_FLAG} ${YES_FLAG} borra los socios del libro que ya no estan en el Excel)`,
     `en base: members ${dbMembers} | memberships libro ${book.number}: ${dbMemberships} | movements admission libro ${book.number}: ${dbAdmissions}`,
     ...(updateExisting
       ? []
@@ -496,7 +640,7 @@ async function main() {
     `avisos (${warnings.length}):`,
     ...warnings.map((w) => `  - ${w}`),
   ];
-  if (total !== EXPECTED_ROWS || vigentes !== EXPECTED_ACTIVE || !gapsOk) {
+  if (!controlTotalsOk) {
     lines.push("ATENCION: TOTALES DISTINTOS DE LOS ESPERADOS — revisar antes de continuar");
   }
   if (dbMemberships !== dbAdmissions) {
@@ -515,7 +659,7 @@ async function main() {
       unchanged: progress.unchanged, conflicts: progress.conflicts,
       missingEmail: progress.missingEmail, loginEmailMoved: progress.loginEmailMoved,
       memberships: progress.memberships, movements: progress.movements,
-      updateExisting, warnings: warnings.length,
+      updateExisting, prune, pruned: pruned.length, warnings: warnings.length,
     },
   });
 }
@@ -539,7 +683,7 @@ main()
     console.error(
       `  progreso antes de abortar: creados ${progress.created}, actualizados ${progress.updated}, ` +
         `sin cambios ${progress.unchanged}, salteados ${progress.conflicts + progress.missingEmail} ` +
-        `(memberships ${progress.memberships}, movements ${progress.movements})`,
+        `(memberships ${progress.memberships}, movements ${progress.movements}), podados ${progress.pruned}`,
     );
     console.error("  El script es idempotente: corregí la causa y volvé a correrlo (los socios ya cargados se saltean).");
   })
