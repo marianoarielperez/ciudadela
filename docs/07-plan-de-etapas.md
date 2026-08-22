@@ -25,7 +25,10 @@ ficha de socio, **modo carga de fichas** (edición rápida con navegación por n
 ABM de actas, acciones alta/baja/cambio de categoría con acta, verificación de email
 + invitación de acceso al cargar email, export Excel del padrón.
 
-CA: los 283 registros importados con sus números originales y los 22 huecos correctos;
+CA: los registros importados con sus números originales y sus huecos correctos
+(283 filas / 22 huecos en la carga del 18/08/2026; **278 filas / 28 huecos** en el
+padrón definitivo del 21/08/2026, que además borra las fichas que salieron del
+libro);
 cargar una ficha completa (DNI, domicilio con calle del catálogo, email) toma <2 min;
 una baja con acta queda en el historial y en auditoría; el email de verificación
 llega vía Brevo y el estado cambia a `verificado`.
@@ -101,11 +104,56 @@ socio con `debt_at_withdrawal` → mensaje "acercate a la sede vecinal" sin deja
 continuar). Resumen mensual de socios aceptados para confeccionar el acta.
 
 ## Módulo 4 — Tesorería
-Cuotas devengadas (cron día 1), aplicación automática de pagos, recibos PDF serie
-única `AAAA-NNNNN` con envío por email, registro de efectivo, links de Checkout Pro,
-bandeja sin-matching, vinculación de suscripciones preexistentes, deudores + propuesta
-de cesantía (4 cuotas), pantalla de valores de cuota (MP vs local), conciliación
-cron de respaldo, `/admin/salud`.
+
+Se ejecuta en **tres fases**, cada una con su branch, su merge a `main` con los
+tests en verde y su despliegue antes de empezar la siguiente.
+
+### Fase 4A — Cuenta corriente y efectivo — **CERRADA** (22/08/2026)
+
+Migración `20260822125844_add_module_4_treasury`, reglas puras de tesorería, tabla
+de valores de cuota + su alta desde Configuración, scripts de datos (padrón
+definitivo con poda + deuda histórica), ficha del socio con pestañas y cinta de
+períodos, `/mi/cuenta`, cobro en efectivo con recibo PDF numerado + email +
+anulación, deudores con cesantía en lote, REG-07 y REG-16 sobre deuda viva,
+paginación.
+
+CA verificados en local con el padrón y la deuda importados: el socio 144 muestra
+23 cuotas pendientes y $ 138.000; registrar 3 cuotas en efectivo emite el
+`2026-00001`, marca pagas las tres más viejas (oct-dic 2024) y la cinta lo refleja;
+anularlo las devuelve a pendientes y el número no se reutiliza; 20 cobros
+concurrentes numeran `00002..00021` sin huecos contra MariaDB real; en Deudores
+sólo los de ≥ 4 cuotas son tildables; cambiar de categoría a un socio con deuda
+está bloqueado.
+
+Despliegue: `docs/10` §4, bloque "Específico de la fase 4A".
+
+### Fase 4B — Mercado Pago (pendiente)
+
+Gateway ampliado, webhook que **aplica** el pago (cuota + recibo + email), links de
+Checkout Pro, bandeja sin conciliar, vinculación de suscripciones preexistentes,
+conciliación diaria de respaldo, lote REG-34 ("aplicar el valor vigente a las
+suscripciones") y **eliminación de la caché de planes**: recién ahí el wizard deja
+de leer el monto de Mercado Pago y pasa a leer `fee_values`.
+
+CA (sandbox local, notificaciones disparadas a mano): un
+`subscription_authorized_payment` de prueba genera pago + cuota del período +
+recibo por email; un pago `pago:{id}:2` aplica dos cuotas; un pago sin referencia
+cae en la bandeja y se vincula desde ahí; matar el webhook y correr la conciliación
+registra el pago igual; el lote actualiza el monto de una suscripción de prueba y
+reporta la que falla.
+
+### Fase 4C — Notificaciones y salud (pendiente)
+
+Crons de devengo (día 1), aviso de mora (día 30) y resumen diario a la Comisión;
+`payment_rejected` que avisa al socio; `Notification.failed` + reintento desde el
+panel; `/admin/salud`; export del padrón electoral (REG-31); crontab completo
+documentado.
+
+CA: correr el devengo dos veces el mismo día crea una sola cuota por socio; el
+aviso de mora en un día que no es 30 no envía nada y el 30 envía una sola vez a
+cada deudor; el resumen sin novedades no se envía; un email con el transporte roto
+queda `failed` y "Reintentar" lo saca; `/admin/salud` muestra las cinco corridas y
+el backup.
 
 **Alcance agregado el 21/08/2026 — propagación del valor de cuota (REG-34).**
 Las suscripciones se crean **sin plan asociado** en MP y **copian** el monto
@@ -120,11 +168,6 @@ llamadas, hasta 4 veces al año: no es un problema de escala. Queda atado al act
 que es más fiel al estatuto que el sync. **Hasta que exista, un cambio de cuota
 en MP sólo afecta a las altas nuevas.**
 
-CA (sandbox): un débito recurrente de prueba genera Pago aplicado a la cuota del
-período + Recibo correlativo enviado por email; un efectivo registrado emite recibo
-imprimible; matar el webhook y correr el cron registra el pago igual; la numeración
-de recibos no tiene huecos tras 20 pagos concurrentes de prueba.
-
 Ideas incorporadas durante el desarrollo del Módulo 1: recibo automático por email
 para los débitos acreditados; registro de pago en efectivo con envío automático
 del comprobante por email; notificación el día 30 de cada mes a los socios con
@@ -138,6 +181,11 @@ porque depende del dato de deuda real.
 Cosas que se encontraron construyendo el M3, que **no** entraban en su alcance y
 que el M4 tiene que levantar. No son ideas sueltas: cada una tapa un agujero
 concreto.
+
+Reparto tras cerrar la fase 4A: **1, 3, 4, 5 y 6 van a la 4B** (todo lo que toca
+Mercado Pago); **2 va a la 4C** (junto con el resto de las notificaciones); **7
+está cerrado**; **8 queda abierto** y sin fase asignada. La 4A no levantó ninguno:
+su alcance era la cuenta corriente local.
 
 1. **La conciliación debe barrer preapprovals sin fila local.** Si
    `createPreapproval` sale bien contra MP y la escritura local falla, queda un
@@ -158,11 +206,13 @@ concreto.
    `already_processed`, indistinguibles de un reintento. Recuperable por el
    payload crudo; candidato a un `result` propio (`duplicate_entry_payment`).
 5. **Cambiar los ids de plan no invalida la caché de montos** (hasta 24 h de
-   retraso): cerrar junto con la pantalla de valores de cuota. Acotado el
-   21/08/2026: **ningún** camino que escriba un monto en MP usa ya la caché —ni
-   `startPaymentAction` ni la recategorización: las dos leen el plan fresco y
-   abortan si falla—, así que lo que queda es un monto viejo **en pantalla**
-   (paso 2 del wizard), no un débito por el importe equivocado.
+   retraso). Acotado el 21/08/2026: **ningún** camino que escriba un monto en MP usa
+   ya la caché —ni `startPaymentAction` ni la recategorización: las dos leen el plan
+   fresco y abortan si falla—, así que lo que queda es un monto viejo **en pantalla**
+   (paso 2 del wizard), no un débito por el importe equivocado. **Sigue abierto
+   después de la 4A**: la fase creó la tabla de valores de cuota y la hizo la única
+   fuente de montos de tesorería, pero **no tocó `startPaymentAction`**, que sigue
+   leyendo el plan de MP. La caché y esta lectura se van juntas en la 4B.
 6. **Una solicitud re-suscripta a mano** (tras revivir por pago tardío) queda
    describiendo la suscripción nueva con la copia "verificá antes de gestionar".
    No es alcanzable hoy porque la re-suscripción es manual; si el M4 automatiza el
@@ -205,16 +255,26 @@ baja con `recurso_hasta` correcto; el Libro 1 queda cerrado y consultable; resta
 backup revierte el simulacro.
 
 ## Lanzamiento (cuando IGJ oficialice)
-Checklist: **cambiar `MP_ACCESS_TOKEN` a las credenciales productivas** (hasta el
-lanzamiento el dominio corre con las de prueba) → **borrar `EMAIL_ALLOWLIST` del `.env`
-del VPS** (mientras esté definida, los avisos a los socios NO salen) →
-webhooks productivos apuntando a `vecinalciudadela.ar` → **recargar en
-`/admin/configuracion` los ids de los dos planes productivos** (`mp_plan_active_id`
-y `mp_plan_shared_id`: los de sandbox no existen en la cuenta real, y sin ellos el
-paso 2 del wizard no muestra montos) → SPF/DKIM/DMARC del dominio (ya autenticado
-en Brevo) → carga de fichas completa (160 vigentes: 55 activos + 105 adherentes) →
-suscripciones preexistentes vinculadas → acta marco de admisión digital dictada
-(REG-12) → **textos legales aprobados por la CD y cargados en
-`/admin/configuracion`** → **crontab de `/api/cron/applications` instalado en el
-VPS** (`docs/11`, Parte H) → activar `asociate_activo` → convocar
-re-empadronamiento dentro de los 90 días.
+
+Ya hecho, antes de tiempo: ~~cambiar `MP_ACCESS_TOKEN` a las credenciales
+productivas~~, ~~webhooks productivos apuntando a `vecinalciudadela.ar`~~ y
+~~recargar los ids de los dos planes productivos~~. Las tres se hicieron el
+**22/08/2026** para el piloto real del socio 306, que se afilió por la web y cuyo
+débito funcionó. Desde entonces el dominio corre en producción contra Mercado Pago:
+**no se prueban cobros ahí**.
+
+Checklist que queda: **borrar `EMAIL_ALLOWLIST` del `.env` del VPS** (mientras esté
+definida, los avisos a los socios NO salen) → SPF/DKIM/DMARC del dominio (ya
+autenticado en Brevo) → carga de fichas completa (160 vigentes: 36 activos +
+124 adherentes) → suscripciones preexistentes vinculadas (fase 4B) → acta marco de
+admisión digital dictada (REG-12) → **textos legales aprobados por la CD y cargados
+en `/admin/configuracion`** → **crontab instalado en el VPS** (`docs/11`, Parte H:
+hoy `/api/cron/applications`; la fase 4C suma devengo, mora, resumen y
+conciliación) → activar `asociate_activo` → convocar re-empadronamiento dentro de
+los 90 días.
+
+Nota sobre los ids de plan: desde la fase 4A **el monto ya no sale de ahí** —la
+tabla de valores de cuota es la única fuente—, pero los ids **siguen siendo
+obligatorios** porque `startPaymentAction` del wizard todavía lee el monto del plan
+con `getPlan()`. Sin ellos, el paso 2 de ASOCIATE no avanza. Eso se migra en la
+fase 4B; recién entonces los ids pasan a ser opcionales.

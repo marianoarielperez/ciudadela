@@ -23,9 +23,13 @@ de Datos Personales** (Argentina).
 
 ## Archivos sensibles
 
-- Almacenados fuera del webroot (`/var/sigev/uploads`), nombres UUID, permisos 750.
+- Almacenados fuera del webroot (`/var/sigev/uploads` para documentos personales,
+  `/var/sigev/recibos` para los PDFs de recibos), nombres UUID, permisos 750.
 - Servidos solo por API route autenticada con verificación de rol; **cada
   visualización de un documento queda en Auditoria** (quién, cuándo, qué documento).
+  Los recibos suman una ruta para el propio socio (`/api/mi/recibos/[id]`): pedir
+  uno ajeno devuelve **404** —no 403— con el mismo cuerpo que un id inexistente y
+  sin tocar el disco, así que el status no funciona como oráculo de existencia.
 - Validación de subida: MIME real (magic bytes), extensiones jpg/png/webp/pdf,
   máx 10 MB, re-encode de imágenes (elimina metadatos EXIF con GPS).
 
@@ -98,7 +102,7 @@ de su imagen antes de publicarlo.
 
 ## Backups
 
-- Nocturno: `mysqldump sigev` + `tar` de uploads → **GPG simétrico** (passphrase
+- Nocturno: `mysqldump sigev` + `tar` de `uploads` y `recibos` → **GPG simétrico** (passphrase
   guardada fuera del VPS) → `rclone` al Google Drive institucional
   (av.ciudadela@gmail.com). Retención 30 días. Verificación de restore trimestral.
 - Complemento: snapshots de Contabo (VPS completo).

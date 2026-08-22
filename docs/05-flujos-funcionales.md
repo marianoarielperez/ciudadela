@@ -125,13 +125,19 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
 | Socio `vigente` o `suspendido` | "Ya estás asociado/a a la vecinal" (al suspendido no se le revela la suspensión) |
 | Baja por expulsión / `reentryBlocked` (REG-04) | "No podemos procesar tu solicitud por este medio. Acercate a la sede vecinal." — genérico, sin motivo |
 | Baja por **fallecimiento** o **anulación por duplicado** | El **mismo** mensaje genérico de sede (decisión de Mariano, 20/08/2026): un DNI vivo contra una ficha de fallecido es error de datos o suplantación, y la ficha anulada tiene su gemela real en el padrón. Ninguna de las dos cosas se discute por un formulario web |
-| Baja por mora, o con deuda al momento de la baja (REG-16) | "Tenés una deuda pendiente con tesorería. Acercate a la sede vecinal para regularizarla." |
+| **Deuda viva** en la cuenta corriente: una o más cuotas pendientes (REG-16) | "Tenés una deuda pendiente con tesorería. Acercate a la sede vecinal para regularizarla." |
 | Rechazo de menos de 6 meses, sobre la ficha o sobre una solicitud anterior (REG-05) | "No podés presentar una nueva solicitud por el momento" + la fecha exacta a partir de la cual puede reintentar |
-| Cualquier otra baja sin deuda (renuncia, mudanza, no re-empadronado) | **Continúa**: la solicitud guarda el `memberId` y el asiento será un **reingreso** sobre la ficha original, no un socio duplicado (REG-25) |
+| Cualquier otra baja sin deuda viva (renuncia, mudanza, no re-empadronado, **y también el cesante por mora que ya saldó**) | **Continúa**: la solicitud guarda el `memberId` y el asiento será un **reingreso** sobre la ficha original, no un socio duplicado (REG-25) |
 | DNI desconocido | Continúa (alta común) |
 
 Los mensajes de "sede" no distinguen expulsión de fallecimiento ni de anulación:
 quien golpea el formulario con DNIs ajenos no puede deducir nada del padrón.
+
+**Cambio de la fase 4A (decisión del cliente, 22/08/2026):** lo que bloquea por
+deuda es la **cuenta corriente viva**, no la marca histórica `debtAtWithdrawal` del
+Libro 1. El motivo de baja `cesantia_mora` **dejó de bloquear por sí solo**: REG-16
+dice que saldar la totalidad habilita el reingreso, así que el cesante que paga en
+la sede queda habilitado solo, sin que nadie tenga que bajar un flag.
 
 **Paso 4 — Documentación**
 - Upload obligatorio: DNI frente y dorso (foto/imagen). Opcional/according: hasta 2
@@ -243,39 +249,111 @@ y el operador vería un acta vacía.
 - Listado del libro abierto: número, nombre, DNI, categoría, estado, email
   (con su estado de verificación), deuda (cuotas pendientes), débito automático sí/no.
   Filtros y búsqueda. Export Excel.
-- Ficha de socio: datos completos, documentos, historial de movimientos con actas,
-  cuenta corriente (cuotas y pagos), notificaciones cursadas, suscripción MP.
-- **Modo carga de fichas** (crítico para el arranque): edición rápida de los 163
+- Ficha de socio, en cuatro pestañas (`?tab=`): **Ficha** (datos personales),
+  **Cuenta corriente** (ver §5.1), **Historial** (movimientos con sus actas y
+  notificaciones cursadas) y **Acceso** (cuenta del socio, verificación de email).
+  El encabezado —nombre, badges de categoría, estado y deuda viva, y las acciones
+  societarias— es común a las cuatro.
+- **Modo carga de fichas** (crítico para el arranque): edición rápida de los 160
   vigentes importados, con todos los campos en una pantalla, guardado con Ctrl+S /
   botón, y navegación "anterior / siguiente por número de socio". Al cargar un email:
   botón "enviar verificación + invitación de acceso".
 - Acciones con acta: baja (motivo del catálogo), cambio de categoría, reingreso
   (si es cesante por mora, muestra deuda calculada a valor vigente, REG-16),
   suspensión (desde/hasta).
+  Desde la fase 4A, **el cambio de categoría está bloqueado si el socio tiene
+  cuotas pendientes** (REG-07), y el conteo se hace dentro de la misma transacción
+  que el cambio. Y toda baja marca la deuda al momento de la baja si había cuotas
+  pendientes, sea cesantía por mora, renuncia o mudanza.
 - Export **Padrón electoral** (REG-31): parámetro fecha de elección → Excel/PDF.
 
 ## 5. Panel admin — Tesorería
 
-- **Conciliación**: pagos entrantes por webhook ya aplicados (solo se miran);
-  pendientes de matching (pago MP sin socio identificable) con buscador para
-  asignar a mano.
-- **Registrar pago en efectivo**: buscar socio → monto y concepto (cuota período X /
-  ingreso / voluntaria / extraordinaria) → genera Pago + Recibo PDF numerado →
-  se imprime y/o se envía por email.
-- **Generar link de pago**: para socio con cuotas pendientes → crea preferencia de
-  Checkout Pro con `external_reference` → copia el link o lo envía por email.
-- **Recibos**: listado, reimpresión, envío. Serie única `AAAA-NNNNN`.
-- **Deudores**: socios con cuotas impagas; a partir de 4 (REG-15), botón
-  "proponer cesantía" que arma el lote para el acta.
-- **Valores de cuota**: pantalla que muestra los montos actuales de los Planes MP
-  (API) vs. tabla ValorCuota local; botón "registrar nuevo valor" (con acta) cuando
-  la CD cambió el plan en MP. Como las suscripciones se crean sin plan asociado y
-  copian el monto (`docs/06` §2), cambiar el valor en MP no se propaga solo a las
-  suscripciones vigentes: la pantalla incluye también la acción "aplicar el nuevo
-  valor de cuota a las suscripciones vigentes" (REG-34) — recorre las suscripciones
-  activas de la categoría, empuja el monto por API a cada una, con progreso,
-  reintento de las que fallen, asiento de auditoría y pantalla de "quedaron N sin
-  actualizar".
+`/admin/tesoreria` no tiene pantalla propia: redirige a la primera pestaña. Las
+pestañas son **rutas**, no un componente de pestañas — así el filtro queda en la
+URL, el botón atrás funciona y `aria-current` sale solo. El encabezado
+("Tesorería") lo pone el layout de la sección; ninguna pestaña escribe el suyo.
+
+**Implementadas (fase 4A)**
+
+- **Deudores** (`/admin/tesoreria/deudores`) — la pantalla más grave del sistema:
+  acá se expulsa gente. Lista los socios vigentes y suspendidos con cuotas
+  pendientes, ordenados por deuda: N°, socio (link a su cuenta corriente),
+  categoría, cuotas, deuda a valor vigente, último pago y situación
+  ("Al día" / "1 cuota" / "En mora" / "Cesantía posible"). Filtros por nombre o DNI
+  y por situación.
+  Sólo las filas de **≥ 4 cuotas** (REG-15) tienen casilla que tildar; si no hay
+  ninguna, la columna de selección ni siquiera existe. Se elige un acta y se pide
+  "Declarar cesantía", y entonces aparece un **paso de confirmación con los nombres
+  a la vista** (socios elegidos + cuotas adeudadas + acta) antes de ejecutar
+  —decisión del cliente, 22/08/2026—; los datos de ese panel se resuelven en el
+  servidor, así que un payload adulterado no puede mostrar un nombre y expulsar a
+  otro. "Volver sin declarar" conserva la selección y el acta.
+  Cada declaración deja baja con motivo `cesantia_mora`, fecha del acta, cuenta de
+  acceso apagada, movimiento en el historial, la marca de deuda al momento de la
+  baja y asiento de auditoría.
+- **Efectivo** (`/admin/tesoreria/efectivo`) — buscar al socio por número, apellido
+  o DNI → elegir concepto (**Cuotas sociales** / Aporte voluntario / Aporte
+  extraordinario). Para cuotas se pide la **cantidad**, no el monto: el total es
+  `n × valor vigente` y se muestra en pantalla antes de confirmar; para los aportes
+  se pide el monto (pesos enteros, sin centavos). Nota opcional y casilla "enviar
+  el recibo por email".
+  "Registrar y emitir recibo" imputa las **cuotas más viejas** primero, emite el
+  recibo con su número, escribe el PDF y manda el correo con el PDF adjunto. Si el
+  correo no sale (sin email, casilla rebotada, allowlist del entorno, SMTP caído),
+  el cobro **igual quedó asentado** y la pantalla del recibo lo dice.
+- **Recibos** (`/admin/tesoreria/recibos`) — listado con filtros por número o
+  socio, mes, medio de pago y estado (vigentes / anulados), paginado. Cada fila
+  lleva al detalle (`/admin/tesoreria/recibos/[id]`): fecha, socio, **concepto
+  congelado**, medio, importe, importe en letras, nota y quién lo registró; y las
+  acciones **descargar PDF**, **enviar/reenviar por email** y **anular** (con
+  motivo, detrás de un desplegable). Anular devuelve las cuotas a pendientes y el
+  número **no se reutiliza**.
+- **Valores de cuota** (`/admin/tesoreria/valores`) — pantalla de **lectura**: los
+  dos montos vigentes (socio activo / adherente-colaborador), desde cuándo rigen y
+  el historial completo con su acta. El valor nuevo se registra desde
+  `/admin/configuracion`, que es de superadmin, con la fecha de vigencia y un acta
+  opcional. No se edita nunca: se asienta otro encima.
+
+**Pendientes de la fase 4B**
+
+- **Sin conciliar**: bandeja de pagos de MP que no se pudieron atribuir a un socio,
+  con buscador para asignarlos a mano.
+- **Suscripciones**: vinculación de las preexistentes y la acción "aplicar el valor
+  vigente a las suscripciones" (REG-34) — recorre las activas de la categoría,
+  empuja el monto por API a cada una, con progreso, reintento de las que fallen,
+  auditoría y pantalla de "quedaron N sin actualizar". Hace falta porque las
+  suscripciones se crean **sin plan asociado** y copian el monto (`docs/06` §2):
+  cambiar el valor no mueve ni un débito vivo.
+- **Generar link de pago** (Checkout Pro con `external_reference`), y la aplicación
+  automática de los pagos que llegan por webhook.
+
+### 5.1 Cuenta corriente en la ficha del socio
+
+La ficha (`/admin/socios/[id]`) tiene cuatro pestañas —**Ficha**, **Cuenta
+corriente**, **Historial**, **Acceso**— que son paneles de la misma pantalla, no
+rutas (van por `?tab=`, así que el enlace se comparte igual). El encabezado con el
+nombre, los badges y las acciones societarias no se mueve al cambiar de pestaña, y
+uno de esos badges es "Debe N cuotas", calculado sobre la deuda **viva**: el que
+saldó en la sede deja de verse como deudor sin que nadie toque un flag.
+
+La pestaña de cuenta corriente muestra:
+
+- El resumen: "Debe N cuotas · $ X a valor vigente · desde marzo 2024", o "Está al
+  día", o —si la categoría no devenga— "el aporte es voluntario". Más el valor
+  vigente de la cuota.
+- La **cinta de períodos**: una tabla con un año por fila y un mes por columna.
+  Cada celda dice el estado de esa cuota y lo dice **dos veces**, con color y con
+  glifo (`✓` pagada, `•` pendiente, `L` pendiente importada del Libro 1,
+  `E` exenta, `A` anulada), porque
+  los navegadores no imprimen fondos y la cinta salía en blanco en papel. Las
+  celdas pagadas enlazan a su recibo. El rango arranca en el **primer año con
+  cuota** —no en el año de ingreso, o un socio con un solo pago rendía ocho filas
+  vacías— y llega hasta el año corriente.
+- El **libro de pagos**: fecha, concepto, medio, importe y recibo. Los pagos
+  anulados quedan tachados, no desaparecen.
+- Los accesos directos a "Registrar efectivo" (con el socio ya elegido) y "Ver
+  recibos".
 
 ## 6. Panel admin — Noticias, Actividades, Actas, Configuración
 
@@ -300,8 +378,14 @@ Login email + contraseña (Auth.js). Recupero por email.
 - **Mis datos**: ver todo, editar teléfono/email/domicilio (cambio de email exige
   re-verificación; cambio de domicilio queda marcado "pendiente de constatación"
   para la CD).
-- **Mi cuenta**: estado (categoría, número de socio, antigüedad), cuotas pendientes
-  y pagadas, recibos descargables.
+- **Mi cuenta** (`/mi/cuenta`, implementada en la fase 4A, **solo lectura**): la
+  misma sección que ve el admin en la ficha —resumen, cinta de períodos y libro de
+  pagos— con el tratamiento cambiado ("Debés", no "Debe") y sin los botones de
+  cobro. El adherente lee "Tu aporte es voluntario", no "estás al día". Los recibos
+  se descargan por `/api/mi/recibos/[id]`: pedir uno ajeno devuelve **404**, no 403,
+  y con el mismo cuerpo que un id inexistente.
+  La página se autoriza a sí misma: el layout de `/mi` corre en paralelo y no la
+  protege.
 - **Pagar**: si hay pendientes, botón que genera el link de Checkout Pro por los
   períodos seleccionados. Si es adherente sin débito: botón "hacer un aporte
   voluntario" y/o "adherir al débito automático".
@@ -319,7 +403,7 @@ Precondición: proceso en `primera_instancia` o `segunda_instancia`.
   nombre enmascarado "¿Sos M****** P.?" para confirmar. Si no matchea, mensaje
   genérico "No encontramos una coincidencia" (sin revelar si el DNI existe).
   Rate limit estricto (p. ej. 5 intentos/15 min por IP) + Turnstile.
-- Nota operativa: esto requiere que los DNI de los 105 adherentes estén cargados
+- Nota operativa: esto requiere que los DNI de los 124 adherentes estén cargados
   ANTES de abrir el proceso (modo carga de fichas). El proceso no puede activarse
   si hay adherentes vigentes sin DNI (validación al activar, con listado de faltantes).
 

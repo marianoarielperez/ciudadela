@@ -221,10 +221,11 @@ AUTH_URL=https://vecinalciudadela.ar
 MP_ACCESS_TOKEN=<credenciales PRODUCTIVAS>
 MP_WEBHOOK_SECRET=<productivo>
 UPLOADS_DIR=/var/sigev/uploads
+RECEIPTS_DIR=/var/sigev/recibos
 MAIL_FROM="Asoc. Vecinal del Barrio Ciudadela <notificaciones@vecinalciudadela.ar>"
 ```
 
-Tres cosas que no avisan si están mal:
+Cuatro cosas que no avisan si están mal:
 
 - **`AUTH_URL` se hornea en el build.** De ahí salen `metadataBase`, las URLs
   canónicas, el `robots.txt` y el `sitemap.xml`. Cambiarla exige **re-buildear**;
@@ -236,6 +237,10 @@ Tres cosas que no avisan si están mal:
 - **`UPLOADS_DIR` tiene que estar.** Si falta, la app cae en silencio a
   `./uploads` dentro del directorio del repo: las portadas de noticias se
   escriben ahí y se pierden en el próximo deploy, sin ningún error.
+- **`RECEIPTS_DIR` tiene que estar** (fase 4A), por el mismo motivo y con la misma
+  falla silenciosa: sin ella los PDFs de los recibos caen en `./recibos` dentro del
+  repo, quedan fuera del backup y se pierden en el próximo deploy. El cobro no se
+  pierde —el recibo vive en la base y el PDF es regenerable—, pero el archivo sí.
 
 ---
 
@@ -244,7 +249,7 @@ Tres cosas que no avisan si están mal:
 ### 4.0 Antes del PRIMER `deploy.sh` (una sola vez, obligatorio)
 
 `deploy.sh` corre `npx prisma db seed` en cada despliegue. Antes de que eso pase
-por primera vez sobre la base con los 283 socios reales, verificá a mano que el
+por primera vez sobre la base con los socios reales, verificá a mano que el
 `.env` del VPS no pida las cuentas de prueba:
 
 ```bash
@@ -364,6 +369,274 @@ pm2 save
    (uploads de DNI de hasta 10 MB).
 7. **NO tocar `instances` de PM2.** El módulo asume un solo proceso: ver la
    advertencia de `docs/03` (mutex por DNI y rate limiters en memoria).
+
+**Específico de la fase 4A del Módulo 4 (tesorería: cuenta corriente, efectivo,
+recibos, deudores):**
+
+Este despliegue tiene dos mitades muy distintas. La primera (pasos 1 a 5) es un
+deploy normal y se puede repetir. La segunda (pasos 6 y 7) es la **carga
+fundacional de datos**: corre **una sola vez**, borra fichas físicamente y crea
+3080 cuotas que después se van a cobrar y a notificar de forma fehaciente. No hay
+"des-importar". Leé los pasos 6 y 7 enteros antes de tipear nada.
+
+#### 1. Backup, antes de todo
+
+```bash
+mysqldump sigev > /root/backup-pre-m4a-$(date +%F).sql
+ls -lh /root/backup-pre-m4a-*.sql       # que NO diga 0 bytes
+```
+
+Si el archivo salió vacío o el `mysqldump` devolvió error, **frená acá**: el resto
+de este procedimiento no tiene vuelta atrás sin él.
+
+#### 2. `RECEIPTS_DIR` en el `.env` y el directorio, ANTES del deploy
+
+Se hace antes para que el `pm2 restart --update-env` que ya trae `deploy.sh` la
+tome, y no haya que reiniciar dos veces:
+
+```bash
+cd /root/dev/ciudadela
+grep -q '^RECEIPTS_DIR=' .env || echo 'RECEIPTS_DIR=/var/sigev/recibos' >> .env
+grep -n '^RECEIPTS_DIR=' .env           # tiene que devolver exactamente una línea
+
+install -d -m 750 /var/sigev/recibos
+ls -ld /var/sigev/recibos               # drwxr-x--- root root
+```
+
+`/var/sigev/recibos` **ya está cubierto por `scripts/backup.sh`** (el tar nocturno
+empaqueta `uploads` y `recibos`), así que no hay que tocar el backup.
+
+#### 3. El deploy
+
+```bash
+cd /root/dev/ciudadela && bash deploy.sh
+```
+
+Trae la migración `20260822125844_add_module_4_treasury` (tablas `fee_values`,
+`fees`, `payments`, `receipts`, `receipt_sequences`, `mp_unmatched_payments`,
+`cron_runs`, más el estado `failed` y la columna `error` de `notifications`).
+`migrate deploy` la aplica sola: **nunca `db push`**.
+
+El seed siembra el **valor de cuota inicial** ($ 6.000 activo / $ 3.000 compartido,
+vigente desde el 01/08/2026) sólo si la tabla está vacía; si ya hay algún valor, no
+toca nada. Lo imprime así:
+
+```
+new  valor de cuota inicial: activo 6000 / compartido 3000 (vigente 01/08/2026)
+```
+
+#### 4. Verificación de la app, antes de tocar datos
+
+Entrá al panel y comprobá tres cosas:
+
+- La lateral muestra **Tesorería** entre Socios y Actas, y la tarjeta del tablero
+  ya no dice "Próximamente".
+- `/admin/tesoreria/valores` muestra los dos montos y "Vigente desde 01/08/2026".
+  Si dice "Todavía no rige ningún valor", el seed no corrió: **no sigas**, sin
+  valor vigente el cobro en efectivo no puede calcular ningún total.
+- Las cuatro pestañas (Deudores / Efectivo / Recibos / Valores) navegan.
+
+#### 5. Un recibo de prueba (opcional, pero es la única forma de probar el disco)
+
+Cobrá un aporte voluntario de $ 1 a un socio de prueba y abrí el PDF desde el
+detalle del recibo. Es el único paso que ejercita `RECEIPTS_DIR` de verdad: si los
+permisos están mal, la pantalla dice "el archivo no está disponible" y el PDF se
+regenera al volver a pedirlo. Después anulá el recibo (el número queda quemado, que
+es lo correcto: la serie no se renumera).
+
+**No probar un cobro por Mercado Pago acá**: el dominio corre con credenciales
+productivas desde el 22/08/2026 y eso sería plata de un vecino.
+
+#### 6. Padrón definitivo — `--update-existing --prune --yes`
+
+Este comando hace **dos cosas destructivas**. Antes de correrlo hay que decidir
+sobre las dos.
+
+**(a) `--update-existing` pisa las fichas con lo que dice el Excel, incluidos los
+campos vacíos.** El Excel del padrón trae número, nombre, DNI, email, categoría,
+estado y fechas, y **nada más**: domicilio, teléfono, fecha de nacimiento, estado
+civil, nacionalidad y ocupación vienen vacíos en casi todas las filas. Cada ficha
+que alguien haya completado a mano desde el panel **pierde esos datos**. Preguntá
+antes: ¿alguien de la Comisión ya usó el modo carga de fichas? Si la respuesta es
+sí, corré primero sin el flag (ver más abajo) y resolvé a mano.
+
+El socio **306** —el piloto que se afilió por la web el 22/08/2026— está en el
+Excel, así que no lo poda; pero **sí lo pisa**: la ficha que cargó él en el wizard
+(domicilio, teléfono, fecha de nacimiento) queda en blanco. Si eso importa,
+guardala antes o volvé a cargarla después.
+
+**(b) `--prune --yes` borra FÍSICAMENTE los socios del libro que ya no están en el
+Excel.** Son seis: **118, 141, 158, 239, 287, 288**, las fichas que la Comisión
+sacó del libro en la carga definitiva del 21/08/2026. Pero el criterio del script
+es "está en la base y no está en el Excel", no esa lista: **cualquier socio dado de
+alta desde el M1 y que no figure en el archivo entra en la poda**. Si en el VPS se
+dio de alta a alguien por acta o por el wizard después del import original, ese
+socio no está en el Excel.
+
+El script se defiende: si un socio a podar tiene **cuenta de acceso, solicitud,
+suscripción de Mercado Pago, pago, cuota, membresía en otro libro o cualquier
+movimiento cargado a mano**, aborta **sin borrar a nadie** y los lista uno por uno
+con el motivo. Si eso pasa, la salida se ve así:
+
+```
+IMPORT ABORTADO — ERROR DE DATOS O DE USO: revisá datos/padron_socios.xlsx …
+  No se puede podar: estos socios ya no están en el Excel pero tienen datos del sistema.
+  No se borró a nadie. Resolvelos a mano desde el panel (o volvelos a poner en el Excel):
+    socio 307: tiene cuenta de acceso, 1 solicitud(es)
+```
+
+Las dos salidas legítimas de ese aborto son: **ponerlo en el Excel** (si tiene que
+seguir en el libro) o **resolverlo a mano desde el panel** (darlo de baja en vez de
+borrarlo). Nunca forzar el borrado.
+
+**La corrida de reconocimiento (recomendada).** Sin flags, el script sólo crea
+socios nuevos y no toca ninguna ficha existente, pero igual imprime todos los
+totales y todos los avisos:
+
+```bash
+cd /root/dev/ciudadela
+npx tsx scripts/import-padron.ts
+cat padron-import-report.txt
+```
+
+Mirá que diga `filas: 278 (esperado 278)`, `vigentes: 160 (esperado 160)` y
+`huecos (28, esperado 28)`. **Si alguno no coincide, no sigas**: el archivo no es
+el que este runbook describe.
+
+**La corrida real:**
+
+```bash
+npx tsx scripts/import-padron.ts --update-existing --prune --yes
+```
+
+Cuando anda, el reporte —que también queda en `padron-import-report.txt`— se ve
+como esta corrida real de local, del 22/08/2026:
+
+```
+Padron import — 2026-08-22T19:30:48.901Z
+filas: 278 (esperado 278) | vigentes: 160 (esperado 160) | bajas: 118 (esperado 118)
+numeracion: 1..306 | huecos (28, esperado 28): 21, 71, 72, 73, 93, 94, 95, 97, 118, …
+modo: --update-existing (los existentes se pisan con el Excel)
+creados: 1 | actualizados: 275 | sin cambios: 0 | NO actualizados por quedar sin email teniendo cuenta: 2
+memberships creadas: 1 | movements de admision creados: 1
+podados (6): 118, 141, 158, 239, 287, 288 | con ellos se borraron 6 movimientos, 0 notificaciones y 0 enlaces
+en base: members 278 | memberships libro 1: 278 | movements admission libro 1: 278
+avisos (9):
+  - socio 5: baja sin fecha_egreso
+  …
+```
+
+En el VPS los números de `creados` / `actualizados` van a ser otros (306 ya existe
+allá, así que probablemente sea `creados: 0 | actualizados: 276`), pero las tres
+líneas de control —278 filas, 160 vigentes, 28 huecos— y `en base: members 278`
+tienen que dar exactamente eso.
+
+**Los avisos que espera este archivo, y que NO son un problema:**
+
+- `socio N: baja sin fecha_egreso` para **5, 10, 20, 31, 32, 99 y 282**. El libro
+  de papel no la tiene. Los socios **31 y 32** además están de baja **sin motivo**:
+  el Excel deja la celda vacía y quedan con motivo nulo. Los siete son datos que la
+  Comisión tiene que completar desde el panel; ninguno frena nada.
+- `socio N: el Excel no trae email y el socio ya tiene cuenta de acceso — la fila
+  NO se actualizó`. Es una **protección, no un error**: dejar la ficha sin email
+  dejaría a la cuenta ingresando con una dirección que ya no figura en ningún lado.
+  Esa fila queda como estaba. Para que se actualice hay que cargarle la dirección
+  en el Excel.
+
+**Los avisos que SÍ hay que atender:**
+
+- `el email del Excel ya pertenece a otra cuenta de acceso` → esa fila no se
+  escribió; corregí la dirección en el Excel y volvé a correr.
+- `el Excel le cambió el email y el socio ya tiene cuenta de acceso — ahora INGRESA
+  con la dirección nueva y NO se le avisó por correo` → el import **no manda
+  correos**; avisale por otro medio.
+
+Si el script aborta, distingue las dos causas en la primera línea: **error de datos
+o de uso** (el Excel o los argumentos: se corrige y se vuelve a correr, es
+idempotente) contra **error de infraestructura** (la base). Los abortos por datos
+más probables: el archivo abierto en Excel (queda un lock `~$padron_socios.xlsx`),
+una hoja que no se llama `socios`, un encabezado renombrado o duplicado, una celda
+`numero_socio` que no es un número, y —sólo con `--prune`— los totales de control
+que no dan, que corta **antes de la primera escritura**.
+
+#### 7. Deuda histórica — `scripts/import-deuda.ts`
+
+Va **después** del padrón, siempre: necesita que cada socio del Excel de deuda
+matchee por número **y** DNI contra el libro abierto.
+
+```bash
+npx tsx scripts/import-deuda.ts
+```
+
+Cuando anda:
+
+```
+Debt import — 2026-08-22T…
+filas: 278 (esperado 278) | socios con deuda: 119 (esperado 119) | cuotas en el Excel: 3080 (esperado 3080)
+importados: 119 | salteados (ya tenían deuda importada): 0 | sin cuotas nuevas (todo su plan ya estaba devengado): 0 | cuotas creadas: 3080
+en base: cuotas origin=import del libro 1: 3080
+avisos (2):
+  - socio 217: la deuda arranca en 2023-10, antes de su ingreso (2023-11) — revisá la cantidad del primer año
+  - socio 231: la deuda arranca en 2023-09, antes de su ingreso (2023-11) — revisá la cantidad del primer año
+```
+
+Los avisos de **217** y **231** son reales y esperados: en `deuda.xlsx` la cantidad
+del primer año les da más cuotas de las que ese año pudo devengar. No se descarta
+ninguna (la cantidad la puso el tesorero), pero conviene revisarlas con él.
+
+Es **idempotente por socio**: correrlo de nuevo imprime `importados: 0 | salteados:
+119 | cuotas creadas: 0`. Eso también significa que **corregir el Excel y
+re-correr no arregla a quien ya se cargó mal**: hay que corregirlo desde el panel.
+
+Guardas que abortan **sin escribir nada**:
+
+- Los tres totales de control (278 filas / 119 deudores / 3080 cuotas). Si no dan,
+  el archivo no es el que este runbook describe.
+- Un socio del Excel que no está en el libro, o cuyo DNI no coincide con la ficha.
+  Casi siempre significa que el padrón no se importó, o se importó otro.
+  → "Corré `scripts/import-padron.ts` con el padrón definitivo antes de cargar la
+  deuda."
+- **El mes de baja del Excel de deuda distinto del de la ficha.** Es la guarda que
+  más importa: el mes de la baja decide en qué meses cae la deuda del año de la
+  baja, y con la celda en blanco las cuotas se imputarían a meses **posteriores** a
+  la salida del socio. Emparejá los dos archivos —o corregí la ficha desde el
+  panel— y volvé a correr.
+- Ningún libro abierto, o más de uno.
+
+Dos cosas del diseño que conviene saber antes de mirar los datos: la deuda del año
+abierto se ancla a la **fecha de la foto** (21/08/2026) y no al reloj del servidor,
+así que el resultado es el mismo se corra hoy o en noviembre; y las cuotas
+importadas **no llevan monto** —se valúan al valor vigente el día que se cobran—,
+así que en la cinta del socio se ven con el glifo `L`, distintas de las que devengó
+el sistema.
+
+#### 8. Verificación final de datos
+
+```bash
+mysql sigev -e "SELECT COUNT(*) members FROM members;
+SELECT COUNT(*) fees_import FROM fees WHERE origin='import';
+SELECT COUNT(DISTINCT member_id) deudores FROM fees WHERE status='pending';"
+```
+
+Esperado: `members = 278`, `deudores = 119` y `fees_import = 3080` — o 3080 menos
+las cuotas que el sistema ya hubiera devengado por su cuenta para esos mismos meses,
+que el import saltea y cuenta aparte en la línea `cuotas del Excel que ya existían
+devengadas`. Hoy no hay cron de devengo, así que deberían ser 3080 clavadas.
+
+En el panel: `/admin/tesoreria/deudores` lista a los socios vigentes con deuda
+ordenados por monto, y la ficha de un socio con deuda muestra la cinta con las
+cuotas importadas. Con eso el módulo está en pie.
+
+#### 9. Lo que NO entra en este despliegue
+
+La fase 4A **no** toca Mercado Pago: el webhook sigue registrando los pagos sin
+aplicarlos a cuotas, no hay links de pago, no hay bandeja de sin conciliar y el
+lote de REG-34 no existe. Tampoco hay crons de tesorería: **las cuotas del mes no
+se devengan solas todavía** (eso es la fase 4C). Hasta entonces, el crontab del VPS
+sigue siendo sólo el de `/api/cron/applications` (`docs/11`, Parte H).
+
+Y sigue vigente: **NO tocar `instances` de PM2** (mutex por DNI y rate limiters en
+memoria, `docs/03`).
 
 ### Verificación post-deploy
 

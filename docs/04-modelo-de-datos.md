@@ -11,12 +11,13 @@ Libro 1──N Membresia N──1 Socio 1──N Movimiento N──1 Acta
                               │
         ┌──────────┬──────────┼───────────┬─────────────┬──────────────┐
         N          N          N           N             N              N
-   Documento    Cuota      Pago──1 Recibo │       Notificacion   SuscripcionMP
+   Documento    Cuota N──1 Pago 1──1 Recibo │      Notificacion   SuscripcionMP
                                           │
                                      Presentacion (re-empadronamiento)
 Solicitud (alta web) ──N Documento
 ProcesoReempadronamiento 1──N Presentacion
 Usuario N──N Rol · Noticia · Calle · ValorCuota · Feriado · Auditoria · WebhookEvent
+Recibo N──1 SecuenciaRecibo (por anio) · PagoSinConciliar · CorridaDeCron
 ```
 
 ## Entidades
@@ -37,9 +38,12 @@ Identidad única de la persona a través de todos los libros.
   libro ni de categoría), `fecha_egreso`
 - Flags: `bloqueado_reingreso` (expulsados, REG-04), `rechazo_hasta` (REG-05),
   `deuda_tesoreria_baja` (boolean, `debt_at_withdrawal` en el schema): tenía deuda
-  de tesorería al momento de la baja (columna `deuda_tesoreria` del padrón). Lo usa
-  el Módulo 3 para bloquear el re-ingreso web de cesantes por mora con deuda; el
-  Módulo 4 lo reemplaza por la cuenta corriente real una vez que exista.
+  de tesorería al momento de la baja. Es **histórico del Libro 1** (columna
+  `deuda_tesoreria` del padrón) y **desde el Módulo 4 ya no se lee**: la deuda es la
+  cuenta corriente. Lo sigue escribiendo `withdraw` en toda baja con cuotas
+  pendientes —dentro de su transacción, así que cubre cesantía por mora, renuncia y
+  mudanza por igual— como dato del asiento, y el listado del padrón todavía lo
+  muestra como badge histórico (se migra cuando la fase 4B toque esa consulta).
   `debito_automatico` (boolean, `auto_debit` en el schema): candidato a vincular
   una suscripción MP preexistente (columna `debito_automatico` del padrón, ver 06).
 - `usuario_id` (FK Usuario, nullable)
@@ -115,27 +119,60 @@ Identidad única de la persona a través de todos los libros.
   simultáneas del mismo tipo pueden dejar dos filas. El arreglo de fondo es esa
   restricción más una migración.
 
-### Cuota (período devengado)
-- `socio_id`, `periodo` (YYYY-MM), `monto` (valor vigente al devengar),
-  `estado` (`pendiente` | `pagada` | `exenta` | `anulada`), `pago_id` (nullable)
-- Se generan el día 1 de cada mes para activos y colaboradores vigentes.
-  Adherentes NO devengan (su aporte es voluntario y se registra como Pago suelto).
-  Honorarios y vitalicios: exentos (no devengan).
-- La cuota de ingreso se modela como Pago tipo `ingreso`, no como Cuota.
+### Cuota — `Fee` / tabla `fees` (Módulo 4)
+- `socio_id`, `periodo` (`YYYY-MM`, CHAR(7)), `estado`
+  (`pending` | `paid` | `exempt` | `voided`), `origen` (`accrual` | `import`),
+  `pago_id` (nullable, `SetNull`) — UNIQUE(`socio_id`, `periodo`)
+- **Sin monto, a propósito** (decisión del 21/08/2026). La deuda se valúa
+  **siempre** a valor vigente al momento del pago: es REG-16 generalizado a toda
+  la cuenta corriente, y guardar el monto devengado abriría una segunda verdad que
+  habría que mantener sincronizada con ValorCuota.
+- Se generan el día 1 de cada mes para activos y colaboradores (también los
+  suspendidos: la suspensión no exime de la cuota). Adherentes NO devengan (su
+  aporte es voluntario y se registra como Pago suelto). Honorarios y vitalicios:
+  exentos. El primer devengo es el **primer mes completo posterior al ingreso**.
+  El cron que las crea es alcance de la fase 4C.
+- `origen = import` son las cuotas sintéticas que crea `scripts/import-deuda.ts`
+  desde `datos/deuda.xlsx` (ver "Importación inicial"). Las `accrual` que ya
+  existan mandan: el import nunca las pisa, las saltea y las cuenta en el reporte.
+- La cuota de ingreso se modela como Pago tipo `entry`, no como Cuota.
 
-### Pago
-- `id`, `socio_id` (nullable si aún es Solicitud), `solicitud_id` (nullable),
-  `tipo` (`debito` | `link` | `efectivo` | `voluntaria` | `ingreso` | `extraordinaria`),
-  `monto`, `fecha`, `periodo_aplicado` (nullable), `mp_payment_id` (UNIQUE, nullable),
-  `preapproval_id` (nullable), `registrado_por` (nullable; admin para efectivo),
-  `recibo_id`
-- Un pago por débito/link llega por webhook y se aplica automáticamente a la cuota
-  pendiente más antigua (o al período del mes si no hay atrasos).
+### Pago — `Payment` / tabla `payments`
+- `id`, `socio_id` (nullable, `SetNull`), `solicitud_id` (nullable, `SetNull`),
+  `tipo` (`debit` | `link` | `cash` | `voluntary` | `entry` | `extraordinary`),
+  `monto`, `fecha`, `mp_payment_id` (UNIQUE, nullable), `preapproval_id`
+  (nullable), `registrado_por` (nullable; el admin, en el efectivo), `nota`
+  (≤ 200 chars), `estado` (`applied` | `refunded` | `voided`)
+- **No hay `periodo_aplicado`**: la relación con los períodos es 1:N por
+  `Fee.pago_id`, porque un solo pago puede saldar varias cuotas.
+  Regla de imputación (`allocate`): **un débito = una cuota**; un link de pago trae
+  `n`; el efectivo son `n × valor vigente`. Siempre se imputan las cuotas **más
+  viejas** primero.
+- El socio se borra con `SetNull` y el pago sobrevive: un cobro asentado no
+  desaparece porque la ficha salga del libro.
 
-### Recibo
+### Recibo — `Receipt` / tabla `receipts`
 - `numero` correlativo único global formato `AAAA-NNNNN` (una sola serie para todos
-  los medios de pago), `pago_id`, `pdf_path`, `emitido_at`, `enviado_email_at`
-- Numeración asignada en transacción (tabla de secuencia o MAX+1 con lock) — sin huecos.
+  los medios de pago) + `anio` y `seq` con UNIQUE(`anio`, `seq`), `pago_id`
+  (UNIQUE, `Restrict`), `concepto`, `pdf_path`, `emitido_at`, `enviado_email_at`,
+  `anulado_at`, `motivo_anulacion`, `anulado_por`
+- **El concepto se congela al emitir** (`concept`, VarChar(200)): un recibo es un
+  registro institucional y dice lo que se cobró el día que se emitió. Derivarlo de
+  `payment.fees` lo borraba al anular, porque la anulación despega esas cuotas del
+  pago.
+- Un recibo **nunca se borra ni se renumera**: se anula, con motivo, y el número no
+  se reutiliza (REG-33). La anulación devuelve las cuotas a `pending`.
+- El PDF vive fuera del repo, en `RECEIPTS_DIR` (prod `/var/sigev/recibos`), y se
+  sirve sólo por ruta autenticada. Se escribe **después** del commit y es
+  regenerable: si falla, el cobro igual quedó asentado.
+
+### SecuenciaRecibo — `ReceiptSequence` / tabla `receipt_sequences`
+- `anio` (PK), `last`
+- Contador por año. Se incrementa con `INSERT … ON DUPLICATE KEY UPDATE` **dentro
+  de la transacción que crea el recibo**: el bloqueo de la fila del año serializa a
+  los emisores concurrentes y, si la transacción falla, el número no se consumió.
+  Es lo que hace que la serie no tenga huecos. Verificado con 20 recibos
+  concurrentes contra MariaDB real.
 
 ### SuscripcionMP — `MpSubscription` / tabla `mp_subscriptions` (Módulo 3)
 - `preapprovalId` (UNIQUE), `planId` (el id del plan de MP, no un enum: los planes
@@ -146,16 +183,41 @@ Identidad única de la persona a través de todos los libros.
 - `applicationId` (nullable): la solicitud que la originó. `memberId` (nullable) se
   completa **al asentar el alta**: antes del acta no hay socio al que colgarla.
 
-### ValorCuota (historial, REG-34)
-- `categoria`, `monto`, `vigente_desde`, `acta_id`
-- Los planes de MP son el **registro** del monto vigente (de ahí lo leen las altas
-  nuevas); esta tabla es el espejo histórico para cálculo de deudas y reingresos.
-  Se actualiza a mano desde el panel cuando la CD cambia el plan en MP.
+### ValorCuota — `FeeValue` / tabla `fee_values` (historial, REG-34)
+- `monto_activo`, `monto_compartido` (adherente y colaborador comparten monto,
+  decisión del cliente), `vigente_desde`, `acta_id` (nullable), `creado_por`
+- **Es la ÚNICA fuente de montos del sistema** (invertido el 21/08/2026): devengo,
+  deuda, efectivo, reingreso y —desde la fase 4B— el wizard leen de acá. Los planes
+  de Mercado Pago dejaron de ser el registro y pasaron a ser referencia: a MP se le
+  **empuja** el valor, ya no se le pregunta.
+- Vigente = el de mayor `vigente_desde` ≤ hoy. `vigente_desde` se guarda al
+  **mediodía UTC** del día civil argentino y se compara contra el mediodía civil de
+  hoy, no contra el instante: si se comparara contra el instante, un valor no
+  regiría hasta las 09:00 AR de su primer día y un devengo de madrugada abortaría
+  por falta de monto.
+- Nunca se edita: un valor mal cargado se corrige asentando otro encima, como un
+  acta. El tope de 4 actualizaciones por año lo controla la Comisión, no el sistema.
 - **El plan NO gobierna a las suscripciones ya creadas** (corregido el
   21/08/2026): se crean sin plan asociado y **copian** el monto (`docs/06` §2), así
   que cambiar el plan no mueve ni un débito vivo. Aplicar el valor nuevo a las
-  suscripciones vigentes es una acción explícita del panel, alcance del Módulo 4
+  suscripciones vigentes es una acción explícita del panel, alcance de la fase 4B
   (REG-34). El sync diario avisa de divergencias, no las corrige.
+- Valor sembrado: activo $6.000 / compartido $3.000, vigente desde el 01/08/2026
+  (y no el 01/09, o el sistema se quedaba sin monto con que cobrar hoy).
+
+### PagoSinConciliar — `MpUnmatchedPayment` / tabla `mp_unmatched_payments` (fase 4B)
+- `mp_payment_id` (UNIQUE), `monto`, `fecha`, `payer_email`, `external_reference`,
+  `descripcion`, `estado` (`open` | `matched` | `dismissed`), `pago_id` (FK real a
+  Pago, `SetNull`), `resuelto_por`, `resuelto_at`
+- Bandeja de los pagos de MP que no se pudieron atribuir a un socio. La tabla ya
+  existe (migración 7); la pantalla que la consume llega con la fase 4B.
+- `payer_email` es dato personal: se muestra sólo al admin.
+
+### CorridaDeCron — `CronRun` / tabla `cron_runs` (fase 4C)
+- `job`, `iniciada_at`, `terminada_at`, `ok`, `summary` (JSON con contadores),
+  `error`
+- Última corrida de cada cron, para `/admin/salud`. La tabla ya existe; la escriben
+  los crons de la fase 4C.
 
 ### ProcesoReempadronamiento
 - `id`, `libro_id`, `estado` (`preparacion` | `primera_instancia` | `segunda_instancia`
@@ -180,8 +242,12 @@ Identidad única de la persona a través de todos los libros.
   invitacion_password, resultado_solicitud, reempadronamiento_1, reempadronamiento_2,
   baja_declarada, recordatorio_cuota, alerta_mora, recibo, generica…),
   `via` (`email` | `cartelera`), `enviada_at`, `estado` (`enviada` | `entregada` |
-  `rebotada` | `fijada_cartelera` | `cumplida_cartelera`), `brevo_message_id`,
-  `cartelera_desde`, `cartelera_hasta` (20 días hábiles, REG-10), `payload_resumen`
+  `rebotada` | `fijada_cartelera` | `cumplida_cartelera` | **`failed`**),
+  `brevo_message_id`, `cartelera_desde`, `cartelera_hasta` (20 días hábiles,
+  REG-10), `payload_resumen`, `error`
+- `failed` + `error` (código del fallo de envío, **nunca la dirección**) existen en
+  el schema desde la migración del Módulo 4, pero **todavía no los escribe nadie**:
+  el reintento desde el panel es alcance de la fase 4C.
 
 ### ActionToken (`action_tokens`) — enlaces de un solo uso
 - `purpose` (`email_verification` | invitación de acceso | recupero de
@@ -300,8 +366,10 @@ Actividad sistemática semanal de un salón de la sede ("Gimnasia mujeres",
 
 Script `scripts/import-padron.ts` que lee `datos/padron_socios.xlsx`:
 
-1. Crea Libro 1 (abierto) y las 283 membresías con su `numero_socio` original.
-   Los 22 números ausentes (REG-35) no se crean: son huecos legítimos del libro.
+1. Crea Libro 1 (abierto) y las **278** membresías con su `numero_socio` original.
+   Los **28** números ausentes (REG-35) no se crean: son huecos legítimos del libro.
+   El script valida el **conjunto** de huecos, no su cantidad, y aborta antes de
+   escribir nada si no coincide.
 2. Crea cada Socio con lo que haya: `apellido_nombre`, `categoria_socio`,
    `fecha_ingreso`, `estado` (`activo`='Si' → vigente; 'No' → baja), `fecha_egreso`,
    `motivo_baja` mapeado al catálogo (`Mora`→`cesantia_mora`, `Fallecido/a`→
@@ -312,10 +380,34 @@ Script `scripts/import-padron.ts` que lee `datos/padron_socios.xlsx`:
 3. Los domicilios/teléfonos/estado civil faltantes quedan null: se completan a
    mano desde el panel admin (pantalla de edición de socio pensada para carga
    rápida desde ficha, con navegación siguiente/anterior por número de socio).
-   Estado real del archivo (18/08/2026): 283 filas con DNI casi completo (faltan
-   los de los socios 287 y 288) y ~36 emails cargados; el resto de la ficha se
-   completa desde el panel.
+   Estado real del archivo (padrón definitivo del 21/08/2026): **278 filas** con
+   **DNI completo** —los socios 287 y 288, que no lo tenían, salieron del libro— y
+   **37 emails** cargados; el resto de la ficha se completa desde el panel.
 4. El campo `debito_automatico`='Si' del Excel marca candidatos a vincular
    suscripciones MP preexistentes (ver `06-integracion-mercadopago.md`).
 5. El import es idempotente (re-ejecutable sin duplicar) y genera reporte de
-   inconsistencias.
+   inconsistencias en `padron-import-report.txt`. **Por defecto sólo crea**: para
+   pisar las fichas ya cargadas con los datos del Excel hace falta
+   `--update-existing`, y para borrar de la base las fichas que salieron del libro,
+   `--prune --yes`. Ver el procedimiento en `docs/10` §4.
+6. El Excel **es** el padrón (decisión del 21/08/2026): una ficha que dejó de
+   figurar ahí es una ficha que la Comisión sacó del libro.
+
+### Deuda histórica (`datos/deuda.xlsx`, Módulo 4)
+
+Script `scripts/import-deuda.ts`, que se corre **después** del padrón:
+
+1. El archivo no trae montos: dice **cuántas cuotas** debe cada socio en cada año
+   calendario (2022-2026). Totales de control del archivo del 21/08/2026: 278
+   filas, **119 socios con deuda**, **3080 cuotas**.
+2. Cada cantidad se convierte en cuotas concretas asignadas a los **últimos N meses
+   del año** (y hacia atrás desde el mes de egreso, en las bajas), con
+   `origen = import` y `estado = pending`. La regla es pura y está probada aparte
+   (`src/lib/treasury/debt-import.ts`).
+3. El ancla del año abierto sale de `DEBT_SNAPSHOT_DATE` (21/08/2026), la fecha en
+   que se midió el Excel, y **no del reloj de la corrida**: si no, el mismo archivo
+   diría otra cosa cada vez que se lo importa.
+4. Aborta antes de escribir si los totales de control no dan, si algún socio no
+   matchea por número **y** DNI, o si el mes de baja del Excel no coincide con el de
+   la ficha. Es idempotente por socio: al que ya tiene alguna cuota importada lo
+   saltea entero.

@@ -18,11 +18,17 @@ panel de administración para la Comisión Directiva (CD) y panel de autogestió
 
 ## Contexto y números
 
-- Padrón actual (Libro N° 1): 283 fichas históricas, **160 socios vigentes**
-  (55 activos + 105 adherentes). Tras el re-empadronamiento se esperan **~70 socios**.
+- Padrón actual (Libro N° 1, definitivo del 21/08/2026): **278 fichas históricas**,
+  **160 socios vigentes** (36 activos + 124 adherentes) y 118 bajas. Tras el
+  re-empadronamiento se esperan **~70 socios**.
+- Deuda histórica a agosto de 2026 (`datos/deuda.xlsx`): **119 socios** con
+  **3080 cuotas** impagas. El archivo no trae montos: dice cuántas cuotas debe
+  cada socio por año, y la deuda se valúa siempre a valor vigente (REG-16).
 - Cuotas actuales: Activo $6.000/mes (obligatoria), Adherente $3.000/mes (voluntaria),
-  Colaborador $3.000/mes (obligatoria). Los montos NO se hardcodean: viven en los
-  Planes de suscripción de Mercado Pago y la CD los actualiza desde el panel de MP.
+  Colaborador $3.000/mes (obligatoria), vigentes desde el 01/08/2026. Los montos NO
+  se hardcodean **ni salen de Mercado Pago**: desde el Módulo 4 viven en la tabla
+  local de valores de cuota y la CD registra el valor nuevo desde el panel de SIGeV
+  (REG-34). Los Planes de MP quedaron como referencia.
 - Cuenta de MP institucional, a nombre de la asociación (CUIT propio, IVA exento).
 - Ya existen suscripciones activas creadas desde el panel de MP (ej. "Cuota Social ACTIVO");
   deben poder vincularse a socios una única vez y conciliarse automáticamente.

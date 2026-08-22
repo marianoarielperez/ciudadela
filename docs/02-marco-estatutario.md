@@ -81,10 +81,24 @@ Reglas de sistema:
   cuenta cuotas impagas por socio, muestra alertas desde la 2ª, y a partir de la 4ª
   ofrece al admin la acción "declarar cesantía" (requiere acta). La declaración es
   decisión humana, nunca automática.
+  Implementado en `/admin/tesoreria/deudores` como **lote con paso de confirmación**
+  (decisión del cliente, 22/08/2026): antes de ejecutar se muestran los nombres
+  elegidos, sus cuotas adeudadas y el acta, porque es la acción más grave del
+  sistema. Sólo las filas de ≥ 4 cuotas tienen casilla que tildar.
+  Toda baja —cesantía por mora, renuncia o mudanza— marca `debtAtWithdrawal` si el
+  socio tenía cuotas pendientes, dentro de la misma transacción.
 - REG-16. Reingreso de cesante por mora: debe saldar la totalidad de la deuda
   **a valores vigentes al momento del reingreso** (deuda en cantidad de cuotas ×
   valor actual de la cuota) y cumplir los requisitos de la categoría. El sistema
   calcula ese monto automáticamente.
+  Desde el Módulo 4 el criterio es **generalizado a toda la deuda**: las cuotas no
+  guardan monto, así que cualquier deuda —de un vigente o de un cesante— se valúa
+  al valor vigente el día que se cobra.
+  Y lo que bloquea el reingreso por la web es la **deuda viva de la cuenta
+  corriente**, no la marca histórica `debtAtWithdrawal` (decisión del cliente,
+  22/08/2026): el cesante por mora que salda en la sede queda habilitado solo, sin
+  que nadie tenga que bajar un flag. `withdrawalReason = "arrears"` dejó de
+  bloquear por sí solo.
 - REG-17. Cesantía por mudanza fuera del barrio (activos/adherentes): baja manual
   desde el panel, con acta y motivo `mudanza`, "previa comprobación efectiva".
 
@@ -152,18 +166,27 @@ Proceso completo en `05-flujos-funcionales.md`. Reglas duras:
 - REG-33. Tesorería (Art. 27): registro de asociados y cobro de cuotas → módulo
   de tesorería con recibos numerados; los balances contables quedan fuera de alcance.
 - REG-34. La CD puede actualizar la cuota hasta 4 veces/año (Art. 23 inc. o).
-  Los montos viven en los Planes de MP; el sistema guarda un **historial de valores
-  de cuota** (monto, vigencia desde, acta) para calcular deudas históricas y
-  reingresos a valor vigente (REG-16).
+  Desde el Módulo 4 el **historial de valores de cuota** (monto de activo, monto
+  compartido de adherente/colaborador, vigencia desde, acta) es la **única fuente
+  de montos** del sistema: devengo, deuda, efectivo y reingreso lo leen de ahí, y
+  a Mercado Pago se le **empuja** el valor, ya no se le pregunta. El valor se
+  registra desde `/admin/configuracion` (superadmin) y nunca se edita: un valor
+  mal cargado se corrige asentando otro encima, como un acta.
+  El tope de 4 por año **no lo controla el sistema** (decisión del cliente,
+  21/08/2026): lo controla la Comisión, como el resto de los límites del estatuto.
 
 ## Numeración y libros
 
 - REG-35. Libro N° 1 = padrón histórico importado de `datos/padron_socios.xlsx`
-  (numeración 1-305 con **22 huecos**: 12 anulados por duplicidad
+  (numeración 1-306 con **28 huecos**: 12 anulados por duplicidad
   [21, 71, 72, 73, 93, 94, 95, 97, 125, 147, 238, 254], 8 fichas extraviadas que
-  se desestiman [199, 208, 214, 221, 222, 223, 224, 245] y 2 duplicados eliminados
-  en la carga definitiva del 18/08/2026 [132, 263] — estos números simplemente no
-  existen en el libro). Total: **283 registros** (160 vigentes: 55 activos +
-  105 adherentes; 123 bajas).
+  se desestiman [199, 208, 214, 221, 222, 223, 224, 245], 2 duplicados eliminados
+  en la carga del 18/08/2026 [132, 263] y 6 fichas que la Comisión sacó del libro
+  en la carga **definitiva del 21/08/2026** [118, 141, 158, 239, 287, 288] —
+  estos números simplemente no existen en el libro). Total: **278 registros**
+  (160 vigentes: 36 activos + 124 adherentes; 118 bajas).
+  El Excel es el padrón: `scripts/import-padron.ts --prune --yes` borra de la base
+  las fichas que dejaron de figurar en él, y valida el CONJUNTO de huecos antes de
+  escribir nada.
 - REG-36. Cada libro registra: número de libro, acta/fecha de apertura, acta/fecha
   de cierre. El libro cerrado queda en modo solo-lectura y consultable.
