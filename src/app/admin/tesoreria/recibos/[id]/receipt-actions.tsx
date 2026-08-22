@@ -32,19 +32,32 @@ export function ReceiptActions({ receiptId, voided, hasEmail, emailedAt }: {
         {/* El PDF sale por la ruta autenticada y auditada, en otra pestaña:
             imprimir no puede costarle al operador la pantalla que está mirando. */}
         <Button asChild variant="outline">
-          <a href={`/api/admin/recibos/${receiptId}`} target="_blank" rel="noopener">Imprimir / ver PDF</a>
+          <a href={`/api/admin/recibos/${receiptId}`} target="_blank" rel="noopener">
+            Imprimir / ver PDF
+            <span className="sr-only"> (se abre en una pestaña nueva)</span>
+          </a>
         </Button>
         <form action={emailAction}>
           <input type="hidden" name="receiptId" value={receiptId} />
-          <Button type="submit" variant="outline" disabled={emailPending || !hasEmail || voided}>
+          <Button
+            type="submit"
+            variant="outline"
+            disabled={emailPending || !hasEmail || voided}
+            aria-describedby={!hasEmail && !voided ? "no-email-reason" : undefined}
+          >
             {emailPending ? "Enviando…" : emailedAt ? "Reenviar por email" : "Enviar por email"}
           </Button>
         </form>
       </div>
       {emailedAt && <p className="text-sm text-muted-foreground">Enviado por email el {emailedAt}.</p>}
-      {/* Por qué el botón está apagado: sin esto parece que la pantalla falló. */}
+      {/* Por qué el botón está apagado: sin esto parece que la pantalla falló.
+          Un botón deshabilitado no es focuseable, así que el `id` + el
+          `aria-describedby` de arriba son lo único que le llega a quien
+          navega con lector de pantalla en vez de mirar la pantalla. */}
       {!hasEmail && !voided && (
-        <p className="text-sm text-muted-foreground">El socio no tiene email cargado: imprimí el recibo.</p>
+        <p id="no-email-reason" className="text-sm text-muted-foreground">
+          El socio no tiene email cargado: imprimí el recibo.
+        </p>
       )}
       {voided && <p className="text-sm text-muted-foreground">Un recibo anulado no se envía por email.</p>}
       {emailState.sent && <FormMessage kind="success" box>Recibo enviado por email.</FormMessage>}

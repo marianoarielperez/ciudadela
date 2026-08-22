@@ -17,22 +17,11 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
 import { amountInWords } from "@/lib/treasury/amount-words";
 import { PAYMENT_TYPE_LABELS } from "@/lib/treasury/labels";
+import { resolveEmailNotice } from "@/lib/treasury/receipt-notice";
 import { ReceiptActions } from "./receipt-actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Recibo — SIGeV" };
-
-// Qué pasó con el email del recibo recién emitido. Las claves son los valores
-// que `registerCashPaymentAction` pone en la URL, y salen de `ReceiptEmailResult`
-// (`voided` incluido: es un estado que el tipo puede devolver, y sin entrada
-// propia el cartel de "emitido" desaparecería justo cuando hay algo que contar).
-const EMAIL_NOTICE = {
-  sent: { kind: "success", text: "Recibo emitido y enviado por email." },
-  no_email: { kind: "warning", text: "Recibo emitido. El socio no tiene email: imprimilo." },
-  voided: { kind: "warning", text: "Recibo emitido, pero figura anulado y por eso no se envió por email." },
-  error: { kind: "warning", text: "Recibo emitido, pero el email no salió. Podés reenviarlo desde acá." },
-  skipped: { kind: "success", text: "Recibo emitido." },
-} as const satisfies Record<string, { kind: "success" | "warning"; text: string }>;
 
 // `wide` para los textos largos (el importe en letras, la nota): en media
 // columna de media tarjeta se parten en cinco renglones y no se leen.
@@ -83,12 +72,10 @@ export default async function ReciboPage(props: {
   const number = member?.memberships.find((m) => m.book.status === "open")?.memberNumber;
   const voided = Boolean(r.voidedAt);
   const emailParam = Array.isArray(sp.email) ? sp.email[0] : sp.email;
-  // Un `?email=` desconocido (URL tipeada a mano, valor nuevo que todavía no
-  // está en el mapa) no puede hacer desaparecer la confirmación del cobro:
-  // cae en el cartel neutro de "Recibo emitido".
-  const notice = sp.emitido === "1"
-    ? (EMAIL_NOTICE[emailParam as keyof typeof EMAIL_NOTICE] ?? EMAIL_NOTICE.skipped)
-    : null;
+  // La resolución (incluido el fallback a "Recibo emitido" para un `?email=`
+  // desconocido o una prototype key) vive en `resolveEmailNotice`: es lógica
+  // pura y se prueba aparte, sin React ni Next (tests/treasury-receipt-notice.test.ts).
+  const notice = sp.emitido === "1" ? resolveEmailNotice(emailParam) : null;
   const amount = Number(r.payment.amount);
 
   return (

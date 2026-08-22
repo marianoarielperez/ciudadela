@@ -16,6 +16,7 @@ import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
 import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
+import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { treasuryService, TreasuryError } from "@/lib/treasury/service";
 
 type State = { error?: string };
@@ -74,7 +75,9 @@ export async function registerCashPaymentAction(_prev: State, formData: FormData
     return { error: "No se pudo registrar el pago. Reintentá en un momento." };
   }
 
-  let emailed: "sent" | "no_email" | "voided" | "error" | "skipped" = "skipped";
+  // El tipo sale de `receipt-notice.ts` (no se retipea acá): es el mapa que la
+  // pantalla del recibo usa para leer este mismo valor de la URL.
+  let emailed: ReceiptEmailOutcome = "skipped";
   if (d.sendEmail === "on") {
     // `sendReceiptEmail` está documentado como best-effort y pensado para no
     // tirar nunca, pero su primer statement (el findUnique del recibo) vive

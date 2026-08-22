@@ -55,6 +55,31 @@ describe("receipt actions", () => {
     expect(mocks.voidReceipt).not.toHaveBeenCalled();
   });
 
+  it("un motivo de solo espacios se rechaza igual que uno vacío", async () => {
+    // Hoy pasa por el trim de `parseForm` (src/lib/forms.ts): "   " recorta a
+    // "" y ahí entra el `.min(1)` del schema. No es una regla propia de esta
+    // acción, así que un cambio en `parseForm` la rompería en silencio si nada
+    // la ejercita.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const form = new FormData();
+    form.append("receiptId", "7");
+    form.append("reason", "   ");
+    expect((await voidReceiptAction({}, form)).error).toBe("Indicá el motivo de la anulación.");
+    expect(mocks.voidReceipt).not.toHaveBeenCalled();
+  });
+
+  it("el motivo le llega recortado al servicio", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.voidReceipt.mockResolvedValueOnce({ paymentId: 3, number: "2026-00007", periodsReverted: 2 });
+    const form = new FormData();
+    form.append("receiptId", "7");
+    form.append("reason", "  Cargado por error  ");
+    await voidReceiptAction({}, form);
+    // El motivo asentado (y el que ve `treasuryService.voidReceipt`) es el
+    // recortado, no el que tipeó el operador con espacios de sobra.
+    expect(mocks.voidReceipt).toHaveBeenCalledWith({ receiptId: 7, actorId: 9, reason: "Cargado por error" });
+  });
+
   it("anular audita y redirige", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.voidReceipt.mockResolvedValueOnce({ paymentId: 3, number: "2026-00007", periodsReverted: 2 });
