@@ -11,6 +11,7 @@
 // es el que se cobra.
 import { useActionState } from "react";
 import { registerCashPaymentAction } from "./actions";
+import { digitsOnly } from "./digits";
 import { useSyncedForm, TextField, SelectField } from "@/components/admin/synced-fields";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
@@ -57,8 +58,12 @@ export function CashForm({ memberId, concepts, feeAmount, hasEmail, pendingCount
       {isFees ? (
         <TextField
           label="Cantidad de cuotas"
-          field={field("count", (v) => v.replace(/\D/g, ""))}
+          field={field("count", digitsOnly)}
           inputMode="numeric"
+          // El servicio rechaza por encima de 60, pero sin este techo la
+          // pantalla renderiza un total de siete cifras antes de que el
+          // rechazo llegue.
+          maxLength={2}
           hint={pendingCount > 0
             ? `Debe ${pendingCount}. Se imputan a las más antiguas primero.`
             : "Está al día: se imputa al período corriente y siguientes."}
@@ -69,7 +74,7 @@ export function CashForm({ memberId, concepts, feeAmount, hasEmail, pendingCount
           // Solo dígitos, como el valor de cuota de Configuración: dejar entrar
           // la coma o el punto obliga a adivinar si "2500,50" son dos mil
           // quinientos con cincuenta o doscientos cincuenta mil.
-          field={field("amount", (v) => v.replace(/\D/g, ""))}
+          field={field("amount", digitsOnly)}
           inputMode="numeric"
           maxLength={8}
           placeholder="2500"

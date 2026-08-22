@@ -7,9 +7,11 @@
 import Link from "next/link";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatARS } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
@@ -33,16 +35,18 @@ export default async function EfectivoPage(props: {
   const socio = Number(Array.isArray(sp.socio) ? sp.socio[0] : sp.socio);
   const memberId = Number.isInteger(socio) && socio > 0 ? socio : null;
 
-  const [hits, member, feeValue] = await Promise.all([
+  const [hits, member] = await Promise.all([
     memberId === null ? searchMembers(prisma, q) : Promise.resolve([]),
     memberId === null ? null : prisma.member.findUnique({
       where: { id: memberId },
       include: { memberships: { include: { book: true } } },
     }),
-    feeValueReader.current(),
   ]);
 
   if (memberId !== null && member) {
+    // Solo se lee el valor de cuota cuando hace falta: en modo búsqueda nadie
+    // mira este dato y esperarlo alargaba cada tecleo del buscador para nada.
+    const feeValue = await feeValueReader.current();
     const account = await fetchMemberAccount(prisma, member, feeValue);
     const number = member.memberships.find((m) => m.book.status === "open")?.memberNumber ?? null;
     return (
@@ -88,16 +92,26 @@ export default async function EfectivoPage(props: {
     );
   }
 
+  // `?socio=` apuntaba a un id que ya no existe (o nunca existió): sin este
+  // aviso, el operador vuelve al buscador vacío sin saber por qué perdió la
+  // ficha que acababa de abrir.
+  const notFound = memberId !== null && !member;
+
   return (
     <div className="space-y-4">
       <form className="flex flex-wrap items-end gap-2" method="get">
         <Input name="q" placeholder="Número, apellido o DNI" defaultValue={q} className="w-64" autoFocus />
         <Button type="submit" variant="secondary">Buscar socio</Button>
       </form>
+      {notFound && (
+        <FormMessage kind="error" box>No encontramos a ese socio. Probá buscarlo de nuevo.</FormMessage>
+      )}
       {q === "" ? (
         <EmptyState size="card" description="Buscá al socio que está pagando en la sede." />
       ) : hits.length === 0 ? (
-        <EmptyState description="Ningún socio vigente coincide con la búsqueda." />
+        // La búsqueda trae vigentes Y suspendidos a propósito: no se puede
+        // prometer "vigente" en el estado vacío.
+        <EmptyState description="Ningún socio coincide con la búsqueda." />
       ) : (
         <ul className="divide-y rounded-xl border">
           {hits.map((h) => (
@@ -109,6 +123,10 @@ export default async function EfectivoPage(props: {
                 <span className="font-mono tabular-nums">N° {h.memberNumber}</span>
                 <span className="font-medium">{h.fullName}</span>
                 <span className="text-muted-foreground">{h.dni ?? "sin DNI"} · {CATEGORY_LABELS[h.category]}</span>
+                {/* La búsqueda trae suspendidos a propósito: es lo único que
+                    distingue a un suspendido en esta lista, y es la pantalla
+                    que cobra. */}
+                <Badge variant={memberStatusBadgeVariant(h.status)}>{STATUS_LABELS[h.status]}</Badge>
               </Link>
             </li>
           ))}

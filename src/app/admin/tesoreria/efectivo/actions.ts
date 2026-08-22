@@ -76,8 +76,22 @@ export async function registerCashPaymentAction(_prev: State, formData: FormData
 
   let emailed: "sent" | "no_email" | "voided" | "error" | "skipped" = "skipped";
   if (d.sendEmail === "on") {
-    const r = await sendReceiptEmail(result.receiptId);
-    emailed = r.sent ? "sent" : r.reason;
+    // `sendReceiptEmail` está documentado como best-effort y pensado para no
+    // tirar nunca, pero su primer statement (el findUnique del recibo) vive
+    // AFUERA del try interno del módulo: un timeout del pool ahí se escapa
+    // igual. Para este momento el pago, la imputación y el recibo numerado ya
+    // están commiteados — degradar a "error" (el mismo resultado que un envío
+    // que sí falló prolijamente) es lo único correcto: la auditoría y el
+    // redirect tienen que pasar sí o sí, o el operador reintentaría y le
+    // cobraría dos veces al socio.
+    try {
+      const r = await sendReceiptEmail(result.receiptId);
+      emailed = r.sent ? "sent" : r.reason;
+    } catch (e) {
+      const code = (e as { code?: unknown } | null)?.code;
+      console.error("[treasury] sendReceiptEmail lanzó", typeof code === "string" ? code : "unknown");
+      emailed = "error";
+    }
   }
 
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
