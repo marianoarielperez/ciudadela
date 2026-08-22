@@ -14,9 +14,23 @@
 //     21/08/2026 dice "8" en 2026: enero..agosto). Anclar en diciembre ahí
 //     inventaría cuotas de meses que todavía no se devengaron, que aparecerían
 //     como deuda vencida meses antes de existir.
+import { civilDateUtc } from "@/lib/dates";
 import {
   addMonths, comparePeriods, lastPeriodsOfYear, periodMonth, periodOf, periodRange, type Period,
 } from "./periods";
+
+/** El día en que se MIDIÓ datos/deuda.xlsx. Es el `now` que tiene que usar el
+ *  import: el ancla del año en curso sale de la foto y no del reloj de la
+ *  corrida, o el mismo archivo se re-fecha solo en cada ejecución (la deuda
+ *  2026 de siete socios se corre un mes por mes de demora, y en 2027 el "8 en
+ *  2026" pasa a leerse mayo..diciembre). Los totales de control no lo detectan:
+ *  siguen dando 3080 cuotas en los tres casos.
+ *
+ *  Vive acá, junto a la regla que alimenta, para que se pueda probar sin
+ *  importar el script (que abre Prisma al evaluarse). Si alguna vez se re-mide
+ *  el padrón de deuda, se cambian juntos el archivo, esta fecha y los totales
+ *  de control de `scripts/import-deuda.ts`. */
+export const DEBT_SNAPSHOT_DATE = civilDateUtc(2026, 8, 21);
 
 export type DebtRow = {
   memberNumber: number;

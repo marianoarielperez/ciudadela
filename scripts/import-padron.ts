@@ -17,7 +17,9 @@
 // dejó de figurar ahí, es que la Comisión la sacó del libro. --prune la borra
 // de la base, pero SOLO si no tiene nada colgando que haya producido el
 // sistema, y SOLO si los totales de control del archivo dan — un Excel truncado
-// borraría socios buenos. Es destructivo, así que además pide --yes.
+// borraría socios buenos. Ese chequeo corre ANTES de la primera escritura: si
+// esperara al bloque de poda, el archivo malo ya habría pisado todas las fichas
+// presentes. Es destructivo, así que además pide --yes.
 //
 // Esta es la carga fundacional del Libro de Socios: todo el sistema se construye
 // encima. Ante cualquier ambigüedad el script ABORTA en vez de adivinar; nunca
@@ -30,7 +32,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/prisma";
-import { audit } from "../src/lib/audit";
+import { audit, auditStrict } from "../src/lib/audit";
 import { mapPadronRow, type RawPadronRow } from "../src/lib/padron/mapping";
 import { MemberEmailConflictError, MemberEmailRequiredError, memberWriter } from "../src/lib/members/write";
 
@@ -76,6 +78,13 @@ class PadronDataError extends Error {
     super(message);
     this.name = "PadronDataError";
   }
+}
+
+// Del error sólo se conserva el código, nunca el objeto: los errores de Prisma
+// traen la consulta, o sea datos del socio en claro, y la salida del script
+// termina pegada en un chat o en un log (Ley 25.326, docs/08).
+function codeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
 }
 
 type CellScalar = string | number | boolean | Date | null;
@@ -387,6 +396,24 @@ async function main() {
   const gapsOk = newGaps.length === 0 && filledGaps.length === 0;
   const controlTotalsOk = total === EXPECTED_ROWS && vigentes === EXPECTED_ACTIVE && gapsOk;
 
+  // La poda necesita este chequeo, pero NO puede esperar a su bloque: para
+  // cuando se llega ahí, el loop de abajo ya escribió el archivo entero. Con un
+  // Excel truncado y --update-existing eso significa pisar cada ficha presente
+  // con los nulos del archivo malo antes de abortar: no se borra a nadie, pero
+  // el trabajo del panel ya se perdió. Como los totales salen del Excel y ya
+  // están calculados, se corta acá, antes de la primera escritura.
+  if (prune && !controlTotalsOk) {
+    throw new PadronDataError(
+      [
+        `${PRUNE_FLAG} borra socios y los totales de control del Excel no dan: no se escribió ni se borró nada.`,
+        `  filas ${total} (esperado ${EXPECTED_ROWS}) | vigentes ${vigentes} (esperado ${EXPECTED_ACTIVE})`,
+        newGaps.length > 0 ? `  huecos NUEVOS (no esperados): ${newGaps.join(", ")}` : null,
+        filledGaps.length > 0 ? `  huecos que se completaron: ${filledGaps.join(", ")}` : null,
+        "  Si el padrón cambió de verdad, actualizá EXPECTED_ROWS / EXPECTED_ACTIVE / EXPECTED_GAPS y volvé a correr.",
+      ].filter((l): l is string => l !== null).join("\n"),
+    );
+  }
+
   const minJoined = mapped.reduce((min, m) => (m.member.joinedAt < min ? m.member.joinedAt : min), mapped[0].member.joinedAt);
   const book = await prisma.book.upsert({
     where: { number: 1 },
@@ -499,24 +526,19 @@ async function main() {
   // Segundo, que el socio no tenga NADA colgando que haya producido el sistema.
   // El esquema no protege: `fees` es Cascade (se borrarían las cuotas sin
   // decir nada), `payments`, `applications` y `mpSubscriptions` son SetNull (un
-  // pago cobrado quedaría sin socio, y con él su recibo), y una cuenta de acceso
-  // quedaría viva apuntando a una ficha que ya no existe. Si aparece cualquiera
-  // de esos casos se aborta SIN borrar a nadie y se resuelve a mano.
+  // pago cobrado quedaría sin socio, y con él su recibo). Y la cuenta de acceso
+  // ni siquiera se entera: la FK vive en `Member.userId` (el `SetNull` es para
+  // cuando se borra el USUARIO, no la ficha), así que borrar el socio deja la
+  // fila de `User` intacta —con su contraseña y su rol `socio`— pero sin
+  // ninguna ficha detrás: alguien sigue pudiendo ingresar al panel de socio de
+  // un socio que ya no está en el libro. Si aparece cualquiera de esos casos se
+  // aborta SIN borrar a nadie y se resuelve a mano.
   const pruned: number[] = [];
   const prunedCollateral = { notifications: 0, tokens: 0, movements: 0 };
   if (prune) {
-    if (!controlTotalsOk) {
-      throw new PadronDataError(
-        [
-          `${PRUNE_FLAG} borra socios y los totales de control del Excel no dan: no se poda nada.`,
-          `  filas ${total} (esperado ${EXPECTED_ROWS}) | vigentes ${vigentes} (esperado ${EXPECTED_ACTIVE})`,
-          newGaps.length > 0 ? `  huecos NUEVOS (no esperados): ${newGaps.join(", ")}` : null,
-          filledGaps.length > 0 ? `  huecos que se completaron: ${filledGaps.join(", ")}` : null,
-          "  Si el padrón cambió de verdad, actualizá EXPECTED_ROWS / EXPECTED_ACTIVE / EXPECTED_GAPS y volvé a correr.",
-        ].filter((l): l is string => l !== null).join("\n"),
-      );
-    }
-
+    // (Los totales de control ya se verificaron arriba, antes de la primera
+    // escritura: llegar hasta acá con --prune significa que el archivo es el
+    // padrón entero.)
     const stale = await prisma.membership.findMany({
       where: { bookId: book.id, memberNumber: { notIn: [...numbers] } },
       include: {
@@ -586,10 +608,29 @@ async function main() {
     if (pruned.length > 0) {
       // El asiento lleva números de socio: no son dato personal (a diferencia
       // del DNI o del nombre) y son lo único que permite reconstruir qué se borró.
-      await audit({
-        action: "padron_prune", entity: "book", entityId: book.id,
-        detail: { memberNumbers: pruned, ...prunedCollateral },
-      });
+      //
+      // Va por `auditStrict` y no por `audit()`: acá el asiento ES la señal. Un
+      // borrado físico no deja rastro en ninguna otra pantalla, así que si
+      // `audit()` se tragara el error el operador se quedaría sin saber qué
+      // fichas desaparecieron. Lo que no se puede hacer con el fallo es
+      // propagarlo —el borrado ya está commiteado y abortar acá dejaría la
+      // corrida sin reporte ni asiento de import—, así que se degrada a un
+      // aviso explícito en el reporte y a un `console.error`.
+      try {
+        await auditStrict({
+          action: "padron_prune", entity: "book", entityId: book.id,
+          detail: { memberNumbers: pruned, ...prunedCollateral },
+        });
+      } catch (e) {
+        console.error(
+          "[padron] CRÍTICO: se borraron socios y el asiento de auditoría NO se pudo escribir. code:",
+          codeOf(e),
+        );
+        warnings.push(
+          `se borraron ${pruned.length} socios (${pruned.join(", ")}) pero el asiento de auditoría NO se pudo ` +
+            `escribir: anotá esos números a mano, son el único registro de qué salió del libro`,
+        );
+      }
     }
   }
 

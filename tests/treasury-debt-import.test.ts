@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { civilDateUtc } from "@/lib/dates";
-import { planDebtImport } from "@/lib/treasury/debt-import";
+import { DEBT_SNAPSHOT_DATE, planDebtImport } from "@/lib/treasury/debt-import";
 
 // deuda.xlsx es una FOTO: dice cuántas cuotas debía cada socio el 21/08/2026.
 // El reloj se inyecta en todos los casos para que el resultado no cambie cuando
@@ -133,9 +133,62 @@ describe("planDebtImport", () => {
   });
 
   it("el reloj por defecto es el de sistema", () => {
-    // Sin `now` explícito el planificador tiene que seguir funcionando: es como
-    // lo llama el script.
+    // Sin `now` explícito el planificador usa `new Date()`. Sirve para un
+    // llamador futuro que quiera devengar "a hoy", pero NO para el import de
+    // deuda.xlsx: ver el bloque de abajo.
     const { errors } = planDebtImport([{ memberNumber: 13, dni: "13", counts: { 2022: 3 }, leftAt: null }]);
     expect(errors).toEqual([]);
+  });
+});
+
+// La foto se sacó el 21/08/2026 y los totales de control del script (278 filas,
+// 119 deudores, 3080 cuotas) describen ESE día. El import tiene que anclar ahí
+// y no en el reloj de la corrida.
+describe("DEBT_SNAPSHOT_DATE — el ancla es la foto, no el día en que se corre", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Forma real del archivo: el año en curso, una baja de agosto de 2025 y años
+  // cerrados. Son los tres caminos del ancla.
+  const rows = [
+    { memberNumber: 144, dni: "1", counts: { 2025: 12, 2026: 8 }, leftAt: null },
+    { memberNumber: 1, dni: "2", counts: { 2024: 12, 2025: 8 }, leftAt: civilDateUtc(2025, 8, 31) },
+    { memberNumber: 5, dni: "5", counts: { 2022: 3, 2023: 12 }, leftAt: null },
+  ];
+
+  it("la constante apunta al 21/08/2026", () => {
+    expect(DEBT_SNAPSHOT_DATE.toISOString()).toBe("2026-08-21T12:00:00.000Z");
+  });
+
+  it("el plan es idéntico en agosto de 2026, en septiembre y en 2027", () => {
+    // El reloj de SISTEMA es el que se mueve: es exactamente lo que le pasa al
+    // script cuando el operador lo corre semanas o meses después de que el
+    // tesorero midió el archivo.
+    const seen: string[] = [];
+    for (const today of ["2026-08-21T15:00:00Z", "2026-09-15T15:00:00Z", "2027-02-10T15:00:00Z"]) {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(today));
+      const { plans, errors } = planDebtImport(rows, DEBT_SNAPSHOT_DATE);
+      expect(errors).toEqual([]);
+      seen.push(JSON.stringify(plans));
+    }
+    expect(new Set(seen).size).toBe(1);
+    // Y el ancla es la de la foto: 8 cuotas de 2026 son enero..agosto.
+    expect(JSON.parse(seen[0])[0].periods.filter((p: string) => p.startsWith("2026"))).toEqual([
+      "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08",
+    ]);
+  });
+
+  it("con el reloj de la corrida el mismo archivo diría otra cosa (el bug que cierra la constante)", () => {
+    // Un mes de demora corre la deuda de 2026 un mes entero, y el total de
+    // cuotas no cambia: por eso la línea de control del reporte no lo detecta.
+    const anchored = planDebtImport(rows, DEBT_SNAPSHOT_DATE);
+    const drifted = planDebtImport(rows, new Date("2026-09-15T15:00:00Z"));
+    expect(drifted.plans[0].periods).not.toEqual(anchored.plans[0].periods);
+    expect(drifted.plans[0].periods).toContain("2026-09");
+    expect(anchored.plans[0].periods).toContain("2026-01");
+    const fees = (r: typeof anchored) => r.plans.reduce((n, p) => n + p.periods.length, 0);
+    expect(fees(drifted)).toBe(fees(anchored));
   });
 });

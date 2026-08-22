@@ -7,6 +7,15 @@
 // cuota — y eso lo resuelve `planDebtImport`, que es puro y está probado
 // aparte.
 //
+// El archivo es una FOTO del 21/08/2026 (`DEBT_SNAPSHOT_DATE`): el "mes en curso"
+// que ancla la deuda del año abierto sale de esa fecha y no del reloj de la
+// corrida, o el mismo Excel diría otra cosa cada vez que se lo importa.
+//
+// Todo lo que se puede validar SIN la base —los totales de control— se valida
+// antes de la primera escritura: esta carga no se deshace, y la idempotencia
+// por socio hace que corregir el Excel y re-correr saltee a los que ya se
+// cargaron mal.
+//
 // Idempotente por socio: si ya tiene alguna cuota importada, se saltea entero.
 // Aborta ante cualquier fila que no matchee número Y DNI con la base: esta
 // deuda se va a cobrar y a notificar fehacientemente, así que no se carga sobre
@@ -24,7 +33,7 @@ import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/prisma";
 import { audit } from "../src/lib/audit";
 import { excelDateToCivilUtc } from "../src/lib/dates";
-import { planDebtImport, type DebtRow } from "../src/lib/treasury/debt-import";
+import { DEBT_SNAPSHOT_DATE, planDebtImport, type DebtRow } from "../src/lib/treasury/debt-import";
 import { comparePeriods, periodOf } from "../src/lib/treasury/periods";
 
 const FILE = join(process.cwd(), "datos", "deuda.xlsx");
@@ -43,6 +52,16 @@ const EXPECTED_HEADERS = [
 const EXPECTED_ROWS = 278;
 const EXPECTED_TOTAL_FEES = 3080;
 const EXPECTED_DEBTORS = 119;
+
+// La fecha de la foto (`DEBT_SNAPSHOT_DATE`, 21/08/2026) vive junto a la regla
+// que alimenta, en `src/lib/treasury/debt-import.ts`, y es la que describen los
+// tres totales de acá arriba. Se pasa como `now` al planificador: el "mes en
+// curso" que ancla la deuda del año abierto tiene que ser el de la medición y
+// no el del reloj de la corrida. Medido sobre este archivo: importándolo el
+// 15/09/2026 la deuda 2026 de siete socios se corre un mes (el socio 144
+// pierde 2026-01 y gana 2026-09) y en 2027 el "8 en 2026" se leería como
+// mayo..diciembre — cuotas de meses que el socio nunca devengó. Los totales
+// seguirían dando 3080, así que nada avisaría.
 
 // Un error de datos se arregla editando el Excel; uno de infraestructura,
 // levantando la base. Para el operador se ven igual si no los distinguimos.
@@ -127,7 +146,11 @@ function resolveColumns(headerRow: ExcelJS.Row): Map<string, number> {
 
 // Contadores fuera de main() para que el handler de error pueda decir hasta
 // dónde llegó si el proceso muere en medio del loop de escritura.
-const progress = { imported: 0, skipped: 0, fees: 0, collisions: 0 };
+// `fullyCollided` es el socio cuyo plan entero ya existía devengado: no se le
+// creó ninguna cuota pero tampoco se lo salteó por idempotencia. Tiene contador
+// propio para que `importados + salteados + ya devengados` cierre contra la
+// cantidad de socios con deuda; si no, el reporte muestra una resta que no da.
+const progress = { imported: 0, skipped: 0, fullyCollided: 0, fees: 0, collisions: 0 };
 
 async function main() {
   if (existsSync(LOCK)) {
@@ -218,8 +241,32 @@ async function main() {
     );
   }
 
-  const { plans, errors } = planDebtImport(rows);
+  const { plans, errors } = planDebtImport(rows, DEBT_SNAPSHOT_DATE);
   if (errors.length > 0) throw new DebtDataError(["deuda.xlsx tiene cantidades imposibles:", ...errors].join("\n"));
+
+  // ── Totales de control: se validan ACÁ, antes de tocar la base ────────────
+  // Las tres cifras salen del Excel y ya están todas calculadas, así que no hay
+  // ninguna razón para escribir primero y avisar después. Y avisar después no
+  // sirve: la clave de idempotencia es "este socio ya tiene alguna cuota
+  // importada", o sea que corregir el Excel y re-correr SALTEA a todos los que
+  // ya se cargaron. Los meses equivocados se quedarían puestos y no hay
+  // des-import. Mismo criterio que la poda del padrón: si el archivo cambió de
+  // verdad, se actualizan las constantes y recién ahí se importa.
+  const totalFees = plans.reduce((n, p) => n + p.periods.length, 0);
+  if (rows.length !== EXPECTED_ROWS || plans.length !== EXPECTED_DEBTORS || totalFees !== EXPECTED_TOTAL_FEES) {
+    throw new DebtDataError(
+      [
+        "Los totales de control de deuda.xlsx no dan: no se importó nada.",
+        `  filas          : ${rows.length} (esperado ${EXPECTED_ROWS})`,
+        `  socios con deuda: ${plans.length} (esperado ${EXPECTED_DEBTORS})`,
+        `  cuotas          : ${totalFees} (esperado ${EXPECTED_TOTAL_FEES})`,
+        "  Esta carga no se puede deshacer y una re-corrida saltea a los socios ya importados,",
+        "  así que se corta antes de escribir. Si el archivo cambió de verdad, actualizá",
+        "  EXPECTED_ROWS / EXPECTED_DEBTORS / EXPECTED_TOTAL_FEES (y DEBT_SNAPSHOT_DATE si se re-midió)",
+        "  y volvé a correr.",
+      ].join("\n"),
+    );
+  }
 
   // ── Join con la base: por número de socio del libro abierto Y por DNI ──────
   const openBooks = await prisma.book.findMany({ where: { status: "open" }, orderBy: { number: "asc" } });
@@ -269,18 +316,21 @@ async function main() {
     );
   }
   const rowByNumber = new Map(rows.map((r) => [r.memberNumber, r]));
+  const leftMismatches: string[] = [];
   for (const plan of plans) {
     const m = byNumber.get(plan.memberNumber)!;
-    // El mes de la baja decide en qué meses cae la deuda del año de la baja: si
-    // los dos Excel no dicen lo mismo, la deuda queda imputada a meses
-    // distintos de los que muestra la ficha del socio.
+    // El mes de la baja decide en qué meses cae la deuda del año de la baja, y
+    // es la regla que más importa de todo el import: con la baja en blanco el
+    // ancla cae en diciembre y las cuotas se imputan a meses POSTERIORES a la
+    // salida del socio. Un aviso no alcanza —la escritura ya habría ocurrido y
+    // no hay des-import—, así que si los dos Excel no dicen lo mismo se aborta.
     const fichaLeft = m.leftAt ? periodOf(m.leftAt) : null;
     const excelLeft = rowByNumber.get(plan.memberNumber)!.leftAt;
     const excelLeftPeriod = excelLeft ? periodOf(excelLeft) : null;
     if (fichaLeft !== excelLeftPeriod) {
-      warnings.push(
-        `socio ${plan.memberNumber}: la baja de deuda.xlsx (${excelLeftPeriod ?? "sin baja"}) no coincide con la ` +
-          `de la ficha (${fichaLeft ?? "sin baja"}) — la deuda se imputó según deuda.xlsx`,
+      leftMismatches.push(
+        `  socio ${plan.memberNumber}: deuda.xlsx dice ${excelLeftPeriod ?? "sin baja"} y la ficha dice ` +
+          `${fichaLeft ?? "sin baja"}`,
       );
     }
     // Cuotas anteriores al ingreso: el Excel pidió más cuotas de las que ese
@@ -293,6 +343,17 @@ async function main() {
           `revisá la cantidad del primer año`,
       );
     }
+  }
+  if (leftMismatches.length > 0) {
+    throw new DebtDataError(
+      [
+        "El mes de baja de deuda.xlsx no coincide con el de la ficha: no se importó nada.",
+        ...leftMismatches,
+        "El mes de la baja decide en qué meses cae la deuda del año de la baja: con una celda",
+        "fecha_egreso en blanco las cuotas se imputan a meses posteriores a la salida del socio.",
+        "Emparejá los dos archivos (o corregí la ficha desde el panel) y volvé a correr.",
+      ].join("\n"),
+    );
   }
 
   // ── Escritura ─────────────────────────────────────────────────────────────
@@ -321,7 +382,10 @@ async function main() {
     // fallar el INSERT entero si intentáramos crearlas).
     const toCreate = plan.periods.filter((p) => !taken.has(p));
     progress.collisions += plan.periods.length - toCreate.length;
-    if (toCreate.length === 0) continue;
+    if (toCreate.length === 0) {
+      progress.fullyCollided++;
+      continue;
+    }
     // Un solo `createMany` = un solo INSERT = atómico: o el socio queda con toda
     // su deuda importada o con ninguna, que es justo lo que asume la clave de
     // idempotencia ("tiene alguna cuota importada"). Por eso el script se puede
@@ -333,8 +397,6 @@ async function main() {
     progress.fees += toCreate.length;
   }
 
-  const totalFees = plans.reduce((n, p) => n + p.periods.length, 0);
-  const totalsOk = rows.length === EXPECTED_ROWS && plans.length === EXPECTED_DEBTORS && totalFees === EXPECTED_TOTAL_FEES;
   // Se cuenta acotado al libro: cuando el re-empadronamiento abra el Libro 2,
   // un total global diría otra cosa que lo que este import escribió.
   const dbImported = await prisma.fee.count({
@@ -346,13 +408,13 @@ async function main() {
     `filas: ${rows.length} (esperado ${EXPECTED_ROWS}) | socios con deuda: ${plans.length} (esperado ${EXPECTED_DEBTORS}) ` +
       `| cuotas en el Excel: ${totalFees} (esperado ${EXPECTED_TOTAL_FEES})`,
     `importados: ${progress.imported} | salteados (ya tenían deuda importada): ${progress.skipped} | ` +
+      `sin cuotas nuevas (todo su plan ya estaba devengado): ${progress.fullyCollided} | ` +
       `cuotas creadas: ${progress.fees}` +
       (progress.collisions > 0 ? ` | cuotas del Excel que ya existían devengadas: ${progress.collisions}` : ""),
     `en base: cuotas origin=import del libro ${book.number}: ${dbImported}`,
     `avisos (${warnings.length}):`,
     ...warnings.map((w) => `  - ${w}`),
   ];
-  if (!totalsOk) lines.push("ATENCION: TOTALES DISTINTOS DE LOS ESPERADOS — revisar antes de continuar");
   console.log(lines.join("\n"));
 
   // El asiento lleva solo contadores: ni nombres ni DNIs (Ley 25.326).
@@ -362,9 +424,11 @@ async function main() {
     entityId: book.id,
     detail: {
       rows: rows.length, debtors: plans.length, totalFees,
+      snapshot: DEBT_SNAPSHOT_DATE.toISOString().slice(0, 10),
       imported: progress.imported, skipped: progress.skipped,
+      fullyCollided: progress.fullyCollided,
       feesCreated: progress.fees, collisions: progress.collisions,
-      warnings: warnings.length, totalsOk,
+      warnings: warnings.length,
     },
   });
 }
@@ -387,7 +451,7 @@ main()
     }
     console.error(
       `  progreso antes de abortar: socios importados ${progress.imported}, salteados ${progress.skipped}, ` +
-        `cuotas creadas ${progress.fees}`,
+        `sin cuotas nuevas ${progress.fullyCollided}, cuotas creadas ${progress.fees}`,
     );
     console.error("  El script es idempotente: corregí la causa y volvé a correrlo (los socios ya cargados se saltean).");
   })
