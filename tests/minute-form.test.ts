@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
+  createsNewMinute, describeMinuteSelection, discardUnusedMinute, minuteSelectionSchema,
+  resolveMinuteId,
 } from "@/lib/members/minute-form";
 
 describe("minuteSelectionSchema", () => {
@@ -25,6 +26,51 @@ describe("minuteSelectionSchema", () => {
   it("rejects a new minute without a date", () => {
     const r = minuteSelectionSchema.safeParse({ minuteNew: "1", minuteType: "board", minuteNumber: "12" });
     expect(r.success).toBe(false);
+  });
+});
+
+// La pantalla de confirmación tiene que decir en qué acta se va a asentar la
+// decisión SIN crearla: el acta se escribe recién cuando la acción se ejecuta,
+// o volver atrás dejaría un asiento fantasma en el libro que se presenta a la IGJ.
+describe("describeMinuteSelection", () => {
+  it("describes an existing minute from the database, never from the form", async () => {
+    const db = {
+      minute: {
+        findUnique: async () => ({ type: "assembly", number: 12, date: new Date("2026-08-12T12:00:00Z") }),
+      },
+    };
+    const label = await describeMinuteSelection(db as never, { minuteId: 3 });
+    expect(label).toBe("Asamblea N° 12 — 12/08/2026");
+  });
+
+  it("describes a minute that does not exist yet without creating it", async () => {
+    const db = {
+      minute: {
+        findUnique: async () => null,
+        create: async () => { throw new Error("no debería crear nada"); },
+      },
+    };
+    const label = await describeMinuteSelection(db as never, {
+      minuteNew: "1" as const, minuteType: "board" as const, minuteNumber: 48,
+      minuteDate: "2026-08-20", minuteDescription: undefined,
+    });
+    expect(label).toContain("Comisión Directiva N° 48 — 20/08/2026");
+    // El operador tiene que saber que ese número de acta todavía no existe.
+    expect(label).toMatch(/acta nueva/i);
+  });
+
+  it("refuses an existing minute that is gone, in Spanish", async () => {
+    const db = { minute: { findUnique: async () => null } };
+    await expect(describeMinuteSelection(db as never, { minuteId: 3 }))
+      .rejects.toThrow("El acta seleccionada no existe.");
+  });
+
+  it("rejects an impossible date before the operator confirms", async () => {
+    const db = { minute: { findUnique: async () => null } };
+    await expect(describeMinuteSelection(db as never, {
+      minuteNew: "1" as const, minuteType: "board" as const, minuteNumber: 48,
+      minuteDate: "2026-02-31", minuteDescription: undefined,
+    })).rejects.toThrow("La fecha del acta no existe.");
   });
 });
 

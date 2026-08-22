@@ -3,7 +3,7 @@
 // asiento masivo de solicitudes: un acta para todo el lote, una baja por socio,
 // éxito parcial reportado POR SOCIO.
 //
-// Dos cosas que no son detalle:
+// Tres cosas que no son detalle:
 //
 //   1. El umbral (≥4 cuotas pendientes) se REVALIDA acá, socio por socio y al
 //      momento de la baja. La pantalla pudo quedar vieja —alguien pagó en la
@@ -12,6 +12,13 @@
 //   2. La declaración la decide la Comisión Directiva, no el sistema. Acá no
 //      hay ningún camino automático: el sistema propone (los ≥4) y el operador
 //      dispone (los que tilda), y todo queda asentado en un acta.
+//   3. La acción tiene DOS pasos (decisión del cliente, 22/08/2026). El primer
+//      envío no da de baja a nadie: devuelve quiénes se van a declarar cesantes
+//      —nombre, número de socio y cuotas, todo resuelto contra la base— y en
+//      qué acta se va a asentar. La baja ocurre recién en el segundo envío. El
+//      formulario NO dicta esos datos: un POST armado a mano no puede mostrar
+//      un nombre y expulsar a otro socio. Y el acta se crea recién en el
+//      segundo paso, así que volver atrás no deja ningún asiento fantasma.
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -20,8 +27,10 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { memberService } from "@/lib/members/service";
 import {
-  createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
+  createsNewMinute, describeMinuteSelection, discardUnusedMinute, minuteSelectionSchema,
+  resolveMinuteId,
 } from "@/lib/members/minute-form";
+import { arrearsConfirmToken, type ArrearsConfirmTarget } from "@/lib/treasury/arrears-confirm";
 import { ARREARS_THRESHOLD } from "@/lib/treasury/rules";
 
 const BASE = "/admin/tesoreria/deudores";
@@ -32,10 +41,20 @@ const BASE = "/admin/tesoreria/deudores";
 // contador. "2 sin declarar" en un lote de diez no le dice al operador a quién
 // tiene que volver a mirar, y acá la diferencia entre un socio y otro es si
 // sigue siendo socio.
+//
+// `confirm` es el primer paso: la lista que el operador tiene que leer antes de
+// expulsar a nadie. `changed` avisa que confirmó una cosa y mandó otra (cambió
+// de acta o de selección después de leer), y entonces se vuelve a pedir.
 type State = {
   error?: string;
   declared?: number;
   failures?: Array<{ memberId: number; name: string; error: string }>;
+  confirm?: {
+    token: string;
+    minuteLabel: string;
+    targets: ArrearsConfirmTarget[];
+    changed?: boolean;
+  };
 };
 
 export async function declareArrearsAction(_prev: State, formData: FormData): Promise<State> {
@@ -54,7 +73,7 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
         .map((s) => Number(s.trim()))
         .filter((n) => Number.isInteger(n) && n > 0),
     ),
-  ];
+  ].sort((a, b) => a - b);
   if (ids.length === 0) return { error: "Seleccioná al menos un socio." };
 
   // El acta se parsea aparte y nunca combinada con otro schema:
@@ -68,13 +87,57 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
   }
 
   // Pre-validación anti acta huérfana: si ninguno de los ids existe, se corta
-  // antes de tocar el libro de actas.
+  // antes de tocar el libro de actas. El nombre y el número salen de ACÁ —de la
+  // base— tanto para la confirmación como para el informe de fallos: es lo que
+  // hace que el formulario no pueda mostrar un nombre y expulsar a otro.
   const members = await prisma.member.findMany({
     where: { id: { in: ids } },
-    select: { id: true, fullName: true },
+    select: {
+      id: true,
+      fullName: true,
+      memberships: { select: { memberNumber: true, book: { select: { status: true } } } },
+    },
     orderBy: { id: "asc" },
   });
   if (members.length === 0) return { error: "Ninguno de los socios seleccionados existe." };
+
+  // Primer paso, o segundo paso sobre algo distinto de lo confirmado: se
+  // muestra a quiénes se va a expulsar y en qué acta, y no se escribe nada.
+  const token = arrearsConfirmToken(ids, sel.data);
+  const confirmedToken = formData.get("confirmToken");
+  const confirmed = formData.get("confirmar") === "1" && confirmedToken === token;
+  if (!confirmed) {
+    let minuteLabel: string;
+    try {
+      minuteLabel = await describeMinuteSelection(prisma, sel.data);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : "No se pudo resolver el acta." };
+    }
+    // Un solo groupBy para toda la tanda: la revalidación socio por socio del
+    // segundo paso es la que manda, ésta sólo es lo que el operador lee.
+    const groups = await prisma.fee.groupBy({
+      by: ["memberId"],
+      where: { memberId: { in: ids }, status: "pending" },
+      _count: { _all: true },
+    });
+    const counts = new Map(groups.map((g) => [g.memberId, g._count._all]));
+    return {
+      confirm: {
+        token,
+        minuteLabel,
+        changed: formData.get("confirmar") === "1" ? true : undefined,
+        targets: members.map((m) => ({
+          memberId: m.id,
+          name: m.fullName,
+          // El número vigente es el del libro ABIERTO: el de uno cerrado es
+          // historia y no es el que figura en el padrón de hoy (mismo criterio
+          // que `fetchDebtors`).
+          memberNumber: m.memberships.find((ms) => ms.book.status === "open")?.memberNumber ?? null,
+          pendingCount: counts.get(m.id) ?? 0,
+        })),
+      },
+    };
+  }
 
   const createdMinute = createsNewMinute(sel.data);
   let minuteId: number;

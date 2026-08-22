@@ -10,13 +10,24 @@
 // al terminar la action. Acá el rechazo parcial es el caso ESPERABLE (alguien
 // pagó y bajó de las 4 cuotas), así que sin eso cada intento le destildaría al
 // operador la lista entera que acababa de elegir.
+//
+// La acción tiene dos pasos: el primer envío devuelve `confirm` —a quiénes se
+// va a expulsar, con nombre y cuotas, resuelto por el servidor— y el segundo
+// (el botón "Confirmar la cesantía", que agrega `confirmar=1`) es el que da de
+// baja. Volver atrás es local: se descarta la confirmación y el formulario
+// queda intacto, con la selección tildada y el acta elegida, porque nunca se
+// navegó a ningún lado.
 import Link from "next/link";
 import { useActionState, useRef, useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { MinutePicker, type MinuteOption } from "@/components/admin/minute-picker";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
+import { ARREARS_THRESHOLD } from "@/lib/treasury/rules";
 import { declareArrearsAction } from "./actions";
+
+type ArrearsState = Awaited<ReturnType<typeof declareArrearsAction>>;
+type ArrearsConfirmation = NonNullable<ArrearsState["confirm"]>;
 
 export function ArrearsForm({ minutes, selectableIds, children }: {
   minutes: MinuteOption[];
@@ -26,6 +37,10 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
 }) {
   const [state, formAction, pending] = useActionState(declareArrearsAction, {});
   const [selected, setSelected] = useState<string[]>([]);
+  // Qué confirmación descartó el operador con "Volver". Se guarda el objeto y
+  // no un booleano: cada corrida de la action devuelve uno nuevo, así que una
+  // confirmación posterior se muestra sola sin ningún efecto que resetear.
+  const [dismissed, setDismissed] = useState<ArrearsConfirmation | undefined>(undefined);
   const formRef = useRef<HTMLFormElement>(null);
 
   // La selección efectiva se DERIVA de lo que la página sigue ofreciendo. Con
@@ -43,13 +58,26 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
     setSelected((prev) =>
       el.checked ? [...new Set([...prev, el.value])] : prev.filter((v) => v !== el.value),
     );
+    // Tocar la selección invalida lo que el operador acaba de leer: la
+    // confirmación se cae y hay que volver a pedirla. (El cambio de acta no se
+    // ve desde acá — lo agarra el token del lado del servidor.)
+    setDismissed(state.confirm);
   };
 
   const allSelected = all.length > 0 && all.every((id) => effective.includes(id));
   const failures = state.failures ?? [];
+  const confirm = state.confirm && state.confirm !== dismissed ? state.confirm : null;
+
+  // Con la confirmación abierta, el ÚNICO botón de envío que queda es el que da
+  // de baja, y el navegador se lo asigna al Enter de cualquier campo: tipear el
+  // número de acta y apretar Enter declararía la cesantía sin haber apretado
+  // "Confirmar". La confirmación se aprieta, no se tipea.
+  const onKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (confirm && e.key === "Enter" && e.target instanceof HTMLInputElement) e.preventDefault();
+  };
 
   return (
-    <form ref={formRef} action={formAction} onChange={onChange} className="space-y-4">
+    <form ref={formRef} action={formAction} onChange={onChange} onKeyDown={onKeyDown} className="space-y-4">
       {/* Borde destructivo: este bloque no registra un pago, expulsa socios. */}
       <div className="flex flex-wrap items-end gap-4 rounded-md border border-destructive/40 p-3">
         <div className="min-w-64 grow">
@@ -61,17 +89,88 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
               type="checkbox"
               className="size-4"
               checked={allSelected}
-              onChange={() => setSelected(allSelected ? [] : all)}
+              onChange={() => {
+                setSelected(allSelected ? [] : all);
+                setDismissed(state.confirm);
+              }}
             />
             Seleccionar todos los candidatos
           </label>
-          <Button type="submit" variant="destructive" disabled={pending || effective.length === 0}>
-            {pending
-              ? "Declarando…"
-              : `Declarar cesantía${effective.length > 0 ? ` (${effective.length})` : ""}`}
-          </Button>
+          {/* Con la confirmación en pantalla desaparece: hay un solo botón que
+              da de baja, y es el que está debajo de la lista de nombres. */}
+          {!confirm && (
+            <Button type="submit" variant="destructive" disabled={pending || effective.length === 0}>
+              {pending
+                ? "Revisando…"
+                : `Declarar cesantía${effective.length > 0 ? ` (${effective.length})` : ""}`}
+            </Button>
+          )}
         </div>
       </div>
+
+      {/* El paso que pidió el cliente: antes de expulsar a nadie, quiénes son.
+          Los nombres, los números y las cuotas los resolvió el servidor contra
+          la base — no salen de este formulario. */}
+      {confirm && (
+        <div
+          className="space-y-3 rounded-md border border-destructive bg-destructive/5 p-3"
+          role="group"
+          aria-labelledby="arrears-confirm-title"
+        >
+          {confirm.changed && (
+            <FormMessage kind="warning">
+              La selección o el acta cambiaron después de confirmar: revisá de nuevo la lista.
+            </FormMessage>
+          )}
+          <p id="arrears-confirm-title" className="font-medium">
+            {`Vas a declarar la cesantía de ${confirm.targets.length} ${
+              confirm.targets.length === 1 ? "socio" : "socios"
+            }. Dejan de ser socios de la asociación.`}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {"Se asienta en el acta: "}
+            <span className="font-medium text-foreground">{confirm.minuteLabel}</span>
+          </p>
+          <ul className="space-y-1 text-sm">
+            {confirm.targets.map((t) => (
+              <li key={t.memberId} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-mono tabular-nums text-muted-foreground">
+                  {t.memberNumber !== null ? `N° ${t.memberNumber}` : "Sin número"}
+                </span>
+                <span className="font-medium">{t.name}</span>
+                <span>
+                  <span className="font-mono tabular-nums">{t.pendingCount}</span>
+                  {t.pendingCount === 1 ? " cuota adeudada" : " cuotas adeudadas"}
+                </span>
+                {/* Alguien pudo pagar entre las dos pantallas: se dice acá y la
+                    acción lo vuelve a rechazar por su nombre al ejecutar. */}
+                {t.pendingCount < ARREARS_THRESHOLD && (
+                  <FormMessage kind="warning" as="span" role="none">
+                    {`No llega a ${ARREARS_THRESHOLD} cuotas: se va a rechazar.`}
+                  </FormMessage>
+                )}
+              </li>
+            ))}
+          </ul>
+          {/* Devuelve la huella de lo que se está confirmando: si para cuando
+              se envía ya no es la misma selección ni la misma acta, la acción
+              vuelve a pedir confirmación en vez de expulsar a ciegas. */}
+          <input type="hidden" name="confirmToken" value={confirm.token} />
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" name="confirmar" value="1" variant="destructive" disabled={pending}>
+              {pending ? "Declarando…" : "Confirmar la cesantía"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setDismissed(confirm)}
+            >
+              Volver sin declarar
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Ayuda estática, no respuesta a una acción: `role="none"` para que el
           lector de pantalla no la anuncie como alerta en cada render. */}

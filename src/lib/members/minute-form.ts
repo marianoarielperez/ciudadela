@@ -1,7 +1,9 @@
 // Shared "pick or create a Minute" used by every statutory action form.
 import { z } from "zod";
 import type { PrismaClient } from "@/generated/prisma/client";
+import { formatDateAR } from "@/lib/format";
 import { parseMinuteDate } from "@/lib/members/minute-date";
+import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
 
 export const minuteSelectionSchema = z.union(
   [
@@ -49,6 +51,33 @@ export async function resolveMinuteId(
     }
     throw e;
   }
+}
+
+// Cómo se llama el acta que va a recibir el asiento, para PODER MOSTRARLA antes
+// de escribir nada. Es la contracara de `resolveMinuteId`: misma selección, cero
+// escrituras. Una pantalla de confirmación que creara el acta para poder
+// nombrarla dejaría un asiento fantasma en el libro cada vez que el operador
+// vuelve atrás — justo lo que evita `discardUnusedMinute` más abajo.
+//
+// La fecha se valida acá y no recién al confirmar: es mejor que el "31 de
+// febrero" salte mientras el operador todavía está mirando el formulario.
+export async function describeMinuteSelection(
+  db: Pick<PrismaClient, "minute">,
+  sel: MinuteSelection,
+): Promise<string> {
+  if ("minuteId" in sel) {
+    const existing = await db.minute.findUnique({
+      where: { id: sel.minuteId },
+      select: { type: true, number: true, date: true },
+    });
+    if (!existing) throw new Error("El acta seleccionada no existe.");
+    return `${MINUTE_TYPE_LABELS[existing.type]} N° ${existing.number} — ${formatDateAR(existing.date)}`;
+  }
+  const parsedDate = parseMinuteDate(sel.minuteDate);
+  if (!parsedDate.ok) throw new Error(parsedDate.error);
+  // Se aclara que todavía no existe: el número que el operador tipeó no es el de
+  // un acta del libro hasta que la acción se ejecute.
+  return `${MINUTE_TYPE_LABELS[sel.minuteType]} N° ${sel.minuteNumber} — ${formatDateAR(parsedDate.value)} (acta nueva, se crea al confirmar)`;
 }
 
 // `true` cuando la selección va a dar de alta un acta nueva en vez de reusar una

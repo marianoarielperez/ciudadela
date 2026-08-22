@@ -16,6 +16,9 @@ type FakeConfig = {
   // último paso de casi toda acción, así que el update del socio ya está
   // aplicado cuando explota.
   failMovementCreate?: boolean;
+  // Cuotas pendientes del socio al momento de la acción: la baja las cuenta
+  // para congelar `debtAtWithdrawal` (REG-16).
+  pendingFees?: number;
 };
 
 type FakeToken = { id: number; memberId: number; purpose: string; usedAt: Date | null };
@@ -42,6 +45,9 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
     // el reingreso tiene que devolvérsela.
     users: [{ id: 55, active: true }],
     userUpdates: [] as Record<string, unknown>[],
+    // Los `where` con los que se contaron las cuotas: la baja tiene que contar
+    // las del socio que da de baja y sólo las pendientes.
+    feeCounts: [] as Record<string, unknown>[],
   };
   const openBooks = config.openBooks ?? [{ id: 1, number: 1, status: "open" }];
   const db = {
@@ -91,6 +97,15 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
       },
     },
     book: { findMany: async () => openBooks },
+    // `feeCounts` es registro de llamadas, no estado: a propósito NO se
+    // restaura en el rollback, así se puede afirmar que el conteo ocurrió
+    // aunque la transacción termine deshaciéndose.
+    fee: {
+      count: async ({ where }: { where: Record<string, unknown> }) => {
+        state.feeCounts.push(where);
+        return config.pendingFees ?? 0;
+      },
+    },
     minute: { findUniqueOrThrow: async () => MINUTE },
     membership: {
       aggregate: async () => ({ _max: { memberNumber: 305 } }),
@@ -189,6 +204,40 @@ describe("memberService.withdraw", () => {
     const svc = makeMemberService(db as never);
     await svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 });
     expect(state.tokens.map((t) => t.id).sort()).toEqual([3, 4, 5]);
+  });
+
+  // REG-16: la baja congela la deuda. El flag no lo escribe la pantalla de
+  // deudores sino el servicio, así que sale igual por cesantía por mora, por
+  // renuncia con deuda o por mudanza con deuda.
+  it("freezes the debt flag from the fees pending at the moment of the withdrawal (REG-16)", async () => {
+    const { db, state } = makeFakeDb({}, { pendingFees: 4 });
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toMatchObject({ debtAtWithdrawal: true });
+    // El conteo es el del socio y sólo el de las pendientes: contar todas las
+    // cuotas marcaría con deuda a cualquiera que alguna vez pagó una.
+    expect(state.feeCounts).toEqual([{ memberId: 1, status: "pending" }]);
+  });
+
+  it("marks no debt when the member leaves up to date, whatever the reason", async () => {
+    const { db, state } = makeFakeDb({ debtAtWithdrawal: true }, { pendingFees: 0 });
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "resignation", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toMatchObject({ debtAtWithdrawal: false });
+    expect(state.member.debtAtWithdrawal).toBe(false);
+  });
+
+  // El flag y las cuotas que lo justifican tienen que moverse juntos: si el
+  // asiento falla, el socio sigue vigente y no puede quedarle una marca de
+  // deuda que nadie escribió.
+  it("does not leave the debt flag set when the withdrawal rolls back", async () => {
+    const { db, state } = makeFakeDb({}, { pendingFees: 6, failMovementCreate: true });
+    const svc = makeMemberService(db as never);
+    await expect(svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 }))
+      .rejects.toThrow(/movement insert failed/);
+    expect(state.feeCounts).toHaveLength(1);
+    expect(state.member.debtAtWithdrawal).toBe(false);
+    expect(state.member.status).toBe("active");
   });
 
   it("keeps the withdrawn member's tokens when the movement cannot be written", async () => {

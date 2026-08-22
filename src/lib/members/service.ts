@@ -10,7 +10,7 @@ import { revokeStaleMemberTokens } from "./write";
 // métodos de control de sesión (`$transaction`, `$connect`, …).
 type Tx = Pick<
   PrismaClient,
-  "actionToken" | "book" | "member" | "membership" | "minute" | "movement" | "user"
+  "actionToken" | "book" | "fee" | "member" | "membership" | "minute" | "movement" | "user"
 >;
 
 // Exportada: las server actions la consultan para poder rechazar el cambio de
@@ -85,10 +85,19 @@ export function makeMemberService(db: PrismaClient) {
         const check = canWithdraw(member);
         if (!check.ok) throw new Error(check.error);
         const minute = await tx.minute.findUniqueOrThrow({ where: { id: input.minuteId } });
+        // REG-16: la baja NO devenga más, así que las cuotas que quedan
+        // pendientes son la deuda congelada al momento de la baja. El flag se
+        // escribe acá y no en la pantalla que ordenó la baja: así lo llevan
+        // todas por igual —cesantía por mora, renuncia con deuda, mudanza con
+        // deuda— y, al salir de la MISMA transacción que congela esas cuotas,
+        // no puede contradecirlas. Es un booleano, no un monto: el monto se
+        // valúa a valor vigente al momento del pago, nunca al de la baja.
+        const pendingFees = await tx.fee.count({ where: { memberId: member.id, status: "pending" } });
         const updated = await tx.member.update({
           where: { id: member.id },
           data: {
             status: "withdrawn", withdrawalReason: input.reason, leftAt: minute.date,
+            debtAtWithdrawal: pendingFees > 0,
             reentryBlocked: input.reason === "expulsion" ? true : member.reentryBlocked,
             suspendedFrom: null, suspendedTo: null,
           },
