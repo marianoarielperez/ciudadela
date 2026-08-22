@@ -65,6 +65,19 @@ describe("registerCashPaymentAction", () => {
     expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/recibos/7?emitido=1&email=sent");
   });
 
+  it("un monto que no es número se rechaza en castellano, no con el NaN de zod", async () => {
+    // Sin mensaje propio en la coerción, zod contesta "Invalid input: expected
+    // number, received NaN" y ese texto va derecho a la pantalla del mostrador.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const form = new FormData();
+    form.append("memberId", "1");
+    form.append("concept", "voluntary");
+    form.append("amount", "2.500.");
+    const r = await registerCashPaymentAction({}, form);
+    expect(r.error).toBe("Ingresá el monto del aporte.");
+    expect(mocks.register).not.toHaveBeenCalled();
+  });
+
   it("un concepto inválido se rechaza en castellano antes de tocar el servicio", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     const form = new FormData();

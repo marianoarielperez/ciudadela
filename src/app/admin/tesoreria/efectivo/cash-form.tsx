@@ -38,7 +38,13 @@ export function CashForm({ memberId, concepts, feeAmount, hasEmail, pendingCount
   });
   const isFees = values.concept === "fees";
   const count = Number(values.count);
-  const total = isFees && feeAmount !== null && Number.isInteger(count) && count > 0 ? feeAmount * count : null;
+  const amount = Number(values.amount);
+  // El total se muestra SIEMPRE, no solo en cuotas: es lo último que el
+  // operador lee antes de cobrar, y en un aporte es la única forma de ver que
+  // el número que tipeó es el que se va a cobrar.
+  const total = isFees
+    ? (feeAmount !== null && Number.isInteger(count) && count > 0 ? feeAmount * count : null)
+    : (Number.isInteger(amount) && amount > 0 ? amount : null);
 
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
@@ -60,9 +66,14 @@ export function CashForm({ memberId, concepts, feeAmount, hasEmail, pendingCount
       ) : (
         <TextField
           label="Monto ($)"
-          field={field("amount", (v) => v.replace(/[^\d.]/g, ""))}
+          // Solo dígitos, como el valor de cuota de Configuración: dejar entrar
+          // la coma o el punto obliga a adivinar si "2500,50" son dos mil
+          // quinientos con cincuenta o doscientos cincuenta mil.
+          field={field("amount", (v) => v.replace(/\D/g, ""))}
           inputMode="numeric"
+          maxLength={8}
           placeholder="2500"
+          hint="En pesos enteros."
         />
       )}
       <TextField label="Nota (opcional)" field={field("note")} maxLength={200} />

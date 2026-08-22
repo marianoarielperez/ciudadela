@@ -20,15 +20,31 @@ import { treasuryService, TreasuryError } from "@/lib/treasury/service";
 
 type State = { error?: string };
 
+// Todo mensaje va explícito y en castellano, incluido el de la COERCIÓN: un
+// valor que no es número llega a zod como NaN y sin mensaje propio el operador
+// lee "Invalid input: expected number, received NaN" en pantalla. Pasa con un
+// POST a mano, pero también con un campo que quedó a medio tipear.
+//
+// El monto es en pesos enteros, igual que el valor de cuota de Configuración:
+// con centavos habría que decidir si la coma es decimal o separador de miles, y
+// equivocarse ahí cobra de más sin que nadie lo note. El techo lo pone el
+// servicio (Decimal(10,2)), que ya lo dice en castellano.
 const schema = z.object({
-  memberId: z.coerce.number().int().positive(),
+  memberId: z.coerce
+    .number("Elegí a qué socio se le cobra.")
+    .int("Elegí a qué socio se le cobra.")
+    .positive("Elegí a qué socio se le cobra."),
   concept: z.enum(["fees", "voluntary", "extraordinary"], { error: "Elegí el concepto del pago." }),
   count: z.coerce
-    .number()
+    .number("Indicá cuántas cuotas paga.")
     .int("La cantidad de cuotas tiene que ser un número entero.")
     .positive("Indicá cuántas cuotas paga.")
     .optional(),
-  amount: z.coerce.number().positive("Ingresá el monto del aporte.").optional(),
+  amount: z.coerce
+    .number("Ingresá el monto del aporte.")
+    .int("El monto tiene que ser un número entero de pesos.")
+    .positive("Ingresá el monto del aporte.")
+    .optional(),
   note: z.string().max(200, "La nota no puede superar los 200 caracteres.").optional(),
   sendEmail: z.literal("on", { error: "Valor inválido." }).optional(),
 });
