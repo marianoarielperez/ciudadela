@@ -172,6 +172,15 @@ export function makeTreasuryService(deps: Deps) {
     if (!Number.isInteger(input.n) || input.n < 0 || input.n > MAX_FEES_PER_PAYMENT) {
       throw new TreasuryError(`La cantidad de cuotas tiene que estar entre 0 y ${MAX_FEES_PER_PAYMENT}.`);
     }
+    // `n` sólo tiene sentido para los tipos que imputan cuotas (FEE_TYPES). Un
+    // llamador que mande `entry`/`voluntary`/`extraordinary` con `n` distinto de
+    // cero está confundido sobre qué está cobrando, y silenciarlo (como hacía la
+    // línea de abajo antes de este chequeo) asentaba el pago con cero cuotas
+    // imputadas sin avisar a nadie. Esto es un bug del llamador, no algo que
+    // Mercado Pago pueda provocar, así que tiene que ser ruidoso.
+    if (!FEE_TYPES.includes(input.type) && input.n !== 0) {
+      throw new TreasuryError("Este tipo de pago no imputa cuotas: la cantidad tiene que ser 0.");
+    }
     if (input.memberId === null && input.type !== "entry") throw new TreasuryError("El pago necesita un socio.");
 
     // Primera barrera de idempotencia: el cobro de MP ya está asentado. La
@@ -187,7 +196,10 @@ export function makeTreasuryService(deps: Deps) {
 
     let periods: Period[] = [];
     let toCreate: Period[] = [];
-    let n = FEE_TYPES.includes(input.type) ? input.n : 0;
+    // Ya se validó arriba que `input.n === 0` para cualquier tipo fuera de
+    // FEE_TYPES, así que tomar `input.n` directo es equivalente al recorte
+    // silencioso de antes, pero ahora un valor inconsistente ya no llega hasta acá.
+    let n = input.n;
     if (input.memberId !== null) {
       const member = await db.member.findUnique({ where: { id: input.memberId }, select: { id: true, status: true } });
       if (!member) throw new TreasuryError("El socio no existe.");

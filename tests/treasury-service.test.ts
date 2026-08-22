@@ -7,7 +7,7 @@ type Fee = { id: number; memberId: number; period: string; status: string; origi
 type Row = Record<string, unknown> & { id: number };
 type FeeWhere = { memberId: number; period: { in: string[] }; paymentId?: number; status?: string };
 
-function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
+function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[]; application?: Record<string, unknown> }) {
   const state = {
     fees: opts.fees.map((f) => ({ ...f })),
     payments: [] as Row[],
@@ -16,8 +16,14 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
     // Los `where` de cada updateMany sobre cuotas, para poder afirmar CON QUÉ se
     // acotó el UPDATE y no solo qué quedó en la tabla.
     feeUpdateWheres: [] as FeeWhere[],
-    // Con qué se cerraron las filas de la bandeja de sin conciliar.
-    unmatchedUpdates: [] as Array<{ where: Record<string, unknown>; data: Record<string, unknown> }>,
+    // Bitácora de orden para poder probar que el cierre de la bandeja de sin
+    // conciliar ocurre DENTRO de `$transaction` y no después: "start"/"end" los
+    // empuja el `$transaction` del fake al entrar/salir del callback, "update" lo
+    // empuja `mpUnmatchedPayment.updateMany` cuando corre. Si el update quedara
+    // fuera de la transacción (antes del "start" o después del "end"), el test
+    // que lee esta bitácora lo detecta; con `db`/`tx` compartiendo el mismo
+    // espía, sólo el orden distingue adentro de afuera.
+    unmatchedUpdates: [] as string[],
     // Gancho para simular que otra operación tocó la tabla entre la foto que lee
     // el servicio y las escrituras de su transacción.
     beforeTransaction: null as null | (() => void),
@@ -77,8 +83,8 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
       }),
     },
     mpUnmatchedPayment: {
-      updateMany: vi.fn(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
-        state.unmatchedUpdates.push(args);
+      updateMany: vi.fn(async () => {
+        state.unmatchedUpdates.push("update");
         return { count: 0 };
       }),
     },
@@ -92,9 +98,16 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
         const r = state.receipts.find((x) => x.id === args.where.id);
         if (!r) return null;
         const payment = state.payments.find((p) => p.id === r.paymentId)!;
+        // Como Prisma de verdad: sin `memberId` el `include` no trae socio, y
+        // `application` sólo viene si el pago cuelga de una solicitud.
         return {
           ...r,
-          payment: { ...payment, fees: state.fees.filter((f) => f.paymentId === payment.id), member: opts.member },
+          payment: {
+            ...payment,
+            fees: state.fees.filter((f) => f.paymentId === payment.id),
+            member: payment.memberId != null ? opts.member : null,
+            application: payment.applicationId != null ? (opts.application ?? null) : null,
+          },
         };
       }),
       update: vi.fn(async (args: { where: { id: number }; data: Record<string, unknown> }) => {
@@ -113,7 +126,10 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
       state.beforeTransaction?.();
       state.beforeTransaction = null;
-      return fn(tx);
+      state.unmatchedUpdates.push("start");
+      const result = await fn(tx);
+      state.unmatchedUpdates.push("end");
+      return result;
     }),
   };
   // `db` va casteado para entrar donde se espera un PrismaClient; `mocks` es el
@@ -422,7 +438,7 @@ describe("registerPayment (núcleo 4B)", () => {
     const { db, state } = fakeDb({ member: { ...member, category: "active" }, fees: [
       { id: 1, memberId: 1, period: "2025-11", status: "pending", origin: "import", paymentId: null },
     ] });
-    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     const r = await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 6000, paidAt, mpPaymentId: "778", actorId: null });
     expect(r.kind === "registered" && r.periods).toEqual(["2025-11"]);
     expect(state.fees.find((f) => f.period === "2025-11")?.status).toBe("paid");
@@ -430,7 +446,7 @@ describe("registerPayment (núcleo 4B)", () => {
 
   it("mismo mpPaymentId dos veces → already_processed sin segundo recibo (consulta previa)", async () => {
     const { db, state } = fakeDb({ member, fees: [] });
-    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     const input = { memberId: 1, type: "debit" as const, n: 1, amount: 3000, paidAt, mpPaymentId: "777", actorId: null };
     await svc.registerPayment(input);
     const r = await svc.registerPayment(input);
@@ -445,7 +461,7 @@ describe("registerPayment (núcleo 4B)", () => {
     // create choca contra la unique.
     mocks.payment.findUnique.mockResolvedValueOnce(null);
     state.payments.push({ id: 9, mpPaymentId: "777" });
-    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     const r = await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "777", actorId: null });
     expect(r).toEqual({ kind: "already_processed", paymentId: 9 });
     expect(state.seq).toBe(0);
@@ -458,12 +474,12 @@ describe("registerPayment (núcleo 4B)", () => {
       { id: 1, memberId: 1, period: "2025-07", status: "pending", origin: "import", paymentId: null },
       { id: 2, memberId: 1, period: "2025-08", status: "pending", origin: "import", paymentId: null },
     ] });
-    const svc = makeTreasuryService({ db: a.db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc = makeTreasuryService({ db: a.db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     const r = await svc.registerPayment({ memberId: 1, type: "link", n: 3, amount: 9000, paidAt, mpPaymentId: "1", actorId: null });
     expect(r.kind === "registered" && r.periods).toEqual(["2025-07", "2025-08"]);
     expect(a.state.fees).toHaveLength(2);
     const b = fakeDb({ member: withdrawn, fees: [] });
-    const svc2 = makeTreasuryService({ db: b.db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc2 = makeTreasuryService({ db: b.db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     expect(await svc2.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "2", actorId: null }))
       .toEqual({ kind: "no_pending_withdrawn" });
     expect(b.state.payments).toHaveLength(0);
@@ -473,7 +489,7 @@ describe("registerPayment (núcleo 4B)", () => {
     const { db, mocks, state } = fakeDb({ member, fees: [] });
     mocks.receiptSequence.findUniqueOrThrow.mockImplementation(
       async (args: { where: { year: number } }) => ({ year: args.where.year, last: 1 }));
-    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     const r = await svc.registerPayment({
       memberId: 1, type: "debit", n: 1, amount: 3000, paidAt: new Date("2027-01-01T02:30:00Z"), mpPaymentId: "3", actorId: null,
     });
@@ -483,7 +499,7 @@ describe("registerPayment (núcleo 4B)", () => {
 
   it("entry: n=0, sin socio, cuelga de la solicitud; concepto de cuota de ingreso", async () => {
     const { db, state } = fakeDb({ member, fees: [] });
-    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     const r = await svc.registerPayment({
       memberId: null, applicationId: 9, type: "entry", n: 0, amount: 6000, paidAt,
       mpPaymentId: "4", preapprovalId: "pre-9", actorId: null,
@@ -495,13 +511,19 @@ describe("registerPayment (núcleo 4B)", () => {
   });
 
   it("cierra las filas de la bandeja con ese mpPaymentId dentro de la transacción", async () => {
-    const { db, mocks } = fakeDb({ member, fees: [] });
-    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const { db, mocks, state } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
     await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "777", actorId: null });
     expect(mocks.mpUnmatchedPayment.updateMany).toHaveBeenCalledWith({
       where: { mpPaymentId: "777", status: "open" },
       data: { status: "matched", paymentId: 1, resolvedAt: expect.any(Date) },
     });
+    // No alcanza con que se haya llamado: si el update corriera FUERA del
+    // `$transaction` (por ejemplo, después del commit), un fallo posterior
+    // dejaría la bandeja cerrada contra un pago que nunca se asentó. `db` y `tx`
+    // comparten el mismo espía de `mpUnmatchedPayment`, así que sólo el ORDEN de
+    // esta bitácora distingue adentro de afuera.
+    expect(state.unmatchedUpdates).toEqual(["start", "update", "end"]);
   });
 
   it("monto menor o igual a cero, o por encima del techo, es TreasuryError", async () => {
@@ -511,5 +533,63 @@ describe("registerPayment (núcleo 4B)", () => {
       .rejects.toThrow(TreasuryError);
     await expect(svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 100_000_000, paidAt, actorId: null }))
       .rejects.toThrow(TreasuryError);
+  });
+
+  // Antes de este chequeo, un llamador que mandara `n` para un tipo que no
+  // imputa cuotas (entry/voluntary/extraordinary) se asentaba con CERO cuotas
+  // imputadas y sin error: un bug del llamador, silencioso, en un camino de
+  // plata. Ahora es ruidoso.
+  it("un tipo que no imputa cuotas con n distinto de 0 es TreasuryError, no un recorte silencioso", async () => {
+    const { db: dbEntry, state: stateEntry } = fakeDb({ member, fees: [] });
+    const svcEntry = makeTreasuryService({ db: dbEntry as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    await expect(svcEntry.registerPayment({
+      memberId: null, applicationId: 9, type: "entry", n: 3, amount: 6000, paidAt, actorId: null,
+    })).rejects.toThrow(/no imputa cuotas/);
+    expect(stateEntry.payments).toHaveLength(0);
+
+    const { db: dbVol } = fakeDb({ member, fees: [] });
+    const svcVol = makeTreasuryService({ db: dbVol as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    await expect(svcVol.registerPayment({
+      memberId: 1, type: "voluntary", n: 2, amount: 2500, paidAt, actorId: null,
+    })).rejects.toThrow(TreasuryError);
+  });
+
+  // Invariante 2 (REG-33) del lado de `registerPayment`, no sólo de Efectivo:
+  // el chequeo de `imputed.count` va ANTES de pedir el número, así un rollback
+  // no consume serie. Simula, con el mismo gancho que usa `voidReceipt`, que
+  // otra operación ya cobró la cuota entre la foto que arma `allocate` y las
+  // escrituras de la transacción.
+  it("invariante 2 en el registro: si la cuota cambió justo antes de la transacción, no se pierde el número", async () => {
+    const { db, state } = fakeDb({
+      member, fees: [{ id: 1, memberId: 1, period: "2025-11", status: "pending", origin: "import", paymentId: null }],
+    });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    state.beforeTransaction = () => {
+      state.fees[0].status = "paid";
+      state.fees[0].paymentId = 99;
+    };
+    await expect(svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 6000, paidAt, mpPaymentId: "999", actorId: null,
+    })).rejects.toThrow(TreasuryError);
+    // El número NO se consumió (el rollback no gasta serie) y no quedó recibo.
+    expect(state.seq).toBe(0);
+    expect(state.receipts).toHaveLength(0);
+  });
+
+  // El recibo de una cuota de ingreso cuelga de la solicitud, no de un socio
+  // (`memberId: null`): en Prisma real el `include` de `member` da `null` ahí,
+  // y `pdfDataFor` cae a `payment.application.fullName`. El fake anterior
+  // devolvía `opts.member` sin condición, así que este camino era inasertable.
+  it("recibo de una cuota de ingreso (memberId null) saca el nombre de la solicitud", async () => {
+    const { db } = fakeDb({ member, fees: [], application: { fullName: "Juana Pérez" } });
+    const svc = makeTreasuryService({ db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const r = await svc.registerPayment({
+      memberId: null, applicationId: 9, type: "entry", n: 0, amount: 6000, paidAt, mpPaymentId: "5", actorId: null,
+    });
+    expect(r.kind).toBe("registered");
+    if (r.kind !== "registered") return;
+    const data = await svc.receiptPdfData(r.receiptId);
+    expect(data.memberName).toBe("Juana Pérez");
+    expect(data.memberNumber).toBeNull();
   });
 });
