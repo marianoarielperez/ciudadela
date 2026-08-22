@@ -83,11 +83,20 @@ describe("allocate", () => {
     expect(allocate({ pending: ["2026-01"], existing: ["2026-01"], n: 0, currentPeriod: "2026-08" }))
       .toEqual({ toPay: [], toCreate: [] });
   });
+  it("no duplica el período corriente cuando la pendiente aún no está en existing", () => {
+    const r = allocate({ pending: ["2026-08"], existing: [], n: 2, currentPeriod: "2026-08" });
+    expect(r).toEqual({ toPay: ["2026-08", "2026-09"], toCreate: ["2026-09"] });
+  });
 });
 
 describe("revertFees", () => {
   it("las cuotas de períodos futuros se borran, el resto vuelve a pendiente", () => {
     const r = revertFees(["2026-07", "2026-08", "2026-09", "2026-10"], "2026-08");
+    expect(r.toPending).toEqual(["2026-07", "2026-08"]);
+    expect(r.toDelete).toEqual(["2026-09", "2026-10"]);
+  });
+  it("el resultado no depende del orden de entrada (filas de la DB sin orden garantizado)", () => {
+    const r = revertFees(["2026-10", "2026-07", "2026-09", "2026-08"], "2026-08");
     expect(r.toPending).toEqual(["2026-07", "2026-08"]);
     expect(r.toDelete).toEqual(["2026-09", "2026-10"]);
   });
@@ -120,5 +129,8 @@ describe("labels", () => {
     expect(paymentConcept("extraordinary", [])).toBe("Aporte extraordinario");
     expect(paymentConcept("entry", [])).toBe("Cuota de ingreso");
     expect(paymentConcept("debit", ["2026-09"])).toBe("Cuota social · septiembre 2026");
+  });
+  it("paymentConcept sin períodos cae en el genérico, nunca vacío", () => {
+    expect(paymentConcept("cash", [])).toBe("Cuota social");
   });
 });

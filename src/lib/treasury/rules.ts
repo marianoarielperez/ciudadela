@@ -29,6 +29,10 @@ export function firstAccrualPeriod(joinedAt: Date): Period {
 
 // La suspensión es disciplinaria, no eximición: el suspendido sigue devengando.
 // La baja no devenga: sus pendientes quedan congeladas (deuda al momento de la baja).
+// Contrato: se llama para el período CORRIENTE (o uno futuro), nunca para recorrer
+// el pasado de un socio que estuvo dado de baja y reingresó — el predicado decide
+// con el status ACTUAL y no conoce el intervalo de baja. Si algún día hace falta
+// backfill histórico, hay que pasarle ese intervalo aparte.
 export function accrues(
   m: { status: MemberStatus; category: MemberCategory; joinedAt: Date },
   period: Period,
@@ -43,6 +47,9 @@ export const ARREARS_THRESHOLD = 4; // habilita la cesantía (REG-15)
 
 export type ArrearsLevel = 0 | 1 | 2 | 4;
 
+/** Devuelve el umbral de exhibición (0, 1, 2 o 4), no la cantidad real de cuotas
+ *  pendientes: si se cambia `ARREARS_WARNING` o `ARREARS_THRESHOLD` hay que cambiar
+ *  también estos literales devueltos. */
 export function arrearsLevel(pending: number): ArrearsLevel {
   if (pending >= ARREARS_THRESHOLD) return 4;
   if (pending >= ARREARS_WARNING) return 2;
@@ -57,8 +64,9 @@ export function debtAmount(pending: number, category: MemberCategory, v: FeeValu
 }
 
 /** Qué cuotas cubre un pago de `n` cuotas: las pendientes más antiguas primero;
- *  si faltan, períodos nuevos desde el corriente, salteando los que ya existen
- *  (pagados, exentos) para no chocar con el unique (memberId, period). */
+ *  si faltan, períodos nuevos desde el corriente, salteando los que ya tienen fila
+ *  en `existing` — TODOS los períodos ya creados, incluidas las pendientes, no solo
+ *  pagados/exentos — para no chocar con el unique (memberId, period). */
 export function allocate(input: {
   pending: Period[];
   existing: Period[];
@@ -82,7 +90,9 @@ export function allocate(input: {
 
 /** Al anular un pago: una cuota de un período futuro no puede quedar pendiente
  *  (contaría como deuda antes de tiempo), así que se borra; las demás vuelven a
- *  pendientes. */
+ *  pendientes. `toDelete` asume que toda cuota futura ligada a este pago fue creada
+ *  POR este pago — vale porque `allocate` solo crea períodos que no existían antes;
+ *  si eso deja de cumplirse, esta función borraría una fila que no creó. */
 export function revertFees(periods: Period[], currentPeriod: Period): { toPending: Period[]; toDelete: Period[] } {
   const toPending: Period[] = [];
   const toDelete: Period[] = [];
