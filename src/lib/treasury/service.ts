@@ -31,6 +31,50 @@ const CONCEPT_TYPE: Record<CashConcept, PaymentType> = {
   fees: "cash", voluntary: "voluntary", extraordinary: "extraordinary",
 };
 
+/** Lo que necesita el núcleo para asentar un cobro, venga del mostrador o de
+ *  Mercado Pago. Deliberadamente NO trae categoría ni valor de cuota: el monto
+ *  es lo que se cobró de verdad, y quién lo calculó es problema del llamador. */
+export type RegisterPaymentInput = {
+  /** `null` sólo para `entry`: la solicitud todavía no es socio. */
+  memberId: number | null;
+  applicationId?: number | null;
+  type: PaymentType;
+  /** Cuotas a imputar; 0 para voluntary/extraordinary/entry. */
+  n: number;
+  /** Lo cobrado de verdad, no lo que debería haberse cobrado. */
+  amount: number;
+  /** La fecha real del cobro (la de MP, no la del reloj de la corrida). */
+  paidAt: Date;
+  mpPaymentId?: string | null;
+  preapprovalId?: string | null;
+  /** `null` = automático (webhook, cron): no hay operador detrás. */
+  actorId: number | null;
+  note?: string | null;
+};
+
+export type RegisterResult =
+  | {
+      kind: "registered";
+      paymentId: number;
+      receiptId: number;
+      number: string;
+      periods: Period[];
+      amount: number;
+      pdfWritten: boolean;
+    }
+  | { kind: "already_processed"; paymentId: number }
+  | { kind: "no_pending_withdrawn" };
+
+/** Tipos que imputan cuotas. `entry` no imputa (REG-14: cubre el mes de alta). */
+const FEE_TYPES: readonly PaymentType[] = ["debit", "link", "cash"];
+
+// Prisma lanza `PrismaClientKnownRequestError` con `code: "P2002"` en una
+// violación de unique. Se mira por forma y no por `instanceof` para que el
+// fake de los tests pueda producirlo sin importar la clase generada.
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
+}
+
 const MAX_FEES_PER_PAYMENT = 60;
 
 // `Payment.amount` es Decimal(10,2): 99.999.999,99 es el techo del tipo. Se
@@ -74,7 +118,14 @@ export function makeTreasuryService(deps: Deps) {
     const r = await db.receipt.findUnique({
       where: { id: receiptId },
       include: {
-        payment: { include: { member: { include: { memberships: { include: { book: true } } } } } },
+        payment: {
+          include: {
+            member: { include: { memberships: { include: { book: true } } } },
+            // Un pago de cuota de ingreso cuelga de la solicitud y todavía no
+            // tiene socio: sin esto el recibo salía a nombre de "—".
+            application: { select: { fullName: true } },
+          },
+        },
       },
     });
     if (!r) throw new TreasuryError("El recibo no existe.");
@@ -83,7 +134,7 @@ export function makeTreasuryService(deps: Deps) {
     return {
       number: r.number,
       issuedAt: r.issuedAt,
-      memberName: member?.fullName ?? "—",
+      memberName: member?.fullName ?? r.payment.application?.fullName ?? "—",
       memberNumber: open?.memberNumber ?? null,
       // El concepto sale de la fila del recibo, no de `payment.fees`: al anular,
       // esas cuotas se despegan del pago (o se borran, si eran futuras) y
@@ -107,7 +158,152 @@ export function makeTreasuryService(deps: Deps) {
     }
   }
 
+  // Núcleo agnóstico del origen: asienta un cobro (pago + cuotas + recibo) sin
+  // preguntar de dónde viene. NO toma el mutex — el mutex lo pone el método
+  // público `registerPayment`, y `registerCashPayment` lo llama desde adentro
+  // del suyo (no existe mutex reentrante: volver a tomarlo se bloquearía solo).
+  async function registerPaymentCore(input: RegisterPaymentInput): Promise<RegisterResult> {
+    const { paidAt } = input;
+    const amount = Math.round(input.amount * 100) / 100;
+    if (!Number.isFinite(amount) || amount <= 0) throw new TreasuryError("El monto del pago tiene que ser mayor a cero.");
+    if (amount > MAX_AMOUNT) {
+      throw new TreasuryError("El monto supera el máximo que admite el sistema ($ 99.999.999,99).");
+    }
+    if (!Number.isInteger(input.n) || input.n < 0 || input.n > MAX_FEES_PER_PAYMENT) {
+      throw new TreasuryError(`La cantidad de cuotas tiene que estar entre 0 y ${MAX_FEES_PER_PAYMENT}.`);
+    }
+    if (input.memberId === null && input.type !== "entry") throw new TreasuryError("El pago necesita un socio.");
+
+    // Primera barrera de idempotencia: el cobro de MP ya está asentado. La
+    // barrera REAL es la unique de `mpPaymentId` (se maneja más abajo); esta
+    // consulta sólo evita el trabajo y el rollback en el caso normal.
+    if (input.mpPaymentId) {
+      const existing = await db.payment.findUnique({
+        where: { mpPaymentId: input.mpPaymentId },
+        select: { id: true },
+      });
+      if (existing) return { kind: "already_processed", paymentId: existing.id };
+    }
+
+    let periods: Period[] = [];
+    let toCreate: Period[] = [];
+    let n = FEE_TYPES.includes(input.type) ? input.n : 0;
+    if (input.memberId !== null) {
+      const member = await db.member.findUnique({ where: { id: input.memberId }, select: { id: true, status: true } });
+      if (!member) throw new TreasuryError("El socio no existe.");
+      if (n > 0) {
+        const fees = await db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } });
+        const pending = fees.filter((f) => f.status === "pending").map((f) => f.period);
+        // Un dado de baja no devenga: se le cobra la deuda congelada y ni una
+        // cuota más. Acotar en vez de tirar — desde un webhook, tirar sería un
+        // 500 y MP reintentaría para siempre un cobro que ya hizo.
+        if (member.status === "withdrawn") {
+          n = Math.min(n, pending.length);
+          if (n === 0) return { kind: "no_pending_withdrawn" };
+        }
+        const allocation = allocate({
+          pending,
+          existing: fees.map((f) => f.period),
+          n,
+          currentPeriod: currentPeriod(paidAt),
+        });
+        periods = allocation.toPay;
+        toCreate = allocation.toCreate;
+      }
+    }
+
+    // El concepto se congela al emitir: es lo que dice el recibo para siempre.
+    const concept = fitConcept(paymentConcept(input.type, periods));
+    const year = seriesYear(paidAt);
+    let created: { paymentId: number; receiptId: number; number: string };
+    try {
+      created = await db.$transaction(async (tx) => {
+        // El pago va PRIMERO: si la unique de `mpPaymentId` choca (dos eventos
+        // del mismo cobro en paralelo), la transacción muere acá, antes de
+        // pedir número — un rollback no consume serie (REG-33).
+        const payment = await tx.payment.create({
+          data: {
+            memberId: input.memberId,
+            applicationId: input.applicationId ?? null,
+            type: input.type,
+            amount: amount.toFixed(2),
+            paidAt,
+            mpPaymentId: input.mpPaymentId ?? null,
+            preapprovalId: input.preapprovalId ?? null,
+            registeredById: input.actorId,
+            note: input.note ?? null,
+            status: "applied",
+          },
+        });
+        if (toCreate.length > 0) {
+          await tx.fee.createMany({
+            data: toCreate.map((period) => ({
+              memberId: input.memberId!, period, status: "paid" as const, origin: "accrual" as const, paymentId: payment.id,
+            })),
+          });
+        }
+        const existingToPay = periods.filter((p) => !toCreate.includes(p));
+        if (existingToPay.length > 0) {
+          // `status: "pending"` no es redundante con la lectura de arriba: acota
+          // el UPDATE a lo que sigue pendiente AHORA. Y se controla el `count`
+          // porque un `where` que no matchea no falla, solo actualiza cero filas:
+          // sin este chequeo, un pago podía quedar cobrado sin cuotas imputadas.
+          const imputed = await tx.fee.updateMany({
+            where: { memberId: input.memberId!, period: { in: existingToPay }, status: "pending" },
+            data: { status: "paid", paymentId: payment.id },
+          });
+          if (imputed.count !== existingToPay.length) {
+            throw new TreasuryError(
+              "Las cuotas del socio cambiaron mientras se registraba el pago. Revisá la cuenta y volvé a intentarlo.",
+            );
+          }
+        }
+        // Cierre automático de la bandeja: si este cobro estaba esperando, deja
+        // de esperar en la misma transacción que lo asienta.
+        if (input.mpPaymentId) {
+          await tx.mpUnmatchedPayment.updateMany({
+            where: { mpPaymentId: input.mpPaymentId, status: "open" },
+            data: { status: "matched", paymentId: payment.id, resolvedAt: now() },
+          });
+        }
+        // El número, lo último: el lock de la fila del año se sostiene hasta el
+        // commit, así que todo lo que se pueda escribir antes se escribe antes.
+        const seq = await nextReceiptSeq(tx, year);
+        const number = formatReceiptNumber(year, seq);
+        const receipt = await tx.receipt.create({
+          data: {
+            number, year, seq, paymentId: payment.id, concept,
+            pdfPath: receiptRelativePath(number), issuedAt: paidAt,
+          },
+        });
+        return { paymentId: payment.id, receiptId: receipt.id, number };
+      });
+    } catch (e) {
+      // Barrera real de idempotencia: la unique de `mp_payment_id`. Si dos
+      // eventos del mismo cobro corrieron en paralelo, el que perdió no
+      // escribió nada y el ganador ya tiene el recibo.
+      if (input.mpPaymentId && isUniqueViolation(e)) {
+        const winner = await db.payment.findUnique({
+          where: { mpPaymentId: input.mpPaymentId },
+          select: { id: true },
+        });
+        if (winner) return { kind: "already_processed", paymentId: winner.id };
+      }
+      throw e;
+    }
+    // Después del commit: el número ya es definitivo y el PDF es regenerable.
+    const pdfWritten = await writePdfBestEffort(created.receiptId, receiptRelativePath(created.number));
+    return { kind: "registered", ...created, periods: [...periods].sort(comparePeriods), amount, pdfWritten };
+  }
+
   return {
+    /** Asienta un cobro de cualquier origen. Serializa por socio (o por
+     *  solicitud, en la cuota de ingreso) como lo hace el mostrador. */
+    async registerPayment(input: RegisterPaymentInput): Promise<RegisterResult> {
+      const key = input.memberId !== null ? `member:${input.memberId}` : `application:${input.applicationId ?? 0}`;
+      return memberMutex.run(key, () => registerPaymentCore(input));
+    },
+
     async registerCashPayment(input: {
       memberId: number; actorId: number; concept: CashConcept; count?: number; amount?: number; note?: string;
     }) {
@@ -141,8 +337,6 @@ export function makeTreasuryService(deps: Deps) {
           throw new TreasuryError("Ese concepto no corresponde a la categoría del socio.");
         }
 
-        let periods: Period[] = [];
-        let toCreate: Period[] = [];
         let amount: number;
         if (input.concept === "fees") {
           const count = input.count ?? 0;
@@ -154,8 +348,13 @@ export function makeTreasuryService(deps: Deps) {
           if (!value) throw new TreasuryError(NO_FEE_VALUE_MESSAGE);
           const unit = feeAmountFor(member.category, value);
           if (unit === null) throw new TreasuryError("La categoría del socio no paga cuota.");
+          // Esta lectura queda sólo para el mensaje de mostrador del cesante: el
+          // núcleo vuelve a leer las cuotas para imputar. Son dos SELECT baratos
+          // bajo el mismo mutex, y a cambio el operador lee cuántas pendientes
+          // tiene en vez del recorte silencioso que hace el núcleo (ese recorte
+          // existe para el webhook, donde no hay a quién avisarle).
           const fees = await db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } });
-          const pending = fees.filter((f) => f.status === "pending").map((f) => f.period);
+          const pending = fees.filter((f) => f.status === "pending");
           // Un dado de baja no devenga (`accrues()` lo dice explícito): si se le
           // cobraran más cuotas que las pendientes, `allocate` crearía períodos
           // NUEVOS a nombre de alguien que ya no es socio. Lo que se le cobra es
@@ -167,14 +366,6 @@ export function makeTreasuryService(deps: Deps) {
                 : `El socio está dado de baja: tiene ${pending.length} ${pending.length === 1 ? "cuota pendiente" : "cuotas pendientes"} y no devenga nuevas.`,
             );
           }
-          const allocation = allocate({
-            pending,
-            existing: fees.map((f) => f.period),
-            n: count,
-            currentPeriod: currentPeriod(at),
-          });
-          periods = allocation.toPay;
-          toCreate = allocation.toCreate;
           amount = unit * count;
         } else {
           const free = input.amount ?? 0;
@@ -185,52 +376,27 @@ export function makeTreasuryService(deps: Deps) {
           throw new TreasuryError("El monto supera el máximo que admite el sistema ($ 99.999.999,99).");
         }
 
-        // El concepto se congela al emitir: es lo que dice el recibo para siempre.
-        const concept = fitConcept(paymentConcept(CONCEPT_TYPE[input.concept], periods));
-        const year = seriesYear(at);
-        const created = await db.$transaction(async (tx) => {
-          const payment = await tx.payment.create({
-            data: {
-              memberId: member.id, type: CONCEPT_TYPE[input.concept], amount: amount.toFixed(2), paidAt: at,
-              registeredById: input.actorId, note: input.note ?? null, status: "applied",
-            },
-          });
-          if (toCreate.length > 0) {
-            await tx.fee.createMany({
-              data: toCreate.map((period) => ({
-                memberId: member.id, period, status: "paid" as const, origin: "accrual" as const, paymentId: payment.id,
-              })),
-            });
-          }
-          const existingToPay = periods.filter((p) => !toCreate.includes(p));
-          if (existingToPay.length > 0) {
-            // `status: "pending"` no es redundante con la lectura de arriba: acota
-            // el UPDATE a lo que sigue pendiente AHORA. Y se controla el `count`
-            // porque un `where` que no matchea no falla, solo actualiza cero filas:
-            // sin este chequeo, un pago podía quedar cobrado sin cuotas imputadas.
-            const imputed = await tx.fee.updateMany({
-              where: { memberId: member.id, period: { in: existingToPay }, status: "pending" },
-              data: { status: "paid", paymentId: payment.id },
-            });
-            if (imputed.count !== existingToPay.length) {
-              throw new TreasuryError(
-                "Las cuotas del socio cambiaron mientras se registraba el pago. Revisá la cuenta y volvé a intentarlo.",
-              );
-            }
-          }
-          const seq = await nextReceiptSeq(tx, year);
-          const number = formatReceiptNumber(year, seq);
-          const receipt = await tx.receipt.create({
-            data: {
-              number, year, seq, paymentId: payment.id, concept,
-              pdfPath: receiptRelativePath(number), issuedAt: at,
-            },
-          });
-          return { paymentId: payment.id, receiptId: receipt.id, number };
+        // Ya estamos DENTRO del mutex de este socio, así que se llama al núcleo
+        // sin mutex: `registerPayment` volvería a tomarlo y se bloquearía solo.
+        const r = await registerPaymentCore({
+          memberId: member.id,
+          type: CONCEPT_TYPE[input.concept],
+          n: input.concept === "fees" ? (input.count ?? 0) : 0,
+          amount,
+          paidAt: at,
+          actorId: input.actorId,
+          note: input.note ?? null,
         });
-
-        const pdfWritten = await writePdfBestEffort(created.receiptId, receiptRelativePath(created.number));
-        return { ...created, periods: [...periods].sort(comparePeriods), amount, pdfWritten };
+        // Los dos resultados no-registrados son imposibles acá: sin mpPaymentId
+        // no hay `already_processed`, y el cesante sin pendientes ya se rechazó
+        // arriba con su mensaje de mostrador.
+        if (r.kind !== "registered") throw new TreasuryError("No se pudo registrar el pago.");
+        // Se arma explícito y no con un rest: el retorno de Efectivo es contrato
+        // de las pantallas y no tiene por qué heredar campos nuevos del núcleo.
+        return {
+          paymentId: r.paymentId, receiptId: r.receiptId, number: r.number,
+          periods: r.periods, amount: r.amount, pdfWritten: r.pdfWritten,
+        };
       });
     },
 

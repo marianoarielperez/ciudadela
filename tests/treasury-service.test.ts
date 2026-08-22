@@ -16,6 +16,8 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
     // Los `where` de cada updateMany sobre cuotas, para poder afirmar CON QUÉ se
     // acotó el UPDATE y no solo qué quedó en la tabla.
     feeUpdateWheres: [] as FeeWhere[],
+    // Con qué se cerraron las filas de la bandeja de sin conciliar.
+    unmatchedUpdates: [] as Array<{ where: Record<string, unknown>; data: Record<string, unknown> }>,
     // Gancho para simular que otra operación tocó la tabla entre la foto que lee
     // el servicio y las escrituras de su transacción.
     beforeTransaction: null as null | (() => void),
@@ -52,14 +54,32 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
     },
     payment: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        // Unique de `mpPaymentId`, como la base: el segundo create del mismo
+        // cobro tiene que chocar con P2002 y no crear una segunda fila.
+        const mpId = args.data.mpPaymentId;
+        if (mpId && state.payments.some((p) => p.mpPaymentId === mpId)) {
+          throw Object.assign(new Error("Unique constraint failed"), {
+            code: "P2002", meta: { target: ["mp_payment_id"] },
+          });
+        }
         const p = { id: state.payments.length + 1, ...args.data };
         state.payments.push(p);
         return p;
       }),
+      findUnique: vi.fn(async (args: { where: { mpPaymentId?: string; id?: number } }) =>
+        state.payments.find((p) => (
+          args.where.mpPaymentId ? p.mpPaymentId === args.where.mpPaymentId : p.id === args.where.id
+        )) ?? null),
       update: vi.fn(async (args: { where: { id: number }; data: Record<string, unknown> }) => {
         const p = state.payments.find((x) => x.id === args.where.id)!;
         Object.assign(p, args.data);
         return p;
+      }),
+    },
+    mpUnmatchedPayment: {
+      updateMany: vi.fn(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        state.unmatchedUpdates.push(args);
+        return { count: 0 };
       }),
     },
     receipt: {
@@ -84,7 +104,9 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
       }),
     },
     $executeRaw: vi.fn(async () => { state.seq++; return 1; }),
-    receiptSequence: { findUniqueOrThrow: vi.fn(async () => ({ year: 2026, last: state.seq })) },
+    receiptSequence: {
+      findUniqueOrThrow: vi.fn(async (args: { where: { year: number } }) => ({ year: args.where.year, last: state.seq })),
+    },
   };
   const db = {
     ...tx,
@@ -94,7 +116,10 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[] }) {
       return fn(tx);
     }),
   };
-  return { db: db as never, state };
+  // `db` va casteado para entrar donde se espera un PrismaClient; `mocks` es el
+  // MISMO objeto sin castear, para poder afirmar sobre los espías (sobre `never`
+  // no hay acceso a propiedades).
+  return { db: db as never, mocks: db, state };
 }
 
 const feeValue = { id: 1, activeAmount: 6000, sharedAmount: 3000, validFrom: civilDateUtc(2026, 9, 1), minuteId: null };
@@ -359,5 +384,132 @@ describe("voidReceipt", () => {
     const r = await svc.registerCashPayment({ memberId: 4, actorId: 1, concept: "extraordinary", amount: 500 });
     await svc.voidReceipt({ receiptId: r.receiptId, actorId: 1, reason: "x" });
     await expect(svc.voidReceipt({ receiptId: r.receiptId, actorId: 1, reason: "y" })).rejects.toThrow(/ya está anulado/);
+  });
+});
+
+// El núcleo agnóstico del origen que estrena la fase 4B: lo mismo que asienta
+// Efectivo, pero con el cobro que llega de Mercado Pago (su `paidAt`, su id, sin
+// operador humano). Efectivo pasa a llamarlo, así que las invariantes de plata
+// —número tardío y adentro de la transacción, imputación controlada, PDF después
+// del commit, concepto congelado— viven en un solo lugar.
+describe("registerPayment (núcleo 4B)", () => {
+  const member = { id: 1, category: "adherent", status: "active", joinedAt: civilDateUtc(2020, 1, 1), memberships: [] };
+  const paidAt = new Date("2026-09-10T11:15:30Z");
+
+  it("débito de un adherente: crea y paga la cuota del período, recibo con concepto de cuota, paidAt de MP", async () => {
+    const { db, state } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, now: () => new Date("2026-09-10T12:00:00Z"),
+      renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    const r = await svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "777", preapprovalId: "pre-1", actorId: null,
+    });
+    expect(r.kind).toBe("registered");
+    if (r.kind !== "registered") return;
+    expect(r.periods).toEqual(["2026-09"]);
+    expect(state.fees).toEqual([
+      expect.objectContaining({ period: "2026-09", status: "paid", origin: "accrual", paymentId: 1 }),
+    ]);
+    expect(state.payments[0]).toMatchObject({
+      type: "debit", amount: "3000.00", paidAt, mpPaymentId: "777", preapprovalId: "pre-1",
+      registeredById: null, status: "applied",
+    });
+    expect(state.receipts[0]).toMatchObject({ concept: "Cuota social · septiembre 2026", issuedAt: paidAt, year: 2026 });
+  });
+
+  it("imputa la pendiente más vieja antes que el período corriente", async () => {
+    const { db, state } = fakeDb({ member: { ...member, category: "active" }, fees: [
+      { id: 1, memberId: 1, period: "2025-11", status: "pending", origin: "import", paymentId: null },
+    ] });
+    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const r = await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 6000, paidAt, mpPaymentId: "778", actorId: null });
+    expect(r.kind === "registered" && r.periods).toEqual(["2025-11"]);
+    expect(state.fees.find((f) => f.period === "2025-11")?.status).toBe("paid");
+  });
+
+  it("mismo mpPaymentId dos veces → already_processed sin segundo recibo (consulta previa)", async () => {
+    const { db, state } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const input = { memberId: 1, type: "debit" as const, n: 1, amount: 3000, paidAt, mpPaymentId: "777", actorId: null };
+    await svc.registerPayment(input);
+    const r = await svc.registerPayment(input);
+    expect(r).toEqual({ kind: "already_processed", paymentId: 1 });
+    expect(state.receipts).toHaveLength(1);
+    expect(state.seq).toBe(1);
+  });
+
+  it("carrera: el create choca con P2002 → already_processed y el número NO se consumió", async () => {
+    const { db, mocks, state } = fakeDb({ member, fees: [] });
+    // La consulta previa no ve nada (simula dos eventos en paralelo) y el
+    // create choca contra la unique.
+    mocks.payment.findUnique.mockResolvedValueOnce(null);
+    state.payments.push({ id: 9, mpPaymentId: "777" });
+    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const r = await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "777", actorId: null });
+    expect(r).toEqual({ kind: "already_processed", paymentId: 9 });
+    expect(state.seq).toBe(0);
+    expect(state.receipts).toHaveLength(0);
+  });
+
+  it("cesante con 2 pendientes y n=3 → se acota a 2; sin pendientes → no_pending_withdrawn", async () => {
+    const withdrawn = { ...member, status: "withdrawn" };
+    const a = fakeDb({ member: withdrawn, fees: [
+      { id: 1, memberId: 1, period: "2025-07", status: "pending", origin: "import", paymentId: null },
+      { id: 2, memberId: 1, period: "2025-08", status: "pending", origin: "import", paymentId: null },
+    ] });
+    const svc = makeTreasuryService({ db: a.db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const r = await svc.registerPayment({ memberId: 1, type: "link", n: 3, amount: 9000, paidAt, mpPaymentId: "1", actorId: null });
+    expect(r.kind === "registered" && r.periods).toEqual(["2025-07", "2025-08"]);
+    expect(a.state.fees).toHaveLength(2);
+    const b = fakeDb({ member: withdrawn, fees: [] });
+    const svc2 = makeTreasuryService({ db: b.db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    expect(await svc2.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "2", actorId: null }))
+      .toEqual({ kind: "no_pending_withdrawn" });
+    expect(b.state.payments).toHaveLength(0);
+  });
+
+  it("la serie sale del día civil AR de paidAt: cobro del 31/12 23:30 AR es del año viejo", async () => {
+    const { db, mocks, state } = fakeDb({ member, fees: [] });
+    mocks.receiptSequence.findUniqueOrThrow.mockImplementation(
+      async (args: { where: { year: number } }) => ({ year: args.where.year, last: 1 }));
+    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const r = await svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 3000, paidAt: new Date("2027-01-01T02:30:00Z"), mpPaymentId: "3", actorId: null,
+    });
+    expect(r.kind === "registered" && r.number.startsWith("2026-")).toBe(true);
+    expect(state.receipts[0].year).toBe(2026);
+  });
+
+  it("entry: n=0, sin socio, cuelga de la solicitud; concepto de cuota de ingreso", async () => {
+    const { db, state } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    const r = await svc.registerPayment({
+      memberId: null, applicationId: 9, type: "entry", n: 0, amount: 6000, paidAt,
+      mpPaymentId: "4", preapprovalId: "pre-9", actorId: null,
+    });
+    expect(r.kind).toBe("registered");
+    expect(state.payments[0]).toMatchObject({ memberId: null, applicationId: 9, type: "entry" });
+    expect(state.receipts[0].concept).toBe("Cuota de ingreso");
+    expect(state.fees).toHaveLength(0);
+  });
+
+  it("cierra las filas de la bandeja con ese mpPaymentId dentro de la transacción", async () => {
+    const { db, mocks } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({ db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {} });
+    await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "777", actorId: null });
+    expect(mocks.mpUnmatchedPayment.updateMany).toHaveBeenCalledWith({
+      where: { mpPaymentId: "777", status: "open" },
+      data: { status: "matched", paymentId: 1, resolvedAt: expect.any(Date) },
+    });
+  });
+
+  it("monto menor o igual a cero, o por encima del techo, es TreasuryError", async () => {
+    const { db } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({ db: db as never, feeValues });
+    await expect(svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 0, paidAt, actorId: null }))
+      .rejects.toThrow(TreasuryError);
+    await expect(svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 100_000_000, paidAt, actorId: null }))
+      .rejects.toThrow(TreasuryError);
   });
 });
