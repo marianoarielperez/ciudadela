@@ -33,9 +33,11 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   application_result: "Resultado de solicitud", reregistration_first: "Re-empadronamiento (1° aviso)",
   reregistration_second: "Re-empadronamiento (2° aviso)", withdrawal_declared: "Baja declarada",
   fee_reminder: "Recordatorio de cuota", arrears_alert: "Aviso de mora",
-  receipt: "Recibo", generic: "Aviso",
+  receipt: "Recibo", payment_rejected: "Pago rechazado",
+  board_digest: "Resumen para la cartelera", generic: "Aviso",
 };
 export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
   sent: "Enviada", delivered: "Entregada", bounced: "Rebotada",
   posted_board: "Publicada en cartelera", completed_board: "Cartelera cumplida",
+  failed: "Fallida",
 };
