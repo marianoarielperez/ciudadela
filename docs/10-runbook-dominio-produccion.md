@@ -378,36 +378,61 @@ recibos, deudores):**
 
 Este despliegue tiene tres tramos muy distintos. El primero (pasos 1 a 5) es un
 deploy normal y se puede repetir. El segundo (paso 6) **borra los datos de prueba**
-que hoy tiene el VPS: es destructivo pero acotado, y el paso 1 lo cubre. El tercero
-(pasos 7 y 8) es la **carga fundacional de datos**: corre **una sola vez**, borra
-fichas físicamente y crea 3080 cuotas que después se van a cobrar y a notificar de
-forma fehaciente. No hay "des-importar". Leé los pasos 6, 7 y 8 enteros antes de
-tipear nada.
+que hoy tiene el VPS: es destructivo pero acotado, y quien lo cubre es el **backup B
+del paso 4 bis** (el del paso 1 quedó del otro lado de la migración: ver el paso 1).
+El tercero (pasos 7 y 8) es la **carga fundacional de datos**: corre **una sola
+vez**, borra fichas físicamente y crea 3080 cuotas que después se van a cobrar y a
+notificar de forma fehaciente. No hay "des-importar". Leé los pasos 6, 7 y 8 enteros
+antes de tipear nada.
 
-#### 1. Backup **cifrado**, antes de todo
+Los archivos que borra el paso 6 —las fotos de DNI— no los cubre ningún backup del
+VPS salvo el tar del paso 1.3, que hay que tomar a mano.
 
-El dump lleva 278 DNIs, así que no puede quedar en claro en `/root` esperando a que
-alguien se acuerde de borrarlo: `docs/08` no admite excepciones —los backups viajan
-y descansan cifrados, siempre— y este en particular es el único camino de vuelta de
-todo lo que sigue.
+#### 1. Dos backups **cifrados**, y para qué sirve cada uno
 
-```bash
-mysqldump --single-transaction --routines sigev \
-  | gzip \
-  | gpg --batch --yes --symmetric --cipher-algo AES256 \
-        --passphrase-file /root/.sigev_backup_pass \
-        -o /root/backup-pre-m4a-$(date +%F).sql.gz.gpg
-ls -lh /root/backup-pre-m4a-*.sql.gz.gpg     # que NO diga 0 bytes
-```
+Este despliegue necesita **dos** fotos de la base, y no son intercambiables:
+
+| | Cuándo se toma | Qué esquema tiene | Qué falla repara |
+|---|---|---|---|
+| **A — pre-deploy** | acá, antes de `deploy.sh` | el de hoy (**M3**) | el deploy mismo: pasos 3 y 4 |
+| **B — post-migración** | paso **4 bis**, con la app ya verificada | **M4** | la limpieza y los imports: pasos 5 a 8 |
+
+El motivo es de orden: `deploy.sh` corre `prisma migrate deploy` en el paso 3, y
+**todos** los pasos irreversibles (6, 7 y 8) ocurren después. El backup A queda del
+otro lado de esa migración, así que **no sirve para volver del paso 6**: restaurarlo
+con `mysql sigev` a secas después del paso 3 no deja la base "como estaba antes de
+la limpieza", deja **producción rota**, y por tres motivos a la vez:
+
+- `mysqldump sigev` (sin `--databases`) emite `DROP TABLE IF EXISTS` + `CREATE TABLE`
+  **sólo de las tablas que existían cuando se tomó el dump**. Restaurarlo devuelve
+  `notifications` y `mp_subscriptions` a su DDL pre-M4: desaparecen
+  `notifications.error` y `mp_subscriptions.amount` / `external_reference`, y los
+  enums de `notifications` pierden `receipt`, `payment_rejected` y `failed`. El
+  build M4 que está sirviendo **selecciona esas columnas**: empieza a tirar
+  `Unknown column` en la primera pantalla que las toque.
+- `fees`, `payments`, `receipts`, `receipt_sequences`, `mp_unmatched_payments` y
+  `cron_runs` **no están en ese dump**, así que sobreviven al restore tal como
+  estaban — justo los datos que se querían deshacer.
+- `_prisma_migrations` **sí** está, y vuelve a su estado pre-M4: la migración
+  `20260822125844_add_module_4_treasury` pasa a leerse como *no aplicada* mientras
+  sus tablas siguen existiendo. El siguiente `migrate deploy` muere en
+  `CREATE TABLE fees` y no hay deploy que avance.
+
+Por eso A se restaura **entero** (base + código) y B se restaura **plano**. Cuál usar:
+
+- **Falló el deploy** (la migración quedó a medias, el build no compila, PM2 no
+  levanta, `/admin/tesoreria/valores` no existe): **A**, y se vuelve también el
+  código al commit anterior. Es el único caso en que A se usa.
+- **Falló la limpieza o un import** (se borró de más en el paso 6, el padrón entró
+  mal, la deuda entró mal): **B**. El esquema está bien; lo que hay que rebobinar
+  son los datos.
+
+##### 1.1 La passphrase
 
 Es el mismo cifrado que usa `scripts/backup.sh` (AES256 simétrico con la passphrase
 de `/root/.sigev_backup_pass`), pero a mano: al día de hoy **ese script todavía no
 está instalado en el VPS** —no hay crontab y `rclone` no está, `docs/09`—, así que
-no hay un backup nocturno del que colgarse. Si para cuando leas esto ya lo
-instalaste, corré `bash scripts/backup.sh` **además** de este comando: sube una
-copia al Drive, y una copia en el mismo disco que la base no es un backup. Lo que
-no hay que hacer es correr `backup.sh` **de nuevo el mismo día, después del
-import**: el nombre lleva `$(date +%F)` y pisaría la foto previa con la posterior.
+no hay un backup nocturno del que colgarse.
 
 Si `/root/.sigev_backup_pass` no existiera todavía, creala **antes** —y anotá la
 passphrase fuera del VPS, que es la mitad que importa: sin ella el `.gpg` no se
@@ -420,30 +445,128 @@ umask 077 && printf '%s' 'UNA-PASSPHRASE-LARGA' > /root/.sigev_backup_pass
 Si el archivo ya existe, **no lo pises**: los backups viejos se descifran con la
 que está adentro.
 
-**Restaurar** — el comando que hay que tener a mano *antes* de necesitarlo:
+Si ya instalaste `backup.sh`, corré `bash scripts/backup.sh` **además** de lo de
+abajo: sube una copia al Drive, y una copia en el mismo disco que la base no es un
+backup. Lo que no hay que hacer es correr `backup.sh` **de nuevo el mismo día,
+después del import**: el nombre lleva `$(date +%F)` y pisaría la foto previa con la
+posterior.
+
+##### 1.2 Backup A — la base, antes del deploy
+
+El dump lleva 278 DNIs, así que no puede quedar en claro en `/root` esperando a que
+alguien se acuerde de borrarlo: `docs/08` no admite excepciones —los backups viajan
+y descansan cifrados, siempre—.
+
+Va con `--databases --add-drop-database` a propósito, y no como el dump de
+`backup.sh`: A tiene que poder recrear una base **cuyo esquema ya avanzó**, y eso
+sólo se consigue tirando la base entera y volviéndola a crear. Con un dump sin
+`--databases`, el restore es el desastre de tres puntas que describe el cuadro de
+arriba.
+
+```bash
+# El commit al que se vuelve si hay que usar A. Anotalo fuera del VPS.
+git -C /root/dev/ciudadela rev-parse --short HEAD
+
+mysqldump --single-transaction --routines --databases --add-drop-database sigev \
+  | gzip \
+  | gpg --batch --yes --symmetric --cipher-algo AES256 \
+        --passphrase-file /root/.sigev_backup_pass \
+        -o /root/backup-pre-m4a-$(date +%F).sql.gz.gpg
+```
+
+**La verificación no es mirar el tamaño.** En `mysqldump | gzip | gpg` el shell
+devuelve el estado de **gpg**, que cifra feliz lo que le llegue aunque `mysqldump`
+haya muerto a la mitad; y un flujo gzip vacío envuelto en gpg pesa 60–100 bytes, así
+que "que no diga 0 bytes" le da el visto bueno igual a un backup truncado. La única
+comprobación que sirve es abrir el archivo y mirar la última línea:
 
 ```bash
 gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
-    /root/backup-pre-m4a-AAAA-MM-DD.sql.gz.gpg \
-  | gunzip \
-  | mysql sigev
+    /root/backup-pre-m4a-$(date +%F).sql.gz.gpg \
+  | gunzip | tail -1
 ```
 
-Deja la base como estaba antes del paso 6, y por lo tanto **borra todo lo que haya
-pasado después** (un cobro en efectivo, una noticia publicada). Por eso este runbook
-junta los pasos irreversibles al final y pide no usar el panel mientras dure.
+Tiene que imprimir `-- Dump completed on AAAA-MM-DD …`, que es la última línea que
+`mysqldump` escribe **cuando terminó bien**. De paso prueba la otra mitad que hay
+que saber antes de necesitarla: que la passphrase del archivo descifra lo que acaba
+de cifrar. Si no aparece esa línea —o gpg falla, o la salida viene cortada—
+**frená acá**: el resto de este procedimiento no tiene vuelta atrás sin backup.
 
-**Cuándo borrar el backup**: cuando el paso 9 haya dado los tres números esperados
-y alguien haya mirado el panel. Ahí sí:
+##### 1.3 Backup A — los archivos (uploads y recibos)
+
+**El paso 6 borra archivos, y de esos archivos no hay ninguna otra copia.** Corre
+`rm -rf /var/sigev/uploads/applications/*`, y ahí adentro están las **fotos de DNI**
+de las solicitudes, que el modelo marca como *Conservación PERMANENTE (decisión
+institucional)* (`prisma/schema.prisma`, `model Document`). El único script que
+empaqueta esos directorios es `scripts/backup.sh`, y **no está instalado**: sin este
+tar, el `rm -rf` del paso 6 no tiene vuelta atrás.
 
 ```bash
-shred -u /root/backup-pre-m4a-*.sql.gz.gpg
+# `recibos` todavía puede no existir (lo crea el paso 2) y el tar lo exige.
+mkdir -p /var/sigev/uploads /var/sigev/recibos
+
+tar -czf - -C /var/sigev uploads recibos \
+  | gpg --batch --yes --symmetric --cipher-algo AES256 \
+        --passphrase-file /root/.sigev_backup_pass \
+        -o /root/backup-pre-m4a-files-$(date +%F).tar.gz.gpg
+
+# Verificación: tiene que listar los archivos, no fallar ni salir vacía.
+gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
+    /root/backup-pre-m4a-files-$(date +%F).tar.gz.gpg \
+  | tar -tzf - | head
 ```
 
-Cifrado o no, ese archivo es el padrón entero y `/root` no es donde tiene que vivir.
+Este tar **sirve para A y para B por igual**: entre el paso 1 y el paso 6, lo único
+que se escribe en esos directorios es el PDF del recibo de prueba del paso 5, que el
+propio paso 6 borra. Restaurar archivos es, en cualquiera de los dos casos:
 
-Si el `mysqldump` devolvió error o el `.gpg` salió vacío, **frená acá**: el resto de
-este procedimiento no tiene vuelta atrás sin él.
+```bash
+gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
+    /root/backup-pre-m4a-files-AAAA-MM-DD.tar.gz.gpg \
+  | tar -xzf - -C /var/sigev
+```
+
+##### 1.4 Restaurar A — rollback completo (base + código)
+
+Se usa **sólo** si el deploy en sí falló. Son cuatro cosas, en este orden:
+
+```bash
+# 1. La base: el dump trae DROP DATABASE + CREATE DATABASE + USE adentro, así que
+#    NO se le pasa el nombre de la base al cliente.
+gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
+    /root/backup-pre-m4a-AAAA-MM-DD.sql.gz.gpg \
+  | gunzip \
+  | mysql
+
+# 2. Los archivos, si el paso 6 llegó a correr (ver 1.3).
+
+# 3. El código, al commit anotado en 1.2.
+cd /root/dev/ciudadela
+git checkout <sha-anotado>
+npm ci && npm run build
+
+# 4. El proceso.
+pm2 restart sigev --update-env && pm2 save
+```
+
+Si después del restore la app no conecta a la base, mirá los permisos del usuario de
+la aplicación (`SHOW GRANTS FOR 'sigev'@'localhost';`): la base se recreó desde cero.
+Y ojo con el `.env`: `RECEIPTS_DIR` (paso 2) queda escrito y a la versión vieja no le
+molesta, pero el `git checkout` a un commit anterior **no** deshace nada del `.env`.
+
+##### Cuándo se borran los backups
+
+Cuando el paso 9 haya dado los tres números esperados y alguien haya mirado el panel.
+Ahí sí, todos:
+
+```bash
+shred -u /root/backup-pre-m4a-*.sql.gz.gpg \
+         /root/backup-pre-m4a-files-*.tar.gz.gpg \
+         /root/backup-post-migracion-*.sql.gz.gpg
+```
+
+Cifrados o no, ahí adentro están el padrón entero y las fotos de DNI, y `/root` no es
+donde tienen que vivir.
 
 #### 2. `RECEIPTS_DIR` en el `.env` y el directorio, ANTES del deploy
 
@@ -492,6 +615,53 @@ Entrá al panel y comprobá tres cosas:
   valor vigente el cobro en efectivo no puede calcular ningún total.
 - Las cuatro pestañas (Deudores / Efectivo / Recibos / Valores) navegan.
 
+#### 4 bis. Backup B — la foto que necesitan los pasos 6, 7 y 8
+
+Ahora sí: el esquema ya es el de M4, la app anda y **todavía no se tocó ningún
+dato**. Ésta es la única foto desde la que se puede volver de la limpieza y de los
+imports, y es la que hay que tomar antes de seguir.
+
+```bash
+mysqldump --single-transaction --routines sigev \
+  | gzip \
+  | gpg --batch --yes --symmetric --cipher-algo AES256 \
+        --passphrase-file /root/.sigev_backup_pass \
+        -o /root/backup-post-migracion-$(date +%F).sql.gz.gpg
+
+gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
+    /root/backup-post-migracion-$(date +%F).sql.gz.gpg \
+  | gunzip | tail -1
+```
+
+Misma verificación que en 1.2: tiene que terminar en `-- Dump completed on …`.
+Si no, **no sigas** — a partir del paso 6 no hay vuelta atrás sin este archivo.
+
+Acá sí alcanza el `mysqldump` común, **sin `--databases`**: el esquema del dump y el
+esquema de la base van a ser el mismo cuando toque restaurar (entre este punto y el
+paso 9 no corre ninguna migración más), así que el `DROP TABLE IF EXISTS` +
+`CREATE TABLE` de cada tabla las repone todas, incluidas las siete que estrenó M4, y
+`_prisma_migrations` vuelve con la fila de M4 puesta.
+
+**Restaurar B** — el restore es plano, sobre la base migrada, y no hay que tocar el
+código ni volver a buildear:
+
+```bash
+gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
+    /root/backup-post-migracion-AAAA-MM-DD.sql.gz.gpg \
+  | gunzip \
+  | mysql sigev
+```
+
+(El dump abre con `FOREIGN_KEY_CHECKS=0`, así que el orden en que caen y se recrean
+las tablas no importa.) Si el paso 6 ya había borrado archivos, restaurá también el
+tar de 1.3. Después del restore, `pm2 restart sigev` por las dudas y volvé a mirar
+`/admin/tesoreria`.
+
+Lo que B deshace es **todo** lo posterior al paso 4: el recibo de prueba del paso 5,
+la limpieza del paso 6 y los dos imports. Por eso el runbook junta lo irreversible al
+final y pide no usar el panel mientras dure — un cobro en efectivo o una noticia
+publicada entre medio también se irían.
+
 #### 5. Un recibo de prueba, sobre el socio 306
 
 Es el único paso que ejercita `RECEIPTS_DIR` de verdad, así que conviene hacerlo.
@@ -508,10 +678,15 @@ Dos razones para que sea el 306 y no cualquiera:
   que la poda tiene que borrar le crea un pago, y un pago es uno de los motivos por
   los que la poda aborta — y **ninguna acción del panel borra un pago**.
 
-No hace falta anular el recibo: el paso 6 borra el recibo, el pago y la cuota junto
-con el resto de los datos de prueba, y repone el contador de la serie para que el
-primer recibo de verdad de la asociación sea el `AAAA-00001`. (Si querés ver la
-anulación funcionando, anulalo igual: se borra lo mismo.)
+No hace falta anular el recibo: el paso 6 borra el recibo y el pago junto con el
+resto de los datos de prueba, y repone el contador de la serie para que el primer
+recibo de verdad de la asociación sea el `AAAA-00001`. (Si querés ver la anulación
+funcionando, anulalo igual: se borra lo mismo.)
+
+**Cuota no crea ninguna.** Sólo el concepto `fees` imputa períodos y devenga filas de
+`fees` (`registerCashPayment` → `allocate`, `src/lib/treasury/service.ts`); el aporte
+voluntario y el extraordinario no imputan nada, así que este cobro deja exactamente
+un `Payment` y un `Receipt`, y la tabla `fees` sigue vacía hasta el paso 8.
 
 **No probar un cobro por Mercado Pago acá**: el dominio corre con credenciales
 productivas desde el 22/08/2026 y eso sería plata de un vecino.
@@ -532,6 +707,32 @@ cuota o un movimiento cargado a mano, y en el VPS hay socios nacidos de solicitu
 de prueba que no están en el Excel. Si no se limpia primero, el import aborta sin
 escribir nada y hay que volver acá igual.
 
+##### 6.0 Cerrar el sistema — antes de tipear el primer `DELETE`
+
+**ASOCIATE está prendido y el sitio es público.** Una solicitud que entre en el medio
+de esta limpieza es un vecino de verdad, y las consultas de acá abajo la van a barrer
+como si fuera de prueba. El caso concreto: si alguien completa el wizard entre 6.2 y
+6.3, queda un `Application` nuevo y una `MpSubscription` con `member_id IS NULL`
+—porque el `member_id` se escribe recién al asentar el alta—, o sea **exactamente**
+el criterio que borra el `DELETE` de 6.3. Y borrar esa fila **no cancela nada en
+Mercado Pago**: se pierde el `preapproval_id` mientras la tarjeta del vecino sigue
+debitando todos los meses, sin nadie que sepa a quién devolverle la plata.
+
+1. En `/admin/configuracion`, **destildá el interruptor de ASOCIATE** y guardá. La
+   guarda no es cosmética: `createApplicationAction` lee la clave `asociate_activo`
+   **sin caché** y rechaza las altas nuevas (`src/app/(public)/asociate/actions.ts`).
+2. **Ojo con las solicitudes ya empezadas**: apagar el interruptor cierra las altas
+   nuevas, pero **no** frena los pasos 4 y 5 de un wizard en curso, que operan con el
+   token de retome sobre una solicitud que ya existe (`docs/05` §2). O sea que una
+   solicitud viva todavía puede crear una suscripción de MP mientras hacés esto. Por
+   eso la consulta 6.1 **(a)** es un pre-vuelo y no un trámite: si aparece alguna
+   solicitud que no sea de prueba, **frená** y resolvela antes de seguir.
+3. **Nadie usa el panel** desde acá hasta que el paso 9 dé bien: ni cobros en
+   efectivo, ni altas, ni noticias. Todo lo que se cargue en el medio se lo lleva
+   puesto el restore del backup B si algo sale mal.
+4. **ASOCIATE se vuelve a prender recién después del paso 9.** Anotalo: es fácil
+   dejarlo apagado y enterarse por un vecino.
+
 Abrí **una sesión interactiva** y hacé todo desde ahí: las variables de usuario
 (`@…`) viven en la conexión y se pierden entre invocaciones de `mysql -e`.
 
@@ -540,6 +741,11 @@ mysql sigev
 ```
 
 ```sql
+-- `SELECT … INTO` con CERO filas deja la variable como estaba y sólo emite un
+-- warning (MySQL 1329): se inicializan en NULL para que un número mal tipeado se
+-- vea como NULL y no como el valor de la consulta anterior.
+SET @libro1 = NULL;
+SET @socio306 = NULL;
 SELECT id INTO @libro1 FROM books WHERE `number` = 1;
 SELECT member_id INTO @socio306 FROM memberships WHERE book_id = @libro1 AND member_number = 306;
 SELECT @libro1 AS libro, @socio306 AS ficha_del_306;
@@ -550,7 +756,10 @@ en la base y este runbook no describe lo que tenés delante: **frená y averigu�
 qué** antes de borrar nada.
 
 Las consultas de abajo nombran **números de socio e ids**, nunca nombres ni DNIs: la
-salida de una sesión así termina pegada en un chat (Ley 25.326, `docs/08`).
+salida de una sesión así termina pegada en un chat (Ley 25.326, `docs/08`). La única
+excepción es la vista previa de 6.5, que sí muestra el nombre —es la que decide un
+borrado físico y no hay otra forma de distinguir una ficha de prueba de un vecino de
+verdad—: esa salida no se pega en ningún lado.
 
 ##### 6.1 Inventario — mirar antes de borrar
 
@@ -597,6 +806,28 @@ SELECT (SELECT COUNT(*) FROM fees)                   AS cuotas,
 Antes del import de deuda **no puede haber ninguna cuota legítima**: no hay cron de
 devengo (es la fase 4C) y la deuda histórica todavía no se cargó. Todo lo que
 aparezca acá es el recibo del paso 5 o una prueba anterior.
+
+**(c bis) La corrida de reconocimiento, ANTES de mirar la lista de huecos.**
+
+La consulta (d) tiene la lista de huecos del Excel **escrita a mano**, y ese es su
+punto débil: si el archivo que está en el VPS no es el que describe este runbook, la
+consulta mira el conjunto equivocado y la poda del paso 7 borra otra cosa. Validalo
+contra el Excel real antes de seguir. Salí un momento del `mysql` (o abrí otra
+terminal) y corré la versión **sin flags**, que sólo crea los socios que falten y no
+toca ninguna ficha existente:
+
+```bash
+cd /root/dev/ciudadela
+npx tsx scripts/import-padron.ts
+cat padron-import-report.txt
+```
+
+Tiene que decir `filas: 278 (esperado 278)`, `vigentes: 160 (esperado 160)` y
+`huecos (28, esperado 28): 21, 71, 72, 73, 93, 94, 95, 97, 118, …`. **Si alguno de
+los tres no coincide, o si la lista de huecos no es la del `IN (…)` de abajo, no
+sigas**: el archivo no es el que este runbook describe. Lo que esa corrida **no**
+puede decirte está explicado en el paso 7 (ni los avisos de email ni la poda se
+calculan sin flags); acá se usa sólo para confirmar el archivo.
 
 **(d) Los socios que la poda va a mirar** — los que están en el libro y **no** en el
 Excel, con los mismos siete motivos por los que el script se niega a borrarlos. El
@@ -683,6 +914,17 @@ FROM documents d WHERE d.owner_type = 'application' ORDER BY d.owner_id, d.id;
 Si en la primera lista hubiera alguna solicitud que **no** sea de prueba, no corras
 el borrado en bloque: borrá por `id`.
 
+⚠️ **Las notificaciones de la solicitud del piloto son correos que salieron a una
+persona real.** Cada fila de `notifications` con `application_id` es la acreditación
+del envío exigida por el Art. 5° quater (por eso el modelo guarda el destinatario en
+`application_id` cuando el destinatario todavía no era socio). Borrarlas es asumir
+que el ingreso del 306 —verificación de email, resultado de la solicitud— deja de
+tener constancia en SIGeV. Es la misma pérdida que la de `mp_payment_id_entry` de
+más arriba: se acepta porque el alta es de prueba y el legajo queda en la copia de
+la consulta 6.1 **(a)**, no porque no importe. Si querés conservarla, copiá también
+la salida de `SELECT id, type, via, status, sent_at, application_id FROM
+notifications WHERE application_id IS NOT NULL;` antes del `DELETE`.
+
 ```sql
 START TRANSACTION;
 -- Una notificación de solicitud tiene `member_id` NULL (el destinatario todavía no
@@ -738,11 +980,24 @@ DELETE FROM mp_subscriptions WHERE member_id IS NULL OR member_id <> @socio306;
 
 ##### 6.4 La tesorería de prueba
 
+Una fila a la vista por cada tabla que se va a vaciar — ninguna se borra a ciegas:
+
 ```sql
 SELECT r.id, r.number, r.payment_id, r.issued_at, r.voided_at, r.pdf_path FROM receipts ORDER BY r.id;
 SELECT p.id, p.type, p.amount, p.paid_at, p.member_id, p.status  FROM payments ORDER BY p.id;
 SELECT f.member_id, f.period, f.status, f.origin                 FROM fees ORDER BY f.member_id, f.period;
+SELECT u.id, u.mp_payment_id, u.amount, u.paid_at, u.status, u.payment_id
+  FROM mp_unmatched_payments u ORDER BY u.id;
+SELECT `year`, `last` FROM receipt_sequences ORDER BY `year`;
 ```
+
+Las dos últimas tienen que estar vacías o traer sólo el rastro del paso 5.
+`mp_unmatched_payments` es la bandeja de la conciliación de MP y en la fase 4A
+**ningún código la escribe** (grep: sólo la toca el cliente generado de Prisma), así
+que tiene que venir vacía. `receipt_sequences` puede tener a lo sumo una fila, la
+del año en curso, con `last` igual a la cantidad de recibos que emitiste en el paso 5
+—normalmente `1`—. **Cualquier otra cosa es un dato que este runbook no previó: pará
+y miralo antes de borrar.**
 
 El orden del borrado no es negociable: `receipts.payment_id` es `ON DELETE
 RESTRICT`, así que un pago con recibo no se borra hasta que el recibo no esté.
@@ -782,21 +1037,69 @@ Para cada número `N` que sobre, uno por vez:
 
 ```sql
 -- Reemplazá `N` por el número de socio de la fila que sobra.
+--
+-- Los NULL primero, y no son decorativos: `SELECT … INTO` con CERO filas no falla
+-- ni corta la sesión, sólo deja un warning (MySQL 1329) y **conserva el valor
+-- anterior** de la variable. Como este bloque se corre una vez por socio que sobra,
+-- un número mal tipeado en la segunda vuelta dejaría @vict apuntando al socio que ya
+-- borraste, y las vistas previas —que hasta ahora imprimían `id`, no `member_number`—
+-- no lo delataban. Inicializadas en NULL, un número que no existe se ve como NULL.
+SET @vict = NULL;
+SET @cuenta = NULL;
 SELECT member_id INTO @vict FROM memberships WHERE book_id = @libro1 AND member_number = N;
-SELECT id, user_id, status, category, joined_at, created_at FROM members WHERE id = @vict;
-SELECT id, type, date, detail FROM movements     WHERE member_id = @vict;
-SELECT id, purpose            FROM action_tokens WHERE member_id = @vict;
-SELECT id, type, sent_at      FROM notifications WHERE member_id = @vict;
+SELECT @vict AS ficha;   -- si viene NULL, ese número no está en el libro: revisá el número
+
+-- La vista previa dice el NÚMERO DE SOCIO, el NOMBRE y los ROLES de la cuenta.
+-- El número, para que se vea que es el que tipeaste. El nombre, porque acá se borra
+-- físicamente y es lo único que distingue una ficha de prueba de un vecino de
+-- verdad (es la excepción a la regla de no mostrar datos personales en esta sesión:
+-- no pegues esta salida en ningún lado). Los roles, por lo que dice abajo.
+SELECT ms.member_number AS socio, m.full_name AS nombre,
+       m.id, m.user_id, m.status, m.category, m.joined_at, m.created_at,
+       (SELECT GROUP_CONCAT(r.name) FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = m.user_id) AS roles_de_la_cuenta
+FROM members m
+JOIN memberships ms ON ms.member_id = m.id AND ms.book_id = @libro1
+WHERE m.id = @vict;
+
+SELECT id, type, date, detail   FROM movements     WHERE member_id = @vict;
+SELECT id, purpose              FROM action_tokens WHERE member_id = @vict;
+SELECT id, type, sent_at        FROM notifications WHERE member_id = @vict;
+SELECT id, status, created_at   FROM applications  WHERE member_id = @vict;
+SELECT id, book_id, member_number FROM memberships WHERE member_id = @vict;
 ```
 
 Miralo antes de borrar: si esa ficha resultara ser un socio de verdad que la
 Comisión dio de alta y se olvidó de poner en el Excel, la salida correcta es la 2 o
 la 3 del paso 7, no ésta.
 
+⚠️ **Si `roles_de_la_cuenta` dice `admin` o `superadmin`, no borres nada.** Los roles
+en este proyecto son **acumulables**: una cuenta puede ser `socio` y `admin` a la
+vez, y en un VPS que se usó para probar el panel es perfectamente posible que la
+cuenta de gestión de alguien haya quedado colgada de una ficha de prueba. Es la misma
+regla que 6.6 (*"las de `admin` y `superadmin` no las toques"*), y acá importa más,
+porque el `DELETE FROM users` de abajo se lleva la cuenta entera con sus roles por
+CASCADE. Si aparece una así: desenganchá primero la cuenta de la ficha
+(`UPDATE members SET user_id = NULL WHERE id = @vict;`, y `SET @cuenta = NULL;` para
+que el borrado no la toque), y recién entonces borrá la ficha.
+
+Y si la lista de `applications` no vino vacía, es porque en 6.2 tomaste la rama
+"borrá por `id`": el FK `applications.member_id` es `ON DELETE SET NULL`, así que
+borrar la ficha **no** se lleva la solicitud, la deja huérfana —y el paso 9 te la va
+a contar en `solicitudes`—. El bloque de abajo la borra; si preferís no pensar en
+esto, la salida más simple es haber usado la forma en bloque de 6.2.
+
 ```sql
 SELECT user_id INTO @cuenta FROM members WHERE id = @vict;
+SELECT @cuenta AS cuenta_a_borrar;   -- NULL si la ficha no tenía cuenta: está bien
 
 START TRANSACTION;
+-- La solicitud del socio, si sobrevivió a 6.2 (rama "por id"). Va primero porque
+-- sus notificaciones y sus documentos cuelgan de ella, no de la ficha.
+DELETE FROM notifications WHERE application_id IN (SELECT id FROM applications WHERE member_id = @vict);
+DELETE FROM documents     WHERE owner_type = 'application'
+                            AND owner_id IN (SELECT id FROM applications WHERE member_id = @vict);
+DELETE FROM applications  WHERE member_id = @vict;   -- sus action_tokens caen por CASCADE
 DELETE FROM notifications WHERE member_id = @vict;
 DELETE FROM action_tokens WHERE member_id = @vict;
 DELETE FROM movements     WHERE member_id = @vict;   -- FK RESTRICT: van antes que la ficha
@@ -808,6 +1111,11 @@ DELETE FROM members       WHERE id = @vict;
 DELETE FROM users         WHERE id = @cuenta;   -- si no tenía cuenta, @cuenta es NULL y no borra nada
 COMMIT;
 ```
+
+Si esa solicitud tenía documentos, los archivos del disco los borra el `rm -rf` de
+6.2 (que vacía `/var/sigev/uploads/applications` entero). Si en 6.2 borraste por
+`id` y no corriste ese `rm`, borralos por la ruta que te dio el `SELECT … FROM
+documents` de 6.2: en `documents` no hay FK contra el disco.
 
 (Las cuotas y los pagos de esa ficha ya no existen: los borró el paso 6.4. Si por
 alguna razón quedaran, `fees` cae por CASCADE y `payments` queda con `member_id`
@@ -881,7 +1189,10 @@ exactamente ese criterio, y por eso va antes.
 El script se defiende: si un socio a podar tiene **cuenta de acceso, solicitud,
 suscripción de Mercado Pago, pago, cuota, membresía en otro libro o cualquier
 movimiento cargado a mano**, aborta **sin borrar a nadie** y los lista uno por uno
-con el motivo. Si eso pasa, la salida se ve así:
+con el motivo. "Sin borrar a nadie" es literal y también es incompleto: la
+verificación de la poda corre **después** del loop de actualización, así que para
+cuando aborta las 278 fichas ya se pisaron con el Excel y esas escrituras están
+commiteadas (ver más abajo, "Si el import aborta"). Si eso pasa, la salida se ve así:
 
 ```
 IMPORT ABORTADO — ERROR DE DATOS O DE USO: revisá datos/padron_socios.xlsx …
@@ -910,8 +1221,9 @@ los que el script se niega. Lo que sí funciona:
 
 Nunca forzar el borrado por SQL saltando las guardas del script.
 
-**La corrida de reconocimiento, y lo que NO te va a decir.** Sin flags el script
-sólo crea los socios que falten y no toca ninguna ficha existente:
+**La corrida de reconocimiento, y lo que NO te va a decir.** Es la del paso 6.1
+**(c bis)**, que ya corriste antes de mirar la lista de huecos: sin flags el script
+sólo crea los socios que falten y no toca ninguna ficha existente.
 
 ```bash
 cd /root/dev/ciudadela
@@ -1005,6 +1317,35 @@ una hoja que no se llama `socios`, un encabezado renombrado o duplicado, una cel
 `numero_socio` que no es un número, y —sólo con `--prune`— los totales de control
 que no dan, que corta **antes de la primera escritura**.
 
+**Si el import aborta en la poda, leé la CONSOLA y no el archivo del reporte.**
+
+El aborto por socios no podables (el de más arriba) es el único que ocurre **con
+escrituras ya hechas**, y eso cambia qué hay que mirar:
+
+- **Las 278 fichas ya se actualizaron.** El loop commitea socio por socio y la
+  verificación de la poda corre después. Volver a correr el import corregido es
+  seguro —es idempotente—, pero el padrón ya está pisado desde el primer intento.
+- **`padron-import-report.txt` quedó VIEJO.** El `writeFileSync` del reporte está
+  después de la poda: en un aborto nunca se ejecuta, así que el archivo sigue siendo
+  el de la corrida de reconocimiento del paso 6.1 **(c bis)**. Leerlo y creer que
+  describe lo que acaba de pasar es el error fácil de cometer acá. **`cat` de ese
+  archivo no sirve después de un aborto.**
+- **Lo único que hay es la salida de consola**, y es un resumen: la línea
+  `progreso antes de abortar: creados …, actualizados …, sin cambios …, salteados …`.
+  Copiala. Los avisos individuales de esa corrida —los que se acumulan en memoria
+  para el reporte— **se pierden con el aborto**: no van a la consola ni al archivo.
+- **El que más duele perder es `el Excel le cambió el email y el socio ya tiene
+  cuenta de acceso — ahora INGRESA con la dirección nueva`.** Ese aviso es de **una
+  sola vez**: en la corrida siguiente la ficha ya tiene el email del Excel, el writer
+  ve las dos direcciones iguales y no lo vuelve a emitir (`syncAccountEmail` sale por
+  `sameAddress`, `src/lib/members/write.ts`). O sea: si se perdió en el aborto, nadie
+  se entera nunca de que a ese socio le cambió el nombre de usuario, y hay que
+  avisarle por otro medio.
+- **El pre-vuelo que lo cubre es la consulta 6.1 (f)**, la lista de socios con cuenta
+  de acceso: si la tenés copiada de antes del import, podés comparar la dirección de
+  cada uno contra la del Excel y reconstruir a mano a quién se le movió el ingreso.
+  Ésa es la razón por la que 6.1 **(f)** se corre y se guarda, y no se mira de paso.
+
 #### 8. Deuda histórica — `scripts/import-deuda.ts`
 
 Va **después** del padrón, siempre: necesita que cada socio del Excel de deuda
@@ -1078,7 +1419,12 @@ En el panel: `/admin/tesoreria/deudores` lista a los socios vigentes con deuda
 ordenados por monto, y la ficha de un socio con deuda muestra la cinta con las
 cuotas importadas. Con eso el módulo está en pie.
 
-Recién ahora se borra el backup del paso 1.
+Con los números dados y el panel mirado, **volvé a prender ASOCIATE** en
+`/admin/configuracion` (lo apagaste en 6.0) y confirmá en la home pública que el
+botón volvió. Mientras esté apagado, ningún vecino puede asociarse y nada avisa.
+
+Recién ahora se borran los backups: el A y el tar de archivos del paso 1, y el B del
+paso 4 bis (el `shred` está al final del paso 1).
 
 #### 10. Lo que NO entra en este despliegue
 

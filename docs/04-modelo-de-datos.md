@@ -153,7 +153,8 @@ Identidad única de la persona a través de todos los libros.
 
 ### Recibo — `Receipt` / tabla `receipts`
 - `numero` correlativo único global formato `AAAA-NNNNN` (una sola serie para todos
-  los medios de pago) + `anio` y `seq` con UNIQUE(`anio`, `seq`), `pago_id`
+  los medios de pago) + `anio` y `seq` con UNIQUE(`anio`, `seq`) —la columna real se
+  llama `year`, no `anio`—, `pago_id`
   (UNIQUE, `Restrict`), `concepto`, `pdf_path`, `emitido_at`, `enviado_email_at`,
   `anulado_at`, `motivo_anulacion`, `anulado_por`
 - **El concepto se congela al emitir** (`concept`, VarChar(200)): un recibo es un
@@ -172,7 +173,11 @@ Identidad única de la persona a través de todos los libros.
   regenerable: si falla, el cobro igual quedó asentado.
 
 ### SecuenciaRecibo — `ReceiptSequence` / tabla `receipt_sequences`
-- `anio` (PK), `last`
+- `anio` (PK), `last`. **La columna real se llama `year`, no `anio`**: en SQL se
+  escribe ``SELECT `year`, `last` FROM receipt_sequences`` (con backticks, que `YEAR`
+  también es un tipo de dato de MariaDB). Este documento nombra los campos en
+  castellano; los únicos nombres que valen para tipear una consulta son los del
+  `schema.prisma`.
 - Contador por año. Se incrementa con `INSERT … ON DUPLICATE KEY UPDATE` **dentro
   de la transacción que crea el recibo**: el bloqueo de la fila del año serializa a
   los emisores concurrentes y, si la transacción falla, el número no se consumió.
