@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // El comportamiento de `createFeeValueAction` con el superadmin ya adentro. Va
 // aparte del test de autorización por el mismo motivo que `config-actions.test`
@@ -13,7 +13,9 @@ import { describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
   feeValue: { create: vi.fn(async () => ({ id: 42 })) },
-  minute: { findUnique: vi.fn(async () => null) },
+  // El tipo de retorno va explícito para que un caso pueda devolver un acta
+  // que SÍ existe con `mockResolvedValueOnce`.
+  minute: { findUnique: vi.fn(async (): Promise<{ id: number } | null> => null) },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/require-admin", () => ({
@@ -35,6 +37,13 @@ function form(o: Record<string, string>) {
 }
 
 describe("createFeeValueAction como superadmin", () => {
+  // Cada caso arranca sin llamadas previas: los `not.toHaveBeenCalled()` de los
+  // rechazos no pueden depender de en qué orden corrieron los casos que sí
+  // insertan. `clearAllMocks` limpia las llamadas, no las implementaciones.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("monto 0 rechaza con el mensaje de pantalla", async () => {
     const r = await createFeeValueAction({}, form({ activeAmount: "0", sharedAmount: "3000", validFrom: "2026-09-01" }));
     expect(r.error).toBe("El monto de activo tiene que ser mayor a cero.");
@@ -73,5 +82,57 @@ describe("createFeeValueAction como superadmin", () => {
     });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "fee_value_create", entityId: 42 }));
     expect(redirect).toHaveBeenCalledWith("/admin/configuracion?cuota=1");
+  });
+
+  it("con acta existente, el id llega a la fila y al asiento", async () => {
+    // El único caso que prueba que `minuteId` se escribe: en todos los demás el
+    // acta no existe y la action corta antes del insert, así que el camino del
+    // acta válida no lo tocaba nadie.
+    prismaMock.minute.findUnique.mockResolvedValueOnce({ id: 12 });
+    await createFeeValueAction({}, form({
+      activeAmount: "9000", sharedAmount: "4500", validFrom: "2027-06-01", minuteId: "12",
+    }));
+    expect(prismaMock.minute.findUnique).toHaveBeenCalledWith({ where: { id: 12 }, select: { id: true } });
+    expect(prismaMock.feeValue.create).toHaveBeenCalledWith({
+      data: {
+        activeAmount: "9000.00",
+        sharedAmount: "4500.00",
+        validFrom: new Date(Date.UTC(2027, 5, 1, 12)),
+        minuteId: 12,
+        createdById: 3,
+      },
+    });
+    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "fee_value_create",
+      detail: expect.objectContaining({ minuteId: 12, activeAmount: 9000, sharedAmount: 4500 }),
+    }));
+  });
+
+  // Un POST armado a mano puede traer cualquier cosa en `minuteId`: era el
+  // último mensaje de zod del archivo sin texto propio, y salía en inglés.
+  it("minuteId no numérico rechaza en castellano y sin insertar", async () => {
+    const r = await createFeeValueAction({}, form({
+      activeAmount: "6000", sharedAmount: "3000", validFrom: "2026-09-01", minuteId: "abc",
+    }));
+    expect(r.error).toBe("El acta seleccionada no es válida.");
+    expect(prismaMock.feeValue.create).not.toHaveBeenCalled();
+  });
+
+  it("minuteId negativo rechaza en castellano y sin insertar", async () => {
+    const r = await createFeeValueAction({}, form({
+      activeAmount: "6000", sharedAmount: "3000", validFrom: "2026-09-01", minuteId: "-3",
+    }));
+    expect(r.error).toBe("El acta seleccionada no es válida.");
+    expect(prismaMock.feeValue.create).not.toHaveBeenCalled();
+  });
+
+  // `Decimal(10,2)` llega hasta 99.999.999,99: sin tope en el schema el INSERT
+  // lo rechazaría MariaDB y el superadmin vería un error de Prisma en crudo.
+  it("monto arriba del tope de la columna rechaza con una frase", async () => {
+    const r = await createFeeValueAction({}, form({
+      activeAmount: "100000000", sharedAmount: "3000", validFrom: "2026-09-01",
+    }));
+    expect(r.error).toBe("El monto no puede superar los $ 99.999.999.");
+    expect(prismaMock.feeValue.create).not.toHaveBeenCalled();
   });
 });

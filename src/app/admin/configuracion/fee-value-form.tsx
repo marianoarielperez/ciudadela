@@ -25,13 +25,18 @@ export function FeeValueForm({ minutes, suggestedValidFrom }: {
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
+        {/* 8 dígitos: es lo que entra en el `Decimal(10,2)` de la columna
+            (99.999.999 con los dos decimales). El tope de verdad lo pone el
+            schema de la action; esto es sólo para que el error no llegue a
+            pantalla por un cero de más al tipear. */}
         <TextField
           label="Cuota de socio activo ($)" field={field("activeAmount", digits)}
-          inputMode="numeric" placeholder="6000"
+          inputMode="numeric" maxLength={8} placeholder="6000"
         />
         <TextField
           label="Cuota de adherente / colaborador ($)" field={field("sharedAmount", digits)}
-          inputMode="numeric" placeholder="3000" hint="Las dos categorías comparten el mismo monto."
+          inputMode="numeric" maxLength={8} placeholder="3000"
+          hint="Las dos categorías comparten el mismo monto."
         />
         <TextField
           label="Rige desde" field={field("validFrom")} type="date"

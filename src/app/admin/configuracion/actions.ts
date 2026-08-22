@@ -160,22 +160,37 @@ export async function updateConfigAction(
 // su vigencia. La deuda de todos se valúa al vigente (REG-16), así que el valor
 // viejo deja de usarse solo, sin tocar ninguna cuota. El acta es opcional al
 // registrar (la asamblea ya lo fijó y el acta puede digitalizarse después).
+//
+// El tope de los montos no es cosmético: las dos columnas son `Decimal(10,2)`,
+// así que arriba de 99.999.999 el INSERT lo rechazaría MariaDB y el superadmin
+// vería un error de Prisma en crudo en vez de una frase.
+const MAX_FEE_AMOUNT = 99_999_999;
+
 const feeValueSchema = z.object({
   activeAmount: z.coerce
     .number("Ingresá el monto de la cuota de socio activo.")
     .int("El monto tiene que ser un número entero de pesos.")
-    .positive("El monto de activo tiene que ser mayor a cero."),
+    .positive("El monto de activo tiene que ser mayor a cero.")
+    .max(MAX_FEE_AMOUNT, "El monto no puede superar los $ 99.999.999."),
   sharedAmount: z.coerce
     .number("Ingresá el monto de la cuota de adherente/colaborador.")
     .int("El monto tiene que ser un número entero de pesos.")
-    .positive("El monto de adherente/colaborador tiene que ser mayor a cero."),
+    .positive("El monto de adherente/colaborador tiene que ser mayor a cero.")
+    .max(MAX_FEE_AMOUNT, "El monto no puede superar los $ 99.999.999."),
   // El mensaje va también en `z.string(...)`, no sólo en el `.regex(...)`: sin
   // clave `validFrom` en el POST, zod ni llega al regex y devuelve su texto por
   // defecto EN INGLÉS, que es lo que termina en pantalla (ver `@/lib/forms`).
   validFrom: z
     .string("Ingresá desde cuándo rige el valor.")
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Ingresá desde cuándo rige el valor."),
-  minuteId: z.coerce.number().int().positive().optional(),
+  // Mismo motivo que `validFrom`: el select nunca manda otra cosa que un id de
+  // la lista, pero un POST a mano con "abc" o "-3" sí, y sin mensajes propios
+  // el que se muestra es el texto por defecto de zod EN INGLÉS.
+  minuteId: z.coerce
+    .number("El acta seleccionada no es válida.")
+    .int("El acta seleccionada no es válida.")
+    .positive("El acta seleccionada no es válida.")
+    .optional(),
 });
 
 export async function createFeeValueAction(

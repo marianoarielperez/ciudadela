@@ -2,6 +2,8 @@
 // La zona de negocio es la de Argentina (UTC-3, sin DST): el "mes actual" se
 // decide ahí y no en UTC, o el cron de las 00:30 del día 1 devengaría el mes
 // equivocado.
+import { civilDateUtc } from "@/lib/dates";
+
 const TZ = "America/Argentina/Buenos_Aires";
 
 export type Period = string;
@@ -24,16 +26,44 @@ function build(year: number, month: number): Period {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
+// El año/mes/día que marca el calendario argentino en ese instante. Es el único
+// lugar del proyecto que traduce un instante de reloj a una fecha civil, y por
+// eso `periodOf` y `civilDayOf` salen los dos de acá: si alguna vez cambia la
+// zona de negocio, cambia una línea.
+function civilPartsOf(date: Date): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return { year: get("year"), month: get("month"), day: get("day") };
+}
+
 export function periodOf(date: Date): Period {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit" })
-    .formatToParts(date);
-  const year = Number(parts.find((p) => p.type === "year")?.value);
-  const month = Number(parts.find((p) => p.type === "month")?.value);
+  const { year, month } = civilPartsOf(date);
   return build(year, month);
 }
 
 export function currentPeriod(now: Date = new Date()): Period {
   return periodOf(now);
+}
+
+/** El día civil ARGENTINO de `date`, como el mediodía UTC con el que el
+ *  proyecto guarda toda fecha civil (`civilDateUtc`).
+ *
+ *  Existe para comparar un instante de reloj contra una columna de fecha civil
+ *  sin que la hora del día decida. El mediodía UTC son las 09:00 argentinas,
+ *  así que un `validFrom <= new Date()` crudo deja al valor invisible entre las
+ *  00:00 y las 08:59 del propio día en que empieza a regir: el cron de devengo
+ *  (00:30 del día 1) abortaría por "no hay valor vigente" y el superadmin que
+ *  registra un valor "desde hoy" y recarga a la mañana leería que no rige
+ *  ninguno, arriba de la fila que acaba de crear. Comparando contra el mediodía
+ *  del día argentino, el valor rige el día entero.
+ *
+ *  El día se resuelve en Argentina y no en UTC a propósito: a las 23:00 de acá
+ *  UTC ya está en el día siguiente, y ese valor todavía no tiene que regir. */
+export function civilDayOf(date: Date = new Date()): Date {
+  const { year, month, day } = civilPartsOf(date);
+  return civilDateUtc(year, month, day);
 }
 
 export function addMonths(p: Period, n: number): Period {

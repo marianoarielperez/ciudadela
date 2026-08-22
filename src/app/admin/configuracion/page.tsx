@@ -59,7 +59,13 @@ export default async function ConfigPage(props: {
   const [current, history, minuteRows] = await Promise.all([
     feeValueReader.current(),
     feeValueReader.history(),
-    prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
+    // `select` explícito: de la fila del acta acá sólo se arma la etiqueta del
+    // combo, y sin él Prisma trae también el texto y los adjuntos del acta.
+    prisma.minute.findMany({
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+      take: 30,
+      select: { id: true, type: true, number: true, date: true },
+    }),
   ]);
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,

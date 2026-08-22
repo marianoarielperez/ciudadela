@@ -1,6 +1,7 @@
 // Valor de cuota vigente e historial (REG-34). Prisma inyectado.
 import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { civilDayOf } from "@/lib/treasury/periods";
 
 export type CurrentFeeValue = {
   id: number;
@@ -34,11 +35,18 @@ const SELECT = { id: true, activeAmount: true, sharedAmount: true, validFrom: tr
 
 export function makeFeeValueReader(db: Db) {
   return {
-    /** El vigente a `at` (default: ahora): mayor `validFrom` ≤ `at`. `null` si
-     *  no rige ninguno todavía — quien cobra tiene que abortar, no inventar. */
+    /** El vigente a `at` (default: ahora): mayor `validFrom` ≤ el DÍA de `at`.
+     *  `null` si no rige ninguno todavía — quien cobra tiene que abortar, no
+     *  inventar.
+     *
+     *  La comparación no va contra el instante sino contra el mediodía UTC del
+     *  día argentino de `at` (`civilDayOf`), porque `validFrom` es una fecha
+     *  civil guardada al mediodía UTC = 09:00 argentinas. Contra el instante
+     *  crudo, un valor que rige "desde hoy" no existiría hasta las 09:00 y el
+     *  cron de devengo de las 00:30 del día 1 abortaría sin valor de cuota. */
     async current(at: Date = new Date()): Promise<CurrentFeeValue | null> {
       const row = await db.feeValue.findFirst({
-        where: { validFrom: { lte: at } },
+        where: { validFrom: { lte: civilDayOf(at) } },
         orderBy: [{ validFrom: "desc" }, { id: "desc" }],
         select: SELECT,
       });
