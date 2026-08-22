@@ -38,6 +38,20 @@ describe("fetchDebtors", () => {
     expect(rows[1]).toMatchObject({ memberId: 2, pendingCount: 1, debt: 3000, level: 1 });
   });
 
+  it("pide el groupBy filtrado a socios vigentes o suspendidos: un dado de baja no vuelve a la lista", async () => {
+    const groupBy = vi.fn(async () => []);
+    const db = {
+      fee: { groupBy },
+      member: { findMany: vi.fn(async () => []) },
+    } as never;
+    await fetchDebtors(db, {}, null);
+    expect(groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: "pending", member: { status: { in: ["active", "suspended"] } } },
+      }),
+    );
+  });
+
   it("con nivel 4 solo devuelve candidatos a cesantía", async () => {
     const db = {
       fee: { groupBy: vi.fn(async () => [{ memberId: 1, _count: { _all: 5 } }, { memberId: 2, _count: { _all: 2 } }]) },

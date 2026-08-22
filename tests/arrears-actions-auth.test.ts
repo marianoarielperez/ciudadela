@@ -11,7 +11,12 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(async () => {}),
   admin: vi.fn(async (): Promise<AdminDouble> => ({ ok: false, reason: "not_admin", error: "Necesitás permisos de administrador." })),
   prisma: {
-    member: { findMany: vi.fn(async (): Promise<MemberDouble[]> => []) },
+    member: {
+      findMany: vi.fn(async (args: { where: { id: { in: number[] } } }): Promise<MemberDouble[]> => {
+        void args;
+        return [];
+      }),
+    },
     fee: { count: vi.fn(async () => 5) },
     minute: { findUnique: vi.fn(async () => ({ id: 3 })), create: vi.fn(), delete: vi.fn() },
     movement: { count: vi.fn(async () => 0) },
@@ -69,12 +74,20 @@ describe("declareArrearsAction", () => {
   // El formulario real NO manda una lista separada por comas: manda un campo
   // `ids` por cada checkbox tildado. Con `formData.get("ids")` se declararía la
   // cesantía de UNO SOLO y el operador creería haber dado de baja a todos.
+  //
+  // El mock de `findMany` HONRA su `where`: filtra el padrón fijo por los ids
+  // que la acción realmente pidió. Si `getAll` se revierte a `get`, la acción
+  // sólo pide el id 5 y ni la aserción sobre `findMany` ni la de `withdaw` (2
+  // veces) pueden pasar con datos que la acción nunca solicitó.
   it("acepta la selección como un campo por socio (checkboxes nativos)", async () => {
     mocks.withdraw.mockClear();
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.prisma.member.findMany.mockResolvedValueOnce([
+    const roll: MemberDouble[] = [
       { id: 5, fullName: "C", status: "active" }, { id: 6, fullName: "D", status: "active" },
-    ]);
+    ];
+    mocks.prisma.member.findMany.mockImplementationOnce(async (args: { where: { id: { in: number[] } } }) =>
+      roll.filter((m) => args.where.id.in.includes(m.id)),
+    );
     mocks.prisma.fee.count.mockResolvedValueOnce(4).mockResolvedValueOnce(11);
     const f = new FormData();
     f.append("ids", "5");
@@ -82,8 +95,40 @@ describe("declareArrearsAction", () => {
     f.append("minuteMode", "existing");
     f.append("minuteId", "3");
     await declareArrearsAction({}, f);
+    // Pinea el INPUT parseado, no sólo el resultado: un `findMany` que ignora
+    // su `where` (o una acción que sólo parseó el primer checkbox) no puede
+    // hacer pasar esta aserción con datos que nunca se pidieron.
+    expect(mocks.prisma.member.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: [5, 6] } }) }),
+    );
     expect(mocks.withdraw).toHaveBeenCalledTimes(2);
     expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/deudores?declaradas=2");
+  });
+
+  // El `Set` de la acción dedupe antes de tocar la base: un socio tildado dos
+  // veces (o llegado dos veces por el `split` de comas) se declara UNA sola
+  // vez, no dos.
+  it("deduplica ids repetidos: un socio no se declara ni se audita dos veces", async () => {
+    mocks.withdraw.mockClear();
+    mocks.audit.mockClear();
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const roll: MemberDouble[] = [{ id: 7, fullName: "E", status: "active" }];
+    mocks.prisma.member.findMany.mockImplementationOnce(async (args: { where: { id: { in: number[] } } }) =>
+      roll.filter((m) => args.where.id.in.includes(m.id)),
+    );
+    mocks.prisma.fee.count.mockResolvedValueOnce(5);
+    const f = new FormData();
+    f.append("ids", "7");
+    f.append("ids", "7,7");
+    f.append("minuteMode", "existing");
+    f.append("minuteId", "3");
+    await declareArrearsAction({}, f);
+    expect(mocks.prisma.member.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: [7] } }) }),
+    );
+    expect(mocks.withdraw).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/deudores?declaradas=1");
   });
 
   // Un acta sin ningún movimiento es un asiento fantasma en un libro que se

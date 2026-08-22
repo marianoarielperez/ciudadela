@@ -91,9 +91,9 @@ export async function fetchDebtors(
       lastPaidAt: m.payments[0]?.paidAt ?? null,
     };
   });
-  // El umbral se vuelve a aplicar sobre las filas ya armadas y no sólo en el
-  // `where`: es lo que garantiza que la lista nunca muestre a alguien por debajo
-  // del nivel pedido —ni siquiera un socio sin conteo, que entraría con 0
-  // pendientes y se leería como "al día" en una lista de deudores.
+  // Defensa en profundidad: se vuelve a aplicar el umbral sobre las filas ya
+  // armadas, no sólo en el `where` que arma `ids`. Así la lista devuelta nunca
+  // puede ofrecer un candidato que el llamador no pidió, aunque cambie cómo se
+  // construye `ids` más arriba.
   return rankDebtors(rows.filter((r) => r.pendingCount >= minimum));
 }
