@@ -38,14 +38,26 @@ function integerWords(n: number): string {
   return parts.join(" ");
 }
 
+/** Tope de la tabla de nombres: arriba de esto haría falta "mil millones". */
+export const MAX_AMOUNT_IN_WORDS = 999_999_999;
+
 export function amountInWords(amount: number): string {
+  // Fuera de rango el resultado sería `"undefined millones de pesos"` impreso en
+  // un recibo. Preferimos que reviente antes de generar el PDF.
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`Monto inválido para expresar en letras: ${amount}`);
+  }
   const cents = Math.round(amount * 100);
   const whole = Math.floor(cents / 100);
   const frac = cents % 100;
+  if (whole > MAX_AMOUNT_IN_WORDS) {
+    throw new Error(`Monto fuera de rango para expresar en letras: ${amount}`);
+  }
   let words = integerWords(whole);
   // "un millón DE pesos" solo con millones redondos.
   if (whole >= 1_000_000 && whole % 1_000_000 === 0) words += " de";
   words += whole === 1 ? " peso" : " pesos";
-  if (frac > 0) words += ` con ${below100(frac)} centavos`;
+  // Un solo centavo va en singular: "con un centavo", no "con un centavos".
+  if (frac > 0) words += ` con ${below100(frac)} ${frac === 1 ? "centavo" : "centavos"}`;
   return words;
 }

@@ -31,11 +31,22 @@ function safe(s: string): string {
   return s.replace(/[^ -~ -ÿ]/g, "?");
 }
 
+// Medidas de la hoja. Exportadas porque los tests miden el corte de líneas con
+// el MISMO ancho que usa la fila: una constante duplicada en el test dejaría
+// pasar justo el caso que el corte de líneas existe para evitar.
+export const A4: readonly [number, number] = [595.28, 841.89];
+const MARGIN = 48;
+const CONTENT_WIDTH = A4[0] - MARGIN * 2;
+/** Ancho disponible para el valor de una fila (la etiqueta ocupa 140 pt). */
+export const VALUE_WIDTH = CONTENT_WIDTH - 140;
+/** Interlineado de los valores que envuelven. */
+export const LINE_HEIGHT = 14;
+
 // pdf-lib corta el valor por palabras cuando se pasa `maxWidth`, pero no dice
 // cuántos renglones usó. El concepto de doce cuotas sueltas ocupa tres, y con un
 // avance fijo de 22 el tercero se monta sobre la fila siguiente. Contamos igual
 // que pdf-lib (cada palabra con su espacio) para avanzar lo que se dibujó.
-function lineCount(text: string, font: PDFFont, size: number, maxWidth: number): number {
+export function lineCount(text: string, font: PDFFont, size: number, maxWidth: number): number {
   let lines = 1;
   let used = 0;
   for (const word of text.split(" ")) {
@@ -63,12 +74,12 @@ async function logoBytes(): Promise<Uint8Array | null> {
 export async function renderReceiptPdf(data: ReceiptPdfData): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Recibo ${data.number} — ${SITE.shortName}`);
-  const page = doc.addPage([595.28, 841.89]); // A4
+  const page = doc.addPage([A4[0], A4[1]]);
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const mono = await doc.embedFont(StandardFonts.Courier);
-  const margin = 48;
-  const width = page.getWidth() - margin * 2;
+  const margin = MARGIN;
+  const width = CONTENT_WIDTH;
   let y = page.getHeight() - margin;
 
   const logo = await logoBytes();
@@ -94,14 +105,14 @@ export async function renderReceiptPdf(data: ReceiptPdfData): Promise<Uint8Array
   const row = (label: string, value: string, opts?: { big?: boolean; monoValue?: boolean }) => {
     const size = opts?.big ? 16 : 11;
     const valueFont = opts?.monoValue ? mono : font;
-    const valueWidth = width - 140;
+    const valueWidth = VALUE_WIDTH;
     const text = safe(value);
     page.drawText(safe(label.toUpperCase()), { x: margin, y, size: 8, font: bold, color: MUTED });
     page.drawText(text, {
       x: margin + 140, y: y - 1, size,
-      font: valueFont, color: INK, maxWidth: valueWidth, lineHeight: 14,
+      font: valueFont, color: INK, maxWidth: valueWidth, lineHeight: LINE_HEIGHT,
     });
-    y -= (opts?.big ? 30 : 22) + (lineCount(text, valueFont, size, valueWidth) - 1) * 14;
+    y -= (opts?.big ? 30 : 22) + (lineCount(text, valueFont, size, valueWidth) - 1) * LINE_HEIGHT;
   };
 
   row("Fecha", formatDateAR(data.issuedAt));
@@ -118,7 +129,12 @@ export async function renderReceiptPdf(data: ReceiptPdfData): Promise<Uint8Array
 
   if (data.voided) {
     page.drawText("ANULADO", { x: 120, y: 380, size: 72, font: bold, color: RED, opacity: 0.35, rotate: degrees(30) });
-    page.drawText(safe(`Anulado: ${data.voided.reason}`), { x: margin, y: y - 16, size: 9, font: bold, color: RED });
+    // El motivo es texto libre del operador: sin `maxWidth` una anulación
+    // explicada en dos renglones se sale por el borde derecho de la hoja.
+    page.drawText(safe(`Anulado: ${data.voided.reason}`), {
+      x: margin, y: y - 16, size: 9, font: bold, color: RED,
+      maxWidth: width, lineHeight: 11,
+    });
   }
 
   return doc.save();
