@@ -34,6 +34,7 @@ CREATE TABLE `fees` (
 
     INDEX `fees_status_idx`(`status`),
     INDEX `fees_member_id_status_idx`(`member_id`, `status`),
+    INDEX `fees_period_status_idx`(`period`, `status`),
     UNIQUE INDEX `fees_member_id_period_key`(`member_id`, `period`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -55,6 +56,8 @@ CREATE TABLE `payments` (
 
     UNIQUE INDEX `payments_mp_payment_id_key`(`mp_payment_id`),
     INDEX `payments_member_id_paid_at_idx`(`member_id`, `paid_at`),
+    INDEX `payments_paid_at_idx`(`paid_at`),
+    INDEX `payments_preapproval_id_idx`(`preapproval_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -103,6 +106,7 @@ CREATE TABLE `mp_unmatched_payments` (
 
     UNIQUE INDEX `mp_unmatched_payments_mp_payment_id_key`(`mp_payment_id`),
     INDEX `mp_unmatched_payments_status_idx`(`status`),
+    INDEX `mp_unmatched_payments_payment_id_idx`(`payment_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -151,11 +155,16 @@ ALTER TABLE `receipts` ADD CONSTRAINT `receipts_payment_id_fkey` FOREIGN KEY (`p
 ALTER TABLE `receipts` ADD CONSTRAINT `receipts_voided_by_id_fkey` FOREIGN KEY (`voided_by_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `mp_unmatched_payments` ADD CONSTRAINT `mp_unmatched_payments_payment_id_fkey` FOREIGN KEY (`payment_id`) REFERENCES `payments`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `mp_unmatched_payments` ADD CONSTRAINT `mp_unmatched_payments_resolved_by_id_fkey` FOREIGN KEY (`resolved_by_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
--- RedefineIndex
--- Editado a mano: Prisma genera CREATE + DROP, pero MariaDB 10.11 elimina sola
--- el indice implicito de la FK apenas se crea otro que la cubre, y el DROP
--- posterior falla con el error 1091. RENAME INDEX hace lo mismo en un solo
--- paso (soportado desde MariaDB 10.5.2; el VPS corre 10.11).
+-- RenameIndex
+-- OJO al regenerar: Prisma emitio alguna vez CREATE + DROP para este indice,
+-- y contra MariaDB 10.11 eso falla con el error 1091 ("Can't DROP INDEX"):
+-- el motor elimina solo el indice implicito de la FK apenas se crea otro que
+-- la cubre, asi que cuando llega el DROP ese indice ya no existe. RENAME INDEX
+-- hace lo mismo en un solo paso y es deterministico (soportado desde MariaDB
+-- 10.5.2; local y el VPS corren 10.11).
 ALTER TABLE `mp_subscriptions` RENAME INDEX `mp_subscriptions_member_id_fkey` TO `mp_subscriptions_member_id_idx`;

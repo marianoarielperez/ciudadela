@@ -647,29 +647,37 @@ model Fee {
   @@unique([memberId, period])
   @@index([status])
   @@index([memberId, status])
+  // El cron de devengo pregunta "qué socios no tienen cuota del período X":
+  // el @@unique de arriba es left-most en member_id y no le sirve.
+  @@index([period, status])
   @@map("fees")
 }
 
 model Payment {
-  id             Int           @id @default(autoincrement())
-  memberId       Int?          @map("member_id")
-  member         Member?       @relation(fields: [memberId], references: [id], onDelete: SetNull)
-  applicationId  Int?          @map("application_id")
-  application    Application?  @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  id             Int                  @id @default(autoincrement())
+  memberId       Int?                 @map("member_id")
+  member         Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  applicationId  Int?                 @map("application_id")
+  application    Application?         @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   type           PaymentType
-  amount         Decimal       @db.Decimal(10, 2)
-  paidAt         DateTime      @map("paid_at")
-  mpPaymentId    String?       @unique @map("mp_payment_id") @db.VarChar(64)
-  preapprovalId  String?       @map("preapproval_id") @db.VarChar(64)
-  registeredById Int?          @map("registered_by_id")
-  registeredBy   User?         @relation("PaymentRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
-  note           String?       @db.VarChar(200)
-  status         PaymentStatus @default(applied)
-  createdAt      DateTime      @default(now()) @map("created_at")
+  amount         Decimal              @db.Decimal(10, 2)
+  paidAt         DateTime             @map("paid_at")
+  mpPaymentId    String?              @unique @map("mp_payment_id") @db.VarChar(64)
+  preapprovalId  String?              @map("preapproval_id") @db.VarChar(64)
+  registeredById Int?                 @map("registered_by_id")
+  registeredBy   User?                @relation("PaymentRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
+  note           String?              @db.VarChar(200)
+  status         PaymentStatus        @default(applied)
+  createdAt      DateTime             @default(now()) @map("created_at")
   fees           Fee[]
   receipt        Receipt?
+  unmatched      MpUnmatchedPayment[]
 
   @@index([memberId, paidAt])
+  // Las pantallas listan pagos por rango de fechas sin filtrar por socio.
+  @@index([paidAt])
+  // La conciliación (4B) busca los pagos de una suscripción por preapproval.
+  @@index([preapprovalId])
   @@map("payments")
 }
 
@@ -714,12 +722,16 @@ model MpUnmatchedPayment {
   description       String?         @db.VarChar(200)
   status            UnmatchedStatus @default(open)
   paymentId         Int?            @map("payment_id")
+  // FK real y no un Int suelto: un puntero a un pago borrado no puede quedar
+  // apuntando a la nada. `SetNull` deja la fila en la bandeja para revisar.
+  payment           Payment?        @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   resolvedById      Int?            @map("resolved_by_id")
   resolvedBy        User?           @relation("UnmatchedResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
   resolvedAt        DateTime?       @map("resolved_at")
   createdAt         DateTime        @default(now()) @map("created_at")
 
   @@index([status])
+  @@index([paymentId])
   @@map("mp_unmatched_payments")
 }
 
