@@ -1,8 +1,43 @@
 // Único punto de contacto con la API de Mercado Pago. El dominio consume ESTA
 // interfaz, nunca el SDK: los tests mockean MpGateway y no hay red en vitest.
-// SDK oficial `mercadopago` v2 (docs/03). `/authorized_payments` no está en el
-// SDK: va con fetch autenticado directo, documentado acá y en la spec §3.
-import { MercadoPagoConfig, Payment, PreApproval, PreApprovalPlan } from "mercadopago";
+// SDK oficial `mercadopago` v2 (docs/03). `/authorized_payments` y las búsquedas
+// no están en el SDK (o no paginan): van con fetch autenticado directo,
+// documentado acá y en la spec §3.
+import { MercadoPagoConfig, Payment, PreApproval, PreApprovalPlan, Preference } from "mercadopago";
+
+export type MpPaymentDetails = {
+  id: string;
+  status: string;
+  statusDetail: string | null;
+  transactionAmount: number;
+  externalReference: string | null;
+  /** `date_approved` de MP como instante UTC; null si el pago no está aprobado. */
+  dateApproved: Date | null;
+  payerEmail: string | null;
+  description: string | null;
+};
+
+export type MpAuthorizedPayment = {
+  id: string;
+  preapprovalId: string | null;
+  status: string;
+  /** El `payment.id` del cobro real; null mientras MP no lo haya creado. */
+  paymentId: string | null;
+  amount: number | null;
+  dateCreated: Date | null;
+  externalReference: string | null;
+};
+
+export type MpPreapproval = {
+  id: string;
+  status: string;
+  payerEmail: string | null;
+  externalReference: string | null;
+  amount: number | null;
+  reason: string | null;
+  nextPaymentDate: Date | null;
+  dateCreated: Date | null;
+};
 
 export type MpGateway = {
   getPlan(planId: string): Promise<{ id: string; reason: string; amount: number }>;
@@ -27,24 +62,113 @@ export type MpGateway = {
   }): Promise<{ id: string; initPoint: string; status: string }>;
   cancelPreapproval(id: string): Promise<void>;
   updatePreapprovalAmount(id: string, amount: number): Promise<void>;
-  getPreapproval(id: string): Promise<{
-    id: string;
-    status: string;
-    payerEmail: string | null;
-    externalReference: string | null;
-  }>;
-  getPayment(id: string): Promise<{
-    id: string;
-    status: string;
-    transactionAmount: number;
-    externalReference: string | null;
-  }>;
-  getAuthorizedPayment(id: string): Promise<{
-    id: string;
-    preapprovalId: string | null;
-    status: string;
-  }>;
+  getPreapproval(id: string): Promise<MpPreapproval>;
+  getPayment(id: string): Promise<MpPaymentDetails>;
+  getAuthorizedPayment(id: string): Promise<MpAuthorizedPayment>;
+  /** `GET /preapproval/search`, paginado hasta agotar. */
+  searchPreapprovals(input?: { status?: string }): Promise<MpPreapproval[]>;
+  /** `GET /authorized_payments/search?preapproval_id=`: la ÚNICA forma de hallar
+   *  los cobros de una suscripción (docs/11 §7). */
+  searchAuthorizedPayments(preapprovalId: string): Promise<MpAuthorizedPayment[]>;
+  /** `GET /v1/payments/search` aprobados por `date_approved` desde `since`. */
+  searchPayments(input: { since: Date }): Promise<MpPaymentDetails[]>;
+  /** Checkout Pro. La preferencia NO se persiste: el pago se reconoce por la referencia. */
+  createPreference(input: {
+    title: string;
+    amount: number;
+    externalReference: string;
+    backUrl: string;
+    notificationUrl: string;
+  }): Promise<{ id: string; initPoint: string }>;
 };
+
+const API = "https://api.mercadopago.com";
+const PAGE = 100;
+
+/** MP manda ISO con offset argentino (`...-03:00`). El gateway es el ÚNICO
+ *  lugar donde eso se convierte a `Date`: nadie más parsea strings de MP. */
+function isoToDate(s: unknown): Date | null {
+  if (typeof s !== "string" || s === "") return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function numberOrNull(n: unknown): number | null {
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+type RawPayment = {
+  id?: number | string;
+  status?: string;
+  status_detail?: string;
+  transaction_amount?: number;
+  external_reference?: string | null;
+  date_approved?: string | null;
+  payer?: { email?: string | null } | null;
+  description?: string | null;
+};
+
+function mapPayment(res: RawPayment, fallbackId: string): MpPaymentDetails {
+  if (typeof res.transaction_amount !== "number") {
+    throw new Error(`El pago ${fallbackId} no tiene monto en MP.`);
+  }
+  return {
+    id: String(res.id ?? fallbackId),
+    status: res.status ?? "unknown",
+    statusDetail: res.status_detail ?? null,
+    transactionAmount: res.transaction_amount,
+    externalReference: res.external_reference ?? null,
+    dateApproved: isoToDate(res.date_approved),
+    payerEmail: res.payer?.email ?? null,
+    description: res.description ?? null,
+  };
+}
+
+type RawAuthorized = {
+  id?: number | string;
+  preapproval_id?: string;
+  status?: string;
+  payment?: { id?: number | string } | null;
+  transaction_amount?: number;
+  date_created?: string;
+  external_reference?: string | null;
+};
+
+function mapAuthorized(data: RawAuthorized, fallbackId: string): MpAuthorizedPayment {
+  return {
+    id: String(data.id ?? fallbackId),
+    preapprovalId: data.preapproval_id ?? null,
+    status: data.status ?? "unknown",
+    paymentId: data.payment?.id != null ? String(data.payment.id) : null,
+    amount: numberOrNull(data.transaction_amount),
+    dateCreated: isoToDate(data.date_created),
+    externalReference: data.external_reference ?? null,
+  };
+}
+
+type RawPreapproval = {
+  id?: string;
+  status?: string;
+  payer_email?: string | null;
+  external_reference?: string | null;
+  reason?: string | null;
+  auto_recurring?: { transaction_amount?: number } | null;
+  next_payment_date?: string | null;
+  date_created?: string | null;
+};
+
+function mapPreapproval(res: RawPreapproval, fallbackId: string): MpPreapproval {
+  return {
+    id: res.id ?? fallbackId,
+    status: res.status ?? "unknown",
+    payerEmail: res.payer_email ?? null,
+    externalReference: res.external_reference ?? null,
+    amount: numberOrNull(res.auto_recurring?.transaction_amount),
+    reason: res.reason ?? null,
+    nextPaymentDate: isoToDate(res.next_payment_date),
+    dateCreated: isoToDate(res.date_created),
+  };
+}
 
 function accessToken(): string {
   const token = process.env.MP_ACCESS_TOKEN;
@@ -60,6 +184,32 @@ export function makeMpGateway(): MpGateway {
   function mp(): MercadoPagoConfig {
     if (!client) client = new MercadoPagoConfig({ accessToken: accessToken() });
     return client;
+  }
+
+  // Búsquedas por fetch directo: el SDK no expone `/preapproval/search` ni
+  // `/authorized_payments` y su `payments.search` no pagina por nosotros. Una
+  // respuesta no-2xx lanza (es un fallo técnico, que el llamador convierte en
+  // 500 o en `errors[]` del cron), nunca se traduce a "no hay resultados".
+  async function searchAll<T>(
+    path: string,
+    params: Record<string, string>,
+    label: string,
+  ): Promise<T[]> {
+    const out: T[] = [];
+    let offset = 0;
+    for (;;) {
+      const qs = new URLSearchParams({ ...params, limit: String(PAGE), offset: String(offset) });
+      const res = await fetch(`${API}${path}?${qs}`, {
+        headers: { Authorization: `Bearer ${accessToken()}` },
+      });
+      if (!res.ok) throw new Error(`${label} respondió ${res.status}`);
+      const data = (await res.json()) as { paging?: { total?: number }; results?: T[] };
+      const page = data.results ?? [];
+      out.push(...page);
+      offset += page.length;
+      const total = data.paging?.total ?? out.length;
+      if (page.length === 0 || offset >= total) return out;
+    }
   }
 
   return {
@@ -107,40 +257,76 @@ export function makeMpGateway(): MpGateway {
     },
     async getPreapproval(id) {
       const res = await new PreApproval(mp()).get({ id });
-      return {
-        id: res.id ?? id,
-        status: res.status ?? "unknown",
-        payerEmail: res.payer_email ?? null,
-        externalReference: res.external_reference ?? null,
-      };
+      return mapPreapproval(res as RawPreapproval, id);
     },
     async getPayment(id) {
       const res = await new Payment(mp()).get({ id });
-      if (typeof res.transaction_amount !== "number") {
-        throw new Error(`El pago ${id} no tiene monto en MP.`);
-      }
-      return {
-        id: String(res.id ?? id),
-        status: res.status ?? "unknown",
-        transactionAmount: res.transaction_amount,
-        externalReference: res.external_reference ?? null,
-      };
+      return mapPayment(res as RawPayment, id);
     },
     async getAuthorizedPayment(id) {
-      const res = await fetch(`https://api.mercadopago.com/authorized_payments/${id}`, {
+      const res = await fetch(`${API}/authorized_payments/${id}`, {
         headers: { Authorization: `Bearer ${accessToken()}` },
       });
       if (!res.ok) throw new Error(`authorized_payments/${id} respondió ${res.status}`);
-      const data = (await res.json()) as {
-        id?: number;
-        preapproval_id?: string;
-        status?: string;
-      };
-      return {
-        id: String(data.id ?? id),
-        preapprovalId: data.preapproval_id ?? null,
-        status: data.status ?? "unknown",
-      };
+      return mapAuthorized((await res.json()) as RawAuthorized, id);
+    },
+    async searchPreapprovals(input) {
+      const params: Record<string, string> = {};
+      if (input?.status) params.status = input.status;
+      const rows = await searchAll<RawPreapproval>(
+        "/preapproval/search",
+        params,
+        "preapproval/search",
+      );
+      return rows.map((r) => mapPreapproval(r, r.id ?? ""));
+    },
+    async searchAuthorizedPayments(preapprovalId) {
+      const rows = await searchAll<RawAuthorized>(
+        "/authorized_payments/search",
+        { preapproval_id: preapprovalId },
+        "authorized_payments/search",
+      );
+      return rows.map((r) => mapAuthorized(r, String(r.id ?? "")));
+    },
+    async searchPayments(input) {
+      const rows = await searchAll<RawPayment>(
+        "/v1/payments/search",
+        {
+          sort: "date_approved",
+          criteria: "desc",
+          range: "date_approved",
+          begin_date: input.since.toISOString(),
+          end_date: new Date().toISOString(),
+          status: "approved",
+        },
+        "payments/search",
+      );
+      // Un resultado sin monto se descarta en vez de tirar: el cron no puede
+      // caerse entero por una fila rara de MP.
+      return rows
+        .filter((r) => typeof r.transaction_amount === "number")
+        .map((r) => mapPayment(r, String(r.id ?? "")));
+    },
+    async createPreference(input) {
+      const res = await new Preference(mp()).create({
+        body: {
+          items: [
+            {
+              id: input.externalReference,
+              title: input.title,
+              quantity: 1,
+              unit_price: input.amount,
+              currency_id: "ARS",
+            },
+          ],
+          external_reference: input.externalReference,
+          back_urls: { success: input.backUrl, pending: input.backUrl, failure: input.backUrl },
+          auto_return: "approved",
+          notification_url: input.notificationUrl,
+        },
+      });
+      if (!res.id || !res.init_point) throw new Error("MP no devolvió la preferencia creada.");
+      return { id: res.id, initPoint: res.init_point };
     },
   };
 }

@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   planGet: vi.fn(),
+  paymentGet: vi.fn(),
+  preapprovalGet: vi.fn(),
+  preferenceCreate: vi.fn(),
+  fetch: vi.fn(),
 }));
 
 vi.mock("mercadopago", () => ({
@@ -19,15 +23,23 @@ vi.mock("mercadopago", () => ({
   PreApproval: class {
     create = mocks.create;
     update = mocks.update;
-    get = vi.fn();
+    get = mocks.preapprovalGet;
   },
   PreApprovalPlan: class {
     get = mocks.planGet;
   },
   Payment: class {
-    get = vi.fn();
+    get = mocks.paymentGet;
+  },
+  Preference: class {
+    create = mocks.preferenceCreate;
   },
 }));
+
+// Las búsquedas y `/authorized_payments` no pasan por el SDK: van por `fetch`
+// autenticado directo. Mockeamos el global para fijar la URL exacta que se le
+// pide a MP (no hay red en vitest).
+vi.stubGlobal("fetch", mocks.fetch);
 
 import { makeMpGateway } from "@/lib/mp/gateway";
 
@@ -112,5 +124,222 @@ describe("getPlan", () => {
   it("plan sin monto: tira en vez de devolver un importe inventado", async () => {
     mocks.planGet.mockResolvedValue({ id: "PLAN-123", reason: "SOCIO ACTIVO", auto_recurring: {} });
     await expect(makeMpGateway().getPlan("PLAN-123")).rejects.toThrow(/no tiene monto/i);
+  });
+});
+
+// ── 4B: fechas reales de acreditación, el `payment.id` de un cobro de
+// suscripción, las búsquedas de la conciliación y Checkout Pro. ──────────────
+
+describe("getPayment (4B)", () => {
+  it("devuelve dateApproved como Date UTC, payerEmail y description", async () => {
+    mocks.paymentGet.mockResolvedValue({
+      id: 777,
+      status: "approved",
+      status_detail: "accredited",
+      transaction_amount: 6000,
+      external_reference: "solicitud:9",
+      // MP manda el offset argentino: el gateway es el ÚNICO que lo parsea.
+      date_approved: "2026-09-10T08:15:30.000-03:00",
+      payer: { email: "v@x.com" },
+      description: "Cuota Vecinal Ciudadela",
+    });
+    const p = await makeMpGateway().getPayment("777");
+    expect(p).toMatchObject({
+      id: "777",
+      status: "approved",
+      statusDetail: "accredited",
+      transactionAmount: 6000,
+      externalReference: "solicitud:9",
+      payerEmail: "v@x.com",
+      description: "Cuota Vecinal Ciudadela",
+    });
+    expect(p.dateApproved?.toISOString()).toBe("2026-09-10T11:15:30.000Z");
+  });
+
+  it("sin date_approved → null; sin payer → null", async () => {
+    mocks.paymentGet.mockResolvedValue({ id: 1, status: "in_process", transaction_amount: 1 });
+    const p = await makeMpGateway().getPayment("1");
+    expect(p.dateApproved).toBeNull();
+    expect(p.payerEmail).toBeNull();
+  });
+});
+
+describe("getAuthorizedPayment (4B)", () => {
+  it("trae paymentId, amount y dateCreated del cobro", async () => {
+    mocks.fetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 55,
+          preapproval_id: "pre-1",
+          status: "processed",
+          payment: { id: 777, status: "approved" },
+          transaction_amount: 6000,
+          date_created: "2026-09-10T08:00:00.000-03:00",
+          external_reference: "x",
+        }),
+        { status: 200 },
+      ),
+    );
+    const a = await makeMpGateway().getAuthorizedPayment("55");
+    expect(a).toMatchObject({
+      id: "55",
+      preapprovalId: "pre-1",
+      status: "processed",
+      paymentId: "777",
+      amount: 6000,
+      externalReference: "x",
+    });
+    expect(a.dateCreated?.toISOString()).toBe("2026-09-10T11:00:00.000Z");
+    expect(mocks.fetch.mock.calls[0][0]).toBe("https://api.mercadopago.com/authorized_payments/55");
+    expect(mocks.fetch.mock.calls[0][1].headers).toEqual({ Authorization: "Bearer TEST-token" });
+  });
+
+  it("sin `payment` el paymentId queda en null (el cobro todavía no existe)", async () => {
+    mocks.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ id: 56, preapproval_id: "pre-1", status: "scheduled" }), {
+        status: 200,
+      }),
+    );
+    expect((await makeMpGateway().getAuthorizedPayment("56")).paymentId).toBeNull();
+  });
+});
+
+describe("getPreapproval (4B)", () => {
+  it("suma amount, reason y nextPaymentDate", async () => {
+    mocks.preapprovalGet.mockResolvedValue({
+      id: "pre-1",
+      status: "authorized",
+      payer_email: "v@x.com",
+      external_reference: null,
+      reason: "Cuota",
+      auto_recurring: { transaction_amount: 6000 },
+      next_payment_date: "2026-09-10T03:00:00.000Z",
+    });
+    const s = await makeMpGateway().getPreapproval("pre-1");
+    expect(s).toMatchObject({ amount: 6000, reason: "Cuota", externalReference: null });
+    expect(s.nextPaymentDate?.toISOString()).toBe("2026-09-10T03:00:00.000Z");
+  });
+});
+
+describe("searchPreapprovals", () => {
+  it("pagina de a 100 hasta agotar y filtra por status", async () => {
+    mocks.fetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            paging: { total: 101, limit: 100, offset: 0 },
+            results: Array.from({ length: 100 }, (_, i) => ({ id: `p${i}`, status: "authorized" })),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            paging: { total: 101, limit: 100, offset: 100 },
+            results: [{ id: "p100", status: "authorized" }],
+          }),
+          { status: 200 },
+        ),
+      );
+    const rows = await makeMpGateway().searchPreapprovals({ status: "authorized" });
+    expect(rows).toHaveLength(101);
+    expect(String(mocks.fetch.mock.calls[0][0])).toContain("/preapproval/search?");
+    expect(String(mocks.fetch.mock.calls[0][0])).toContain("status=authorized");
+    expect(String(mocks.fetch.mock.calls[1][0])).toContain("offset=100");
+  });
+
+  it("una respuesta no-2xx lanza (fallo técnico, no result)", async () => {
+    mocks.fetch.mockResolvedValueOnce(new Response("nope", { status: 500 }));
+    await expect(makeMpGateway().searchPreapprovals()).rejects.toThrow(
+      "preapproval/search respondió 500",
+    );
+  });
+});
+
+describe("searchAuthorizedPayments", () => {
+  it("consulta por preapproval_id y mapea los resultados", async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          paging: { total: 1, limit: 100, offset: 0 },
+          results: [
+            {
+              id: 9,
+              preapproval_id: "pre-1",
+              status: "processed",
+              payment: { id: 777 },
+              transaction_amount: 6000,
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const rows = await makeMpGateway().searchAuthorizedPayments("pre-1");
+    expect(rows[0]).toMatchObject({ id: "9", paymentId: "777", amount: 6000 });
+    expect(String(mocks.fetch.mock.calls[0][0])).toContain(
+      "authorized_payments/search?preapproval_id=pre-1",
+    );
+  });
+});
+
+describe("searchPayments", () => {
+  it("busca approved por date_approved desde `since`", async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          paging: { total: 1, limit: 100, offset: 0 },
+          results: [
+            {
+              id: 777,
+              status: "approved",
+              transaction_amount: 6000,
+              date_approved: "2026-09-10T11:15:30.000Z",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const rows = await makeMpGateway().searchPayments({ since: new Date("2026-09-07T11:00:00Z") });
+    expect(rows[0]).toMatchObject({ id: "777", status: "approved", transactionAmount: 6000 });
+    const url = String(mocks.fetch.mock.calls[0][0]);
+    expect(url).toContain("/v1/payments/search?");
+    expect(url).toContain("range=date_approved");
+    expect(url).toContain("status=approved");
+    expect(decodeURIComponent(url)).toContain("begin_date=2026-09-07T11:00:00.000Z");
+  });
+});
+
+describe("createPreference", () => {
+  it("manda título, monto, referencia, back_urls y notification_url; devuelve init_point", async () => {
+    mocks.preferenceCreate.mockResolvedValue({
+      id: "pref-1",
+      init_point: "https://mp/checkout/pref-1",
+    });
+    const r = await makeMpGateway().createPreference({
+      title: "Cuota Vecinal Ciudadela × 2",
+      amount: 12000,
+      externalReference: "pago:14:2",
+      backUrl: "https://vecinalciudadela.ar/mi/cuenta?volvio=1",
+      notificationUrl: "https://vecinalciudadela.ar/api/webhooks/mp",
+    });
+    expect(r).toEqual({ id: "pref-1", initPoint: "https://mp/checkout/pref-1" });
+    const body = mocks.preferenceCreate.mock.calls[0][0].body;
+    expect(body.items[0]).toMatchObject({
+      title: "Cuota Vecinal Ciudadela × 2",
+      quantity: 1,
+      unit_price: 12000,
+      currency_id: "ARS",
+    });
+    expect(body.external_reference).toBe("pago:14:2");
+    expect(body.back_urls).toEqual({
+      success: "https://vecinalciudadela.ar/mi/cuenta?volvio=1",
+      pending: "https://vecinalciudadela.ar/mi/cuenta?volvio=1",
+      failure: "https://vecinalciudadela.ar/mi/cuenta?volvio=1",
+    });
+    expect(body.auto_return).toBe("approved");
+    expect(body.notification_url).toBe("https://vecinalciudadela.ar/api/webhooks/mp");
   });
 });
