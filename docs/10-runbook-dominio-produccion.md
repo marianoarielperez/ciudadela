@@ -510,10 +510,13 @@ tar -czf - -C /var/sigev uploads recibos \
         --passphrase-file /root/.sigev_backup_pass \
         -o /root/backup-pre-m4a-files-$(date +%F).tar.gz.gpg
 
-# Verificación: tiene que listar los archivos, no fallar ni salir vacía.
+# Verificación: tiene que listar los archivos y terminar sin error. Se cuenta en
+# vez de mostrar con `head`: cortar el pipe con `head` hace que gzip y gpg se quejen
+# de "Broken pipe" aunque el backup esté perfecto, y ese ruido se lee como un fallo.
 gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
     /root/backup-pre-m4a-files-$(date +%F).tar.gz.gpg \
-  | tar -tzf - | head
+  | tar -tzf - | wc -l
+# tiene que dar un número mayor a 0 (la cantidad de archivos del tar)
 ```
 
 Este tar **sirve para A y para B por igual**: entre el paso 1 y el paso 6, lo único
@@ -548,6 +551,12 @@ npm ci && npm run build
 # 4. El proceso.
 pm2 restart sigev --update-env && pm2 save
 ```
+
+**Para volver a desplegar después de un rollback A**, primero `git checkout main`.
+El `git checkout <sha>` deja el repo en HEAD suelto (detached), y `deploy.sh` arranca
+con `git pull --ff-only`, que en ese estado aborta con "You are not currently on a
+branch" — un error de git que no tiene nada que ver con lo que fuiste a arreglar.
+El rollback en sí anda perfecto en HEAD suelto; lo que no anda es el siguiente deploy.
 
 Si después del restore la app no conecta a la base, mirá los permisos del usuario de
 la aplicación (`SHOW GRANTS FOR 'sigev'@'localhost';`): la base se recreó desde cero.
@@ -656,6 +665,20 @@ gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
 las tablas no importa.) Si el paso 6 ya había borrado archivos, restaurá también el
 tar de 1.3. Después del restore, `pm2 restart sigev` por las dudas y volvé a mirar
 `/admin/tesoreria`.
+
+**OJO: el restore de B vuelve a prender ASOCIATE.** `asociate_activo` vive en la tabla
+`configuration`, y B se tomó en 4 bis, ANTES de apagarlo en 6.0. Un restore plano
+deja la clave como estaba entonces: prendida, sin ningún aviso en el panel. Es justo
+la ventana que 6.0 existe para cerrar, y se reabre en el momento en que más probable
+es que estés por repetir los `DELETE` de 6.2 y 6.3. **Volvé a hacer 6.0 después de
+cada restore de B, antes de tipear otro `DELETE`.** Lo mismo vale para cualquier otra
+clave de `configuration` que hayas tocado después de 4 bis.
+
+Otra cosa que B deshace y no se ve: los `webhook_events` que Mercado Pago haya
+mandado después de 4 bis, y con ellos el `status`/`last_sync_at` de la suscripción
+del piloto. MP no reenvía notificaciones que ya respondimos con 2xx. No es grave —el
+preapproval en MP no cambia— pero un `status` viejo en la fila del piloto después de
+un restore no es un problema, es el restore.
 
 Lo que B deshace es **todo** lo posterior al paso 4: el recibo de prueba del paso 5,
 la limpieza del paso 6 y los dos imports. Por eso el runbook junta lo irreversible al
@@ -1048,6 +1071,10 @@ SET @vict = NULL;
 SET @cuenta = NULL;
 SELECT member_id INTO @vict FROM memberships WHERE book_id = @libro1 AND member_number = N;
 SELECT @vict AS ficha;   -- si viene NULL, ese número no está en el libro: revisá el número
+-- Cerrojo contra el dedazo más caro de esta sección: el piloto. Si esta línea dice
+-- "ES EL PILOTO", no sigas — la vista previa de abajo mostraría su nombre, pero esto
+-- no depende de que alguien lo lea.
+SELECT IF(@vict = @socio306, 'ES EL PILOTO: NO SIGAS', 'ok') AS guarda_piloto;
 
 -- La vista previa dice el NÚMERO DE SOCIO, el NOMBRE y los ROLES de la cuenta.
 -- El número, para que se vea que es el que tipeaste. El nombre, porque acá se borra
@@ -1404,16 +1431,20 @@ mysql sigev -e "SELECT COUNT(*) members FROM members;
 SELECT COUNT(*) fees_import FROM fees WHERE origin='import';
 SELECT COUNT(DISTINCT member_id) deudores FROM fees WHERE status='pending';
 SELECT COUNT(*) recibos FROM receipts;
-SELECT COUNT(*) suscripciones FROM mp_subscriptions;
-SELECT COUNT(*) solicitudes FROM applications;"
+SELECT COUNT(*) solicitudes FROM applications;
+SELECT s.id, s.preapproval_id, s.status, s.member_id, x.member_number, s.application_id
+  FROM mp_subscriptions s
+  LEFT JOIN memberships x ON x.member_id = s.member_id;"
 ```
 
 Esperado: `members = 278`, `deudores = 119` y `fees_import = 3080` — o 3080 menos
 las cuotas que el sistema ya hubiera devengado por su cuenta para esos mismos meses,
 que el import saltea y cuenta aparte en la línea `cuotas del Excel que ya existían
 devengadas`. Hoy no hay cron de devengo, así que deberían ser 3080 clavadas. Y del
-paso 6: `recibos = 0`, `solicitudes = 0` y `suscripciones = 1` (la del piloto, con
-`member_id` apuntando al socio 306 y `application_id` en NULL).
+paso 6: `recibos = 0`, `solicitudes = 0` y **una sola fila** de suscripción — la del
+piloto, con `member_number = 306`, `status = authorized` y `application_id` en NULL.
+La consulta la muestra en vez de contarla a propósito: es la fila que todo este
+runbook existe para no romper, y un `COUNT = 1` no dice de quién es.
 
 En el panel: `/admin/tesoreria/deudores` lista a los socios vigentes con deuda
 ordenados por monto, y la ficha de un socio con deuda muestra la cinta con las
