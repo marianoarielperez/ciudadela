@@ -79,7 +79,7 @@ para dinero, fechas en UTC, `Json?` nunca con `null` pelado.
 | `createdAt` | | |
 
 `@@index([validFrom])`. **El vigente** es la fila de mayor `validFrom ≤ hoy`. Seed inicial:
-`6000 / 3000` vigente desde `2026-09-01`, sin acta. Función pura `feeAmountFor(category,
+`6000 / 3000` vigente desde `2026-08-01`, sin acta (corregido el 22/08/2026: con vigencia 01/09 el sistema se quedaba sin monto con qué cobrar hasta septiembre). Función pura `feeAmountFor(category,
 value)` → `active` → `activeAmount`; `adherent|collaborator` → `sharedAmount`;
 `honorary|lifetime|cadet` → `null` (no pagan).
 
@@ -241,7 +241,7 @@ Sin Prisma; tabla de casos en `tests/treasury-rules.test.ts`.
 
 ### 4.3 Seed
 
-`prisma/seed.ts` siembra `FeeValue{6000, 3000, validFrom 2026-09-01}` con `upsert`
+`prisma/seed.ts` siembra `FeeValue{6000, 3000, validFrom 2026-08-01}` con `upsert`
 sobre `validFrom` (no pisa si ya existe) y crea `RECEIPTS_DIR` si falta.
 
 ## 5. Mercado Pago
