@@ -41,7 +41,8 @@ const MAX_AMOUNT = 99_999_999.99;
 // `Receipt.concept` es VarChar(200). Un pago de 60 cuotas no contiguas describe
 // una lista más larga que eso, así que se recorta antes de escribir: el recibo
 // se emite igual y el detalle completo sigue estando en las cuotas del pago.
-// Puntos suspensivos ASCII y no "…": el PDF usa fuentes WinAnsi.
+// Puntos suspensivos ASCII y no "…": la función `safe()` en receipt-pdf.ts
+// solo admite U+0020–U+007E y U+00A0–U+00FF, así que "…" (U+2026) se convierte en "?".
 const CONCEPT_MAX = 200;
 
 function fitConcept(concept: string): string {
@@ -241,7 +242,10 @@ export function makeTreasuryService(deps: Deps) {
           }
           if (toDelete.length > 0) {
             const ids = r.payment.fees.filter((f) => toDelete.includes(f.period)).map((f) => f.id);
-            const deleted = await tx.fee.deleteMany({ where: { id: { in: ids } } });
+            // Una anulación solo puede tocar las cuotas que este pago cubrió: sin la guarda
+            // de `paymentId`, el deleteMany podría eliminar una cuota que ya se reimputó a
+            // OTRO pago con recibo válido.
+            const deleted = await tx.fee.deleteMany({ where: { id: { in: ids }, paymentId: r.payment.id } });
             periodsReverted += deleted.count;
           }
           await tx.payment.update({ where: { id: r.payment.id }, data: { status: "voided" } });
