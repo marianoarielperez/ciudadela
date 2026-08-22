@@ -29,22 +29,54 @@ describe("buildPeriodGrid", () => {
     expect(grid.map((r) => r.year)).toEqual([2026]);
     expect(grid[0].cells.every((c) => c.state === "none")).toBe(true);
   });
+
+  // allocate() en rules.ts puede generar cuotas en un año POSTERIOR al del
+  // período corriente cuando un socio paga por adelantado más meses de los
+  // que debe (un pago en noviembre que cubre nov/dic/ene crea una fila de
+  // enero del año siguiente). El límite superior del recorrido de años tiene
+  // que ensancharse igual que el inferior, o esa plata queda invisible en la
+  // cinta.
+  it("una cuota en un año posterior al corriente también aparece en la cinta", () => {
+    const grid = buildPeriodGrid(
+      [fee("2026-12", "pending"), fee("2027-01", "pending")],
+      new Map(),
+      null,
+      "2026-11",
+    );
+    expect(grid.map((r) => r.year)).toEqual([2026, 2027]);
+    expect(grid[1].cells[0]).toEqual({ period: "2027-01", state: "pending" });
+  });
+
+  it("una cuota paga en un año futuro también aparece con su estado", () => {
+    const grid = buildPeriodGrid(
+      [fee("2027-03", "paid", "accrual", 1)],
+      new Map([[1, "2027-00001"]]),
+      null,
+      "2026-11",
+    );
+    expect(grid.map((r) => r.year)).toEqual([2026, 2027]);
+    expect(grid[1].cells[2]).toEqual({ period: "2027-03", state: "paid", receiptNumber: "2027-00001" });
+  });
 });
 
 describe("fetchMemberAccount", () => {
+  // Las filas vienen DESORDENADAS a propósito (a diferencia de las filas de la
+  // base real, `orderBy` no las ordena solo): si alguno de los dos
+  // `.sort(comparePeriods)` de fetchMemberAccount se borra, este fake no lo
+  // tapa y la prueba de abajo falla.
   const db = {
     fee: {
       findMany: vi.fn(async () => [
-        { period: "2025-12", status: "pending", origin: "import", paymentId: null },
-        { period: "2026-01", status: "paid", origin: "accrual", paymentId: 5 },
         { period: "2026-02", status: "pending", origin: "accrual", paymentId: null },
+        { period: "2026-01", status: "paid", origin: "accrual", paymentId: 5 },
+        { period: "2025-12", status: "pending", origin: "import", paymentId: null },
       ]),
     },
     payment: {
       findMany: vi.fn(async () => [
         {
           id: 5, type: "cash", amount: "6000.00", paidAt: civilDateUtc(2026, 2, 3), status: "applied", note: null,
-          fees: [{ period: "2026-01" }], receipt: { id: 9, number: "2026-00003", voidedAt: null },
+          fees: [{ period: "2026-03" }, { period: "2026-01" }], receipt: { id: 9, number: "2026-00003", voidedAt: null },
         },
       ]),
     },
@@ -58,7 +90,9 @@ describe("fetchMemberAccount", () => {
     expect(a.debt).toBe(12000);
     expect(a.feeAmount).toBe(6000);
     expect(a.level).toBe(2);
-    expect(a.payments[0]).toMatchObject({ id: 5, amount: 6000, periods: ["2026-01"], receipt: { number: "2026-00003" } });
+    expect(a.payments[0]).toMatchObject({
+      id: 5, amount: 6000, periods: ["2026-01", "2026-03"], receipt: { number: "2026-00003" },
+    });
   });
 
   it("sin valor vigente la deuda es null (no se inventa un monto)", async () => {

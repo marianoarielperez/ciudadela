@@ -102,8 +102,14 @@ export function buildPeriodGrid(
     currentYear,
   ];
   const firstYear = Math.min(...years);
+  // `allocate()` puede generar cuotas en un año POSTERIOR al del período
+  // corriente: un pago que cubre más meses de los que el socio debe (p. ej.
+  // uno de noviembre que cubre nov/dic/ene) crea una fila de enero del año
+  // siguiente. El límite superior tiene que ensanchar igual que el inferior,
+  // o esa cuota queda sin fila y sin celda en la cinta.
+  const lastYear = Math.max(...years);
   const rows: GridRow[] = [];
-  for (let year = firstYear; year <= currentYear; year++) {
+  for (let year = firstYear; year <= lastYear; year++) {
     const cells: GridCell[] = [];
     for (let m = 1; m <= 12; m++) {
       const period = `${year}-${String(m).padStart(2, "0")}`;
