@@ -1,0 +1,49 @@
+// Etiquetas es-AR de tesorería. Un solo lugar: pantalla, PDF y email dicen lo mismo.
+import type { FeeStatus, PaymentType } from "@/generated/prisma/client";
+import { addMonths, comparePeriods, monthName, periodLabel, periodMonth, periodYear, type Period } from "./periods";
+import type { CashConcept } from "./rules";
+
+export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
+  debit: "Débito automático",
+  link: "Link de pago",
+  cash: "Efectivo",
+  voluntary: "Aporte voluntario",
+  entry: "Cuota de ingreso",
+  extraordinary: "Aporte extraordinario",
+};
+
+export const FEE_STATUS_LABELS: Record<FeeStatus, string> = {
+  pending: "Pendiente",
+  paid: "Pagada",
+  exempt: "Exenta",
+  voided: "Anulada",
+};
+
+export const CASH_CONCEPT_LABELS: Record<CashConcept, string> = {
+  fees: "Cuotas sociales",
+  voluntary: "Aporte voluntario",
+  extraordinary: "Aporte extraordinario",
+};
+
+/** "marzo a mayo 2025 (3 cuotas)" para rangos contiguos; lista separada por
+ *  comas cuando no lo son. Un solo período va sin contador. */
+export function describePeriods(periods: Period[]): string {
+  const sorted = [...periods].sort(comparePeriods);
+  if (sorted.length === 0) return "";
+  if (sorted.length === 1) return periodLabel(sorted[0]);
+  const contiguous = sorted.every((p, i) => i === 0 || addMonths(sorted[i - 1], 1) === p);
+  const count = ` (${sorted.length} cuotas)`;
+  if (!contiguous) return sorted.map(periodLabel).join(", ") + count;
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (periodYear(first) === periodYear(last)) {
+    return `${monthName(periodMonth(first))} a ${monthName(periodMonth(last))} ${periodYear(first)}${count}`;
+  }
+  return `${periodLabel(first)} a ${periodLabel(last)}${count}`;
+}
+
+export function paymentConcept(type: PaymentType, periods: Period[]): string {
+  if (type === "voluntary" || type === "extraordinary" || type === "entry") return PAYMENT_TYPE_LABELS[type];
+  const described = describePeriods(periods);
+  return described ? `Cuota social · ${described}` : "Cuota social";
+}

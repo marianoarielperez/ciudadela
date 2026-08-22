@@ -1,0 +1,101 @@
+// Reglas puras de tesorería (spec §3). Sin Prisma: la tabla de casos se prueba
+// sin fixtures. Los mensajes que llegan a pantalla viven en las actions.
+import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
+import { addMonths, comparePeriods, periodOf, type Period } from "./periods";
+
+export type FeeValueAmounts = { activeAmount: number; sharedAmount: number };
+
+/** Monto mensual de la categoría, o `null` si la categoría no paga cuota. */
+export function feeAmountFor(category: MemberCategory, v: FeeValueAmounts): number | null {
+  switch (category) {
+    case "active":
+      return v.activeAmount;
+    case "adherent":
+    case "collaborator":
+      return v.sharedAmount;
+    default:
+      return null; // honorary, lifetime, cadet
+  }
+}
+
+/** Quién devenga cuota obligatoria (docs/02 tabla Art. 5). Adherente es voluntaria. */
+export const ACCRUING_CATEGORIES: readonly MemberCategory[] = ["active", "collaborator"];
+
+/** Primer mes completo posterior al ingreso: la cuota de ingreso cubre el mes
+ *  de alta (REG-14). Ingresó el 21/08 → primera cuota septiembre. */
+export function firstAccrualPeriod(joinedAt: Date): Period {
+  return addMonths(periodOf(joinedAt), 1);
+}
+
+// La suspensión es disciplinaria, no eximición: el suspendido sigue devengando.
+// La baja no devenga: sus pendientes quedan congeladas (deuda al momento de la baja).
+export function accrues(
+  m: { status: MemberStatus; category: MemberCategory; joinedAt: Date },
+  period: Period,
+): boolean {
+  if (m.status === "withdrawn") return false;
+  if (!ACCRUING_CATEGORIES.includes(m.category)) return false;
+  return comparePeriods(period, firstAccrualPeriod(m.joinedAt)) >= 0;
+}
+
+export const ARREARS_WARNING = 2; // alerta desde la 2ª (REG-15)
+export const ARREARS_THRESHOLD = 4; // habilita la cesantía (REG-15)
+
+export type ArrearsLevel = 0 | 1 | 2 | 4;
+
+export function arrearsLevel(pending: number): ArrearsLevel {
+  if (pending >= ARREARS_THRESHOLD) return 4;
+  if (pending >= ARREARS_WARNING) return 2;
+  if (pending === 1) return 1;
+  return 0;
+}
+
+/** REG-16 generalizado: deuda = pendientes × valor vigente de la categoría. */
+export function debtAmount(pending: number, category: MemberCategory, v: FeeValueAmounts): number {
+  const amount = feeAmountFor(category, v);
+  return amount === null ? 0 : pending * amount;
+}
+
+/** Qué cuotas cubre un pago de `n` cuotas: las pendientes más antiguas primero;
+ *  si faltan, períodos nuevos desde el corriente, salteando los que ya existen
+ *  (pagados, exentos) para no chocar con el unique (memberId, period). */
+export function allocate(input: {
+  pending: Period[];
+  existing: Period[];
+  n: number;
+  currentPeriod: Period;
+}): { toPay: Period[]; toCreate: Period[] } {
+  const toPay = [...input.pending].sort(comparePeriods).slice(0, input.n);
+  const toCreate: Period[] = [];
+  const taken = new Set([...input.existing, ...toPay]);
+  let p = input.currentPeriod;
+  while (toPay.length < input.n) {
+    if (!taken.has(p)) {
+      toPay.push(p);
+      toCreate.push(p);
+      taken.add(p);
+    }
+    p = addMonths(p, 1);
+  }
+  return { toPay, toCreate };
+}
+
+/** Al anular un pago: una cuota de un período futuro no puede quedar pendiente
+ *  (contaría como deuda antes de tiempo), así que se borra; las demás vuelven a
+ *  pendientes. */
+export function revertFees(periods: Period[], currentPeriod: Period): { toPending: Period[]; toDelete: Period[] } {
+  const toPending: Period[] = [];
+  const toDelete: Period[] = [];
+  for (const p of [...periods].sort(comparePeriods)) {
+    (comparePeriods(p, currentPeriod) > 0 ? toDelete : toPending).push(p);
+  }
+  return { toPending, toDelete };
+}
+
+export type CashConcept = "fees" | "voluntary" | "extraordinary";
+
+export function cashConceptsFor(category: MemberCategory): CashConcept[] {
+  if (ACCRUING_CATEGORIES.includes(category)) return ["fees", "voluntary", "extraordinary"];
+  if (category === "adherent") return ["voluntary", "extraordinary"];
+  return ["extraordinary"];
+}
