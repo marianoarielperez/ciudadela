@@ -86,8 +86,10 @@ export type GridCellState = "paid" | "pending" | "pending_import" | "exempt" | "
 export type GridCell = { period: Period; state: GridCellState; receiptNumber?: string };
 export type GridRow = { year: number; cells: GridCell[] };
 
-/** La cinta de períodos: una fila por año, 12 celdas. Desde el año del primer
- *  dato (cuota, ingreso o incorporación) hasta el año de la última cuota. */
+/** La cinta de períodos: una fila por año, 12 celdas. Va del año más viejo al
+ *  más nuevo entre las cuotas, la fecha de ingreso y el período corriente: el
+ *  corriente siempre entra, y las cuotas futuras de quien pagó por adelantado
+ *  también (si el tope fuera el año corriente, desaparecerían de la cinta). */
 export function buildPeriodGrid(
   fees: AccountFee[],
   receiptByPayment: Map<number, string>,
