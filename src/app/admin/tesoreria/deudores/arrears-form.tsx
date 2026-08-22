@@ -18,7 +18,7 @@
 // queda intacto, con la selección tildada y el acta elegida, porque nunca se
 // navegó a ningún lado.
 import Link from "next/link";
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { MinutePicker, type MinuteOption } from "@/components/admin/minute-picker";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
@@ -42,6 +42,7 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
   // confirmación posterior se muestra sola sin ningún efecto que resetear.
   const [dismissed, setDismissed] = useState<ArrearsConfirmation | undefined>(undefined);
   const formRef = useRef<HTMLFormElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
 
   // La selección efectiva se DERIVA de lo que la página sigue ofreciendo. Con
   // éxito parcial el `revalidatePath` de la action deja las bajas hechas y esas
@@ -67,14 +68,40 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
   const allSelected = all.length > 0 && all.every((id) => effective.includes(id));
   const failures = state.failures ?? [];
   const confirm = state.confirm && state.confirm !== dismissed ? state.confirm : null;
+  // Cuenta sólo a quienes de verdad se va a intentar dar de baja: los que la
+  // propia lista marca "se va a rechazar" (bajaron de 4 cuotas entre la
+  // selección y la lectura) no cuentan para el titular, aunque sigan
+  // listados abajo con su advertencia.
+  const toDeclareCount = confirm?.targets.filter((t) => t.pendingCount >= ARREARS_THRESHOLD).length ?? 0;
 
   // Con la confirmación abierta, el ÚNICO botón de envío que queda es el que da
-  // de baja, y el navegador se lo asigna al Enter de cualquier campo: tipear el
-  // número de acta y apretar Enter declararía la cesantía sin haber apretado
-  // "Confirmar". La confirmación se aprieta, no se tipea.
+  // de baja, y el navegador lo asigna al Enter de cualquier campo enfocado —no
+  // sólo un <input> de texto: en "Acta existente" (el modo por defecto en
+  // cuanto hay algún acta cargada) el único control de `MinutePicker` es un
+  // <select>, y en algunos navegadores (Firefox) Enter sobre un <select>
+  // también dispara el envío implícito. Sin cubrirlo, tabular hasta el acta y
+  // apretar Enter declara la cesantía sin haber apretado "Confirmar la
+  // cesantía". La confirmación se aprieta, no se tipea ni se selecciona.
   const onKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (confirm && e.key === "Enter" && e.target instanceof HTMLInputElement) e.preventDefault();
+    if (
+      confirm && e.key === "Enter" &&
+      (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)
+    ) {
+      e.preventDefault();
+    }
   };
+
+  // El botón "Declarar cesantía" que tenía el foco se desmonta apenas aparece
+  // el panel (deja de renderizarse), y el foco cae a <body>: un lector de
+  // pantalla no anuncia nada y el operador tiene que tabular desde arriba de
+  // la página —el skip link, toda la lateral— para llegar a "Confirmar la
+  // cesantía". Se dispara con CADA confirmación nueva, no sólo la primera:
+  // `confirm` cambia de identidad en cada corrida de la action (por eso
+  // `dismissed` guarda el objeto y no un booleano), así que un segundo lote
+  // después de "Volver sin declarar" también mueve el foco al panel.
+  useEffect(() => {
+    if (confirm) confirmRef.current?.focus();
+  }, [confirm]);
 
   return (
     <form ref={formRef} action={formAction} onChange={onChange} onKeyDown={onKeyDown} className="space-y-4">
@@ -113,7 +140,9 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
           la base — no salen de este formulario. */}
       {confirm && (
         <div
-          className="space-y-3 rounded-md border border-destructive bg-destructive/5 p-3"
+          ref={confirmRef}
+          tabIndex={-1}
+          className="space-y-3 rounded-md border border-destructive bg-destructive/5 p-3 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           role="group"
           aria-labelledby="arrears-confirm-title"
         >
@@ -123,8 +152,8 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
             </FormMessage>
           )}
           <p id="arrears-confirm-title" className="font-medium">
-            {`Vas a declarar la cesantía de ${confirm.targets.length} ${
-              confirm.targets.length === 1 ? "socio" : "socios"
+            {`Vas a declarar la cesantía de ${toDeclareCount} ${
+              toDeclareCount === 1 ? "socio" : "socios"
             }. Dejan de ser socios de la asociación.`}
           </p>
           <p className="text-sm text-muted-foreground">

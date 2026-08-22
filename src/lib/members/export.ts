@@ -101,7 +101,13 @@ export function buildExportRow({ memberNumber, member }: PadronExportInput): Pad
     in: member.joinedAt,
     out: member.leftAt ?? null,
     reason: member.withdrawalReason ? REASON_LABELS[member.withdrawalReason] : "",
-    debt: member.debtAtWithdrawal ? "Sí" : "No",
+    // Mismo guardia que las dos badges del panel (socios/page.tsx y
+    // socios/[id]/page.tsx): `debtAtWithdrawal` sobrevive a propósito al
+    // reingreso (REG-16, service.ts::readmit) para que M4 pueda calcular la
+    // deuda a saldar. Sin el `status === "withdrawn"` acá, un socio readmitido
+    // exporta "Vigente" + deuda "Sí" — contradice al resto del sistema y a la
+    // planilla que lee la Comisión.
+    debt: member.status === "withdrawn" && member.debtAtWithdrawal ? "Sí" : "No",
     ad: member.autoDebit ? "Sí" : "No",
   };
 }

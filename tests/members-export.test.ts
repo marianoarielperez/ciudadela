@@ -148,6 +148,30 @@ describe("buildExportRow", () => {
     expect(active.reason).toBe("");
   });
 
+  // El reingreso (service.ts::readmit) conserva `debtAtWithdrawal` a propósito
+  // (REG-16: M4 lo usa para calcular la deuda a saldar), así que un socio
+  // vigente puede tener ese flag en `true`. Sin el guardia de `status`, ese
+  // socio exportaría "Vigente" + deuda "Sí" — contradice tanto la badge de
+  // socios/page.tsx y socios/[id]/page.tsx como la planilla que lee la
+  // Comisión.
+  it("only shows debt when the member is actually withdrawn, even if debtAtWithdrawal survived a readmission", () => {
+    const readmitted = buildExportRow({
+      memberNumber: 13,
+      member: makeMember({ status: "active", withdrawalReason: null, leftAt: null, debtAtWithdrawal: true }),
+    });
+    expect(readmitted.st).toBe("Vigente");
+    expect(readmitted.debt).toBe("No");
+
+    const stillWithdrawn = buildExportRow({
+      memberNumber: 14,
+      member: makeMember({
+        status: "withdrawn", withdrawalReason: "arrears",
+        leftAt: new Date("2022-01-10T12:00:00Z"), debtAtWithdrawal: true,
+      }),
+    });
+    expect(stillWithdrawn.debt).toBe("Sí");
+  });
+
   it("renders booleans as Sí/No, not true/false", () => {
     const row = buildExportRow({
       memberNumber: 8,

@@ -5,6 +5,13 @@
 //
 // La fila que se muestra la resuelve SIEMPRE el servidor contra la base (ver
 // `declareArrearsAction`): el formulario no dicta nombres ni cuotas.
+//
+// `confirmToken` no es una barrera de seguridad: se deriva de datos que el
+// cliente ya tiene (la selección y el acta), así que un POST armado a mano
+// por alguien que ya puede postear como admin puede calcularlo y saltar el
+// primer paso en un solo request. Eso es posible y queda deliberadamente sin
+// bloquear: lo que el token evita es el mis-click del operador humano —"esto
+// es lo mismo que confirmé, no algo que cambió en el medio"—, no un atacante.
 import type { MinuteSelection } from "@/lib/members/minute-form";
 
 /** Un socio de la tanda, como lo va a leer el operador antes de confirmar. */
