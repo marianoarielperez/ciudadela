@@ -1,16 +1,23 @@
 # 11 — Preparación de Mercado Pago (sandbox) y Cloudflare Turnstile
 
 Instructivo operativo para Mariano. Al terminar vas a tener los **8 valores**
-de la tabla final para pegar en el `.env` local y en el del VPS. Nada de esto
-toca la cuenta real ni mueve plata: todo es en modo prueba.
+de la tabla final para pegar en el `.env` **local**. Nada de esto toca la cuenta
+real ni mueve plata: todo es en modo prueba.
 
-> **Entorno**: desde el 20/08/2026 hay un solo sitio desplegado,
-> `vecinalciudadela.ar` (el staging `sigev.redaccion.ar` se dio de baja). Hasta
-> el lanzamiento ese dominio corre con estas credenciales **de prueba** y con
-> `EMAIL_ALLOWLIST` puesta: el sitio ya está publicado pero todavía no se
-> difundió, y el botón ASOCIATE está apagado. Dos pasos quedan pendientes para
-> el día del lanzamiento y están en el checklist de `docs/07`: **cambiar a las
-> credenciales productivas de MP** y **borrar `EMAIL_ALLOWLIST`**.
+> **Entorno (actualizado el 22/08/2026)**: desde el 20/08/2026 hay un solo sitio
+> desplegado, `vecinalciudadela.ar` (el staging `sigev.redaccion.ar` se dio de
+> baja), y desde el **22/08/2026 ese dominio corre con credenciales PRODUCTIVAS
+> de Mercado Pago**: se hizo un piloto real y el socio 306 se afilió por la web
+> con su débito funcionando. `EMAIL_ALLOWLIST` **sigue puesta** y el botón
+> ASOCIATE sigue apagado; borrar la allowlist es lo único de este tema que queda
+> en el checklist de `docs/07`.
+>
+> **Consecuencia para todo lo que sigue en este documento: el sandbox es cosa de
+> LOCAL.** Las credenciales de prueba, los planes de prueba y las notificaciones
+> disparadas a mano de la Parte I §7 van al `.env` de la máquina de desarrollo,
+> nunca al del VPS. **No se prueban cobros en producción**: ahí la plata es de un
+> vecino. Lo único productivo es el piloto controlado (el débito mensual del 306
+> y algún efectivo cargado por Mariano).
 >
 > Tiempo estimado: 30–40 minutos. Necesitás: un navegador (y una ventana de
 > incógnito), y acceso a una cuenta de Mercado Pago cualquiera para entrar al
@@ -237,6 +244,19 @@ tail -5 /var/log/sigev-cron.log     # cada corrida deja {"reminded":N,"expired":
 Un `401` en el log significa que el `CRON_SECRET` del crontab no coincide con el
 del `.env`; un `503`, que la variable no está definida en el `.env` del VPS.
 
+### Estado del crontab tras la fase 4A (22/08/2026)
+
+**No cambia**: la fase 4A no trajo ningún cron. Sigue habiendo una sola línea, la
+de `/api/cron/applications`.
+
+Conviene tenerlo presente porque es contraintuitivo: la tesorería ya está en pie
+—cuenta corriente, efectivo, recibos, deudores— pero **las cuotas del mes todavía
+no se devengan solas**. Las que hay salieron del import de `datos/deuda.xlsx`. El
+devengo del día 1, el aviso de mora del día 30, el resumen diario a la Comisión y
+la conciliación con Mercado Pago llegan con las fases 4B y 4C, y recién ahí este
+crontab suma líneas. Cuando pase, `/admin/salud` va a mostrar la última corrida de
+cada uno.
+
 ---
 
 ## Parte I — Lo que se aprendió probando de verdad (21/08/2026)
@@ -397,3 +417,8 @@ Hace falta una pantalla en el panel con los avisos que no salieron y un botón
 para reintentar. Va junto con el barrido de conciliación de suscripciones: son
 la misma clase de red de contención, y las dos existen porque un aviso perdido
 deja a un vecino que pagó sin ninguna noticia.
+
+> **Dónde quedó (22/08/2026).** La fase 4A dejó el estado `failed` y la columna
+> `error` en la tabla de notificaciones, pero **todavía no los escribe nadie**: la
+> pantalla y el reintento son alcance de la **fase 4C**, y el barrido de
+> conciliación, de la **4B**. Ver `docs/07`.

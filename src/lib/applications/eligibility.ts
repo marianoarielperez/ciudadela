@@ -20,10 +20,10 @@ export type EligibilityBlock =
 
 export type Eligibility = { ok: true; memberId: number | null } | ({ ok: false } & EligibilityBlock);
 
-type MemberSlice = Pick<
-  Member,
-  "id" | "status" | "withdrawalReason" | "debtAtWithdrawal" | "reentryBlocked" | "rejectedUntil"
->;
+type MemberSlice = Pick<Member, "id" | "status" | "withdrawalReason" | "reentryBlocked" | "rejectedUntil"> & {
+  /** Cuotas pendientes en la cuenta corriente (M4). */
+  pendingFees: number;
+};
 
 /** Exportada porque el rechazo del panel calcula con ella el `rejectedUntil` de
  *  la ficha (REG-05): el bloqueo que se ESCRIBE al rechazar y el que se LEE acá
@@ -71,8 +71,13 @@ export function checkEligibility(input: {
     if (member.withdrawalReason === "death" || member.withdrawalReason === "duplicate_annulment") {
       return { ok: false, code: "visit_office", error: VISIT_OFFICE_MESSAGE };
     }
-    // 4. Deuda de tesorería (REG-16, pedido del cliente): mora o deuda al bajar.
-    if (member.withdrawalReason === "arrears" || member.debtAtWithdrawal) {
+    // 4. Deuda de tesorería (REG-16): lo único que bloquea es la deuda VIVA de la
+    //    cuenta corriente (M4). El motivo histórico de la baja no bloquea
+    //    (decisión del cliente, 22/08/2026): REG-16 dice que saldar la totalidad
+    //    de la deuda habilita el reingreso, así que el cesante por mora que paga
+    //    en la sede se rehabilita solo, sin que nadie tenga que bajar un flag.
+    //    `debtAtWithdrawal` del Libro 1 ya no se lee.
+    if (member.pendingFees > 0) {
       return {
         ok: false,
         code: "debt",

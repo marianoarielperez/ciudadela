@@ -1,10 +1,11 @@
 # 06 — Integración Mercado Pago
 
 Cuenta institucional de la asociación (CUIT propio, IVA exento). SDK oficial
-`mercadopago` para Node. Hasta el lanzamiento, `vecinalciudadela.ar` corre con
-credenciales de **prueba** (sandbox completo, tarjetas de test); el cambio a
-credenciales productivas es un paso del checklist de `docs/07`. Verificar en el
-panel de MP que la condición fiscal (exento) esté correctamente cargada.
+`mercadopago` para Node. Desde el **22/08/2026** `vecinalciudadela.ar` corre con
+credenciales **productivas** (piloto real: el socio 306 se afilió por la web y su
+débito funcionó); el sandbox quedó para la máquina de desarrollo. **No se prueban
+cobros contra el dominio**: ahí la plata es de un vecino. Verificar en el panel de
+MP que la condición fiscal (exento) esté correctamente cargada.
 
 Cómo se obtienen las credenciales de sandbox, se crean los planes y se configuran
 los webhooks: `docs/11-preparacion-mp-sandbox-turnstile.md`.
@@ -13,9 +14,20 @@ los webhooks: `docs/11-preparacion-mp-sandbox-turnstile.md`.
 
 Estado al cerrar el Módulo 3: **1, 2, 4 y 7 están implementadas** (altas web).
 Las piezas 3, 5 y 6 —links de pago puntuales, vinculación de suscripciones
-preexistentes y conciliación de respaldo— son del **Módulo 4**.
+preexistentes y conciliación de respaldo— son de la **fase 4B**. La fase 4A no
+tocó ninguna: su alcance fue la cuenta corriente local y el cobro en efectivo.
 
-### 1. Planes de suscripción (fuente de verdad de los montos)
+### 1. Planes de suscripción
+
+> **Dejaron de ser la fuente de verdad de los montos (fase 4A, 22/08/2026).** Esa
+> fuente es ahora la tabla local de valores de cuota (`fee_values`, ver `docs/04`):
+> de ahí salen el devengo, la deuda, el cobro en efectivo y el reingreso, y a
+> Mercado Pago se le **empuja** el monto en lugar de preguntárselo.
+> Lo que sigue describiendo esta sección es lo que **todavía** hace el wizard:
+> `startPaymentAction` lee el monto del plan con `getPlan()`, así que **los ids de
+> plan siguen siendo obligatorios** y sin ellos el paso 2 de ASOCIATE no avanza.
+> Esa lectura —y la caché de 24 h que se explica más abajo— se retiran en la
+> **fase 4B**.
 
 **Son DOS, no tres** (decisión de Mariano del 20/08/2026, implementada en el
 Módulo 3):
@@ -52,9 +64,10 @@ falla, se sigue sirviendo el último valor bueno en vez de romper el paso 2. Si 
 API falla y **nunca** hubo un valor cacheado, el paso 2 del wizard muestra un
 error y **no deja avanzar**: nunca se inventa un monto.
 
-**Los planes son el REGISTRO del monto, no un vínculo.** Las suscripciones de los
-vecinos se crean **sin plan asociado** y **copian** el monto (ver §2), así que
-cambiar el plan en el panel de MP **no mueve ninguna suscripción ya creada**.
+**Los planes no son un vínculo.** Las suscripciones de los vecinos se crean **sin
+plan asociado** y **copian** el monto (ver §2), así que cambiar el plan en el panel
+de MP **no mueve ninguna suscripción ya creada** — y desde la fase 4A tampoco es
+donde se cambia el monto: eso se hace en `/admin/configuracion`, con acta.
 Corregido el 21/08/2026: la versión anterior de este documento decía que "el
 cambio se propaga a las suscripciones asociadas por MP", y eso nunca fue cierto
 para SIGeV porque el flujo con plan asociado nunca funcionó (ver §2).

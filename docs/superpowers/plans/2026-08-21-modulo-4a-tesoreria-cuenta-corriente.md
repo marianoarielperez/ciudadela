@@ -1058,15 +1058,18 @@ En `prisma/seed.ts`, dentro de `main()` después del bloque de `configuration`:
 
 ```ts
   // Valor de cuota inicial (M4, REG-34): $6.000 activo / $3.000 adherente y
-  // colaborador, fijados por la asamblea de agosto de 2026, vigentes desde el
-  // primer devengo del sistema (septiembre 2026). Solo si la tabla está vacía:
-  // los valores posteriores se registran desde /admin/configuracion con acta.
+  // colaborador, fijados por la asamblea de agosto de 2026. Rige desde el
+  // 01/08/2026 y no desde el primer devengo (septiembre): la deuda importada
+  // llega hasta agosto y se salda a valor vigente (REG-16), así que una
+  // vigencia posterior a hoy dejaría al sistema sin monto con qué cobrar.
+  // Solo si la tabla está vacía: los valores posteriores se registran desde
+  // /admin/configuracion con su acta.
   const anyFeeValue = await prisma.feeValue.findFirst({ select: { id: true } })
   if (!anyFeeValue) {
     await prisma.feeValue.create({
-      data: { activeAmount: "6000.00", sharedAmount: "3000.00", validFrom: new Date(Date.UTC(2026, 8, 1, 12)) },
+      data: { activeAmount: "6000.00", sharedAmount: "3000.00", validFrom: new Date(Date.UTC(2026, 7, 1, 12)) },
     })
-    console.log("new  valor de cuota inicial: activo 6000 / compartido 3000 (vigente 01/09/2026)")
+    console.log("new  valor de cuota inicial: activo 6000 / compartido 3000 (vigente 01/08/2026)")
   } else {
     console.log("ok   valor de cuota (sin tocar)")
   }
@@ -1318,7 +1321,7 @@ y en el JSX, después de `<ConfigForm … />`:
 npx tsc --noEmit && npm test
 ```
 
-Expected: verde. Luego `npm run dev`, entrar como superadmin a `/admin/configuracion`: el seed muestra "Vigente desde 01/09/2026: activo $ 6.000,00 · adherente/colaborador $ 3.000,00"; registrar un valor con monto `0` → "El monto de activo tiene que ser mayor a cero."; registrar uno válido con fecha futura → aparece en el historial y el vigente no cambia.
+Expected: verde. Luego `npm run dev`, entrar como superadmin a `/admin/configuracion`: el seed muestra "Vigente desde 01/08/2026: activo $ 6.000,00 · adherente/colaborador $ 3.000,00"; registrar un valor con monto `0` → "El monto de activo tiene que ser mayor a cero."; registrar uno válido con fecha futura → aparece en el historial y el vigente no cambia.
 
 - [ ] **Step 12: Commit**
 

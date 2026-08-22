@@ -11,20 +11,20 @@ datasource db {
 }
 
 model User {
-  id                 Int           @id @default(autoincrement())
-  email              String        @unique @db.VarChar(191)
-  passwordHash       String        @map("password_hash") @db.VarChar(60)
+  id                 Int                  @id @default(autoincrement())
+  email              String               @unique @db.VarChar(191)
+  passwordHash       String               @map("password_hash") @db.VarChar(60)
   // Sello del ÚLTIMO cambio de contraseña de esta cuenta. No es informativo:
   // lo comparan `require-admin` y `require-member` contra el momento en que se
   // emitió la sesión (`session.user.authAt`) para cerrar las sesiones que le
   // son anteriores. Nulo = no se escribió ninguna contraseña desde que existe
   // esta columna (filas previas a la migración), y entonces no invalida nada.
-  passwordChangedAt  DateTime?     @map("password_changed_at")
-  name               String?       @db.VarChar(120)
-  active             Boolean       @default(true)
-  lastLoginAt        DateTime?     @map("last_login_at")
-  createdAt          DateTime      @default(now()) @map("created_at")
-  updatedAt          DateTime      @updatedAt @map("updated_at")
+  passwordChangedAt  DateTime?            @map("password_changed_at")
+  name               String?              @db.VarChar(120)
+  active             Boolean              @default(true)
+  lastLoginAt        DateTime?            @map("last_login_at")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
   roles              UserRole[]
   auditLogs          AuditLog[]
   member             Member?
@@ -33,6 +33,10 @@ model User {
   actionTokens       ActionToken[]
   newsAuthored       News[]
   documentsValidated Document[]
+  feeValuesCreated   FeeValue[]           @relation("FeeValueCreatedBy")
+  paymentsRegistered Payment[]            @relation("PaymentRegisteredBy")
+  receiptsVoided     Receipt[]            @relation("ReceiptVoidedBy")
+  unmatchedResolved  MpUnmatchedPayment[] @relation("UnmatchedResolvedBy")
 
   @@map("users")
 }
@@ -151,6 +155,8 @@ enum NotificationType {
   fee_reminder
   arrears_alert
   receipt
+  payment_rejected
+  board_digest
   generic
 }
 
@@ -165,6 +171,7 @@ enum NotificationStatus {
   bounced
   posted_board
   completed_board
+  failed
 }
 
 model Member {
@@ -205,6 +212,8 @@ model Member {
   tokens           ActionToken[]
   applications     Application[]
   mpSubscriptions  MpSubscription[]
+  fees             Fee[]
+  payments         Payment[]
 
   @@index([fullName])
   @@index([status, category])
@@ -252,6 +261,7 @@ model Minute {
   booksOpened  Book[]        @relation("BookOpeningMinute")
   booksClosed  Book[]        @relation("BookClosingMinute")
   applications Application[]
+  feeValues    FeeValue[]
 
   @@unique([type, number])
   @@map("minutes")
@@ -306,6 +316,8 @@ model Notification {
   boardFrom      DateTime?          @map("board_from")
   boardTo        DateTime?          @map("board_to")
   payloadSummary String?            @map("payload_summary") @db.VarChar(300)
+  // Código del error de envío cuando `status = failed` (4C). Nunca la dirección.
+  error          String?            @db.VarChar(200)
 
   @@index([memberId])
   @@map("notifications")
@@ -463,6 +475,7 @@ model Application {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
   subscriptions     MpSubscription[]
+  payments          Payment[]
   tokens            ActionToken[]
   notifications     Notification[]
 
@@ -508,28 +521,33 @@ model Document {
 // (`applicationId`); `memberId` se completa al asentar. `linkedManually` es
 // para las preexistentes que vincula el M4.
 model MpSubscription {
-  id             Int          @id @default(autoincrement())
-  preapprovalId  String       @unique @map("preapproval_id") @db.VarChar(64)
+  id                Int          @id @default(autoincrement())
+  preapprovalId     String       @unique @map("preapproval_id") @db.VarChar(64)
   // Plan de REFERENCIA: de dónde salió el monto, NO el plan al que la
   // suscripción está asociada en MP. Las suscripciones se crean sin
   // `preapproval_plan_id` (el flujo con plan exige `card_token_id` y no permite
   // redirigir al vecino, ver docs/06 §2) y llevan el monto copiado en su propio
   // `auto_recurring`: cambiar el plan en MP no las mueve, hay que empujarles el
   // monto nuevo una por una con `updatePreapprovalAmount` (REG-34, lote del M4).
-  planId         String       @map("plan_id") @db.VarChar(64)
-  applicationId  Int?         @map("application_id")
-  application    Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
-  memberId       Int?         @map("member_id")
-  member         Member?      @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  planId            String       @map("plan_id") @db.VarChar(64)
+  applicationId     Int?         @map("application_id")
+  application       Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  memberId          Int?         @map("member_id")
+  member            Member?      @relation(fields: [memberId], references: [id], onDelete: SetNull)
   // Estados de MP tal cual llegan (pending | authorized | paused | cancelled…):
   // string y no enum, porque el catálogo es de MP y puede crecer sin avisarnos.
-  status         String       @db.VarChar(32)
-  payerEmail     String       @map("payer_email") @db.VarChar(191)
-  linkedManually Boolean      @default(false) @map("linked_manually")
-  lastSyncAt     DateTime?    @map("last_sync_at")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  status            String       @db.VarChar(32)
+  payerEmail        String       @map("payer_email") @db.VarChar(191)
+  linkedManually    Boolean      @default(false) @map("linked_manually")
+  // Último monto conocido/empujado (4B: lote REG-34 y divergencia).
+  amount            Decimal?     @db.Decimal(10, 2)
+  externalReference String?      @map("external_reference") @db.VarChar(128)
+  lastSyncAt        DateTime?    @map("last_sync_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
 
+  @@index([memberId])
+  @@index([status])
   @@map("mp_subscriptions")
 }
 
@@ -554,4 +572,184 @@ model WebhookEvent {
 
   @@unique([origin, externalEventId])
   @@map("webhook_events")
+}
+
+// ── Módulo 4: Tesorería ──────────────────────────────────────────────────────
+
+enum FeeStatus {
+  pending
+  paid
+  exempt
+  voided
+}
+
+// `import` = cuota sintética creada por scripts/import-deuda.ts a partir de
+// datos/deuda.xlsx (conteo por año asignado a los últimos N meses del año).
+enum FeeOrigin {
+  accrual
+  import
+}
+
+enum PaymentType {
+  debit
+  link
+  cash
+  voluntary
+  entry
+  extraordinary
+}
+
+// `voided` = efectivo anulado desde el panel; `refunded` = reembolso en MP (4B).
+enum PaymentStatus {
+  applied
+  refunded
+  voided
+}
+
+enum UnmatchedStatus {
+  open
+  matched
+  dismissed
+}
+
+// Historial de valores de cuota (REG-34). El vigente es el de mayor `validFrom`
+// ≤ hoy. ÚNICA fuente de montos: devengo, deuda, wizard, efectivo, lote a MP.
+model FeeValue {
+  id           Int      @id @default(autoincrement())
+  activeAmount Decimal  @map("active_amount") @db.Decimal(10, 2)
+  // Adherente y colaborador comparten monto (decisión del cliente).
+  sharedAmount Decimal  @map("shared_amount") @db.Decimal(10, 2)
+  validFrom    DateTime @map("valid_from")
+  minuteId     Int?     @map("minute_id")
+  minute       Minute?  @relation(fields: [minuteId], references: [id], onDelete: SetNull)
+  createdById  Int?     @map("created_by_id")
+  createdBy    User?    @relation("FeeValueCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([validFrom])
+  @@map("fee_values")
+}
+
+// Cuota devengada. Sin monto a propósito: la deuda se valúa SIEMPRE a valor
+// vigente al momento del pago (REG-16 generalizado, spec §2.2).
+model Fee {
+  id        Int       @id @default(autoincrement())
+  memberId  Int       @map("member_id")
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  period    String    @db.Char(7) // "YYYY-MM"
+  status    FeeStatus @default(pending)
+  origin    FeeOrigin @default(accrual)
+  paymentId Int?      @map("payment_id")
+  payment   Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@unique([memberId, period])
+  @@index([status])
+  @@index([memberId, status])
+  // El cron de devengo pregunta "qué socios no tienen cuota del período X":
+  // el @@unique de arriba es left-most en member_id y no le sirve.
+  @@index([period, status])
+  @@map("fees")
+}
+
+model Payment {
+  id             Int                  @id @default(autoincrement())
+  memberId       Int?                 @map("member_id")
+  member         Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  applicationId  Int?                 @map("application_id")
+  application    Application?         @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  type           PaymentType
+  amount         Decimal              @db.Decimal(10, 2)
+  paidAt         DateTime             @map("paid_at")
+  mpPaymentId    String?              @unique @map("mp_payment_id") @db.VarChar(64)
+  preapprovalId  String?              @map("preapproval_id") @db.VarChar(64)
+  registeredById Int?                 @map("registered_by_id")
+  registeredBy   User?                @relation("PaymentRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
+  note           String?              @db.VarChar(200)
+  status         PaymentStatus        @default(applied)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  fees           Fee[]
+  receipt        Receipt?
+  unmatched      MpUnmatchedPayment[]
+
+  @@index([memberId, paidAt])
+  // Las pantallas listan pagos por rango de fechas sin filtrar por socio.
+  @@index([paidAt])
+  // La conciliación (4B) busca los pagos de una suscripción por preapproval.
+  @@index([preapprovalId])
+  @@map("payments")
+}
+
+// Serie única AAAA-NNNNN. Nunca se borra ni se renumera: se anula.
+model Receipt {
+  id         Int       @id @default(autoincrement())
+  number     String    @unique @db.Char(10)
+  year       Int       @db.SmallInt
+  seq        Int
+  paymentId  Int       @unique @map("payment_id")
+  payment    Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  // El concepto se congela acá al emitir. Un recibo es un registro institucional:
+  // dice lo que se cobró en el momento en que se emitió, y no puede cambiar porque
+  // después se anule o se reimputen las cuotas. Derivarlo de `payment.fees` lo
+  // borraba: al anular, esas filas se despegan del pago y el detalle se perdía.
+  concept    String    @db.VarChar(200)
+  pdfPath    String?   @map("pdf_path") @db.VarChar(255)
+  issuedAt   DateTime  @default(now()) @map("issued_at")
+  emailedAt  DateTime? @map("emailed_at")
+  voidedAt   DateTime? @map("voided_at")
+  voidReason String?   @map("void_reason") @db.VarChar(200)
+  voidedById Int?      @map("voided_by_id")
+  voidedBy   User?     @relation("ReceiptVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@unique([year, seq])
+  @@map("receipts")
+}
+
+// Contador por año. Se incrementa con INSERT … ON DUPLICATE KEY UPDATE dentro
+// de la transacción que crea el recibo: el bloqueo de fila serializa y, si la
+// transacción falla, el número no se consumió (sin huecos).
+model ReceiptSequence {
+  year Int @id @db.SmallInt
+  last Int
+
+  @@map("receipt_sequences")
+}
+
+// Bandeja sin conciliar (4B). `payerEmail` es dato personal: solo al admin.
+model MpUnmatchedPayment {
+  id                Int             @id @default(autoincrement())
+  mpPaymentId       String          @unique @map("mp_payment_id") @db.VarChar(64)
+  amount            Decimal         @db.Decimal(10, 2)
+  paidAt            DateTime        @map("paid_at")
+  payerEmail        String?         @map("payer_email") @db.VarChar(191)
+  externalReference String?         @map("external_reference") @db.VarChar(128)
+  description       String?         @db.VarChar(200)
+  status            UnmatchedStatus @default(open)
+  paymentId         Int?            @map("payment_id")
+  // FK real y no un Int suelto: un puntero a un pago borrado no puede quedar
+  // apuntando a la nada. `SetNull` deja la fila en la bandeja para revisar.
+  payment           Payment?        @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  resolvedById      Int?            @map("resolved_by_id")
+  resolvedBy        User?           @relation("UnmatchedResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt        DateTime?       @map("resolved_at")
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([paymentId])
+  @@map("mp_unmatched_payments")
+}
+
+// Última corrida de cada cron, para /admin/salud (4C). `summary`: contadores.
+model CronRun {
+  id         BigInt    @id @default(autoincrement())
+  job        String    @db.VarChar(32)
+  startedAt  DateTime  @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  ok         Boolean   @default(false)
+  summary    Json?
+  error      String?   @db.VarChar(500)
+
+  @@index([job, startedAt])
+  @@map("cron_runs")
 }

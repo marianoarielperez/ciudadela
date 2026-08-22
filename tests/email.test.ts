@@ -6,7 +6,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { makeMailer } from "@/lib/email";
 import {
   invitationEmail, loginEmailMovedNotice, loginEmailVerification, passwordResetEmail,
-  portalInvite, verificationEmail,
+  portalInvite, receiptEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { getTransport, type MailMessage } from "@/lib/email/transport";
 
@@ -136,6 +136,15 @@ describe("templates", () => {
     expect(i.html).not.toContain("<script>");
     expect(i.html).toContain("&amp;");
   });
+
+  it("receiptEmail nombra número, concepto y monto, y avisa que el PDF va adjunto", () => {
+    const r = receiptEmail({ name: "Ana", number: "2026-00012", concept: "Cuota social · marzo 2025", amount: 6000 });
+    expect(r.subject).toBe("Recibo 2026-00012 — Vecinal Ciudadela");
+    expect(r.text).toContain("2026-00012");
+    expect(r.text).toContain("$ 6.000,00");
+    expect(r.text).toContain("adjunto");
+    expect(r.html).toContain("Cuota social · marzo 2025");
+  });
 });
 
 describe("getTransport", () => {
@@ -158,6 +167,19 @@ describe("getTransport", () => {
     });
     expect(res.messageId).toBeNull();
     expect(log).toHaveBeenCalled();
+  });
+
+  it("el transporte de consola lista los adjuntos por nombre y tamaño, no por contenido", async () => {
+    for (const k of ["BREVO_SMTP_HOST", "BREVO_SMTP_USER", "BREVO_SMTP_KEY", "MAIL_FROM", "EMAIL_ALLOWLIST"]) {
+      delete process.env[k];
+    }
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await getTransport().send({
+      to: "a@b.com", subject: "s", text: "t", html: "<p>t</p>",
+      attachments: [{ filename: "recibo-2026-00001.pdf", content: Buffer.from("%PDF-"), contentType: "application/pdf" }],
+    });
+    expect(log.mock.calls.flat().join("\n")).toContain("recibo-2026-00001.pdf (5 B)");
+    log.mockRestore();
   });
 });
 

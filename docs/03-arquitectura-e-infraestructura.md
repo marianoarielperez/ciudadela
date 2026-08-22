@@ -36,14 +36,22 @@ con comandos preparados):
 
 1. Activar `ufw` (allow 2222/tcp, 80/tcp, 443/tcp; deny resto) — hoy está inactivo.
 2. Rotación de logs de Docker (afecta a `atenea`, conviene cerrarlo ya).
-3. Crear `/var/sigev/uploads` con owner del proceso de la app y permisos 750.
+3. Crear `/var/sigev/uploads` y `/var/sigev/recibos` con owner del proceso de la app y permisos 750.
 
 ## Dominios y entornos
 
+**Hay un solo entorno desplegado: `vecinalciudadela.ar`.**
+
 | Entorno | URL | Certificado | Credenciales MP |
 |---|---|---|---|
-| Staging | `sigev.redaccion.ar` | Cloudflare Origin wildcard `*.redaccion.ar` (ya instalado, válido hasta 2041) | TEST (sandbox) |
-| Producción | `vecinalciudadela.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas |
+| Producción | `vecinalciudadela.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas desde el 22/08/2026 |
+| ~~Staging~~ | ~~`sigev.redaccion.ar`~~ | ~~Cloudflare Origin wildcard `*.redaccion.ar`~~ | **DADO DE BAJA el 20/08/2026** |
+
+El staging se dio de baja el 20/08/2026 (decisión del cliente): quedaba un entorno
+más que mantener para un sitio que todavía no conoce nadie. El sandbox de Mercado
+Pago pasó a ser **cosa de local** (`docs/11`); en el VPS no queda ninguna credencial
+de prueba. Lo que este documento, `docs/07`, `docs/09` y `docs/10` digan sobre
+staging es historia y no describe el estado actual.
 
 - El dominio es **`vecinalciudadela.ar`**, sin `.com`. Ya está registrado en NIC.ar
   a nombre de la vecinal y **delegado a Cloudflare** (`jocelyn`/`logan.ns.cloudflare.com`,
@@ -105,8 +113,8 @@ desindexa solo. Cambiar `AUTH_URL` obliga a re-buildear, no alcanza con reinicia
 
 Antes de buildear en el VPS, verificar en su `.env`:
 
-- `AUTH_URL` = el dominio real del entorno (staging `https://sigev.redaccion.ar`,
-  producción `https://vecinalciudadela.ar`).
+- `AUTH_URL` = el dominio real del entorno, que hoy es uno solo:
+  `https://vecinalciudadela.ar`.
 - `ALLOW_LOCALHOST_BASE_URL` **ausente o comentada**. Es una escotilla solo para el
   build local: si está activa en el servidor, desactiva la guarda que justamente
   impide publicar canonicals a localhost. `grep ALLOW_LOCALHOST_BASE_URL .env` no
@@ -114,6 +122,9 @@ Antes de buildear en el VPS, verificar en su `.env`:
 - `UPLOADS_DIR=/var/sigev/uploads`. Si falta, el código cae en silencio a `./uploads`
   dentro del directorio de la app: las portadas de noticias se escriben ahí y se
   pierden en el próximo deploy, sin ningún error visible.
+- `RECEIPTS_DIR=/var/sigev/recibos` (Módulo 4), con la misma falla silenciosa: sin
+  ella los PDFs de recibos caen en `./recibos`, quedan fuera del backup y se pierden
+  en el próximo deploy.
 - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` = la site key del widget de Cloudflare Turnstile
   (Módulo 3). Todo lo `NEXT_PUBLIC_*` se hornea en el bundle del cliente: si falta
   o está mal al buildear, el widget del **paso 3 del wizard ASOCIATE** no se
@@ -139,7 +150,7 @@ prenderla ahí.
 |---|---|
 | Diario 08:05 | **`POST /api/cron/applications`** (Módulo 3, ya en uso): recordatorio de pago a las solicitudes creadas hace 3 días o más, y expiración de las creadas hace 7 días o más (el corte es por `createdAt`, no por última actividad), con cancelación de la suscripción MP. Bloque copiable en `docs/11` |
 | Diario 03:00 | Conciliación MP de respaldo (script Node: consulta pagos y suscripciones por API, detecta lo que los webhooks no registraron) |
-| Diario 04:00 | Backup: `mysqldump sigev` + `tar` de `/var/sigev/uploads` → cifrado GPG simétrico → `rclone` a Google Drive de la vecinal (av.ciudadela@gmail.com). Retención 30 días. Complementa los snapshots de Contabo |
+| Diario 04:00 | Backup: `mysqldump sigev` + `tar` de `/var/sigev/uploads` y `/var/sigev/recibos` → cifrado GPG simétrico → `rclone` a Google Drive de la vecinal (av.ciudadela@gmail.com). Retención 30 días. Complementa los snapshots de Contabo |
 | Diario 08:00 | Generación de cuotas devengadas del período (día 1 de cada mes), recordatorios de vencimiento, alertas de mora, avisos de vencimiento de plazos de re-empadronamiento |
 | Mensual | Detección de candidatos a vitalicio (REG-06) |
 
@@ -167,7 +178,11 @@ corrida siguiente termina lo que quedó. Ver el bloque de `docs/11`.
   público por definición. La regla de API autenticada sigue valiendo entera para los
   documentos personales (DNIs, facturas). El original queda intacto en disco; la
   variante que baja el visitante la genera `next/image` según el ancho de pantalla.
-- Recibos PDF generados a `/var/sigev/recibos/{año}/`.
+- **Recibos PDF** (Módulo 4): `RECEIPTS_DIR=/var/sigev/recibos`, estructura
+  `{año}/{AAAA-NNNNN}.pdf` — determinística a partir del número de recibo, nunca
+  armada con texto libre. Se sirven por `/api/admin/recibos/[id]` (admin, auditado)
+  y `/api/mi/recibos/[id]` (el socio, sólo el suyo). El PDF se escribe **después**
+  del commit del cobro y es regenerable: es una copia, no el asiento.
 
 ## Observabilidad
 

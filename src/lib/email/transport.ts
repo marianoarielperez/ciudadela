@@ -2,7 +2,16 @@
 // arranque no se bloquea y ningún correo sale de la máquina.
 import nodemailer from "nodemailer";
 
-export type MailMessage = { to: string; subject: string; text: string; html: string };
+// `content` como Buffer y no como stream: los adjuntos del sistema son PDFs de
+// recibo de pocos kB, ya materializados en memoria por quien los lee del disco.
+export type MailAttachment = { filename: string; content: Buffer; contentType: string };
+export type MailMessage = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: MailAttachment[];
+};
 export type MailTransport = { send(msg: MailMessage): Promise<{ messageId: string | null }> };
 
 function makeBrevoTransport(): MailTransport | null {
@@ -25,7 +34,12 @@ function makeBrevoTransport(): MailTransport | null {
 function makeConsoleTransport(): MailTransport {
   return {
     async send(msg) {
-      console.log(`[mail:dev] to=${msg.to} subject="${msg.subject}"\n${msg.text}`);
+      // Los adjuntos se listan por nombre y tamaño: volcar un PDF binario a la
+      // consola no le sirve a nadie y ensucia el log de dev.
+      const attached = (msg.attachments ?? []).map((a) => `${a.filename} (${a.content.length} B)`).join(", ");
+      console.log(
+        `[mail:dev] to=${msg.to} subject="${msg.subject}"${attached ? ` attachments=${attached}` : ""}\n${msg.text}`,
+      );
       return { messageId: null };
     },
   };
@@ -48,7 +62,12 @@ export function makeAllowlistTransport(inner: MailTransport, allowlist: Set<stri
     async send(msg) {
       if (!allowlist.has(msg.to.trim().toLowerCase())) {
         console.warn("[mail:allowlist] envío bloqueado por EMAIL_ALLOWLIST");
-        throw new Error("Envíos de email restringidos en este entorno (EMAIL_ALLOWLIST).");
+        // `code` propio: sin él, `codeOf()` en los call-sites cae a "unknown" y
+        // no se puede distinguir "bloqueado por este entorno" de "SMTP caído".
+        throw Object.assign(
+          new Error("Envíos de email restringidos en este entorno (EMAIL_ALLOWLIST)."),
+          { code: "EMAIL_ALLOWLIST" },
+        );
       }
       return inner.send(msg);
     },

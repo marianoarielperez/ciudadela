@@ -8,7 +8,7 @@ const member = (o: Partial<M>): M => ({
   id: 7,
   status: "withdrawn",
   withdrawalReason: null,
-  debtAtWithdrawal: false,
+  pendingFees: 0,
   reentryBlocked: false,
   rejectedUntil: null,
   ...o,
@@ -46,7 +46,7 @@ describe("checkEligibility", () => {
   it("expulsión gana a la deuda (precedencia de seguridad)", () => {
     const r = checkEligibility({
       ...base,
-      member: member({ reentryBlocked: true, withdrawalReason: "expulsion", debtAtWithdrawal: true }),
+      member: member({ reentryBlocked: true, withdrawalReason: "expulsion", pendingFees: 1 }),
     });
     expect(r).toMatchObject({ ok: false, code: "visit_office" });
   });
@@ -60,13 +60,23 @@ describe("checkEligibility", () => {
       code: "visit_office",
     });
   });
-  it("baja por mora o con deuda → debt (sede)", () => {
-    expect(checkEligibility({ ...base, member: member({ withdrawalReason: "arrears" }) })).toMatchObject({
-      ok: false,
-      code: "debt",
+  it("bloquea por deuda real aunque la baja no haya sido por mora", () => {
+    const r = checkEligibility({
+      member: { id: 1, status: "withdrawn", withdrawalReason: "resignation", pendingFees: 2, reentryBlocked: false, rejectedUntil: null },
+      liveApplication: null, lastRejectionAt: null, now: new Date(),
     });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("debt");
+  });
+  it("cesante por mora que saldó la deuda vuelve a ser elegible sin tocar ningún flag (REG-16)", () => {
+    // Decisión del cliente (22/08/2026): lo que bloquea es la DEUDA, no el
+    // motivo histórico de la baja. El que pagó en la sede se rehabilita solo.
+    const r = checkEligibility({ ...base, member: member({ withdrawalReason: "arrears", pendingFees: 0 }) });
+    expect(r).toEqual({ ok: true, memberId: 7 });
+  });
+  it("cesante por mora que sigue debiendo → debt (sede)", () => {
     expect(
-      checkEligibility({ ...base, member: member({ withdrawalReason: "resignation", debtAtWithdrawal: true }) }),
+      checkEligibility({ ...base, member: member({ withdrawalReason: "arrears", pendingFees: 4 }) }),
     ).toMatchObject({ ok: false, code: "debt" });
   });
   it("rejectedUntil futuro → rejected_wait con la fecha", () => {

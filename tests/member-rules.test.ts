@@ -16,6 +16,13 @@ describe("member rules", () => {
     if (!blocked.ok) expect(blocked.error).toContain("elecciones");
   });
 
+  it("category change requires zero pending fees (REG-07, M4)", () => {
+    const blocked = canChangeCategory({ status: "active", category: "adherent" }, "active", false, 3);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.error).toContain("3 cuotas");
+    expect(canChangeCategory({ status: "active", category: "adherent" }, "active", false, 0).ok).toBe(true);
+  });
+
   it("suspension requires active status", () => {
     expect(canSuspend({ status: "active" }).ok).toBe(true);
     expect(canSuspend({ status: "suspended" }).ok).toBe(false);

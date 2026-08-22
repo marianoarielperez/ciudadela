@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { ADMIN_NAV } from "@/lib/admin/nav";
-import { DASHBOARD_GROUPS } from "@/lib/admin/dashboard-cards";
+import { DASHBOARD_GROUPS, type DashboardCard } from "@/lib/admin/dashboard-cards";
+
+// Regla: una tarjeta sin `href` se muestra como "Próximamente" y no puede
+// llevar `cta` (no habría adónde ir). El tipo no la fuerza —`href` y `cta` son
+// los dos opcionales— así que la chequeamos a mano. No la usa nadie más que
+// este test: la página ya rama sobre `card.href` solo, sin mirar `cta`.
+function isValidRoadmapCard(card: DashboardCard): boolean {
+  if (card.href) return true;
+  return card.cta === undefined;
+}
 
 // El tablero de /admin y la lateral son dos vistas de lo mismo. Cuando M3-M6
 // agreguen secciones, olvidarse de una de las dos dejaba el tablero mintiendo
@@ -49,12 +58,30 @@ describe("DASHBOARD_GROUPS vs ADMIN_NAV", () => {
     expect(dashboardLabels.filter((l) => shared.has(l)))
       .toEqual(navLabels.filter((l) => shared.has(l)));
   });
+});
 
-  it("allows roadmap cards without href as extras", () => {
-    // No es un requisito, es la constancia de que el invariante los tolera:
-    // "Tesorería" es una sección futura sin ruta todavía. ("Solicitudes" lo era
-    // hasta el M3; desde la Task 16 tiene bandeja y salió de esta lista.)
-    const roadmap = allCards.filter((c) => !c.href).map((c) => c.title);
-    expect(roadmap).toContain("Tesorería");
+describe("roadmap card without href never carries a cta", () => {
+  it("flags a roadmap card that carries a cta and accepts one that doesn't", () => {
+    // Fixture local, no DASHBOARD_GROUPS: hoy no hay ninguna tarjeta roadmap ahí
+    // —"Solicitudes" salió en el M3 y "Tesorería" en el M4— así que filtrar la
+    // lista viva deja el loop sin iteraciones y el test pasa sin verificar nada.
+    // Estas tres formas (roadmap válida, roadmap con CTA colgado, tarjeta viva)
+    // sí ejercitan la regla y el test puede fallar de verdad.
+    const roadmapCard: DashboardCard = { title: "Próxima sección", description: "En construcción." };
+    const roadmapCardWithStrayCta: DashboardCard = {
+      title: "Próxima sección",
+      description: "En construcción.",
+      cta: "Ver",
+    };
+    const liveCard: DashboardCard = {
+      title: "Socios",
+      description: "Padrón, fichas y estado de cada socio.",
+      href: "/admin/socios",
+      cta: "Ver el padrón",
+    };
+
+    expect(isValidRoadmapCard(roadmapCard)).toBe(true);
+    expect(isValidRoadmapCard(liveCard)).toBe(true);
+    expect(isValidRoadmapCard(roadmapCardWithStrayCta)).toBe(false);
   });
 });

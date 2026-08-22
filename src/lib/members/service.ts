@@ -10,7 +10,7 @@ import { revokeStaleMemberTokens } from "./write";
 // métodos de control de sesión (`$transaction`, `$connect`, …).
 type Tx = Pick<
   PrismaClient,
-  "actionToken" | "book" | "member" | "membership" | "minute" | "movement" | "user"
+  "actionToken" | "book" | "fee" | "member" | "membership" | "minute" | "movement" | "user"
 >;
 
 // Exportada: las server actions la consultan para poder rechazar el cambio de
@@ -85,10 +85,24 @@ export function makeMemberService(db: PrismaClient) {
         const check = canWithdraw(member);
         if (!check.ok) throw new Error(check.error);
         const minute = await tx.minute.findUniqueOrThrow({ where: { id: input.minuteId } });
+        // REG-16: la baja NO devenga más, así que las cuotas que quedan
+        // pendientes son la deuda congelada al momento de la baja. El flag se
+        // escribe acá y no en la pantalla que ordenó la baja: así lo llevan
+        // todas por igual —cesantía por mora, renuncia con deuda, mudanza con
+        // deuda. Lo que compra la MISMA transacción no es "congelar cuotas"
+        // —esta transacción no toca `Fee` para nada; que queden congeladas es
+        // consecuencia de que el socio pase a `withdrawn`, no un efecto de acá—
+        // sino que el flag y el status se muevan juntos: no puede quedar un
+        // socio `withdrawn` sin que `debtAtWithdrawal` refleje lo que debía en
+        // ese instante, ni viceversa por un rollback a mitad de camino. Es un
+        // booleano, no un monto: el monto se valúa a valor vigente al momento
+        // del pago, nunca al de la baja.
+        const pendingFees = await tx.fee.count({ where: { memberId: member.id, status: "pending" } });
         const updated = await tx.member.update({
           where: { id: member.id },
           data: {
             status: "withdrawn", withdrawalReason: input.reason, leftAt: minute.date,
+            debtAtWithdrawal: pendingFees > 0,
             reentryBlocked: input.reason === "expulsion" ? true : member.reentryBlocked,
             suspendedFrom: null, suspendedTo: null,
           },
@@ -127,7 +141,11 @@ export function makeMemberService(db: PrismaClient) {
       const ongoing = await electionsOngoing(db);
       return db.$transaction(async (tx) => {
         const member = await tx.member.findUniqueOrThrow({ where: { id: input.memberId } });
-        const check = canChangeCategory(member, input.newCategory, ongoing);
+        // La deuda se cuenta DENTRO de la transacción: contarla afuera dejaría una
+        // ventana en la que otro admin cobra (o anula) y el cambio se decide con
+        // un número viejo.
+        const pendingFees = await tx.fee.count({ where: { memberId: member.id, status: "pending" } });
+        const check = canChangeCategory(member, input.newCategory, ongoing, pendingFees);
         if (!check.ok) throw new Error(check.error);
         const minute = await tx.minute.findUniqueOrThrow({ where: { id: input.minuteId } });
         const updated = await tx.member.update({
@@ -198,7 +216,8 @@ export function makeMemberService(db: PrismaClient) {
           data: {
             status: "active", category: input.category, withdrawalReason: null, leftAt: null,
             // joinedAt NO se toca: el reingreso no reinicia la antigüedad (REG-11).
-            // debtAtWithdrawal se conserva: M4 lo usa para calcular la deuda a saldar (REG-16)
+            // debtAtWithdrawal se conserva como dato histórico de la baja; la deuda
+            // que se cobra y se muestra sale de las cuotas pendientes vivas (REG-16).
           },
         });
         // Contracara del cerrojo de la baja: el reingreso le devuelve la cuenta.

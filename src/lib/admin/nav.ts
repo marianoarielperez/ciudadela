@@ -4,7 +4,7 @@
 import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
-  | "home" | "inbox" | "users" | "scroll-text" | "newspaper" | "calendar-days" | "settings";
+  | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings";
 
 export type AdminNavItem = {
   href: string;
@@ -26,6 +26,10 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       // que resolver), y el padrón es la consulta.
       { href: "/admin/solicitudes", label: "Solicitudes", icon: "inbox" },
       { href: "/admin/socios", label: "Socios", icon: "users" },
+      // Tesorería va pegada al padrón: se entra desde la ficha del socio y se
+      // vuelve a ella. Las actas quedan al final del grupo, que es donde se
+      // asienta lo que ya se decidió.
+      { href: "/admin/tesoreria", label: "Tesorería", icon: "wallet" },
       { href: "/admin/actas", label: "Actas", icon: "scroll-text" },
     ],
   },

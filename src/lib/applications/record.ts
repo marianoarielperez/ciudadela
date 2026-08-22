@@ -120,8 +120,9 @@ export function makeApplicationRecorder(db: PrismaClient) {
                 withdrawalReason: null,
                 leftAt: null,
                 // joinedAt NO se toca: el reingreso no reinicia la antigüedad
-                // (REG-11). debtAtWithdrawal se conserva: el M4 lo usa para
-                // calcular la deuda a saldar (REG-16).
+                // (REG-11). `debtAtWithdrawal` se conserva como dato histórico del
+                // Libro 1, pero ya no lo lee ninguna pantalla: la deuda a saldar
+                // (REG-16) sale de las cuotas pendientes de la cuenta corriente.
               },
             });
             // ── Las DOS invariantes de la dirección, acá y no en otro lado ────

@@ -224,13 +224,18 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // Elegibilidad por DNI (spec §4): corre DESPUÉS de Turnstile + rate limit,
   // que son lo único que impide usar este formulario para barrer el padrón.
   const now = new Date();
-  const member = await prisma.member.findUnique({
+  const memberRow = await prisma.member.findUnique({
     where: { dni: data.dni },
     select: {
-      id: true, status: true, withdrawalReason: true, debtAtWithdrawal: true,
+      id: true, status: true, withdrawalReason: true,
       reentryBlocked: true, rejectedUntil: true,
+      // La deuda que bloquea es la VIVA de la cuenta corriente (M4), no el flag
+      // `debtAtWithdrawal` que quedó congelado en la baja: el que saldó en la
+      // sede tiene que poder reingresar sin que nadie le toque la ficha.
+      _count: { select: { fees: { where: { status: "pending" } } } },
     },
   });
+  const member = memberRow ? { ...memberRow, pendingFees: memberRow._count.fees } : null;
   const [liveApplication, lastRejectionAt] = await Promise.all([
     applicationService.findLiveByDni(data.dni),
     applicationService.lastRejectionAt(data.dni),

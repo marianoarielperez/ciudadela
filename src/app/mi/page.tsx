@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { requireMember } from "@/lib/auth/require-member"
 
@@ -5,7 +6,7 @@ export const metadata = { title: "Mi cuenta — Vecinal Ciudadela" }
 
 const sections = [
   { title: "Mis datos", description: "Tus datos personales y de contacto en el padrón." },
-  { title: "Mi cuenta", description: "Estado de tus cuotas y tus recibos." },
+  { title: "Mi cuenta", description: "Estado de tus cuotas y tus recibos.", href: "/mi/cuenta" },
   { title: "Pagar", description: "Pagá tu cuota social con Mercado Pago." },
 ]
 
@@ -33,9 +34,18 @@ export default async function MiHomePage() {
               <CardDescription>{section.description}</CardDescription>
             </CardHeader>
             <CardContent>
-              <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium">
-                Próximamente
-              </span>
+              {section.href ? (
+                <Link
+                  className="inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline"
+                  href={section.href}
+                >
+                  Ver mi cuenta →
+                </Link>
+              ) : (
+                <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium">
+                  Próximamente
+                </span>
+              )}
             </CardContent>
           </Card>
         ))}

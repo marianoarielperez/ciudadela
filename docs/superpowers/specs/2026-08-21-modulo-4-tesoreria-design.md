@@ -26,7 +26,7 @@ entra y sale de ella.
   124 adherentes** (ya no 55 + 105). 28 huecos de numeración (1–306).
 - `datos/deuda.xlsx` (nuevo) trae la deuda **a agosto 2026** como **cantidad de cuotas
   impagas por año** (columnas `cuotas_deuda_2022…2026`), sin montos. 111 bajas con deuda
-  congelada (todas `fecha_egreso` 31/08/2025, 8 cuotas de 2025), 8 vigentes con deuda,
+  congelada (todas `fecha_egreso` 31/08/2025, 8 cuotas de 2025), 7 vigentes con deuda (corregido el 22/08/2026: la socia 213 figuraba con 4 cuotas por error),
   127 adherentes sin datos (cuota optativa). Join por `numero_socio` y DNI: 278/278.
 - Las suscripciones se crean **sin plan** y copian el monto (docs/06 §2): cambiar el
   monto en el panel de MP no mueve ningún débito vivo.
@@ -79,7 +79,7 @@ para dinero, fechas en UTC, `Json?` nunca con `null` pelado.
 | `createdAt` | | |
 
 `@@index([validFrom])`. **El vigente** es la fila de mayor `validFrom ≤ hoy`. Seed inicial:
-`6000 / 3000` vigente desde `2026-09-01`, sin acta. Función pura `feeAmountFor(category,
+`6000 / 3000` vigente desde `2026-08-01`, sin acta (corregido el 22/08/2026: con vigencia 01/09 el sistema se quedaba sin monto con qué cobrar hasta septiembre). Función pura `feeAmountFor(category,
 value)` → `active` → `activeAmount`; `adherent|collaborator` → `sharedAmount`;
 `honorary|lifetime|cadet` → `null` (no pagan).
 
@@ -236,12 +236,12 @@ Sin Prisma; tabla de casos en `tests/treasury-rules.test.ts`.
   12 → todo el año; 2023 = 11 → feb–dic). Blanco = no corresponde (no crea nada).
 - Idempotente: si el socio ya tiene alguna `Fee` con `origin: import`, se saltea y cuenta
   como `unchanged`. Nunca toca cuotas `accrual`.
-- Una transacción por socio. Reporte con totales (esperado: 3080 cuotas, 119 socios con
+- Una transacción por socio. Reporte con totales (esperado: 3076 cuotas, 118 socios con
   deuda, 28 al día con datos, 131 sin datos) y asiento `debt_import` solo con contadores.
 
 ### 4.3 Seed
 
-`prisma/seed.ts` siembra `FeeValue{6000, 3000, validFrom 2026-09-01}` con `upsert`
+`prisma/seed.ts` siembra `FeeValue{6000, 3000, validFrom 2026-08-01}` con `upsert`
 sobre `validFrom` (no pisa si ya existe) y crea `RECEIPTS_DIR` si falta.
 
 ## 5. Mercado Pago
@@ -562,7 +562,7 @@ CA: en local con el padrón y la deuda importados, Skardius (144) muestra 23 cuo
 pendientes y $ 138.000; registrar 3 cuotas en efectivo emite `2026-00001`, marca pagas
 oct–dic 2024 (las tres más viejas: su `2024 = 3` se importó como oct–dic), adjunta el PDF al email de prueba y la cinta lo
 refleja; anularlo las devuelve a pendientes y el número no se reutiliza; 20 efectivos
-concurrentes → `00002..00021`; en Deudores aparecen los 8 vigentes con deuda y solo los
+concurrentes → `00002..00021`; en Deudores aparecen los 7 vigentes con deuda y solo los
 de ≥4 son tildables; cambiar de categoría a un socio con deuda está bloqueado.
 
 **4B — Mercado Pago**
@@ -578,7 +578,7 @@ suscripción de prueba y reporta la que falla.
 Crons `fees`, `arrears`, `digest`; `payment_rejected`; `Notification.failed` + reintento;
 `/admin/salud`; padrón electoral; crontab documentado.
 CA: correr `fees` dos veces el mismo día crea una sola cuota por socio; `arrears` en un día
-que no es 30 no envía nada y el 30 envía a los 8 deudores de prueba una sola vez;
+que no es 30 no envía nada y el 30 envía a los 7 deudores de prueba una sola vez;
 `digest` sin novedades no envía y con una solicitud nueva envía a los admins; un email
 con el transporte roto queda `failed` y "Reintentar" lo saca; `/admin/salud` muestra las
 cinco corridas y el backup.

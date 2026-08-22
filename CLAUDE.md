@@ -50,6 +50,10 @@ Turnstile (de dónde salen las credenciales y el crontab).
   sirven por route handler público SIN autenticación (`/api/imagenes/noticias/[name]`)
   con caché inmutable — son contenido público. La regla de API autenticada aplica a
   documentos personales (DNIs, facturas).
+  Los **recibos PDF** siguen la misma regla en `RECEIPTS_DIR` (en prod
+  `/var/sigev/recibos`, ya cubierto por `scripts/backup.sh`): se sirven sólo por
+  `/api/admin/recibos/[id]` (admin, auditado) y `/api/mi/recibos/[id]` (el socio,
+  su propio recibo; uno ajeno da 404, nunca 403).
 - Toda acción sensible de admin (aprobar alta, declarar baja, registrar pago, ver documento)
   se registra en la tabla de auditoría.
 - Migraciones siempre con `prisma migrate` — nunca `db push` en producción.
@@ -64,7 +68,8 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   el cajón móvil y el marcado de sección activa salen solos. Las tarjetas de `/admin` viven
   en `src/lib/admin/dashboard-cards.ts` y un test verifica que no se desincronicen.
   La lateral lista solo secciones que funcionan; el roadmap ("Próximamente") vive en las
-  tarjetas de Inicio.
+  tarjetas de Inicio. **Tesorería ya está en la lateral** (entre Socios y Actas) y su
+  tarjeta del tablero dejó de ser "Próximamente".
 - **Encabezado**: `PageHeader` (`title`, `breadcrumb`, `actions`, `children`). Convenciones
   acordadas: la **entidad va en el `<h1>`** (el nombre del socio, el título de la noticia) y
   la miga lleva la referencia corta; la **última miga es un sustantivo corto** ("Baja",
@@ -120,6 +125,40 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **Premisa de un solo proceso.** Mutex por DNI y rate limiters viven en memoria:
   ver la advertencia de `docs/03` antes de tocar `instances` en PM2.
 
+## Patrones que estrenó el Módulo 4 (fase 4A)
+
+- **La tabla `fee_values` es la ÚNICA fuente de montos.** Devengo, deuda,
+  efectivo y reingreso leen el valor vigente de ahí (`feeValueReader.current()`,
+  `src/lib/treasury/fee-values.ts`); los planes de Mercado Pago pasaron a ser
+  **referencia**, no registro. El valor nuevo se asienta desde
+  `/admin/configuracion` (superadmin), con acta opcional, y **nunca se edita**:
+  se registra otro encima, como un acta. El tope de 4 actualizaciones por año
+  (REG-34) lo controla la Comisión, no el sistema.
+  Ojo con la vigencia: `validFrom` se guarda al **mediodía UTC** del día civil
+  argentino y `current()` compara contra el mediodía civil de hoy (`civilDayOf`
+  en `periods.ts`), no contra el instante — si no, un valor no regiría hasta las
+  09:00 AR de su primer día y un devengo de madrugada abortaría por falta de monto.
+- **Pestañas por URL para secciones; Radix `Tabs` sólo para vistas que no
+  navegan.** `src/lib/admin/treasury-tabs.ts` + `TreasuryTabs` hacen de Deudores
+  / Efectivo / Recibos / Valores rutas propias: deep-link, botón atrás y
+  `aria-current` salen solos, y la pestaña se marca también en sus subrutas.
+  `MemberTabs` (Radix, con `?tab=`) es lo contrario: paneles de la misma ficha.
+- **Numeración sin huecos: el número se pide TARDE y dentro de la transacción.**
+  `nextReceiptSeq(tx, year)` incrementa `receipt_sequences` con
+  `INSERT … ON DUPLICATE KEY UPDATE`; el lock de la fila del año serializa y un
+  rollback no consume número (REG-33). Verificado con 20 recibos concurrentes
+  contra MariaDB real. Corolario: **nunca escribir el PDF dentro de esa
+  transacción** — el lock se sostiene hasta el commit y el timeout de Prisma es
+  de 5 s.
+- **El PDF se escribe DESPUÉS del commit, es best-effort y es regenerable.**
+  Si falla, el cobro ya quedó asentado; `regenerateReceiptPdf` lo rehace al
+  pedirlo. El **concepto se congela** en `Receipt.concept` al emitir: un recibo
+  dice lo que se cobró, y derivarlo de `payment.fees` lo borraba al anular.
+- **Un débito = una cuota; un link trae `n`; efectivo = `n × valor vigente`.**
+  `allocate` (`src/lib/treasury/rules.ts`) imputa siempre las cuotas
+  **más viejas** primero. Las cuotas no llevan monto: la deuda se valúa siempre
+  a valor vigente al momento del pago (REG-16 generalizado).
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -129,17 +168,29 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **Un solo entorno desplegado: `vecinalciudadela.ar`** (decisión del 20/08/2026).
   El staging `sigev.redaccion.ar` se dio de baja; lo que dicen `docs/03`, `docs/07`,
   `docs/09` y `docs/10` sobre staging es historia, no el estado actual.
-  Hasta el lanzamiento, ese dominio corre con credenciales **de prueba** de MP y con
-  `EMAIL_ALLOWLIST` definida (el sitio está publicado pero nadie lo conoce todavía).
-  El cambio a credenciales productivas y el borrado de `EMAIL_ALLOWLIST` son dos
-  pasos del checklist de lanzamiento de `docs/07`, no algo que ocurra solo.
+  Desde el **22/08/2026** ese dominio corre con credenciales **productivas** de
+  Mercado Pago (piloto real: el socio 306 se afilió por la web y su débito
+  funcionó) y con `EMAIL_ALLOWLIST` todavía definida — el sitio está publicado
+  pero nadie lo conoce.
+  **Nunca probar cobros en producción**: ahí la plata es de un vecino. El circuito
+  de pagos se prueba en **sandbox local** (`docs/11` Parte I §7, notificaciones
+  firmadas a mano) y lo único productivo es el piloto controlado: el débito
+  mensual del 306 y un efectivo de Mariano.
+  Borrar `EMAIL_ALLOWLIST` sigue siendo un paso del checklist de lanzamiento de
+  `docs/07`, no algo que ocurra solo.
 
 ## Datos incluidos
 
-- `datos/padron_socios.xlsx` — padrón definitivo del Libro N° 1 (283 filas,
-  numeración 1-305 con 22 huecos; DNIs completos salvo socios 287/288, ~36 emails
-  cargados). Importado por `scripts/import-padron.ts`; el resto de la ficha se
-  completa a mano desde el panel. Ver `docs/04-modelo-de-datos.md`.
+- `datos/padron_socios.xlsx` — padrón definitivo del Libro N° 1 (**278 filas**,
+  numeración 1-306 con **28 huecos**; DNIs completos, 37 emails cargados;
+  **160 vigentes = 36 activos + 124 adherentes**, 118 bajas). Importado por
+  `scripts/import-padron.ts`; el resto de la ficha se completa a mano desde el
+  panel. Ver `docs/04-modelo-de-datos.md`.
+- `datos/deuda.xlsx` — deuda a agosto de 2026 expresada en **cantidad de cuotas
+  impagas por año** (2022-2026), sin montos: 278 filas, **118 socios con deuda**,
+  **3076 cuotas**. La importa `scripts/import-deuda.ts` como cuotas con
+  `origin = "import"`, ancladas a la fecha de la foto (`DEBT_SNAPSHOT_DATE`,
+  21/08/2026) y no al reloj de la corrida.
 - `datos/calles_inicial.csv` — 40 calles catastrales del barrio para el autocompletado
   (campos: id_calle, orden_carga, nombre_calle). Ojo: nombres sin tilde y con comas
   tipo "Pizarro , Francisco" → normalizar para búsqueda.
@@ -154,7 +205,7 @@ Referencia completa y comentada: `.env.example`.
 DATABASE_URL="mysql://sigev:***@localhost:3306/sigev"
 AUTH_SECRET=***
 AUTH_URL=https://vecinalciudadela.ar       # se HORNEA en el build (SEO, canonicals)
-MP_ACCESS_TOKEN=***                        # hasta el lanzamiento: credenciales TEST
+MP_ACCESS_TOKEN=***                        # PRODUCTIVAS desde el 22/08/2026
 MP_WEBHOOK_SECRET=***                      # para validar x-Signature
 BREVO_SMTP_HOST=smtp-relay.brevo.com
 BREVO_SMTP_PORT=587
@@ -165,6 +216,8 @@ EMAIL_ALLOWLIST=a@b.com,c@d.com            # si está definida NINGÚN email sal
                                            # fuera de la lista. En producción NO
                                            # se define (se borra al lanzar).
 UPLOADS_DIR=/var/sigev/uploads             # dev: ./uploads (gitignored)
+RECEIPTS_DIR=/var/sigev/recibos            # PDFs de recibos; dev: ./recibos
+                                           # (gitignored). Ya lo respalda backup.sh
 NEXT_PUBLIC_TURNSTILE_SITE_KEY=***         # pública: viaja en el HTML
 TURNSTILE_SECRET_KEY=***                   # dev: claves dummy de Cloudflare
 CRON_SECRET=***                            # protege endpoints internos de cron
@@ -173,8 +226,16 @@ CRON_SECRET=***                            # protege endpoints internos de cron
 Los ids de los dos planes de Mercado Pago **no son variables de entorno**: viven
 en `Configuration` (`mp_plan_active_id`, `mp_plan_shared_id`) y se cargan desde
 `/admin/configuracion`. Ver `docs/06` y el instructivo `docs/11`.
+Desde el Módulo 4 el **monto** ya no sale de ahí: la tabla `fee_values` es la
+única fuente (ver más abajo). Los ids **siguen siendo obligatorios** igual porque
+`startPaymentAction` del wizard lee el monto del plan con `getPlan()` — eso se
+migra en la fase 4B; hasta entonces, sin ids el paso 2 de ASOCIATE no avanza.
 
 ## Prioridad actual
 
-Empezar por el **Módulo 0** de `docs/07-plan-de-etapas.md` y avanzar en orden.
-No arrancar un módulo sin cerrar los criterios de aceptación del anterior.
+Módulos 0, 1, 2 y 3 cerrados y desplegados. Del **Módulo 4** está cerrada la
+**fase 4A** (cuenta corriente, efectivo, recibos, deudores). Sigue la **4B**
+(Mercado Pago: webhook que aplica, Checkout Pro, bandeja sin conciliar,
+conciliación, lote REG-34) y después la **4C** (crons de notificación,
+`/admin/salud`, padrón electoral). Ver `docs/07-plan-de-etapas.md`.
+No arrancar una fase sin cerrar los criterios de aceptación de la anterior.

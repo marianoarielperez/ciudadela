@@ -1,5 +1,6 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
+import { formatARS } from "@/lib/format";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 
 type Rendered = { subject: string; text: string; html: string };
@@ -309,5 +310,27 @@ Si no completás el pago, la solicitud vence a los 7 días de iniciada y vas a t
     html: layout("Tu solicitud está esperando el pago", `<p>Tu solicitud de asociación a la ${esc(ORG)} quedó pendiente de autorizar el débito automático en Mercado Pago.</p>
 ${button(opts.url, "Retomar y completar el pago")}
 <p>Si no completás el pago, la solicitud <strong>vence a los 7 días</strong> de iniciada y vas a tener que empezar de nuevo.</p>`),
+  };
+}
+
+/** Recibo de tesorería (M4). El PDF viaja adjunto; el cuerpo repite lo esencial
+ *  para quien no abre adjuntos. Saluda por nombre: va a la casilla del socio
+ *  que pagó, registrada en su ficha. */
+export function receiptEmail(opts: { name: string; number: string; concept: string; amount: number }): Rendered {
+  const amount = formatARS(opts.amount);
+  return {
+    subject: `Recibo ${opts.number} — Vecinal Ciudadela`,
+    text: `Hola ${opts.name}:
+
+Registramos tu pago y te enviamos el recibo N° ${opts.number}.
+
+Concepto: ${opts.concept}
+Importe: ${amount}
+
+El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
+    html: layout(`Recibo ${opts.number}`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>Registramos tu pago y te enviamos el recibo <strong>N° ${esc(opts.number)}</strong>.</p>
+<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>
+<p>El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.</p>`),
   };
 }

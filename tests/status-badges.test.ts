@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  activityBadgeVariant, applicationStatusBadgeVariant, memberStatusBadgeVariant, newsStatusBadgeVariant,
+  activityBadgeVariant, applicationStatusBadgeVariant, arrearsBadgeVariant, feeStatusBadgeVariant,
+  memberStatusBadgeVariant, newsStatusBadgeVariant, receiptBadgeVariant,
 } from "@/lib/admin/status-badges";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import { NEWS_STATUS_LABELS } from "@/lib/news/labels";
@@ -62,5 +63,21 @@ describe("NEWS_STATUS_LABELS", () => {
   it("covers both statuses in es-AR", () => {
     expect(NEWS_STATUS_LABELS.draft).toBe("Borrador");
     expect(NEWS_STATUS_LABELS.published).toBe("Publicada");
+  });
+});
+
+describe("treasury badges", () => {
+  it("la mora escala: 1 secondary, 2 default, 4 destructive", () => {
+    expect(arrearsBadgeVariant(0)).toBe("outline");
+    expect(arrearsBadgeVariant(1)).toBe("secondary");
+    expect(arrearsBadgeVariant(2)).toBe("default");
+    expect(arrearsBadgeVariant(4)).toBe("destructive");
+  });
+  it("recibo anulado es destructive; cuota pagada default, pendiente secondary", () => {
+    expect(receiptBadgeVariant(true)).toBe("destructive");
+    expect(receiptBadgeVariant(false)).toBe("default");
+    expect(feeStatusBadgeVariant("paid")).toBe("default");
+    expect(feeStatusBadgeVariant("pending")).toBe("secondary");
+    expect(feeStatusBadgeVariant("voided")).toBe("outline");
   });
 });
