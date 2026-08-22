@@ -139,6 +139,20 @@ async function main() {
   }
   if (created.length > 0) console.log(`new  configuración: ${created.join(", ")}`)
   if (kept.length > 0) console.log(`ok   configuración (sin tocar): ${kept.join(", ")}`)
+
+  // Valor de cuota inicial (M4, REG-34): $6.000 activo / $3.000 adherente y
+  // colaborador, fijados por la asamblea de agosto de 2026, vigentes desde el
+  // primer devengo del sistema (septiembre 2026). Solo si la tabla está vacía:
+  // los valores posteriores se registran desde /admin/configuracion con acta.
+  const anyFeeValue = await prisma.feeValue.findFirst({ select: { id: true } })
+  if (!anyFeeValue) {
+    await prisma.feeValue.create({
+      data: { activeAmount: "6000.00", sharedAmount: "3000.00", validFrom: new Date(Date.UTC(2026, 8, 1, 12)) },
+    })
+    console.log("new  valor de cuota inicial: activo 6000 / compartido 3000 (vigente 01/09/2026)")
+  } else {
+    console.log("ok   valor de cuota (sin tocar)")
+  }
 }
 
 main()

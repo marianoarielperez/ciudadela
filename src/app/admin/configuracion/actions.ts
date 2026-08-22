@@ -13,6 +13,10 @@
 // corren sobre este POST. La pantalla de bloqueo de `page.tsx` esconde el
 // formulario; lo único que efectivamente cierra la puerta es el
 // `requireSuperadmin()` que abre esta función.
+//
+// Desde el Módulo 4 el archivo tiene una segunda action —`createFeeValueAction`,
+// el valor de la cuota— que comparte pantalla, guarda y motivo: el monto de la
+// cuota es la única fuente de plata del sistema y no lo toca el admin común.
 import { headers } from "next/headers";
 import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
@@ -21,6 +25,7 @@ import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
+import { parseCivilDate } from "@/lib/dates";
 import { CONFIG_KEYS } from "@/lib/config";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 
@@ -147,4 +152,80 @@ export async function updateConfigAction(
   }
 
   redirect("/admin/configuracion?guardado=1");
+}
+
+// ── Valor de cuota (M4, REG-34) ───────────────────────────────────────────────
+//
+// Registrar un valor nuevo NO edita el vigente: agrega una fila al historial con
+// su vigencia. La deuda de todos se valúa al vigente (REG-16), así que el valor
+// viejo deja de usarse solo, sin tocar ninguna cuota. El acta es opcional al
+// registrar (la asamblea ya lo fijó y el acta puede digitalizarse después).
+const feeValueSchema = z.object({
+  activeAmount: z.coerce
+    .number("Ingresá el monto de la cuota de socio activo.")
+    .int("El monto tiene que ser un número entero de pesos.")
+    .positive("El monto de activo tiene que ser mayor a cero."),
+  sharedAmount: z.coerce
+    .number("Ingresá el monto de la cuota de adherente/colaborador.")
+    .int("El monto tiene que ser un número entero de pesos.")
+    .positive("El monto de adherente/colaborador tiene que ser mayor a cero."),
+  // El mensaje va también en `z.string(...)`, no sólo en el `.regex(...)`: sin
+  // clave `validFrom` en el POST, zod ni llega al regex y devuelve su texto por
+  // defecto EN INGLÉS, que es lo que termina en pantalla (ver `@/lib/forms`).
+  validFrom: z
+    .string("Ingresá desde cuándo rige el valor.")
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ingresá desde cuándo rige el valor."),
+  minuteId: z.coerce.number().int().positive().optional(),
+});
+
+export async function createFeeValueAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await requireSuperadmin();
+  if (!actor.ok) return { error: actor.error };
+  const parsed = parseForm(feeValueSchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+  // El regex del schema es sólo de forma: `parseCivilDate` es el que rechaza el
+  // día que no existe y el año mal tipeado, y devuelve el mediodía UTC con el
+  // que se guardan todas las fechas civiles del proyecto.
+  const validFrom = parseCivilDate(parsed.data.validFrom, {
+    minYear: 2015,
+    invalidError: "La fecha de vigencia no es válida.",
+  });
+  if (!validFrom.ok) return { error: validFrom.error };
+
+  if (parsed.data.minuteId !== undefined) {
+    const minute = await prisma.minute.findUnique({
+      where: { id: parsed.data.minuteId },
+      select: { id: true },
+    });
+    if (!minute) return { error: "El acta seleccionada no existe." };
+  }
+
+  const row = await prisma.feeValue.create({
+    data: {
+      // Decimal(10,2): se manda string con dos decimales, no un float.
+      activeAmount: parsed.data.activeAmount.toFixed(2),
+      sharedAmount: parsed.data.sharedAmount.toFixed(2),
+      validFrom: validFrom.value,
+      minuteId: parsed.data.minuteId ?? null,
+      createdById: actor.actorId,
+    },
+  });
+  await audit({
+    userId: actor.actorId,
+    action: "fee_value_create",
+    entity: "fee_value",
+    entityId: row.id,
+    detail: {
+      activeAmount: parsed.data.activeAmount,
+      sharedAmount: parsed.data.sharedAmount,
+      validFrom: parsed.data.validFrom,
+      minuteId: parsed.data.minuteId ?? null,
+    },
+    ip: await clientIp(),
+  });
+  // Fuera de cualquier try: `redirect` funciona tirando una excepción.
+  redirect("/admin/configuracion?cuota=1");
 }
