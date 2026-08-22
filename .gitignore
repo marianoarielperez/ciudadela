@@ -8,8 +8,8 @@ node_modules/
 !.yarn/releases
 !.yarn/versions
 .next/
-out/
-dist/
+/out/
+/dist/
 /build
 /coverage
 
