@@ -161,7 +161,12 @@ Identidad única de la persona a través de todos los libros.
   `payment.fees` lo borraba al anular, porque la anulación despega esas cuotas del
   pago.
 - Un recibo **nunca se borra ni se renumera**: se anula, con motivo, y el número no
-  se reutiliza (REG-33). La anulación devuelve las cuotas a `pending`.
+  se reutiliza (REG-33). La anulación **no devuelve todas las cuotas a `pending`**:
+  `revertFees` (`src/lib/treasury/rules.ts`) separa por período. Las cuotas de un
+  período **posterior al corriente** se **borran** —el cobro en efectivo las creó
+  al imputar por adelantado, y dejarlas pendientes contaría como deuda antes de
+  tiempo—; el resto vuelve a `pending`. Vale porque `allocate` sólo crea períodos
+  que no existían: toda cuota futura ligada a ese pago la creó ese pago.
 - El PDF vive fuera del repo, en `RECEIPTS_DIR` (prod `/var/sigev/recibos`), y se
   sirve sólo por ruta autenticada. Se escribe **después** del commit y es
   regenerable: si falla, el cobro igual quedó asentado.

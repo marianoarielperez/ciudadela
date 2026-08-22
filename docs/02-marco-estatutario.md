@@ -168,8 +168,12 @@ Proceso completo en `05-flujos-funcionales.md`. Reglas duras:
 - REG-34. La CD puede actualizar la cuota hasta 4 veces/año (Art. 23 inc. o).
   Desde el Módulo 4 el **historial de valores de cuota** (monto de activo, monto
   compartido de adherente/colaborador, vigencia desde, acta) es la **única fuente
-  de montos** del sistema: devengo, deuda, efectivo y reingreso lo leen de ahí, y
-  a Mercado Pago se le **empuja** el valor, ya no se le pregunta. El valor se
+  de montos** del sistema: devengo, deuda, efectivo y reingreso lo leen de ahí.
+  A Mercado Pago se le **va a empujar** el valor en vez de preguntárselo, pero eso
+  todavía **no ocurre**: el lote que recorre las suscripciones y les actualiza el
+  monto es la **fase 4B**, y hasta entonces el wizard sigue pidiéndole el monto al
+  plan de MP (`mpGateway.getPlan`), así que los dos ids de plan siguen siendo
+  obligatorios en `/admin/configuracion`. El valor se
   registra desde `/admin/configuracion` (superadmin) y nunca se edita: un valor
   mal cargado se corrige asentando otro encima, como un acta.
   El tope de 4 por año **no lo controla el sistema** (decisión del cliente,

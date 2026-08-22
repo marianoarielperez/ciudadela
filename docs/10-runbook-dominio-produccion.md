@@ -9,8 +9,9 @@ el nombre `sigev`.
 > lanzamiento público a la oficialización de la IGJ. Todo lo de este runbook se
 > puede dejar preparado antes (el dominio puede apuntar y el sitio quedar
 > accesible con ASOCIATE apagado), pero publicarlo es una decisión de la Comisión,
-> no un paso técnico. Mientras tanto, el Módulo 2 se despliega a staging con el
-> procedimiento de la sección 4.
+> no un paso técnico. Todo despliegue —éste y los que sigan— va a
+> `vecinalciudadela.ar` con el procedimiento de la sección 4: **el staging
+> `sigev.redaccion.ar` se dio de baja el 20/08/2026** y hay un solo entorno.
 
 ---
 
@@ -72,8 +73,10 @@ Tres razones por las que SIGeV va proxied:
    ningún navegador: lo valida Cloudflare. Con la nube gris el visitante recibe
    un certificado no confiable. Si se prefiriera la nube gris, habría que usar
    Certbot como cbinfraestructura y saltear el paso 1.3.
-2. **Staging ya funciona así** (`sigev.redaccion.ar`, con el Origin wildcard de
-   `redaccion.ar`), y el server block de producción es el mismo patrón.
+2. **El staging funcionaba así** (`sigev.redaccion.ar`, con el Origin wildcard de
+   `redaccion.ar`), y el server block de producción es el mismo patrón. Ese entorno
+   se dio de baja el 20/08/2026; queda como referencia de la configuración, no como
+   un lugar al que desplegar.
 3. **HSTS la emite Cloudflare, no la app** — decisión tomada en el Módulo 2 y
    escrita en `next.config.ts`. Con la nube gris nadie la emite.
 
@@ -373,21 +376,74 @@ pm2 save
 **Específico de la fase 4A del Módulo 4 (tesorería: cuenta corriente, efectivo,
 recibos, deudores):**
 
-Este despliegue tiene dos mitades muy distintas. La primera (pasos 1 a 5) es un
-deploy normal y se puede repetir. La segunda (pasos 6 y 7) es la **carga
-fundacional de datos**: corre **una sola vez**, borra fichas físicamente y crea
-3080 cuotas que después se van a cobrar y a notificar de forma fehaciente. No hay
-"des-importar". Leé los pasos 6 y 7 enteros antes de tipear nada.
+Este despliegue tiene tres tramos muy distintos. El primero (pasos 1 a 5) es un
+deploy normal y se puede repetir. El segundo (paso 6) **borra los datos de prueba**
+que hoy tiene el VPS: es destructivo pero acotado, y el paso 1 lo cubre. El tercero
+(pasos 7 y 8) es la **carga fundacional de datos**: corre **una sola vez**, borra
+fichas físicamente y crea 3080 cuotas que después se van a cobrar y a notificar de
+forma fehaciente. No hay "des-importar". Leé los pasos 6, 7 y 8 enteros antes de
+tipear nada.
 
-#### 1. Backup, antes de todo
+#### 1. Backup **cifrado**, antes de todo
+
+El dump lleva 278 DNIs, así que no puede quedar en claro en `/root` esperando a que
+alguien se acuerde de borrarlo: `docs/08` no admite excepciones —los backups viajan
+y descansan cifrados, siempre— y este en particular es el único camino de vuelta de
+todo lo que sigue.
 
 ```bash
-mysqldump sigev > /root/backup-pre-m4a-$(date +%F).sql
-ls -lh /root/backup-pre-m4a-*.sql       # que NO diga 0 bytes
+mysqldump --single-transaction --routines sigev \
+  | gzip \
+  | gpg --batch --yes --symmetric --cipher-algo AES256 \
+        --passphrase-file /root/.sigev_backup_pass \
+        -o /root/backup-pre-m4a-$(date +%F).sql.gz.gpg
+ls -lh /root/backup-pre-m4a-*.sql.gz.gpg     # que NO diga 0 bytes
 ```
 
-Si el archivo salió vacío o el `mysqldump` devolvió error, **frená acá**: el resto
-de este procedimiento no tiene vuelta atrás sin él.
+Es el mismo cifrado que usa `scripts/backup.sh` (AES256 simétrico con la passphrase
+de `/root/.sigev_backup_pass`), pero a mano: al día de hoy **ese script todavía no
+está instalado en el VPS** —no hay crontab y `rclone` no está, `docs/09`—, así que
+no hay un backup nocturno del que colgarse. Si para cuando leas esto ya lo
+instalaste, corré `bash scripts/backup.sh` **además** de este comando: sube una
+copia al Drive, y una copia en el mismo disco que la base no es un backup. Lo que
+no hay que hacer es correr `backup.sh` **de nuevo el mismo día, después del
+import**: el nombre lleva `$(date +%F)` y pisaría la foto previa con la posterior.
+
+Si `/root/.sigev_backup_pass` no existiera todavía, creala **antes** —y anotá la
+passphrase fuera del VPS, que es la mitad que importa: sin ella el `.gpg` no se
+restaura desde ningún lado—:
+
+```bash
+umask 077 && printf '%s' 'UNA-PASSPHRASE-LARGA' > /root/.sigev_backup_pass
+```
+
+Si el archivo ya existe, **no lo pises**: los backups viejos se descifran con la
+que está adentro.
+
+**Restaurar** — el comando que hay que tener a mano *antes* de necesitarlo:
+
+```bash
+gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
+    /root/backup-pre-m4a-AAAA-MM-DD.sql.gz.gpg \
+  | gunzip \
+  | mysql sigev
+```
+
+Deja la base como estaba antes del paso 6, y por lo tanto **borra todo lo que haya
+pasado después** (un cobro en efectivo, una noticia publicada). Por eso este runbook
+junta los pasos irreversibles al final y pide no usar el panel mientras dure.
+
+**Cuándo borrar el backup**: cuando el paso 9 haya dado los tres números esperados
+y alguien haya mirado el panel. Ahí sí:
+
+```bash
+shred -u /root/backup-pre-m4a-*.sql.gz.gpg
+```
+
+Cifrado o no, ese archivo es el padrón entero y `/root` no es donde tiene que vivir.
+
+Si el `mysqldump` devolvió error o el `.gpg` salió vacío, **frená acá**: el resto de
+este procedimiento no tiene vuelta atrás sin él.
 
 #### 2. `RECEIPTS_DIR` en el `.env` y el directorio, ANTES del deploy
 
@@ -403,8 +459,8 @@ install -d -m 750 /var/sigev/recibos
 ls -ld /var/sigev/recibos               # drwxr-x--- root root
 ```
 
-`/var/sigev/recibos` **ya está cubierto por `scripts/backup.sh`** (el tar nocturno
-empaqueta `uploads` y `recibos`), así que no hay que tocar el backup.
+`/var/sigev/recibos` **ya está contemplado en `scripts/backup.sh`** (el tar empaqueta
+`uploads` y `recibos`), así que cuando ese script se instale no hay que tocarlo.
 
 #### 3. El deploy
 
@@ -436,42 +492,391 @@ Entrá al panel y comprobá tres cosas:
   valor vigente el cobro en efectivo no puede calcular ningún total.
 - Las cuatro pestañas (Deudores / Efectivo / Recibos / Valores) navegan.
 
-#### 5. Un recibo de prueba (opcional, pero es la única forma de probar el disco)
+#### 5. Un recibo de prueba, sobre el socio 306
 
-Cobrá un aporte voluntario de $ 1 a un socio de prueba y abrí el PDF desde el
-detalle del recibo. Es el único paso que ejercita `RECEIPTS_DIR` de verdad: si los
-permisos están mal, la pantalla dice "el archivo no está disponible" y el PDF se
-regenera al volver a pedirlo. Después anulá el recibo (el número queda quemado, que
-es lo correcto: la serie no se renumera).
+Es el único paso que ejercita `RECEIPTS_DIR` de verdad, así que conviene hacerlo.
+Cobrale **$ 1 de aporte voluntario al socio 306** —el piloto— y abrí el PDF desde el
+detalle del recibo: si los permisos están mal, la pantalla dice "el archivo no está
+disponible" y el PDF se regenera al volver a pedirlo. **Dejá sin marcar "enviar el
+recibo por email"**: la casilla que cargó el piloto en el wizard es de prueba.
+
+Dos razones para que sea el 306 y no cualquiera:
+
+- Es **adherente**, y a un adherente la pantalla de Efectivo sólo le ofrece aporte
+  voluntario y extraordinario (`cashConceptsFor`). Es lo que hay que cobrarle igual.
+- Está en el Excel, así que **la poda del paso 7 no lo mira**. Cobrarle a un socio
+  que la poda tiene que borrar le crea un pago, y un pago es uno de los motivos por
+  los que la poda aborta — y **ninguna acción del panel borra un pago**.
+
+No hace falta anular el recibo: el paso 6 borra el recibo, el pago y la cuota junto
+con el resto de los datos de prueba, y repone el contador de la serie para que el
+primer recibo de verdad de la asociación sea el `AAAA-00001`. (Si querés ver la
+anulación funcionando, anulalo igual: se borra lo mismo.)
 
 **No probar un cobro por Mercado Pago acá**: el dominio corre con credenciales
 productivas desde el 22/08/2026 y eso sería plata de un vecino.
 
-#### 6. Padrón definitivo — `--update-existing --prune --yes`
+#### 6. Limpieza de los datos de prueba
 
-Este comando hace **dos cosas destructivas**. Antes de correrlo hay que decidir
-sobre las dos.
+Lo que hay hoy en el VPS son datos que Mariano cargó él mismo probando el panel y el
+wizard: **el padrón definitivo es el Excel** (decisión del 21/08/2026, confirmada el
+22/08/2026). Este paso saca las **solicitudes**, la **tesorería de prueba** y los
+**socios que no figuran en el padrón**; las fichas que sí figuran se emparejan con
+el Excel en el paso 7, que es el que las pisa. Del piloto se conserva **la ficha del
+socio 306 y su suscripción de Mercado Pago**; su solicitud y todo lo que colgaba de
+ella se borran, porque los datos que tipeó en el wizard son ficticios.
+
+Este paso va **antes** del import por una razón concreta: la poda del paso 7 se
+niega a borrar un socio que todavía tenga solicitud, cuenta, suscripción, pago,
+cuota o un movimiento cargado a mano, y en el VPS hay socios nacidos de solicitudes
+de prueba que no están en el Excel. Si no se limpia primero, el import aborta sin
+escribir nada y hay que volver acá igual.
+
+Abrí **una sesión interactiva** y hacé todo desde ahí: las variables de usuario
+(`@…`) viven en la conexión y se pierden entre invocaciones de `mysql -e`.
+
+```bash
+mysql sigev
+```
+
+```sql
+SELECT id INTO @libro1 FROM books WHERE `number` = 1;
+SELECT member_id INTO @socio306 FROM memberships WHERE book_id = @libro1 AND member_number = 306;
+SELECT @libro1 AS libro, @socio306 AS ficha_del_306;
+```
+
+Las dos tienen que dar un número. Si `ficha_del_306` viene `NULL`, el piloto no está
+en la base y este runbook no describe lo que tenés delante: **frená y averiguá por
+qué** antes de borrar nada.
+
+Las consultas de abajo nombran **números de socio e ids**, nunca nombres ni DNIs: la
+salida de una sesión así termina pegada en un chat (Ley 25.326, `docs/08`).
+
+##### 6.1 Inventario — mirar antes de borrar
+
+**(a) Las solicitudes.**
+
+```sql
+SELECT a.id, a.status, a.requested_category, a.wants_debit,
+       ms.member_number AS socio, a.preapproval_id,
+       a.mp_payment_id_entry, a.entry_amount, a.created_at
+FROM applications a
+LEFT JOIN memberships ms ON ms.member_id = a.member_id AND ms.book_id = @libro1
+ORDER BY a.id;
+```
+
+⚠️ **Copiá esta salida y guardala en el legajo del piloto antes de seguir.** En la
+fase 4A `mp_payment_id_entry` y `entry_amount` **son** el registro de la cuota de
+ingreso: `Payment` y `Receipt` no existían cuando se cobró, así que no hay una fila
+de pago que sobreviva a la solicitud. Después del `DELETE`, ese cobro vive en el
+panel de Mercado Pago y en el payload crudo de `webhook_events` (que no se borra), y
+en ningún otro lado de SIGeV.
+
+**(b) Las suscripciones de Mercado Pago.**
+
+```sql
+SELECT s.id, s.preapproval_id, s.status, s.amount, s.plan_id,
+       s.application_id, s.member_id, ms.member_number AS socio, s.created_at
+FROM mp_subscriptions s
+LEFT JOIN memberships ms ON ms.member_id = s.member_id AND ms.book_id = @libro1
+ORDER BY s.id;
+```
+
+La del piloto es la que tiene `member_id = @socio306`.
+
+**(c) La tesorería cargada a mano.**
+
+```sql
+SELECT (SELECT COUNT(*) FROM fees)                   AS cuotas,
+       (SELECT COUNT(*) FROM payments)               AS pagos,
+       (SELECT COUNT(*) FROM receipts)               AS recibos,
+       (SELECT COUNT(*) FROM mp_unmatched_payments)  AS sin_conciliar,
+       (SELECT GROUP_CONCAT(CONCAT(`year`, ':', `last`)) FROM receipt_sequences) AS serie;
+```
+
+Antes del import de deuda **no puede haber ninguna cuota legítima**: no hay cron de
+devengo (es la fase 4C) y la deuda histórica todavía no se cargó. Todo lo que
+aparezca acá es el recibo del paso 5 o una prueba anterior.
+
+**(d) Los socios que la poda va a mirar** — los que están en el libro y **no** en el
+Excel, con los mismos siete motivos por los que el script se niega a borrarlos. El
+Excel llega hasta el 306 y tiene 28 huecos, así que el conjunto se escribe exacto:
+
+```sql
+SELECT ms.member_number AS socio,
+       (m.user_id IS NOT NULL)                                            AS cuenta,
+       (SELECT COUNT(*) FROM applications     a  WHERE a.member_id  = m.id) AS solicitudes,
+       (SELECT COUNT(*) FROM mp_subscriptions s  WHERE s.member_id  = m.id) AS suscripciones,
+       (SELECT COUNT(*) FROM payments         p  WHERE p.member_id  = m.id) AS pagos,
+       (SELECT COUNT(*) FROM fees             f  WHERE f.member_id  = m.id) AS cuotas,
+       (SELECT COUNT(*) FROM memberships      x  WHERE x.member_id  = m.id) AS libros,
+       (SELECT COUNT(*) FROM movements        mv WHERE mv.member_id = m.id
+          AND NOT (mv.type = 'admission'
+                   AND mv.detail = 'import Libro 1 (acta física no digitalizada)')) AS mov_a_mano
+FROM memberships ms
+JOIN members m ON m.id = ms.member_id
+WHERE ms.book_id = @libro1
+  AND (ms.member_number > 306
+       OR ms.member_number IN (21,71,72,73,93,94,95,97,118,125,132,141,147,158,
+                               199,208,214,221,222,223,224,238,239,245,254,263,
+                               287,288))
+ORDER BY ms.member_number;
+```
+
+**Lo esperado son seis filas** —118, 141, 158, 239, 287, 288— con todas las columnas
+en `0` salvo `libros = 1`. Ésas son las fichas que la Comisión sacó del libro y las
+que la poda borra sin chistar. Cualquier fila de más es un socio de prueba, y
+cualquier columna distinta de `0` en cualquier fila hace **abortar** el import:
+las dos cosas se resuelven en el paso 6.5.
+
+**(e) Lo que el import va a pisar.**
+
+```sql
+SELECT ms.member_number AS socio, m.street_id, m.street_text, m.street_number,
+       m.phone, m.birth_date, m.civil_status, m.nationality, m.occupation,
+       m.email_status
+FROM members m
+JOIN memberships ms ON ms.member_id = m.id AND ms.book_id = @libro1
+WHERE m.street_text IS NOT NULL OR m.street_number IS NOT NULL OR m.phone IS NOT NULL
+   OR m.birth_date IS NOT NULL OR m.civil_status IS NOT NULL
+   OR m.nationality IS NOT NULL OR m.occupation IS NOT NULL
+ORDER BY ms.member_number;
+```
+
+Estas son las fichas con datos que el Excel no trae. **Que se pisen es lo que se
+busca** (ver el paso 7), pero la decisión tiene que ser mirada: si alguna fila
+resultara ser trabajo bueno de la Comisión y no una prueba, guardala ahora.
+
+**(f) Quiénes pueden producir los avisos de email del import.**
+
+```sql
+SELECT ms.member_number AS socio, m.user_id, (m.email IS NOT NULL) AS ficha_con_email
+FROM members m
+JOIN memberships ms ON ms.member_id = m.id AND ms.book_id = @libro1
+WHERE m.user_id IS NOT NULL
+ORDER BY ms.member_number;
+```
+
+Los tres avisos de email del import (conflicto, "quedaría sin email", "se le mudó la
+dirección de ingreso") **sólo pueden salir de un socio con cuenta de acceso**. Ésta
+es la lista completa de candidatos, y hoy tiene que ser cortita.
+
+##### 6.2 Las solicitudes de prueba
+
+Qué cuelga de cada una:
+
+```sql
+SELECT a.id, a.status,
+       (SELECT COUNT(*) FROM documents       d WHERE d.owner_type='application' AND d.owner_id=a.id) AS documentos,
+       (SELECT COUNT(*) FROM notifications   n WHERE n.application_id = a.id) AS notificaciones,
+       (SELECT COUNT(*) FROM action_tokens   t WHERE t.application_id = a.id) AS enlaces,
+       (SELECT COUNT(*) FROM mp_subscriptions s WHERE s.application_id = a.id) AS suscripciones,
+       (SELECT COUNT(*) FROM payments        p WHERE p.application_id = a.id) AS pagos
+FROM applications a
+ORDER BY a.id;
+
+-- Los archivos NO tienen FK: hay que borrarlos del disco a mano.
+SELECT d.id, d.owner_id AS solicitud, d.type, d.path
+FROM documents d WHERE d.owner_type = 'application' ORDER BY d.owner_id, d.id;
+```
+
+Si en la primera lista hubiera alguna solicitud que **no** sea de prueba, no corras
+el borrado en bloque: borrá por `id`.
+
+```sql
+START TRANSACTION;
+-- Una notificación de solicitud tiene `member_id` NULL (el destinatario todavía no
+-- era socio). El FK `ON DELETE SET NULL` le dejaría también `application_id` en
+-- NULL: una fila sin dueño, invisible desde cualquier pantalla. Se borran a mano.
+DELETE FROM notifications WHERE application_id IS NOT NULL;
+DELETE FROM documents     WHERE owner_type = 'application';
+DELETE FROM applications;
+COMMIT;
+```
+
+Los `action_tokens` de la solicitud se van solos (`ON DELETE CASCADE`).
+
+**La suscripción del piloto sobrevive, y no es una casualidad.** El vínculo de
+`MpSubscription` con el socio **no pasa por la solicitud**: al asentar el alta, el
+sistema le escribe `member_id` a la suscripción (`src/lib/applications/record.ts`),
+y el vínculo con Mercado Pago es el `preapproval_id`, que vive en esa misma fila.
+El FK `mp_subscriptions.application_id` es `ON DELETE SET NULL`, así que borrar la
+solicitud sólo le pone ese puntero en NULL. Verificalo:
+
+```sql
+SELECT id, preapproval_id, status, member_id, application_id FROM mp_subscriptions;
+```
+
+`member_id` tiene que seguir siendo el del 306 y `application_id` ahora `NULL`.
+
+Lo que **también** sobrevive, y está bien que sobreviva: el movimiento de admisión
+del 306 (`Alta vía solicitud web #N`) con su acta, y los asientos de auditoría del
+alta. Son el registro institucional del ingreso; que el `#N` que nombran ya no
+exista como fila es prolijidad perdida, no un dato perdido.
+
+Y los archivos:
+
+```bash
+ls -R /var/sigev/uploads/applications
+rm -rf /var/sigev/uploads/applications/*
+```
+
+##### 6.3 Las suscripciones que no son la del piloto
+
+⚠️ **Borrar la fila no cancela nada en Mercado Pago.** Desde el 22/08/2026 las
+credenciales son productivas: un `preapproval` en estado `authorized` o `pending`
+sigue cobrando aunque acá no quede rastro, y sin la fila te quedás sin el
+`preapproval_id` para cancelarlo. Copiá los ids de la consulta 6.1 **(b)**, cancelá
+en el panel de MP los que estén vivos, y recién entonces:
+
+```sql
+SELECT id, preapproval_id, status, member_id FROM mp_subscriptions
+WHERE member_id IS NULL OR member_id <> @socio306;
+
+DELETE FROM mp_subscriptions WHERE member_id IS NULL OR member_id <> @socio306;
+```
+
+##### 6.4 La tesorería de prueba
+
+```sql
+SELECT r.id, r.number, r.payment_id, r.issued_at, r.voided_at, r.pdf_path FROM receipts ORDER BY r.id;
+SELECT p.id, p.type, p.amount, p.paid_at, p.member_id, p.status  FROM payments ORDER BY p.id;
+SELECT f.member_id, f.period, f.status, f.origin                 FROM fees ORDER BY f.member_id, f.period;
+```
+
+El orden del borrado no es negociable: `receipts.payment_id` es `ON DELETE
+RESTRICT`, así que un pago con recibo no se borra hasta que el recibo no esté.
+
+```sql
+START TRANSACTION;
+DELETE FROM receipts;
+DELETE FROM fees;
+DELETE FROM mp_unmatched_payments;
+DELETE FROM payments;
+-- El contador vuelve a cero para que el PRIMER recibo real sea el AAAA-00001.
+-- La serie no se renumera nunca (REG-33) una vez que empezó a emitir recibos de
+-- verdad; todavía no empezó, y ésta es la única ventana en que reponerla es
+-- correcto. La fila la recrea sola el próximo recibo
+-- (`INSERT … ON DUPLICATE KEY UPDATE`, `src/lib/treasury/receipt-number.ts`).
+DELETE FROM receipt_sequences;
+COMMIT;
+```
+
+Los PDFs que quedaron en disco:
+
+```bash
+ls -R /var/sigev/recibos
+rm -rf /var/sigev/recibos/*
+```
+
+##### 6.5 Los socios de prueba que no están en el Excel
+
+Volvé a correr la consulta 6.1 **(d)**. Si ahora da exactamente las seis filas
+esperadas con todo en `0`, ya está: pasá al paso 7. Si queda alguna fila de más —un
+socio nacido de una solicitud de prueba, o dado de alta por acta— hay que borrarla a
+mano, porque **la poda no puede**: ese socio tiene un `Movement` de admisión con
+detalle `Alta vía solicitud web #N`, que no es el que escribió el import, y
+probablemente una cuenta de acceso. Los dos son motivos de aborto.
+
+Para cada número `N` que sobre, uno por vez:
+
+```sql
+-- Reemplazá `N` por el número de socio de la fila que sobra.
+SELECT member_id INTO @vict FROM memberships WHERE book_id = @libro1 AND member_number = N;
+SELECT id, user_id, status, category, joined_at, created_at FROM members WHERE id = @vict;
+SELECT id, type, date, detail FROM movements     WHERE member_id = @vict;
+SELECT id, purpose            FROM action_tokens WHERE member_id = @vict;
+SELECT id, type, sent_at      FROM notifications WHERE member_id = @vict;
+```
+
+Miralo antes de borrar: si esa ficha resultara ser un socio de verdad que la
+Comisión dio de alta y se olvidó de poner en el Excel, la salida correcta es la 2 o
+la 3 del paso 7, no ésta.
+
+```sql
+SELECT user_id INTO @cuenta FROM members WHERE id = @vict;
+
+START TRANSACTION;
+DELETE FROM notifications WHERE member_id = @vict;
+DELETE FROM action_tokens WHERE member_id = @vict;
+DELETE FROM movements     WHERE member_id = @vict;   -- FK RESTRICT: van antes que la ficha
+DELETE FROM memberships   WHERE member_id = @vict;   -- idem
+DELETE FROM members       WHERE id = @vict;
+-- La cuenta NO se va con la ficha: el FK vive en `members.user_id`, así que borrar
+-- el socio deja el `User` intacto —con su contraseña y su rol `socio`— apuntando a
+-- la nada. `user_roles` sí cae por CASCADE cuando se borra el usuario.
+DELETE FROM users         WHERE id = @cuenta;   -- si no tenía cuenta, @cuenta es NULL y no borra nada
+COMMIT;
+```
+
+(Las cuotas y los pagos de esa ficha ya no existen: los borró el paso 6.4. Si por
+alguna razón quedaran, `fees` cae por CASCADE y `payments` queda con `member_id`
+NULL — un pago cobrado no desaparece porque la ficha salga del libro.)
+
+Hoy la app sólo guarda documentos de **solicitud** (`owner_type = 'application'`),
+así que no hay nada que borrar en `documents` por el lado del socio.
+
+##### 6.6 Cuentas de acceso huérfanas
+
+```sql
+SELECT u.id, u.active, u.last_login_at,
+       (SELECT GROUP_CONCAT(r.name) FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = u.id) AS roles
+FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM members m WHERE m.user_id = u.id);
+```
+
+Las que digan sólo `socio` son restos de las pruebas: borralas por `id`
+(`DELETE FROM users WHERE id = …`; `user_roles` cae por CASCADE). **Las de `admin` y
+`superadmin` no tienen ficha por diseño: no las toques.**
+
+#### 7. Padrón definitivo — `--update-existing --prune --yes`
+
+Con el paso 6 hecho, este comando hace dos cosas destructivas, y las dos son las que
+se quieren.
 
 **(a) `--update-existing` pisa las fichas con lo que dice el Excel, incluidos los
-campos vacíos.** El Excel del padrón trae número, nombre, DNI, email, categoría,
-estado y fechas, y **nada más**: domicilio, teléfono, fecha de nacimiento, estado
-civil, nacionalidad y ocupación vienen vacíos en casi todas las filas. Cada ficha
-que alguien haya completado a mano desde el panel **pierde esos datos**. Preguntá
-antes: ¿alguien de la Comisión ya usó el modo carga de fichas? Si la respuesta es
-sí, corré primero sin el flag (ver más abajo) y resolvé a mano.
+campos vacíos — y eso es el objetivo, no un riesgo a esquivar.** Lo que hay hoy en
+las fichas del VPS son datos de prueba; el padrón definitivo es el Excel. La corrida
+es lo que los limpia.
 
-El socio **306** —el piloto que se afilió por la web el 22/08/2026— está en el
-Excel, así que no lo poda; pero **sí lo pisa**: la ficha que cargó él en el wizard
-(domicilio, teléfono, fecha de nacimiento) queda en blanco. Si eso importa,
-guardala antes o volvé a cargarla después.
+Medido sobre `datos/padron_socios.xlsx`, esto es lo que el Excel tiene para escribir
+en las 278 fichas:
+
+| Columnas | Filas que las traen |
+|---|---|
+| `dni`, `barrio`, `debito_automatico` | las 278 |
+| `deuda_tesoreria` | 116 |
+| `email` | 37 |
+| `calle`, `altura`, `fecha_nacimiento`, `estado_civil`, `ocupacion` | **3** (socios 14, 15 y 274) |
+| `nacionalidad`, `telefono` | **ninguna** |
+
+O sea: nacionalidad y teléfono quedan en blanco en todas las fichas, y domicilio,
+fecha de nacimiento, estado civil y ocupación quedan en blanco en todas menos esas
+tres. Dos precisiones que la tabla no muestra:
+
+- **`street_id` no está entre las columnas que escribe el import** (`mapPadronRow`
+  produce `streetText`, no `streetId`): un domicilio elegido del autocompletado
+  sobrevive; el texto libre y la altura, no.
+- **`email_status` vuelve a `declarado`** en toda ficha a la que el Excel le traiga
+  dirección, mientras que `email_verified_at` no se toca — quedan diciendo cosas
+  distintas. Al socio **306**, que confirmó su casilla en el wizard, le pasa esto.
+  Se repone mandándole de nuevo el enlace de verificación desde su ficha.
+
+La consulta 6.1 **(e)** ya te mostró, fila por fila, qué hay hoy en esas columnas.
+
+El **email es la única columna con protección**, y sólo a medias: si el Excel no
+trae dirección **y el socio ya tiene cuenta de acceso**, la fila entera **no se
+actualiza** (dejarlo sin email le dejaría a la cuenta ingresando con una dirección
+que ya no figura en ningún lado), y el reporte las cuenta aparte. En una ficha
+**sin** cuenta, el email se borra como cualquier otra columna.
 
 **(b) `--prune --yes` borra FÍSICAMENTE los socios del libro que ya no están en el
-Excel.** Son seis: **118, 141, 158, 239, 287, 288**, las fichas que la Comisión
-sacó del libro en la carga definitiva del 21/08/2026. Pero el criterio del script
-es "está en la base y no está en el Excel", no esa lista: **cualquier socio dado de
-alta desde el M1 y que no figure en el archivo entra en la poda**. Si en el VPS se
-dio de alta a alguien por acta o por el wizard después del import original, ese
-socio no está en el Excel.
+Excel.** Son seis: **118, 141, 158, 239, 287, 288**, las fichas que la Comisión sacó
+del libro en la carga definitiva del 21/08/2026. Pero el criterio del script es
+"está en la base y no está en el Excel", no esa lista: **cualquier socio dado de alta
+en el VPS y ausente del archivo entra en la poda**. La consulta 6.1 **(d)** es
+exactamente ese criterio, y por eso va antes.
 
 El script se defiende: si un socio a podar tiene **cuenta de acceso, solicitud,
 suscripción de Mercado Pago, pago, cuota, membresía en otro libro o cualquier
@@ -485,13 +890,28 @@ IMPORT ABORTADO — ERROR DE DATOS O DE USO: revisá datos/padron_socios.xlsx �
     socio 307: tiene cuenta de acceso, 1 solicitud(es)
 ```
 
-Las dos salidas legítimas de ese aborto son: **ponerlo en el Excel** (si tiene que
-seguir en el libro) o **resolverlo a mano desde el panel** (darlo de baja en vez de
-borrarlo). Nunca forzar el borrado.
+**Las salidas de ese aborto son tres, y "darlo de baja desde el panel" no es
+ninguna.** La baja **no** saca la fila de `memberships`: el socio sigue estando en la
+base y no en el Excel, así que la corrida siguiente lo vuelve a listar — y encima le
+escribe un `Movement` de tipo `withdrawal`, que es justamente uno de los motivos por
+los que el script se niega. Lo que sí funciona:
 
-**La corrida de reconocimiento (recomendada).** Sin flags, el script sólo crea
-socios nuevos y no toca ninguna ficha existente, pero igual imprime todos los
-totales y todos los avisos:
+1. **Sacarle los datos del sistema y volver a correr.** Es el paso 6.5, aplicado a
+   ese socio.
+2. **Volver a ponerlo en el Excel.** Ojo: agregar una fila cambia los totales de
+   control (279 ≠ 278) y `--prune` aborta **antes de escribir nada**. Hay que
+   actualizar además `EXPECTED_ROWS` / `EXPECTED_ACTIVE` / `EXPECTED_GAPS` en
+   `scripts/import-padron.ts`, commitear y desplegar: no es una corrección que se
+   haga en el VPS.
+3. **Correr sin `--prune`**, sólo con `--update-existing`. El padrón queda al día y
+   el socio de más queda en el libro para resolverlo después. La poda no es
+   condición para que la tesorería funcione: el import de deuda matchea por número y
+   DNI, y un socio de más no le molesta a nadie.
+
+Nunca forzar el borrado por SQL saltando las guardas del script.
+
+**La corrida de reconocimiento, y lo que NO te va a decir.** Sin flags el script
+sólo crea los socios que falten y no toca ninguna ficha existente:
 
 ```bash
 cd /root/dev/ciudadela
@@ -500,8 +920,24 @@ cat padron-import-report.txt
 ```
 
 Mirá que diga `filas: 278 (esperado 278)`, `vigentes: 160 (esperado 160)` y
-`huecos (28, esperado 28)`. **Si alguno no coincide, no sigas**: el archivo no es
-el que este runbook describe.
+`huecos (28, esperado 28)`. **Si alguno no coincide, no sigas**: el archivo no es el
+que este runbook describe.
+
+Lo que esa corrida **no** puede mostrarte —y por eso no alcanza como visto bueno—:
+
+- **Los tres avisos de email no salen.** Sin `--update-existing`, el loop hace
+  `unchanged++; continue;` sobre cada socio que ya existe y nunca llega a
+  `memberWriter.updateMember`, que es quien produce "el email ya pertenece a otra
+  cuenta", "el Excel no trae email y el socio ya tiene cuenta" y "se le mudó la
+  dirección de ingreso". Los avisos que sí imprime son los del parseo del Excel
+  (en este archivo, sólo `baja sin fecha_egreso`; los otros dos de esa familia son
+  `sin DNI` y `motivo_baja no mapeado`), que se calculan sobre el archivo y no
+  dependen de la base. **Un reconocimiento sin avisos de email
+  no significa que no haya conflictos.** El pre-vuelo de eso es la consulta 6.1
+  **(f)**: esos avisos sólo pueden salir de un socio con cuenta de acceso.
+- **La poda no se calcula.** Sin `--prune` el script ni mira qué socios sobran; la
+  línea del reporte dice `poda: no se pidio`. El pre-vuelo de eso es la consulta 6.1
+  **(d)**.
 
 **La corrida real:**
 
@@ -533,10 +969,20 @@ tienen que dar exactamente eso.
 
 **Los avisos que espera este archivo, y que NO son un problema:**
 
-- `socio N: baja sin fecha_egreso` para **5, 10, 20, 31, 32, 99 y 282**. El libro
-  de papel no la tiene. Los socios **31 y 32** además están de baja **sin motivo**:
-  el Excel deja la celda vacía y quedan con motivo nulo. Los siete son datos que la
-  Comisión tiene que completar desde el panel; ninguno frena nada.
+- `socio N: baja sin fecha_egreso` para **5, 10, 20, 31, 32, 99 y 282**. El libro de
+  papel no la tiene. Tres de los siete arrastran algo más:
+  - **31 y 32** están de baja **sin motivo**: el Excel deja la celda vacía y quedan
+    con motivo nulo.
+  - **282** es la ficha más contradictoria del archivo: categoría **Activo**,
+    `activo = No`, motivo **Fallecido** y **sin `fecha_egreso`**. Y es además el
+    **único de los 278 cuya categoría no coincide entre los dos libros de trabajo**:
+    `padron_socios.xlsx` dice Activo y `deuda.xlsx` dice Adherente. No frena nada
+    —282 no tiene deuda, y el import de deuda matchea por número y DNI, no por
+    categoría—, pero es una contradicción del papel que la Comisión tiene que
+    resolver. Mientras tanto manda el padrón, que es el que escribe la ficha.
+
+  Los siete son datos que la Comisión tiene que completar desde el panel; ninguno
+  frena nada.
 - `socio N: el Excel no trae email y el socio ya tiene cuenta de acceso — la fila
   NO se actualizó`. Es una **protección, no un error**: dejar la ficha sin email
   dejaría a la cuenta ingresando con una dirección que ya no figura en ningún lado.
@@ -559,7 +1005,7 @@ una hoja que no se llama `socios`, un encabezado renombrado o duplicado, una cel
 `numero_socio` que no es un número, y —sólo con `--prune`— los totales de control
 que no dan, que corta **antes de la primera escritura**.
 
-#### 7. Deuda histórica — `scripts/import-deuda.ts`
+#### 8. Deuda histórica — `scripts/import-deuda.ts`
 
 Va **después** del padrón, siempre: necesita que cada socio del Excel de deuda
 matchee por número **y** DNI contra el libro abierto.
@@ -585,8 +1031,8 @@ del primer año les da más cuotas de las que ese año pudo devengar. No se desc
 ninguna (la cantidad la puso el tesorero), pero conviene revisarlas con él.
 
 Es **idempotente por socio**: correrlo de nuevo imprime `importados: 0 | salteados:
-119 | cuotas creadas: 0`. Eso también significa que **corregir el Excel y
-re-correr no arregla a quien ya se cargó mal**: hay que corregirlo desde el panel.
+119 | cuotas creadas: 0`. Eso también significa que **corregir el Excel y re-correr
+no arregla a quien ya se cargó mal**: hay que corregirlo desde el panel.
 
 Guardas que abortan **sin escribir nada**:
 
@@ -610,29 +1056,36 @@ importadas **no llevan monto** —se valúan al valor vigente el día que se cob
 así que en la cinta del socio se ven con el glifo `L`, distintas de las que devengó
 el sistema.
 
-#### 8. Verificación final de datos
+#### 9. Verificación final de datos
 
 ```bash
 mysql sigev -e "SELECT COUNT(*) members FROM members;
 SELECT COUNT(*) fees_import FROM fees WHERE origin='import';
-SELECT COUNT(DISTINCT member_id) deudores FROM fees WHERE status='pending';"
+SELECT COUNT(DISTINCT member_id) deudores FROM fees WHERE status='pending';
+SELECT COUNT(*) recibos FROM receipts;
+SELECT COUNT(*) suscripciones FROM mp_subscriptions;
+SELECT COUNT(*) solicitudes FROM applications;"
 ```
 
 Esperado: `members = 278`, `deudores = 119` y `fees_import = 3080` — o 3080 menos
 las cuotas que el sistema ya hubiera devengado por su cuenta para esos mismos meses,
 que el import saltea y cuenta aparte en la línea `cuotas del Excel que ya existían
-devengadas`. Hoy no hay cron de devengo, así que deberían ser 3080 clavadas.
+devengadas`. Hoy no hay cron de devengo, así que deberían ser 3080 clavadas. Y del
+paso 6: `recibos = 0`, `solicitudes = 0` y `suscripciones = 1` (la del piloto, con
+`member_id` apuntando al socio 306 y `application_id` en NULL).
 
 En el panel: `/admin/tesoreria/deudores` lista a los socios vigentes con deuda
 ordenados por monto, y la ficha de un socio con deuda muestra la cinta con las
 cuotas importadas. Con eso el módulo está en pie.
 
-#### 9. Lo que NO entra en este despliegue
+Recién ahora se borra el backup del paso 1.
+
+#### 10. Lo que NO entra en este despliegue
 
 La fase 4A **no** toca Mercado Pago: el webhook sigue registrando los pagos sin
 aplicarlos a cuotas, no hay links de pago, no hay bandeja de sin conciliar y el
-lote de REG-34 no existe. Tampoco hay crons de tesorería: **las cuotas del mes no
-se devengan solas todavía** (eso es la fase 4C). Hasta entonces, el crontab del VPS
+lote de REG-34 no existe. Tampoco hay crons de tesorería: **las cuotas del mes no se
+devengan solas todavía** (eso es la fase 4C). Hasta entonces, el crontab del VPS
 sigue siendo sólo el de `/api/cron/applications` (`docs/11`, Parte H).
 
 Y sigue vigente: **NO tocar `instances` de PM2** (mutex por DNI y rate limiters en

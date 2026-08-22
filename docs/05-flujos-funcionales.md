@@ -294,7 +294,13 @@ URL, el botón atrás funciona y `aria-current` sale solo. El encabezado
   baja y asiento de auditoría.
 - **Efectivo** (`/admin/tesoreria/efectivo`) — buscar al socio por número, apellido
   o DNI → elegir concepto (**Cuotas sociales** / Aporte voluntario / Aporte
-  extraordinario). Para cuotas se pide la **cantidad**, no el monto: el total es
+  extraordinario). **Los conceptos disponibles dependen de la categoría**
+  (`cashConceptsFor`): sólo **activo y colaborador** —los que devengan cuota
+  obligatoria— ven "Cuotas sociales"; el **adherente** ve aporte voluntario y
+  extraordinario (su cuota es voluntaria, Art. 5), y **honorario, vitalicio y
+  cadete** sólo aporte extraordinario. No es un detalle menor: de los 160 socios
+  vigentes, 124 son adherentes, así que en la mayoría de las pantallas de cobro
+  "Cuotas sociales" **no aparece**. Para cuotas se pide la **cantidad**, no el monto: el total es
   `n × valor vigente` y se muestra en pantalla antes de confirmar; para los aportes
   se pide el monto (pesos enteros, sin centavos). Nota opcional y casilla "enviar
   el recibo por email".
@@ -307,8 +313,10 @@ URL, el botón atrás funciona y `aria-current` sale solo. El encabezado
   lleva al detalle (`/admin/tesoreria/recibos/[id]`): fecha, socio, **concepto
   congelado**, medio, importe, importe en letras, nota y quién lo registró; y las
   acciones **descargar PDF**, **enviar/reenviar por email** y **anular** (con
-  motivo, detrás de un desplegable). Anular devuelve las cuotas a pendientes y el
-  número **no se reutiliza**.
+  motivo, detrás de un desplegable). Al anular, las cuotas del período corriente y
+  anteriores vuelven a pendientes, y las de períodos **futuros se borran**: las
+  había creado ese mismo cobro al imputar por adelantado, y dejarlas pendientes
+  contaría como deuda antes de tiempo. El número **no se reutiliza**.
 - **Valores de cuota** (`/admin/tesoreria/valores`) — pantalla de **lectura**: los
   dos montos vigentes (socio activo / adherente-colaborador), desde cuándo rigen y
   el historial completo con su acta. El valor nuevo se registra desde

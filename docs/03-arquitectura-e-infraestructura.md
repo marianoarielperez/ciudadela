@@ -40,10 +40,18 @@ con comandos preparados):
 
 ## Dominios y entornos
 
+**Hay un solo entorno desplegado: `vecinalciudadela.ar`.**
+
 | Entorno | URL | Certificado | Credenciales MP |
 |---|---|---|---|
-| Staging | `sigev.redaccion.ar` | Cloudflare Origin wildcard `*.redaccion.ar` (ya instalado, válido hasta 2041) | TEST (sandbox) |
-| Producción | `vecinalciudadela.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas |
+| Producción | `vecinalciudadela.ar` (+ `www`) | Cloudflare Origin cert propio del dominio | Productivas desde el 22/08/2026 |
+| ~~Staging~~ | ~~`sigev.redaccion.ar`~~ | ~~Cloudflare Origin wildcard `*.redaccion.ar`~~ | **DADO DE BAJA el 20/08/2026** |
+
+El staging se dio de baja el 20/08/2026 (decisión del cliente): quedaba un entorno
+más que mantener para un sitio que todavía no conoce nadie. El sandbox de Mercado
+Pago pasó a ser **cosa de local** (`docs/11`); en el VPS no queda ninguna credencial
+de prueba. Lo que este documento, `docs/07`, `docs/09` y `docs/10` digan sobre
+staging es historia y no describe el estado actual.
 
 - El dominio es **`vecinalciudadela.ar`**, sin `.com`. Ya está registrado en NIC.ar
   a nombre de la vecinal y **delegado a Cloudflare** (`jocelyn`/`logan.ns.cloudflare.com`,
@@ -105,8 +113,8 @@ desindexa solo. Cambiar `AUTH_URL` obliga a re-buildear, no alcanza con reinicia
 
 Antes de buildear en el VPS, verificar en su `.env`:
 
-- `AUTH_URL` = el dominio real del entorno (staging `https://sigev.redaccion.ar`,
-  producción `https://vecinalciudadela.ar`).
+- `AUTH_URL` = el dominio real del entorno, que hoy es uno solo:
+  `https://vecinalciudadela.ar`.
 - `ALLOW_LOCALHOST_BASE_URL` **ausente o comentada**. Es una escotilla solo para el
   build local: si está activa en el servidor, desactiva la guarda que justamente
   impide publicar canonicals a localhost. `grep ALLOW_LOCALHOST_BASE_URL .env` no

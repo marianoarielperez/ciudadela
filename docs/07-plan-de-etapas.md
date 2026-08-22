@@ -86,13 +86,21 @@ base sembrada y navegador:
 - [x] Idempotencia del webhook y validación de firma (cobertura de tests; falta
       el evento real).
 
-**Pendientes de las credenciales de sandbox** (nada de esto se puede probar sin
-`MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` cargados — ver `docs/11`):
+**Pendientes de una corrida contra Mercado Pago** (nada de esto se puede probar sin
+`MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` cargados — ver `docs/11`). Desde el
+22/08/2026 el VPS corre con credenciales **productivas**, así que esta lista se
+cierra **en local, contra el sandbox**: probarla en `vecinalciudadela.ar` sería
+plata de verdad.
 
-- [ ] Alta ACTIVO de punta a punta: wizard → checkout de prueba → webhook →
+- [ ] Alta **ACTIVO** de punta a punta: wizard → checkout → webhook →
       `aprobada_pendiente_acta`. Con esto se verifica de paso que el paso 2 muestre
       los montos reales de los planes (hoy en local el wizard no pasa del paso 2
       sin token) y que la URL de "volver al pago" del retome sea la correcta.
+      **Sigue abierto**: el piloto real del 22/08/2026 (socio 306) recorrió el
+      circuito entero con débito, pero el 306 es **Adherente** en el padrón, así que
+      lo que quedó probado es la rama del monto *compartido* y el plan
+      `mp_plan_shared_id`. La rama del socio activo —el otro plan, el otro monto—
+      todavía no la caminó nadie.
 - [ ] Que el cuerpo del webhook de MP traiga efectivamente `body.id`. Si no lo
       trajera, el fallback que arma la clave de idempotencia pasa a ser crítico.
 - [ ] Rechazo y expiración cancelando una suscripción **real** en MP.
