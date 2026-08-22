@@ -24,7 +24,7 @@ import {
  *  corrida, o el mismo archivo se re-fecha solo en cada ejecución (la deuda
  *  2026 de siete socios se corre un mes por mes de demora, y en 2027 el "8 en
  *  2026" pasa a leerse mayo..diciembre). Los totales de control no lo detectan:
- *  siguen dando 3080 cuotas en los tres casos.
+ *  siguen dando 3076 cuotas en los tres casos.
  *
  *  Vive acá, junto a la regla que alimenta, para que se pueda probar sin
  *  importar el script (que abre Prisma al evaluarse). Si alguna vez se re-mide

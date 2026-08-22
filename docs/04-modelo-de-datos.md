@@ -409,7 +409,7 @@ Script `scripts/import-deuda.ts`, que se corre **después** del padrón:
 
 1. El archivo no trae montos: dice **cuántas cuotas** debe cada socio en cada año
    calendario (2022-2026). Totales de control del archivo del 21/08/2026: 278
-   filas, **119 socios con deuda**, **3080 cuotas**.
+   filas, **118 socios con deuda**, **3076 cuotas**.
 2. Cada cantidad se convierte en cuotas concretas asignadas a los **últimos N meses
    del año** (y hacia atrás desde el mes de egreso, en las bajas), con
    `origen = import` y `estado = pending`. La regla es pura y está probada aparte

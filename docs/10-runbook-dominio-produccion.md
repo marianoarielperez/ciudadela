@@ -381,7 +381,7 @@ deploy normal y se puede repetir. El segundo (paso 6) **borra los datos de prueb
 que hoy tiene el VPS: es destructivo pero acotado, y quien lo cubre es el **backup B
 del paso 4 bis** (el del paso 1 quedó del otro lado de la migración: ver el paso 1).
 El tercero (pasos 7 y 8) es la **carga fundacional de datos**: corre **una sola
-vez**, borra fichas físicamente y crea 3080 cuotas que después se van a cobrar y a
+vez**, borra fichas físicamente y crea 3076 cuotas que después se van a cobrar y a
 notificar de forma fehaciente. No hay "des-importar". Leé los pasos 6, 7 y 8 enteros
 antes de tipear nada.
 
@@ -1386,9 +1386,9 @@ Cuando anda:
 
 ```
 Debt import — 2026-08-22T…
-filas: 278 (esperado 278) | socios con deuda: 119 (esperado 119) | cuotas en el Excel: 3080 (esperado 3080)
-importados: 119 | salteados (ya tenían deuda importada): 0 | sin cuotas nuevas (todo su plan ya estaba devengado): 0 | cuotas creadas: 3080
-en base: cuotas origin=import del libro 1: 3080
+filas: 278 (esperado 278) | socios con deuda: 118 (esperado 118) | cuotas en el Excel: 3076 (esperado 3076)
+importados: 118 | salteados (ya tenían deuda importada): 0 | sin cuotas nuevas (todo su plan ya estaba devengado): 0 | cuotas creadas: 3076
+en base: cuotas origin=import del libro 1: 3076
 avisos (2):
   - socio 217: la deuda arranca en 2023-10, antes de su ingreso (2023-11) — revisá la cantidad del primer año
   - socio 231: la deuda arranca en 2023-09, antes de su ingreso (2023-11) — revisá la cantidad del primer año
@@ -1399,12 +1399,12 @@ del primer año les da más cuotas de las que ese año pudo devengar. No se desc
 ninguna (la cantidad la puso el tesorero), pero conviene revisarlas con él.
 
 Es **idempotente por socio**: correrlo de nuevo imprime `importados: 0 | salteados:
-119 | cuotas creadas: 0`. Eso también significa que **corregir el Excel y re-correr
+118 | cuotas creadas: 0`. Eso también significa que **corregir el Excel y re-correr
 no arregla a quien ya se cargó mal**: hay que corregirlo desde el panel.
 
 Guardas que abortan **sin escribir nada**:
 
-- Los tres totales de control (278 filas / 119 deudores / 3080 cuotas). Si no dan,
+- Los tres totales de control (278 filas / 118 deudores / 3076 cuotas). Si no dan,
   el archivo no es el que este runbook describe.
 - Un socio del Excel que no está en el libro, o cuyo DNI no coincide con la ficha.
   Casi siempre significa que el padrón no se importó, o se importó otro.
@@ -1437,10 +1437,10 @@ SELECT s.id, s.preapproval_id, s.status, s.member_id, x.member_number, s.applica
   LEFT JOIN memberships x ON x.member_id = s.member_id;"
 ```
 
-Esperado: `members = 278`, `deudores = 119` y `fees_import = 3080` — o 3080 menos
+Esperado: `members = 278`, `deudores = 118` y `fees_import = 3076` — o 3076 menos
 las cuotas que el sistema ya hubiera devengado por su cuenta para esos mismos meses,
 que el import saltea y cuenta aparte en la línea `cuotas del Excel que ya existían
-devengadas`. Hoy no hay cron de devengo, así que deberían ser 3080 clavadas. Y del
+devengadas`. Hoy no hay cron de devengo, así que deberían ser 3076 clavadas. Y del
 paso 6: `recibos = 0`, `solicitudes = 0` y **una sola fila** de suscripción — la del
 piloto, con `member_number = 306`, `status = authorized` y `application_id` en NULL.
 La consulta la muestra en vez de contarla a propósito: es la fila que todo este

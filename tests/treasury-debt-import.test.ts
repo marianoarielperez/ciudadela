@@ -142,7 +142,7 @@ describe("planDebtImport", () => {
 });
 
 // La foto se sacó el 21/08/2026 y los totales de control del script (278 filas,
-// 119 deudores, 3080 cuotas) describen ESE día. El import tiene que anclar ahí
+// 118 deudores, 3076 cuotas) describen ESE día. El import tiene que anclar ahí
 // y no en el reloj de la corrida.
 describe("DEBT_SNAPSHOT_DATE — el ancla es la foto, no el día en que se corre", () => {
   afterEach(() => {

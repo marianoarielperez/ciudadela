@@ -50,8 +50,8 @@ const EXPECTED_HEADERS = [
 // compara: tocar uno solo dejaría el reporte diciendo "esperado N" mientras
 // valida otra cosa.
 const EXPECTED_ROWS = 278;
-const EXPECTED_TOTAL_FEES = 3080;
-const EXPECTED_DEBTORS = 119;
+const EXPECTED_TOTAL_FEES = 3076;
+const EXPECTED_DEBTORS = 118;
 
 // La fecha de la foto (`DEBT_SNAPSHOT_DATE`, 21/08/2026) vive junto a la regla
 // que alimenta, en `src/lib/treasury/debt-import.ts`, y es la que describen los
@@ -61,7 +61,7 @@ const EXPECTED_DEBTORS = 119;
 // 15/09/2026 la deuda 2026 de siete socios se corre un mes (el socio 144
 // pierde 2026-01 y gana 2026-09) y en 2027 el "8 en 2026" se leería como
 // mayo..diciembre — cuotas de meses que el socio nunca devengó. Los totales
-// seguirían dando 3080, así que nada avisaría.
+// seguirían dando 3076, así que nada avisaría.
 
 // Un error de datos se arregla editando el Excel; uno de infraestructura,
 // levantando la base. Para el operador se ven igual si no los distinguimos.

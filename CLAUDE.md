@@ -187,8 +187,8 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   `scripts/import-padron.ts`; el resto de la ficha se completa a mano desde el
   panel. Ver `docs/04-modelo-de-datos.md`.
 - `datos/deuda.xlsx` — deuda a agosto de 2026 expresada en **cantidad de cuotas
-  impagas por año** (2022-2026), sin montos: 278 filas, **119 socios con deuda**,
-  **3080 cuotas**. La importa `scripts/import-deuda.ts` como cuotas con
+  impagas por año** (2022-2026), sin montos: 278 filas, **118 socios con deuda**,
+  **3076 cuotas**. La importa `scripts/import-deuda.ts` como cuotas con
   `origin = "import"`, ancladas a la fecha de la foto (`DEBT_SNAPSHOT_DATE`,
   21/08/2026) y no al reloj de la corrida.
 - `datos/calles_inicial.csv` — 40 calles catastrales del barrio para el autocompletado

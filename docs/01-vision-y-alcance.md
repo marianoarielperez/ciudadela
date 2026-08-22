@@ -21,8 +21,8 @@ panel de administración para la Comisión Directiva (CD) y panel de autogestió
 - Padrón actual (Libro N° 1, definitivo del 21/08/2026): **278 fichas históricas**,
   **160 socios vigentes** (36 activos + 124 adherentes) y 118 bajas. Tras el
   re-empadronamiento se esperan **~70 socios**.
-- Deuda histórica a agosto de 2026 (`datos/deuda.xlsx`): **119 socios** con
-  **3080 cuotas** impagas. El archivo no trae montos: dice cuántas cuotas debe
+- Deuda histórica a agosto de 2026 (`datos/deuda.xlsx`): **118 socios** con
+  **3076 cuotas** impagas. El archivo no trae montos: dice cuántas cuotas debe
   cada socio por año, y la deuda se valúa siempre a valor vigente (REG-16).
 - Cuotas actuales: Activo $6.000/mes (obligatoria), Adherente $3.000/mes (voluntaria),
   Colaborador $3.000/mes (obligatoria), vigentes desde el 01/08/2026. Los montos NO
