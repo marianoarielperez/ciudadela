@@ -360,3 +360,40 @@ hipótesis equivocadas seguidas; con él, el motivo apareció en la primera lín
 pm2 flush sigev   # el log de PM2 NO se vacía al reiniciar: sin esto se mezcla lo viejo
 pm2 logs sigev --lines 30 --nostream --raw | grep -i "mp:" | tail -3
 ```
+
+### 10. La allowlist tapaba que el SMTP nunca se había probado
+
+El 22/08/2026, apenas el primer correo real intentó salir del VPS, Brevo
+respondió `535 5.7.8 Authentication failed`. La causa: `BREVO_SMTP_KEY` estaba
+guardada **entre signos de mayor y menor** (`<xsmtpsib-...>`), como se copia de
+un instructivo — 92 caracteres en vez de 90.
+
+Lo importante no es el error, es por qué tardó tanto en aparecer: hasta ese día
+**`EMAIL_ALLOWLIST` frenaba todos los envíos antes de llegar al servidor de
+correo**, así que la autenticación nunca se había ejercitado. La guarda que
+protege a los vecinos durante las pruebas también esconde que el transporte
+puede estar roto.
+
+Al preparar producción, verificar el envío **con una dirección de la allowlist**
+antes de dar por buena la configuración:
+
+```bash
+awk -F= '/^BREVO_SMTP_KEY=/{v=substr($0,index($0,"=")+1); printf "largo=%d primero=[%s] ultimo=[%s]\n", length(v), substr(v,1,1), substr(v,length(v),1)}' .env
+```
+
+Tiene que dar largo **90** y empezar con `x`. Después, un pedido real de
+restablecimiento de contraseña: el sistema **no registra los envíos exitosos**,
+sólo los fallidos, así que un log vacío es la señal buena y la casilla es la
+prueba.
+
+### 11. Lo que este episodio dejó como entrada del Módulo 4
+
+El sistema aceptó una solicitud, cobró la cuota de ingreso y **no pudo avisarle
+al vecino** — y nadie se habría enterado salvo por ir a mirar el log a mano. El
+fallo queda registrado, o sea que la información existe; lo que falta es que
+alguien la vea.
+
+Hace falta una pantalla en el panel con los avisos que no salieron y un botón
+para reintentar. Va junto con el barrido de conciliación de suscripciones: son
+la misma clase de red de contención, y las dos existen porque un aviso perdido
+deja a un vecino que pagó sin ninguna noticia.
