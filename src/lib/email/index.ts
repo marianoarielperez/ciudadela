@@ -3,7 +3,7 @@
 // electrónico: cada envío tiene que quedar acreditado en la base.
 import type { NotificationType, PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getTransport, type MailTransport } from "./transport";
+import { getTransport, type MailMessage, type MailTransport } from "./transport";
 
 type MailerDeps = { transport: MailTransport; db: Pick<PrismaClient, "notification"> };
 
@@ -13,7 +13,7 @@ export function makeMailer(deps: MailerDeps) {
     applicationId: number | null;
     to: string;
     type: NotificationType;
-    message: { subject: string; text: string; html: string };
+    message: Omit<MailMessage, "to">;
     summary: string;
   }): Promise<{ messageId: string | null }> {
     // Primero el envío: si el SMTP falla, no queda registrada una
@@ -37,7 +37,7 @@ export function makeMailer(deps: MailerDeps) {
       memberId: number | null;
       to: string;
       type: NotificationType;
-      message: { subject: string; text: string; html: string };
+      message: Omit<MailMessage, "to">;
       summary: string;
     }) {
       return send({ ...input, applicationId: null });
@@ -48,7 +48,7 @@ export function makeMailer(deps: MailerDeps) {
       applicationId: number;
       to: string;
       type: NotificationType;
-      message: { subject: string; text: string; html: string };
+      message: Omit<MailMessage, "to">;
       summary: string;
     }) {
       return send({ ...input, memberId: null });
