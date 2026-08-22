@@ -70,6 +70,7 @@ describe("fetchMemberAccount", () => {
         { period: "2026-02", status: "pending", origin: "accrual", paymentId: null },
         { period: "2026-01", status: "paid", origin: "accrual", paymentId: 5 },
         { period: "2025-12", status: "pending", origin: "import", paymentId: null },
+        { period: "2026-03", status: "paid", origin: "accrual", paymentId: 5 },
       ]),
     },
     payment: {

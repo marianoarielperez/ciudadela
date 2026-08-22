@@ -87,7 +87,7 @@ export type GridCell = { period: Period; state: GridCellState; receiptNumber?: s
 export type GridRow = { year: number; cells: GridCell[] };
 
 /** La cinta de períodos: una fila por año, 12 celdas. Desde el año del primer
- *  dato (cuota o ingreso) hasta el año del período corriente. */
+ *  dato (cuota, ingreso o incorporación) hasta el año de la última cuota. */
 export function buildPeriodGrid(
   fees: AccountFee[],
   receiptByPayment: Map<number, string>,
