@@ -20,9 +20,12 @@ dist/
 .env.production
 !.env.example
 
-# Archivos subidos por usuarios (DNIs, facturas) y recibos
-uploads/
-recibos/
+# Archivos subidos por usuarios (DNIs, facturas) y recibos. ANCLADOS a la raíz
+# (`/uploads/`, no `uploads/`): sin la barra inicial la regla vale para
+# CUALQUIER directorio con ese nombre, y `src/app/api/admin/recibos/` —la ruta
+# que sirve el PDF— quedaba fuera del repo sin que nada avisara.
+/uploads/
+/recibos/
 
 # Sistema
 .DS_Store
