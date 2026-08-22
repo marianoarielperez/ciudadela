@@ -222,6 +222,43 @@ describe("createApplicationAction", () => {
     expect(mocks.mailer.sendToApplication).not.toHaveBeenCalled();
   });
 
+  // El `_count` es el ÚNICO cable entre la deuda viva de la cuenta corriente y
+  // el bloqueo del wizard: la action traduce `_count.fees` a `pendingFees` y
+  // recién ahí `checkEligibility` decide (REG-16). Si ese renombre se rompe, la
+  // regla pura sigue verde y el ex socio deudor se reasocia por la web.
+  it("ex socio con deuda viva: bloqueo debt y ninguna solicitud creada", async () => {
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: 12, status: "withdrawn", withdrawalReason: "resignation",
+      reentryBlocked: false, rejectedUntil: null, _count: { fees: 2 },
+    });
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.blocked?.code).toBe("debt");
+    expect(result.blocked?.message).toMatch(/deuda pendiente con tesorería/i);
+    expect(result.created).toBeUndefined();
+    expect(mocks.service.create).not.toHaveBeenCalled();
+    // Y se pidió contando SOLO las pendientes: contar todas dejaría afuera a
+    // cualquiera que alguna vez pagó una cuota.
+    const select = mocks.prisma.member.findUnique.mock.calls[0][0].select;
+    expect(select._count).toEqual({ select: { fees: { where: { status: "pending" } } } });
+  });
+
+  it("ex socio sin deuda: pasa y la solicitud queda atada a su ficha (reingreso)", async () => {
+    // La otra mitad del mismo cable: con el contador en 0 el bloqueo NO se
+    // dispara. El que saldó en la sede se rehabilita solo (REG-16, decisión del
+    // 22/08/2026), sin que nadie le baje un flag.
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: 12, status: "withdrawn", withdrawalReason: "resignation",
+      reentryBlocked: false, rejectedUntil: null, _count: { fees: 0 },
+    });
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.blocked).toBeUndefined();
+    expect(result.created).toEqual({ resumeToken: "RESUME-RAW" });
+    expect(mocks.service.create.mock.calls[0][0].memberId).toBe(12);
+    expect(mocks.audit.mock.calls[0][0].detail).toMatchObject({ reentry: true });
+  });
+
   it("camino feliz: devuelve el token de retome, manda la verificación y audita sin datos personales", async () => {
     const result = await createApplicationAction({}, form(VALID));
 

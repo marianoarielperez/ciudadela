@@ -2,7 +2,7 @@
 import type {
   FeeOrigin, FeeStatus, MemberCategory, PaymentStatus, PaymentType, PrismaClient,
 } from "@/generated/prisma/client";
-import { comparePeriods, periodOf, periodYear, type Period } from "./periods";
+import { comparePeriods, periodYear, type Period } from "./periods";
 import { arrearsLevel, debtAmount, feeAmountFor, type ArrearsLevel, type FeeValueAmounts } from "./rules";
 
 export type AccountFee = { period: Period; status: FeeStatus; origin: FeeOrigin; paymentId: number | null };
@@ -86,23 +86,26 @@ export type GridCellState = "paid" | "pending" | "pending_import" | "exempt" | "
 export type GridCell = { period: Period; state: GridCellState; receiptNumber?: string };
 export type GridRow = { year: number; cells: GridCell[] };
 
-/** La cinta de períodos: una fila por año, 12 celdas. Va del año más viejo al
- *  más nuevo entre las cuotas, la fecha de ingreso y el período corriente: el
- *  corriente siempre entra, y las cuotas futuras de quien pagó por adelantado
- *  también (si el tope fuera el año corriente, desaparecerían de la cinta). */
+/** La cinta de períodos: una fila por año, 12 celdas. Va del año de la PRIMERA
+ *  cuota al de la última, con el período corriente siempre adentro (y el año
+ *  corriente solo, si el socio todavía no tiene ninguna cuota).
+ *
+ *  La fecha de ingreso NO entra en el cálculo, y es deliberado: un socio que
+ *  ingresó en 2019 y tiene una sola cuota en 2026 mostraba ocho filas de las
+ *  cuales 95 celdas decían "sin cuota" —una pared de guiones en pantalla y 96
+ *  anuncios para que un lector de pantalla llegue al único pago—. Los años
+ *  anteriores a la primera cuota no tienen nada que contar: no hubo devengo. */
 export function buildPeriodGrid(
   fees: AccountFee[],
   receiptByPayment: Map<number, string>,
-  joinedAt: Date | null,
   currentPeriod: Period,
 ): GridRow[] {
   const byPeriod = new Map(fees.map((f) => [f.period, f]));
   const currentYear = periodYear(currentPeriod);
-  const years = [
-    ...fees.map((f) => periodYear(f.period)),
-    ...(joinedAt ? [periodYear(periodOf(joinedAt))] : []),
-    currentYear,
-  ];
+  const years = [...fees.map((f) => periodYear(f.period)), currentYear];
+  // El corriente entra siempre: si la primera cuota es futura (alguien que pagó
+  // por adelantado antes de que devengue nada), la cinta arranca igual en el año
+  // en curso y no en el del pago.
   const firstYear = Math.min(...years);
   // `allocate()` puede generar cuotas en un año POSTERIOR al del período
   // corriente: un pago que cubre más meses de los que el socio debe (p. ej.

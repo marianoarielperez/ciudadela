@@ -41,23 +41,28 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
   const memberId = Number(id);
   if (!Number.isInteger(memberId) || memberId <= 0) notFound();
 
-  const member = await prisma.member.findUnique({
-    where: { id: memberId },
-    include: {
-      street: true,
-      memberships: { include: { book: true } },
-      movements: { include: { minute: true }, orderBy: { date: "desc" } },
-      notifications: { orderBy: { sentAt: "desc" }, take: 20 },
-    },
-  });
+  // El valor vigente de la cuota no depende del socio: se pide EN PARALELO con
+  // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
+  // cada render (mismo criterio que la ruta hermana `[accion]`).
+  const [member, feeValue] = await Promise.all([
+    prisma.member.findUnique({
+      where: { id: memberId },
+      include: {
+        street: true,
+        memberships: { include: { book: true } },
+        movements: { include: { minute: true }, orderBy: { date: "desc" } },
+        notifications: { orderBy: { sentAt: "desc" }, take: 20 },
+      },
+    }),
+    feeValueReader.current(),
+  ]);
   if (!member) notFound();
 
   // La cuenta corriente se carga siempre: la mora es un dato de encabezado
   // (el badge) y no solo del panel de la pestaña.
-  const feeValue = await feeValueReader.current();
   const account = await fetchMemberAccount(prisma, member, feeValue);
   const receiptByPayment = new Map(account.payments.filter((p) => p.receipt).map((p) => [p.id, p.receipt!.number]));
-  const grid = buildPeriodGrid(account.fees, receiptByPayment, member.joinedAt, currentPeriod());
+  const grid = buildPeriodGrid(account.fees, receiptByPayment, currentPeriod());
 
   const openMembership = member.memberships.find((m) => m.book.status === "open");
   // Misma función que usa la server action como guarda: la ficha no decide nada

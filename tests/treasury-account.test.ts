@@ -8,11 +8,10 @@ const fee = (
 ): AccountFee => ({ period, status, origin, paymentId });
 
 describe("buildPeriodGrid", () => {
-  it("una fila por año desde el primer dato hasta el corriente, 12 celdas", () => {
+  it("una fila por año desde la primera cuota hasta el corriente, 12 celdas", () => {
     const grid = buildPeriodGrid(
       [fee("2025-11", "paid", "accrual", 1), fee("2026-01", "pending"), fee("2026-02", "pending", "import")],
       new Map([[1, "2026-00001"]]),
-      civilDateUtc(2025, 10, 15),
       "2026-03",
     );
     expect(grid.map((r) => r.year)).toEqual([2025, 2026]);
@@ -24,10 +23,30 @@ describe("buildPeriodGrid", () => {
     expect(grid[1].cells[11].state).toBe("none");
   });
 
+  // Un socio sin una sola cuota (recién ingresado, o de categoría que no
+  // devenga) no puede quedarse sin cinta ni con una cinta de años en blanco:
+  // muestra el año en curso y nada más.
   it("sin cuotas devuelve solo el año corriente", () => {
-    const grid = buildPeriodGrid([], new Map(), null, "2026-08");
-    expect(grid.map((r) => r.year)).toEqual([2026]);
+    const grid = buildPeriodGrid([], new Map(), "2026-08");
+    expect(grid).toHaveLength(1);
+    expect(grid[0].year).toBe(2026);
+    expect(grid[0].cells).toHaveLength(12);
     expect(grid[0].cells.every((c) => c.state === "none")).toBe(true);
+  });
+
+  // El defecto que vio el controlador en pantalla: la cinta tomaba también el
+  // año de INGRESO como piso, así que un socio de 2019 con una sola cuota en
+  // 2026 mostraba 8 filas y 96 celdas, 95 de ellas "sin cuota" (con el ingreso
+  // más viejo del padrón, 2015, era peor todavía). Los años previos a la
+  // primera cuota no devengaron nada: no tienen nada que mostrar.
+  it("la antigüedad del socio no agrega filas vacías: se arranca en la primera cuota", () => {
+    const grid = buildPeriodGrid(
+      [fee("2026-07", "paid", "accrual", 1)], // el socio ingresó en 2019
+      new Map([[1, "2026-00042"]]),
+      "2026-08",
+    );
+    expect(grid.map((r) => r.year)).toEqual([2026]);
+    expect(grid[0].cells[6]).toEqual({ period: "2026-07", state: "paid", receiptNumber: "2026-00042" });
   });
 
   // allocate() en rules.ts puede generar cuotas en un año POSTERIOR al del
@@ -40,7 +59,6 @@ describe("buildPeriodGrid", () => {
     const grid = buildPeriodGrid(
       [fee("2026-12", "pending"), fee("2027-01", "pending")],
       new Map(),
-      null,
       "2026-11",
     );
     expect(grid.map((r) => r.year)).toEqual([2026, 2027]);
@@ -51,7 +69,6 @@ describe("buildPeriodGrid", () => {
     const grid = buildPeriodGrid(
       [fee("2027-03", "paid", "accrual", 1)],
       new Map([[1, "2027-00001"]]),
-      null,
       "2026-11",
     );
     expect(grid.map((r) => r.year)).toEqual([2026, 2027]);

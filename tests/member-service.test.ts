@@ -361,6 +361,32 @@ describe("memberService.changeCategory", () => {
     const svc = makeMemberService(db as never);
     await expect(svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 })).rejects.toThrow(/elecciones/);
   });
+
+  // REG-07 pide "no tener deuda", y desde el M4 la deuda es la cuenta corriente
+  // real. El conteo va DENTRO de la transacción a propósito: contarlo afuera
+  // dejaría una ventana en la que otro admin cobra (o anula) y el cambio se
+  // decide con un número viejo.
+  it("is blocked while the member owes fees, counted inside the transaction (REG-07)", async () => {
+    const { db, state } = makeFakeDb({}, { pendingFees: 3 });
+    const svc = makeMemberService(db as never);
+    await expect(svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 }))
+      .rejects.toThrow(/debe 3 cuotas/i);
+    // Nada escrito: ni la categoría nueva ni el asiento del movimiento.
+    expect(state.updates).toEqual([]);
+    expect(state.movements).toEqual([]);
+    expect(state.member.category).toBe("adherent");
+    // Y se contaron las del socio, solo las pendientes, dentro de la transacción.
+    expect(db.$transaction).toHaveBeenCalled();
+    expect(state.feeCounts).toEqual([{ memberId: 1, status: "pending" }]);
+  });
+
+  it("goes through when the member owes nothing", async () => {
+    const { db, state } = makeFakeDb({}, { pendingFees: 0 });
+    const svc = makeMemberService(db as never);
+    await svc.changeCategory({ memberId: 1, newCategory: "active", minuteId: 10, actorId: 2 });
+    expect(state.updates[0]).toEqual({ category: "active" });
+    expect(state.feeCounts).toEqual([{ memberId: 1, status: "pending" }]);
+  });
 });
 
 describe("memberService.suspend / endSuspension", () => {

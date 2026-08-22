@@ -3,8 +3,11 @@
 // que "Cuenta corriente" sea enlazable desde tesorería y el botón atrás funcione.
 //
 // Radix y no links como en Tesorería: allá cada pestaña es una ruta distinta y
-// cambiar de pestaña es navegar; acá los paneles ya están en la página y
-// navegar volvería a pedir la ficha entera para mover el foco de lugar.
+// cambiar de pestaña es navegar; acá los cuatro paneles ya vinieron en el HTML y
+// mostrar otro es puro cliente, sin esperar al servidor. El `router.replace` de
+// abajo sí vuelve a pedir el payload RSC de la ficha entera (la ruta es
+// `force-dynamic`), pero eso pasa DESPUÉS y en segundo plano: lo que hace
+// instantáneo el cambio de panel es Radix, no un ahorro de red.
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
