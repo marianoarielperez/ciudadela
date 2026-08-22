@@ -11,11 +11,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { formatDateAR } from "@/lib/format";
+import { formatARS, formatDateAR } from "@/lib/format";
 import { AUTO_DEBIT_WARNINGS, hasLiveAutoDebit } from "@/lib/members/auto-debit";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "@/lib/members/rules";
 import { electionsOngoing } from "@/lib/members/service";
+import { feeValueReader } from "@/lib/treasury/fee-values";
+import { debtAmount } from "@/lib/treasury/rules";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
@@ -52,7 +54,13 @@ function blockedBy(r: { ok: true } | { ok: false; error: string }): string | und
   return r.ok ? undefined : r.error;
 }
 
-function screenFor(slug: Slug, member: Member, elections: boolean, autoDebit: boolean): Screen {
+/** Lo que el socio debe HOY según la cuenta corriente, valuado al valor
+ *  vigente (`amount` es null si todavía no rige ninguno). */
+type Debt = { pendingCount: number; amount: number | null };
+
+function screenFor(
+  slug: Slug, member: Member, elections: boolean, autoDebit: boolean, debt: Debt,
+): Screen {
   switch (slug) {
     case "baja":
       return {
@@ -83,7 +91,7 @@ function screenFor(slug: Slug, member: Member, elections: boolean, autoDebit: bo
         title: `Cambiar categoría de ${member.fullName}`,
         crumb: "Cambio de categoría",
         notice: `Categoría actual: ${CATEGORY_LABELS[member.category]}. El cambio no interrumpe la antigüedad (Art. 5° ter).`,
-        blocked: blockedBy(canChangeCategory(member, probe, elections)),
+        blocked: blockedBy(canChangeCategory(member, probe, elections, debt.pendingCount)),
         // La cuota la fija la categoría: cambiarla acá no reajusta el monto que
         // MP le sigue debitando (ver members/auto-debit.ts).
         warning: autoDebit ? AUTO_DEBIT_WARNINGS.categoria : undefined,
@@ -122,11 +130,12 @@ function screenFor(slug: Slug, member: Member, elections: boolean, autoDebit: bo
         title: `Reingreso de ${member.fullName}`,
         crumb: "Reingreso",
         blocked: blockedBy(canReadmit(member)),
-        // REG-16: el reingreso del cesante por mora exige saldar la deuda a
-        // valores vigentes. No bloquea la pantalla — el cobro se hace en
-        // tesorería papel hasta que el Módulo 4 sepa calcular el monto.
-        warning: member.withdrawalReason === "arrears" && member.debtAtWithdrawal
-          ? "Cesante por mora con deuda: para reingresar debe saldar la totalidad de la deuda a valores vigentes (Art. 9 inc. c). El cálculo del monto estará disponible con el Módulo 4 — registrá el cobro en tesorería papel antes de confirmar."
+        // REG-16: el reingreso con deuda exige saldarla a valores vigentes. La
+        // deuda sale de las cuotas pendientes VIVAS, no del motivo de la baja ni
+        // del `debtAtWithdrawal` congelado: el que ya pagó no tiene que ver el
+        // aviso. No bloquea la pantalla — la decisión es de la Comisión.
+        warning: debt.pendingCount > 0
+          ? `Debe ${debt.pendingCount} ${debt.pendingCount === 1 ? "cuota" : "cuotas"}${debt.amount !== null ? ` = ${formatARS(debt.amount)} a valor vigente` : ""} (Art. 9 inc. c, REG-16). Registrá el cobro en Efectivo antes de confirmar el reingreso; el sistema no lo bloquea porque la decisión es de la Comisión.`
           : undefined,
         action: readmitAction,
         submitLabel: "Registrar reingreso",
@@ -151,14 +160,20 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
   const member = await prisma.member.findUnique({ where: { id: memberId } });
   if (!member) notFound();
 
-  const [minuteRows, elections, subscriptions] = await Promise.all([
+  const [minuteRows, elections, subscriptions, pendingCount, feeValue] = await Promise.all([
     prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
     electionsOngoing(prisma),
     // Las dos señales del débito vivo: el flag del padrón viene en la ficha, las
     // suscripciones que el sistema conoce salen de acá. Por qué hacen falta las
     // dos, en members/auto-debit.ts.
     prisma.mpSubscription.findMany({ where: { memberId }, select: { status: true } }),
+    prisma.fee.count({ where: { memberId, status: "pending" } }),
+    feeValueReader.current(),
   ]);
+  const debt: Debt = {
+    pendingCount,
+    amount: feeValue ? debtAmount(pendingCount, member.category, feeValue) : null,
+  };
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
@@ -166,7 +181,7 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
     autoDebit: member.autoDebit,
     subscriptionStatuses: subscriptions.map((s) => s.status),
   });
-  const screen = screenFor(accion as Slug, member, elections, autoDebit);
+  const screen = screenFor(accion as Slug, member, elections, autoDebit, debt);
 
   return (
     <div className="max-w-2xl space-y-4">

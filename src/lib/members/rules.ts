@@ -12,11 +12,21 @@ export function canChangeCategory(
   m: { status: MemberStatus; category: MemberCategory },
   newCategory: MemberCategory,
   electionsOngoing: boolean,
+  // REG-07: "requiere no tener deuda". Desde el M4 es la cuenta corriente real.
+  // Default 0 para que un llamador que todavía no la sepa no invente deuda; los
+  // dos llamadores reales (servicio y server action) la cuentan contra la base.
+  pendingFees = 0,
 ): RuleResult {
   if (m.status !== "active") return { ok: false, error: "Solo un socio vigente puede cambiar de categoría." };
   if (m.category === newCategory) return { ok: false, error: "El socio ya tiene esa categoría." };
   if (electionsOngoing) {
     return { ok: false, error: "Hay elecciones en curso: los cambios de categoría están bloqueados (Art. 5° ter)." };
+  }
+  if (pendingFees > 0) {
+    return {
+      ok: false,
+      error: `El socio debe ${pendingFees} ${pendingFees === 1 ? "cuota" : "cuotas"}: tiene que saldarlas antes de cambiar de categoría (Art. 5° ter).`,
+    };
   }
   return { ok: true };
 }

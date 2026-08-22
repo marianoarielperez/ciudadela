@@ -162,7 +162,10 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
     { newCategory: z.enum(CATEGORIES, { error: "Elegí la nueva categoría." }) },
     {
       guard: async (member, data) =>
-        canChangeCategory(member, data.newCategory as MemberCategory, await electionsOngoing(prisma)),
+        canChangeCategory(
+          member, data.newCategory as MemberCategory, await electionsOngoing(prisma),
+          await prisma.fee.count({ where: { memberId: member.id, status: "pending" } }),
+        ),
       run: ({ memberId, minuteId, actorId }, _member, data) =>
         memberService.changeCategory({
           memberId, minuteId, actorId, newCategory: data.newCategory as MemberCategory,

@@ -210,8 +210,8 @@ describe("createApplicationAction", () => {
 
   it("DNI de socio vigente: bloqueo already_member y ninguna solicitud creada", async () => {
     mocks.prisma.member.findUnique.mockResolvedValue({
-      id: 12, status: "active", withdrawalReason: null, debtAtWithdrawal: false,
-      reentryBlocked: false, rejectedUntil: null,
+      id: 12, status: "active", withdrawalReason: null,
+      reentryBlocked: false, rejectedUntil: null, _count: { fees: 0 },
     });
     const result = await createApplicationAction({}, form(VALID));
 

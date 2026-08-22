@@ -141,7 +141,11 @@ export function makeMemberService(db: PrismaClient) {
       const ongoing = await electionsOngoing(db);
       return db.$transaction(async (tx) => {
         const member = await tx.member.findUniqueOrThrow({ where: { id: input.memberId } });
-        const check = canChangeCategory(member, input.newCategory, ongoing);
+        // La deuda se cuenta DENTRO de la transacción: contarla afuera dejaría una
+        // ventana en la que otro admin cobra (o anula) y el cambio se decide con
+        // un número viejo.
+        const pendingFees = await tx.fee.count({ where: { memberId: member.id, status: "pending" } });
+        const check = canChangeCategory(member, input.newCategory, ongoing, pendingFees);
         if (!check.ok) throw new Error(check.error);
         const minute = await tx.minute.findUniqueOrThrow({ where: { id: input.minuteId } });
         const updated = await tx.member.update({
@@ -212,7 +216,8 @@ export function makeMemberService(db: PrismaClient) {
           data: {
             status: "active", category: input.category, withdrawalReason: null, leftAt: null,
             // joinedAt NO se toca: el reingreso no reinicia la antigüedad (REG-11).
-            // debtAtWithdrawal se conserva: M4 lo usa para calcular la deuda a saldar (REG-16)
+            // debtAtWithdrawal se conserva como dato histórico de la baja; la deuda
+            // que se cobra y se muestra sale de las cuotas pendientes vivas (REG-16).
           },
         });
         // Contracara del cerrojo de la baja: el reingreso le devuelve la cuenta.
