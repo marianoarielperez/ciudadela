@@ -41,7 +41,9 @@ type Screen = {
   // Motivo estatutario por el que la acción no se puede hacer ahora. Si está,
   // se muestra en lugar del formulario.
   blocked?: string;
-  warning?: string;
+  // ReactNode y no string: el aviso del reingreso lleva el enlace a Efectivo,
+  // que es la pantalla donde se cobra la deuda que el aviso está reclamando.
+  warning?: React.ReactNode;
   action: Parameters<typeof ActionForm>[0]["action"];
   submitLabel: string;
   fields?: Field[];
@@ -134,9 +136,18 @@ function screenFor(
         // deuda sale de las cuotas pendientes VIVAS, no del motivo de la baja ni
         // del `debtAtWithdrawal` congelado: el que ya pagó no tiene que ver el
         // aviso. No bloquea la pantalla — la decisión es de la Comisión.
-        warning: debt.pendingCount > 0
-          ? `Debe ${debt.pendingCount} ${debt.pendingCount === 1 ? "cuota" : "cuotas"}${debt.amount !== null ? ` = ${formatARS(debt.amount)} a valor vigente` : ""} (Art. 9 inc. c, REG-16). Registrá el cobro en Efectivo antes de confirmar el reingreso; el sistema no lo bloquea porque la decisión es de la Comisión.`
-          : undefined,
+        warning: debt.pendingCount > 0 ? (
+          <>
+            {`Debe ${debt.pendingCount} ${debt.pendingCount === 1 ? "cuota" : "cuotas"}`}
+            {debt.amount !== null ? ` = ${formatARS(debt.amount)} a valor vigente` : ""}
+            {" (Art. 9 inc. c, REG-16). Cobrale primero la deuda en "}
+            <Link className="underline" href={`/admin/tesoreria/efectivo?socio=${member.id}`}>
+              Tesorería → Efectivo
+            </Link>
+            {": al socio dado de baja se le puede cobrar sin reingresarlo. El sistema no bloquea el "}
+            {"reingreso con deuda porque la decisión es de la Comisión, pero queda asentado en auditoría."}
+          </>
+        ) : undefined,
         action: readmitAction,
         submitLabel: "Registrar reingreso",
         fields: [
@@ -195,7 +206,7 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
       />
       {screen.notice && <p className="text-sm text-muted-foreground">{screen.notice}</p>}
       {screen.warning && (
-        <FormMessage kind="warning" box>{screen.warning}</FormMessage>
+        <FormMessage kind="warning" box as="div">{screen.warning}</FormMessage>
       )}
 
       {screen.blocked ? (

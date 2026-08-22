@@ -1,6 +1,10 @@
-// Buscador de socio para Efectivo y para la bandeja sin conciliar (4B). Solo
-// vigentes y suspendidos del libro abierto: a una baja no se le cobra sin
-// reingreso. Hasta 10 resultados; el operador afina la consulta.
+// Buscador de socio para Efectivo y para la bandeja sin conciliar (4B). Todo el
+// libro abierto, en los tres estados: al dado de baja también hay que poder
+// cobrarle, porque el Art. 9 inc. c (REG-16) le exige saldar la deuda a valores
+// vigentes ANTES de que la Comisión pueda readmitirlo. El estado viaja en cada
+// resultado y la lista lo muestra en un badge: cobrarle a un cesante es
+// legítimo, cobrarle sin saber que lo es, no.
+// Hasta 10 resultados; el operador afina la consulta.
 import type { MemberCategory, MemberStatus, Prisma, PrismaClient } from "@/generated/prisma/client";
 
 export type MemberHit = {
@@ -12,18 +16,13 @@ export type MemberHit = {
   status: MemberStatus;
 };
 
-const LIVE: MemberStatus[] = ["active", "suspended"];
-
 export function memberSearchWhere(q: string): Prisma.MembershipWhereInput {
-  const member: Prisma.MemberWhereInput = { status: { in: LIVE } };
-  // Cada rama arrastra el filtro de estado: si no, buscar por número traería
-  // también a un socio dado de baja, y esta pantalla cobra.
   const or: Prisma.MembershipWhereInput[] = [
-    { member: { ...member, fullName: { contains: q } } },
-    { member: { ...member, dni: { contains: q } } },
+    { member: { fullName: { contains: q } } },
+    { member: { dni: { contains: q } } },
   ];
   const n = Number(q);
-  if (Number.isInteger(n) && n > 0) or.push({ member, memberNumber: n });
+  if (Number.isInteger(n) && n > 0) or.push({ memberNumber: n });
   return { book: { status: "open" }, OR: or };
 }
 

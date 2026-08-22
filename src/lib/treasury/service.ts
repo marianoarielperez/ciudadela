@@ -118,8 +118,24 @@ export function makeTreasuryService(deps: Deps) {
           include: { memberships: { include: { book: true } } },
         });
         if (!member) throw new TreasuryError("El socio no existe.");
-        if (member.status === "withdrawn") {
-          throw new TreasuryError("El socio está dado de baja: registrá primero el reingreso.");
+        // El cesante PUEDE pagar antes del reingreso, y es el orden que manda el
+        // estatuto: Art. 9 inc. c (REG-16) exige saldar la deuda a valores
+        // vigentes PARA poder ser readmitido, así que exigir el reingreso para
+        // cobrarle invertía la regla y dejaba el mostrador sin salida. La cuota
+        // se valúa con la categoría que quedó en la ficha —la que tenía a la
+        // baja— y el pago no lo reincorpora: eso lo asienta la Comisión con acta.
+        //
+        // Los aportes voluntario y extraordinario sí se le rechazan. Son cosas
+        // del que HOY es socio: el extraordinario lo vota la asamblea sobre el
+        // padrón vigente (Art. 5) y el voluntario es el aporte con el que el
+        // adherente sostiene a la asociación. Nada de eso es deuda, nada de eso
+        // acerca el reingreso, y un recibo de "aporte" a nombre de quien ya no
+        // es socio ensucia su cuenta corriente. Si la Comisión quiere aceptar
+        // una donación de un no socio, no es un pago de este socio.
+        if (member.status === "withdrawn" && input.concept !== "fees") {
+          throw new TreasuryError(
+            "El socio está dado de baja: sólo se le puede cobrar la deuda de cuotas. Para registrar aportes, primero el reingreso.",
+          );
         }
         if (!cashConceptsFor(member.category).includes(input.concept)) {
           throw new TreasuryError("Ese concepto no corresponde a la categoría del socio.");
@@ -139,8 +155,20 @@ export function makeTreasuryService(deps: Deps) {
           const unit = feeAmountFor(member.category, value);
           if (unit === null) throw new TreasuryError("La categoría del socio no paga cuota.");
           const fees = await db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } });
+          const pending = fees.filter((f) => f.status === "pending").map((f) => f.period);
+          // Un dado de baja no devenga (`accrues()` lo dice explícito): si se le
+          // cobraran más cuotas que las pendientes, `allocate` crearía períodos
+          // NUEVOS a nombre de alguien que ya no es socio. Lo que se le cobra es
+          // la deuda congelada, ni una cuota más.
+          if (member.status === "withdrawn" && count > pending.length) {
+            throw new TreasuryError(
+              pending.length === 0
+                ? "El socio está dado de baja y no tiene cuotas pendientes: no hay nada que cobrarle."
+                : `El socio está dado de baja: tiene ${pending.length} ${pending.length === 1 ? "cuota pendiente" : "cuotas pendientes"} y no devenga nuevas.`,
+            );
+          }
           const allocation = allocate({
-            pending: fees.filter((f) => f.status === "pending").map((f) => f.period),
+            pending,
             existing: fees.map((f) => f.period),
             n: count,
             currentPeriod: currentPeriod(at),

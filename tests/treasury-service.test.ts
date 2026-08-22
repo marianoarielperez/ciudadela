@@ -192,16 +192,52 @@ describe("registerCashPayment", () => {
     expect(state.payments[0]).toMatchObject({ type: "voluntary" });
   });
 
-  it("rechaza cuotas para un adherente, count 0 y socio dado de baja", async () => {
+  it("rechaza cuotas para un adherente y count 0", async () => {
     const adh = fakeDb({ member: { ...active(3), category: "adherent" }, fees: [] });
     await expect(makeTreasuryService({ db: adh.db, feeValues, now, renderPdf, writePdf })
       .registerCashPayment({ memberId: 3, actorId: 1, concept: "fees", count: 1 })).rejects.toThrow(TreasuryError);
     const act = fakeDb({ member: active(4), fees: [] });
     await expect(makeTreasuryService({ db: act.db, feeValues, now, renderPdf, writePdf })
       .registerCashPayment({ memberId: 4, actorId: 1, concept: "fees", count: 0 })).rejects.toThrow(/cuotas/);
-    const baja = fakeDb({ member: { ...active(5), status: "withdrawn" }, fees: [] });
-    await expect(makeTreasuryService({ db: baja.db, feeValues, now, renderPdf, writePdf })
-      .registerCashPayment({ memberId: 5, actorId: 1, concept: "voluntary", amount: 100 })).rejects.toThrow(/baja/);
+  });
+
+  // REG-16 (Art. 9 inc. c): el cesante salda la deuda ANTES del reingreso, así
+  // que Efectivo tiene que poder cobrarle sin que nadie lo readmita primero.
+  it("le cobra al cesante las cuotas congeladas a valor vigente y le emite recibo", async () => {
+    const { db, state } = fakeDb({
+      member: { ...active(5), status: "withdrawn" },
+      fees: [
+        { id: 1, memberId: 5, period: "2025-03", status: "pending", origin: "import", paymentId: null },
+        { id: 2, memberId: 5, period: "2025-04", status: "pending", origin: "import", paymentId: null },
+        { id: 3, memberId: 5, period: "2025-05", status: "pending", origin: "import", paymentId: null },
+      ],
+    });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    const r = await svc.registerCashPayment({ memberId: 5, actorId: 1, concept: "fees", count: 3 });
+    expect(r.periods).toEqual(["2025-03", "2025-04", "2025-05"]);
+    // 3 × 6000: la categoría que tenía a la baja, valuada al valor de HOY.
+    expect(r.amount).toBe(18000);
+    expect(r.number).toBe("2026-00001");
+    expect(state.fees.every((f) => f.status === "paid")).toBe(true);
+    expect(state.receipts[0]).toMatchObject({ number: "2026-00001", concept: "Cuota social · marzo a mayo 2025 (3 cuotas)" });
+  });
+
+  it("al cesante no le cobra aportes ni cuotas futuras", async () => {
+    const { db } = fakeDb({
+      member: { ...active(5), status: "withdrawn" },
+      fees: [{ id: 1, memberId: 5, period: "2025-03", status: "pending", origin: "import", paymentId: null }],
+    });
+    const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
+    // El aporte voluntario y el extraordinario son del que HOY es socio: se
+    // rechazan, y el mensaje dice qué sí se puede cobrar.
+    await expect(svc.registerCashPayment({ memberId: 5, actorId: 1, concept: "voluntary", amount: 100 }))
+      .rejects.toThrow(/dado de baja: sólo se le puede cobrar la deuda de cuotas/);
+    await expect(svc.registerCashPayment({ memberId: 5, actorId: 1, concept: "extraordinary", amount: 100 }))
+      .rejects.toThrow(TreasuryError);
+    // Y no devenga: pagar más cuotas de las pendientes crearía períodos nuevos
+    // a nombre de alguien que ya no es socio.
+    await expect(svc.registerCashPayment({ memberId: 5, actorId: 1, concept: "fees", count: 2 }))
+      .rejects.toThrow(/1 cuota pendiente/);
   });
 
   it("sin valor vigente no cobra cuotas", async () => {

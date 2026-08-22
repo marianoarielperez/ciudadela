@@ -75,7 +75,9 @@ async function runAction(
     guard: (member: Member, data: Data) => RuleResult | Promise<RuleResult>;
     run: (ctx: Ctx, member: Member, data: Data) => Promise<unknown>;
     auditAction: string;
-    detail?: (member: Member, data: Data) => Record<string, unknown>;
+    // Puede ser async: el reingreso necesita CONTAR las cuotas pendientes vivas
+    // para el asiento, y esa cuenta es una lectura a la base.
+    detail?: (member: Member, data: Data) => Record<string, unknown> | Promise<Record<string, unknown>>;
   },
 ): Promise<State> {
   const actor = await requireAdmin();
@@ -128,7 +130,7 @@ async function runAction(
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actorId, action: opts.auditAction, entity: "member", entityId: memberId,
-    detail: { minuteId, ...(opts.detail?.(member, data) ?? {}) }, ip,
+    detail: { minuteId, ...(opts.detail ? await opts.detail(member, data) : {}) }, ip,
   });
 
   // Fuera del try: redirect() señaliza con una excepción y el catch se la comería.
@@ -233,7 +235,16 @@ export async function readmitAction(_p: State, formData: FormData): Promise<Stat
       run: ({ memberId, minuteId, actorId }, _member, data) =>
         memberService.readmit({ memberId, minuteId, actorId, category: data.category as MemberCategory }),
       auditAction: "member_readmit",
-      detail: (_m, data) => ({ category: data.category }),
+      // Spec §6.3. El reingreso de un deudor NO se bloquea —la decisión es de la
+      // Comisión (REG-16)—, así que este asiento es el único lugar del sistema
+      // donde queda dicho que se readmitió a alguien con N cuotas pendientes:
+      // ninguna pantalla lo conserva una vez que el socio vuelve a estar
+      // vigente. Se cuenta al confirmar y en vivo (el reingreso no toca cuotas,
+      // así que contar después del servicio da lo mismo que contar antes).
+      detail: async (member, data) => ({
+        category: data.category,
+        pendingCount: await prisma.fee.count({ where: { memberId: member.id, status: "pending" } }),
+      }),
     },
   );
 }

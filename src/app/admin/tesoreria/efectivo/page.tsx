@@ -49,6 +49,13 @@ export default async function EfectivoPage(props: {
     const feeValue = await feeValueReader.current();
     const account = await fetchMemberAccount(prisma, member, feeValue);
     const number = member.memberships.find((m) => m.book.status === "open")?.memberNumber ?? null;
+    // Al cesante sólo se le cobran las cuotas congeladas: el voluntario y el
+    // extraordinario son del que hoy es socio (el servicio los rechaza), y sin
+    // pendientes tampoco hay cuotas que cobrarle, porque no devenga nuevas.
+    const withdrawn = member.status === "withdrawn";
+    const concepts = withdrawn
+      ? (account.pendingCount > 0 ? cashConceptsFor(member.category).filter((c) => c === "fees") : [])
+      : cashConceptsFor(member.category);
     return (
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -72,15 +79,34 @@ export default async function EfectivoPage(props: {
         </Card>
         <Card>
           <CardHeader><CardTitle>Registrar pago en efectivo</CardTitle></CardHeader>
-          <CardContent>
-            {member.status === "withdrawn" ? (
-              // El servicio también lo rechaza; acá se evita ofrecer el
-              // formulario que no puede terminar bien.
-              <FormMessage kind="warning" box>El socio está dado de baja: registrá primero el reingreso.</FormMessage>
+          <CardContent className="space-y-4">
+            {withdrawn && (
+              // Art. 9 inc. c (REG-16): el cesante salda la deuda ANTES de que la
+              // Comisión pueda readmitirlo, así que acá se cobra. El aviso dice
+              // las dos cosas que el operador tiene que saber: que el pago es
+              // válido y que NO lo reincorpora.
+              <FormMessage kind="warning" box as="div">
+                <p>
+                  Está dado de baja. Podés cobrarle las cuotas que le quedaron pendientes, valuadas
+                  al valor vigente de su categoría (Art. 9 inc. c). El pago salda la deuda y le
+                  emite recibo, pero <strong>no</strong> lo reincorpora.
+                </p>
+                <p className="mt-2">
+                  Con la deuda en cero, el reingreso se registra con acta desde{" "}
+                  <Link className="underline" href={`/admin/socios/${member.id}/reingreso`}>
+                    la ficha del socio
+                  </Link>.
+                </p>
+              </FormMessage>
+            )}
+            {concepts.length === 0 ? (
+              // Un cesante sin cuotas pendientes (o de una categoría que no paga
+              // cuota) no tiene nada que pagar acá: los aportes se le rechazan.
+              <EmptyState size="card" description="No hay nada para cobrarle en esta pantalla." />
             ) : (
               <CashForm
                 memberId={member.id}
-                concepts={cashConceptsFor(member.category)}
+                concepts={concepts}
                 feeAmount={account.feeAmount}
                 hasEmail={Boolean(member.email) && member.emailStatus !== "bounced"}
                 pendingCount={account.pendingCount}
@@ -109,8 +135,8 @@ export default async function EfectivoPage(props: {
       {q === "" ? (
         <EmptyState size="card" description="Buscá al socio que está pagando en la sede." />
       ) : hits.length === 0 ? (
-        // La búsqueda trae vigentes Y suspendidos a propósito: no se puede
-        // prometer "vigente" en el estado vacío.
+        // La búsqueda trae los tres estados a propósito (también las bajas):
+        // no se puede prometer "vigente" en el estado vacío.
         <EmptyState description="Ningún socio coincide con la búsqueda." />
       ) : (
         <ul className="divide-y rounded-xl border">
@@ -123,9 +149,9 @@ export default async function EfectivoPage(props: {
                 <span className="font-mono tabular-nums">N° {h.memberNumber}</span>
                 <span className="font-medium">{h.fullName}</span>
                 <span className="text-muted-foreground">{h.dni ?? "sin DNI"} · {CATEGORY_LABELS[h.category]}</span>
-                {/* La búsqueda trae suspendidos a propósito: es lo único que
-                    distingue a un suspendido en esta lista, y es la pantalla
-                    que cobra. */}
+                {/* La búsqueda trae suspendidos y bajas a propósito: el badge
+                    es lo único que los distingue en esta lista, y es la
+                    pantalla que cobra. */}
                 <Badge variant={memberStatusBadgeVariant(h.status)}>{STATUS_LABELS[h.status]}</Badge>
               </Link>
             </li>
