@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatARS, formatDateTimeAR } from "@/lib/format";
 import { MAX_LINK_FEES, PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
+import { describePeriods } from "@/lib/treasury/labels";
 import { periodLabel, type Period } from "@/lib/treasury/periods";
 import { createPaymentLinkAction, emailPaymentLinkAction, type LinkState } from "./actions";
 
@@ -27,12 +28,17 @@ function digitsOnly(raw: string): string {
 
 type LinkPayload = NonNullable<LinkState["link"]>;
 
-export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, hasEmail }: {
+export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, upcoming, hasEmail }: {
   memberId: number;
   /** Valor vigente de la cuota para la categoría (la pantalla no llega acá si es null). */
   feeAmount: number;
   pendingCount: number;
   oldestPending: Period | null;
+  /** Los períodos que este pago iría creando, en orden, desde el PISO DE
+   *  COBERTURA del socio (`coverageFloor`) — no desde el mes calendario. Los
+   *  calcula la página con el mismo `allocate` que después imputa el cobro,
+   *  así que el operador lee acá lo que va a decir el recibo. */
+  upcoming: Period[];
   hasEmail: boolean;
 }) {
   const [state, formAction, pending] = useActionState<LinkState, FormData>(createPaymentLinkAction, {});
@@ -48,6 +54,7 @@ export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, has
   });
   const n = Number(values.n);
   const total = Number.isInteger(n) && n > 0 && n <= MAX_LINK_FEES ? feeAmount * n : null;
+  const covered = total === null ? "" : describePeriods(upcoming.slice(0, n));
 
   return (
     <div className="space-y-5">
@@ -64,7 +71,9 @@ export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, has
           hint={
             pendingCount > 0
               ? `Debe ${pendingCount} ${pendingCount === 1 ? "cuota" : "cuotas"}${oldestPending ? ` desde ${periodLabel(oldestPending)}` : ""}. El pago se imputa a las más antiguas primero.`
-              : "Está al día: el pago se imputa al período corriente y siguientes."
+              : covered
+                ? `Está al día: el pago cubre ${covered}.`
+                : `Está al día: el próximo período a cubrir es ${periodLabel(upcoming[0])}.`
           }
         />
         <p className="text-sm">

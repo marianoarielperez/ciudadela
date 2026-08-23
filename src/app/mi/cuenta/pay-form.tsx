@@ -16,6 +16,7 @@ import { useActionState, useEffect, useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { formatARS } from "@/lib/format";
+import { describePeriods } from "@/lib/treasury/labels";
 import { periodLabel, type Period } from "@/lib/treasury/periods";
 import { startMemberPaymentAction, type PayState } from "./actions";
 
@@ -31,10 +32,15 @@ function clamp(n: number): number {
   return Math.min(MAX, Math.max(MIN, Math.trunc(n)));
 }
 
-export function PayForm({ pendingCount, feeAmount, oldestPending }: {
+export function PayForm({ pendingCount, feeAmount, oldestPending, upcoming }: {
   pendingCount: number;
   feeAmount: number;
   oldestPending: Period | null;
+  /** Los períodos que este pago iría creando, en orden, desde el PISO DE
+   *  COBERTURA del socio (`coverageFloor`) — no desde el mes calendario. Los
+   *  calcula la página con el mismo `allocate` que después imputa el cobro,
+   *  así que lo que se anuncia acá es lo que va a decir el recibo. */
+  upcoming: Period[];
 }) {
   const [state, formAction, pending] = useActionState<PayState, FormData>(startMemberPaymentAction, {});
   // Arranca en lo que debe: el caso frecuente es "quiero ponerme al día".
@@ -47,6 +53,9 @@ export function PayForm({ pendingCount, feeAmount, oldestPending }: {
   const n = Number(raw);
   const valid = raw !== "" && Number.isInteger(n) && n >= MIN && n <= MAX;
   const total = valid ? feeAmount * n : null;
+  // Qué meses cubre ESTA cantidad. Se recalcula con el contador: el vecino
+  // que sube de 1 a 3 ve crecer el rango antes de irse a Mercado Pago.
+  const covered = valid ? describePeriods(upcoming.slice(0, n)) : "";
   const step = (delta: number) => setRaw(String(clamp((valid ? n : MIN) + delta)));
 
   // Irse del sitio ES un efecto sobre un sistema externo: acá está bien puesto.
@@ -87,7 +96,9 @@ export function PayForm({ pendingCount, feeAmount, oldestPending }: {
         <p className="text-sm text-muted-foreground">
           {pendingCount > 0
             ? `Debés ${pendingCount} ${pendingCount === 1 ? "cuota" : "cuotas"}${oldestPending ? ` desde ${periodLabel(oldestPending)}` : ""}. Podés pagar menos: se imputan a las más viejas.`
-            : "Estás al día: pagás el mes en curso por adelantado."}
+            : covered
+              ? `Estás al día: este pago cubre ${covered}.`
+              : `Estás al día: el próximo período a cubrir es ${periodLabel(upcoming[0])}.`}
         </p>
       </div>
 

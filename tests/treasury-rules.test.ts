@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { civilDateUtc } from "@/lib/dates";
 import {
-  accrues, allocate, arrearsLevel, cashConceptsFor, categoryPaysFee, debtAmount, feeAmountFor,
-  firstAccrualPeriod, revertFees,
+  accrues, allocate, arrearsLevel, cashConceptsFor, categoryPaysFee, coverageFloor, debtAmount,
+  feeAmountFor, firstAccrualPeriod, IMPORT_COVERAGE_FLOOR, revertFees,
 } from "@/lib/treasury/rules";
 import { describePeriods, paymentConcept } from "@/lib/treasury/labels";
 
@@ -81,28 +81,119 @@ describe("debtAmount (REG-16)", () => {
   });
 });
 
+describe("coverageFloor", () => {
+  // La foto de deuda (21/08/2026) contó los impagos hasta agosto INCLUSIVE: el
+  // primer período que NO cubre es septiembre. Sale del archivo, no de un
+  // literal suelto — si algún día se re-mide el padrón, el piso se mueve con él.
+  it("el piso del padrón es el mes siguiente a la foto de deuda", () => {
+    expect(IMPORT_COVERAGE_FLOOR).toBe("2026-09");
+  });
+  it("un socio viejo del padrón tiene el piso de la foto", () => {
+    expect(coverageFloor({ joinedAt: civilDateUtc(1998, 3, 12) })).toBe("2026-09");
+  });
+  it("un alta anterior a la foto no baja el piso", () => {
+    // Martín (306): se asoció el 21/08/2026 y su cuota de ingreso cubre agosto.
+    expect(coverageFloor({ joinedAt: civilDateUtc(2026, 8, 21) })).toBe("2026-09");
+  });
+  it("un alta posterior al padrón manda: la cuota de ingreso cubre el mes de alta", () => {
+    expect(coverageFloor({ joinedAt: civilDateUtc(2026, 11, 4) })).toBe("2026-12");
+  });
+  it("el reingreso manda sobre joinedAt, que el reingreso NO toca (REG-11)", () => {
+    // Sin este término, al ex socio que vuelve en noviembre se le crearían
+    // cuotas de septiembre y octubre: meses en los que no fue socio.
+    expect(coverageFloor({
+      joinedAt: civilDateUtc(2005, 6, 1),
+      readmittedAt: civilDateUtc(2026, 11, 18),
+    })).toBe("2026-12");
+  });
+  it("un reingreso viejo no baja el piso de la foto", () => {
+    expect(coverageFloor({
+      joinedAt: civilDateUtc(2005, 6, 1),
+      readmittedAt: civilDateUtc(2019, 4, 2),
+    })).toBe("2026-09");
+  });
+  it("readmittedAt null o ausente dan lo mismo", () => {
+    const joinedAt = civilDateUtc(2005, 6, 1);
+    expect(coverageFloor({ joinedAt, readmittedAt: null })).toBe(coverageFloor({ joinedAt }));
+  });
+});
+
 describe("allocate", () => {
+  // `startAt` es el PISO DE COBERTURA del socio, no el mes calendario: la cuenta
+  // corriente no tiene fila para lo que ya está cubierto, así que arrancar en el
+  // mes en curso le volvía a cobrar ese mes a todo socio al día.
   it("imputa a las pendientes más antiguas primero", () => {
-    const r = allocate({ pending: ["2025-03", "2024-11", "2025-01"], existing: [], n: 2, currentPeriod: "2026-08" });
+    const r = allocate({ pending: ["2025-03", "2024-11", "2025-01"], existing: [], n: 2, startAt: "2026-09" });
     expect(r.toPay).toEqual(["2024-11", "2025-01"]);
     expect(r.toCreate).toEqual([]);
   });
-  it("si faltan pendientes crea desde el período corriente, salteando las que ya existen", () => {
-    const r = allocate({ pending: ["2026-07"], existing: ["2026-07", "2026-08"], n: 3, currentPeriod: "2026-08" });
+  it("si faltan pendientes crea desde el piso, salteando las que ya existen", () => {
+    const r = allocate({ pending: ["2026-07"], existing: ["2026-07", "2026-08"], n: 3, startAt: "2026-09" });
     expect(r.toPay).toEqual(["2026-07", "2026-09", "2026-10"]);
     expect(r.toCreate).toEqual(["2026-09", "2026-10"]);
   });
-  it("un socio al día que paga una cuota paga el período corriente", () => {
-    const r = allocate({ pending: [], existing: [], n: 1, currentPeriod: "2026-09" });
-    expect(r).toEqual({ toPay: ["2026-09"], toCreate: ["2026-09"] });
-  });
   it("n = 0 no imputa nada", () => {
-    expect(allocate({ pending: ["2026-01"], existing: ["2026-01"], n: 0, currentPeriod: "2026-08" }))
+    expect(allocate({ pending: ["2026-01"], existing: ["2026-01"], n: 0, startAt: "2026-09" }))
       .toEqual({ toPay: [], toCreate: [] });
   });
-  it("no duplica el período corriente cuando la pendiente aún no está en existing", () => {
-    const r = allocate({ pending: ["2026-08"], existing: [], n: 2, currentPeriod: "2026-08" });
-    expect(r).toEqual({ toPay: ["2026-08", "2026-09"], toCreate: ["2026-09"] });
+  it("no duplica el piso cuando la pendiente aún no está en existing", () => {
+    const r = allocate({ pending: ["2026-09"], existing: [], n: 2, startAt: "2026-09" });
+    expect(r).toEqual({ toPay: ["2026-09", "2026-10"], toCreate: ["2026-10"] });
+  });
+
+  // Los casos canónicos que laudó el operador el 23/08/2026. Son la
+  // especificación del piso: cada uno es un socio real del padrón o de producción.
+  describe("los casos canónicos del piso de cobertura", () => {
+    const floorPadron = coverageFloor({ joinedAt: civilDateUtc(1998, 3, 12) }); // 2026-09
+
+    it("Rodrigo: socio del padrón sin filas paga 1 el 23/08 → septiembre, no agosto", () => {
+      const r = allocate({ pending: [], existing: [], n: 1, startAt: floorPadron });
+      expect(r).toEqual({ toPay: ["2026-09"], toCreate: ["2026-09"] });
+    });
+
+    it("Roberto en octubre: sin filas y sin haber pagado septiembre → septiembre primero", () => {
+      // El piso puede quedar ANTERIOR al mes en curso: septiembre ya venció y es
+      // lo primero que hay que cubrir.
+      expect(allocate({ pending: [], existing: [], n: 1, startAt: floorPadron }))
+        .toEqual({ toPay: ["2026-09"], toCreate: ["2026-09"] });
+      expect(allocate({ pending: [], existing: [], n: 2, startAt: floorPadron }))
+        .toEqual({ toPay: ["2026-09", "2026-10"], toCreate: ["2026-09", "2026-10"] });
+    });
+
+    it("Skardius: pendientes hasta 2026-08 y paga una más en agosto → las pendientes + septiembre", () => {
+      const pending = ["2026-06", "2026-07", "2026-08"];
+      const r = allocate({ pending, existing: [...pending], n: 4, startAt: floorPadron });
+      expect(r.toPay).toEqual(["2026-06", "2026-07", "2026-08", "2026-09"]);
+      expect(r.toCreate).toEqual(["2026-09"]);
+    });
+
+    it("Martín: alta del 21/08 con su 2026-08 ya paga, débito del 21/09 → septiembre", () => {
+      const floor = coverageFloor({ joinedAt: civilDateUtc(2026, 8, 21) });
+      const r = allocate({ pending: [], existing: ["2026-08"], n: 1, startAt: floor });
+      expect(r).toEqual({ toPay: ["2026-09"], toCreate: ["2026-09"] });
+    });
+
+    it("alta posterior al padrón: ingreso en noviembre → diciembre, no septiembre", () => {
+      const floor = coverageFloor({ joinedAt: civilDateUtc(2026, 11, 4) });
+      const r = allocate({ pending: [], existing: [], n: 1, startAt: floor });
+      expect(r).toEqual({ toPay: ["2026-12"], toCreate: ["2026-12"] });
+    });
+
+    it("reingreso de noviembre: la deuda congelada + 1 → diciembre, no septiembre", () => {
+      const floor = coverageFloor({
+        joinedAt: civilDateUtc(2005, 6, 1),
+        readmittedAt: civilDateUtc(2026, 11, 18),
+      });
+      const pending = ["2025-04", "2025-05"];
+      const r = allocate({ pending, existing: [...pending], n: 3, startAt: floor });
+      expect(r.toPay).toEqual(["2025-04", "2025-05", "2026-12"]);
+      expect(r.toCreate).toEqual(["2026-12"]);
+    });
+
+    it("el débito del socio 14 del 10/09 sigue cayendo en septiembre", () => {
+      const r = allocate({ pending: [], existing: [], n: 1, startAt: floorPadron });
+      expect(r).toEqual({ toPay: ["2026-09"], toCreate: ["2026-09"] });
+    });
   });
 });
 

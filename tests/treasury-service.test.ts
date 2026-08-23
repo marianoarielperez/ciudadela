@@ -7,7 +7,15 @@ type Fee = { id: number; memberId: number; period: string; status: string; origi
 type Row = Record<string, unknown> & { id: number };
 type FeeWhere = { memberId: number; period: { in: string[] }; paymentId?: number; status?: string };
 
-function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[]; application?: Record<string, unknown> }) {
+function fakeDb(opts: {
+  member: Record<string, unknown>;
+  fees: Fee[];
+  application?: Record<string, unknown>;
+  /** Fecha del acta del reingreso más nuevo, o `null` si nunca reingresó. Entra
+   *  en el piso de cobertura y NO se puede derivar de `joinedAt`, que el
+   *  reingreso deliberadamente no toca (REG-11). */
+  readmittedAt?: Date | null;
+}) {
   const state = {
     fees: opts.fees.map((f) => ({ ...f })),
     payments: [] as Row[],
@@ -46,6 +54,9 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[]; applicatio
   };
   const tx = {
     member: { findUnique: vi.fn(async () => opts.member) },
+    movement: {
+      findFirst: vi.fn(async () => (opts.readmittedAt ? { date: opts.readmittedAt } : null)),
+    },
     fee: {
       findMany: vi.fn(async (args: { where: { memberId: number } }) =>
         state.fees.filter((f) => f.memberId === args.where.memberId)),
@@ -158,8 +169,12 @@ const feeValues = { current: vi.fn(async () => feeValue), history: vi.fn(async (
 const renderPdf = vi.fn(async () => new Uint8Array([0x25, 0x50, 0x44, 0x46]));
 const writePdf = vi.fn(async () => {});
 const now = () => new Date("2026-09-03T15:00:00Z");
+// Socio del padrón: `joinedAt` muy anterior a la foto de deuda, así que su piso
+// de cobertura es el de la foto (2026-09). Las altas posteriores al padrón se
+// arman pisando `joinedAt` en el test que las necesita.
 const active = (id: number) => ({
   id, fullName: "Socio", category: "active", status: "active",
+  joinedAt: civilDateUtc(1998, 3, 12),
   memberships: [{ memberNumber: id, book: { status: "open" } }],
 });
 
@@ -229,13 +244,71 @@ describe("registerCashPayment", () => {
     expect(renderPdf).toHaveBeenCalledWith(expect.objectContaining({ concept }));
   });
 
-  it("un socio al día crea la cuota del período corriente", async () => {
+  it("un socio al día crea la cuota del PISO de cobertura, no la del mes calendario", async () => {
     const { db, state } = fakeDb({ member: { ...active(2), category: "collaborator" }, fees: [] });
     const svc = makeTreasuryService({ db, feeValues, now, renderPdf, writePdf });
     const r = await svc.registerCashPayment({ memberId: 2, actorId: 1, concept: "fees", count: 1 });
     expect(r.periods).toEqual(["2026-09"]);
     expect(r.amount).toBe(3000);
     expect(state.fees[0]).toMatchObject({ period: "2026-09", status: "paid", origin: "accrual", paymentId: 1 });
+  });
+
+  // El bug del 23/08/2026 en producción: un socio del padrón SIN filas está
+  // cubierto hasta agosto (la foto de deuda contó los impagos hasta ahí), y el
+  // sistema le cobró agosto de nuevo porque `allocate` arrancaba en el mes
+  // calendario. Cobrando el 23/08 la primera cuota que puede crear es septiembre.
+  it("Rodrigo: cobro del 23/08 a un socio al día → septiembre, no agosto", async () => {
+    const { db, state } = fakeDb({ member: active(15), fees: [] });
+    const svc = makeTreasuryService({
+      db, feeValues, renderPdf, writePdf, now: () => new Date("2026-08-23T18:00:00Z"),
+    });
+    const r = await svc.registerCashPayment({ memberId: 15, actorId: 1, concept: "fees", count: 1 });
+    expect(r.periods).toEqual(["2026-09"]);
+    expect(state.receipts[0]).toMatchObject({ concept: "Cuota social · septiembre 2026" });
+  });
+
+  // El piso puede quedar ANTERIOR al mes en curso, y tiene que quedar: en
+  // octubre, septiembre ya venció y es lo primero que hay que cubrir.
+  it("Roberto en octubre: sin filas y sin haber pagado septiembre → septiembre primero", async () => {
+    const { db } = fakeDb({ member: active(274), fees: [] });
+    const svc = makeTreasuryService({
+      db, feeValues, renderPdf, writePdf, now: () => new Date("2026-10-05T18:00:00Z"),
+    });
+    const r = await svc.registerCashPayment({ memberId: 274, actorId: 1, concept: "fees", count: 2 });
+    expect(r.periods).toEqual(["2026-09", "2026-10"]);
+  });
+
+  // Un alta posterior al padrón: la cuota de ingreso cubre el mes de alta
+  // (REG-14), así que su primera cuota mensual es la del mes siguiente.
+  it("alta de noviembre: el primer pago cubre diciembre, no septiembre", async () => {
+    const { db } = fakeDb({
+      member: { ...active(307), joinedAt: civilDateUtc(2026, 11, 4) },
+      fees: [],
+    });
+    const svc = makeTreasuryService({
+      db, feeValues, renderPdf, writePdf, now: () => new Date("2026-11-20T18:00:00Z"),
+    });
+    const r = await svc.registerCashPayment({ memberId: 307, actorId: 1, concept: "fees", count: 1 });
+    expect(r.periods).toEqual(["2026-12"]);
+  });
+
+  // Reingreso: `joinedAt` no se toca (REG-11), así que el piso sale del
+  // `Movement` de reingreso. Sin él se le crearían septiembre y octubre, meses
+  // en los que no fue socio.
+  it("reingreso de noviembre: salda la deuda congelada y la cuota nueva es diciembre", async () => {
+    const { db } = fakeDb({
+      member: active(88),
+      readmittedAt: civilDateUtc(2026, 11, 18),
+      fees: [
+        { id: 1, memberId: 88, period: "2025-04", status: "pending", origin: "import", paymentId: null },
+        { id: 2, memberId: 88, period: "2025-05", status: "pending", origin: "import", paymentId: null },
+      ],
+    });
+    const svc = makeTreasuryService({
+      db, feeValues, renderPdf, writePdf, now: () => new Date("2026-11-20T18:00:00Z"),
+    });
+    const r = await svc.registerCashPayment({ memberId: 88, actorId: 1, concept: "fees", count: 3 });
+    expect(r.periods).toEqual(["2025-04", "2025-05", "2026-12"]);
   });
 
   it("voluntaria de monto libre no toca cuotas", async () => {

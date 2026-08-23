@@ -10,7 +10,7 @@ import { comparePeriods, currentPeriod, periodYear, type Period } from "./period
 import { formatReceiptNumber, nextReceiptSeq } from "./receipt-number";
 import { renderReceiptPdf, type ReceiptPdfData } from "./receipt-pdf";
 import { receiptRelativePath, writeReceiptPdf } from "./receipts-dir";
-import { allocate, cashConceptsFor, feeAmountFor, revertFees, type CashConcept } from "./rules";
+import { allocate, cashConceptsFor, coverageFloor, feeAmountFor, revertFees, type CashConcept } from "./rules";
 
 export class TreasuryError extends Error {
   constructor(message: string) {
@@ -201,10 +201,27 @@ export function makeTreasuryService(deps: Deps) {
     // silencioso de antes, pero ahora un valor inconsistente ya no llega hasta acá.
     let n = input.n;
     if (input.memberId !== null) {
-      const member = await db.member.findUnique({ where: { id: input.memberId }, select: { id: true, status: true } });
+      const member = await db.member.findUnique({
+        where: { id: input.memberId },
+        select: { id: true, status: true, joinedAt: true },
+      });
       if (!member) throw new TreasuryError("El socio no existe.");
       if (n > 0) {
-        const fees = await db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } });
+        // El reingreso más nuevo entra en el piso de cobertura y NO se puede
+        // derivar de `joinedAt` (REG-11: el reingreso no reinicia la antigüedad,
+        // ver `applications/record.ts`). Es una consulta más por pago, y se
+        // acepta: los pagos son eventos raros y la alternativa es crearle cuotas
+        // de meses en los que el socio no lo era. `date` es la fecha del ACTA que
+        // resolvió el reingreso, que es la que corresponde: el reingreso rige
+        // desde el acta, no desde el momento en que se cargó en el sistema.
+        const [fees, readmission] = await Promise.all([
+          db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } }),
+          db.movement.findFirst({
+            where: { memberId: member.id, type: "readmission" },
+            orderBy: [{ date: "desc" }, { id: "desc" }],
+            select: { date: true },
+          }),
+        ]);
         const pending = fees.filter((f) => f.status === "pending").map((f) => f.period);
         // Un dado de baja no devenga: se le cobra la deuda congelada y ni una
         // cuota más. Acotar en vez de tirar — desde un webhook, tirar sería un
@@ -217,7 +234,12 @@ export function makeTreasuryService(deps: Deps) {
           pending,
           existing: fees.map((f) => f.period),
           n,
-          currentPeriod: currentPeriod(paidAt),
+          // El PISO, no el mes en curso: la cuenta corriente no tiene fila para
+          // lo que ya está cubierto, así que arrancar en el mes calendario le
+          // cobraba de nuevo el mes corriente a todo socio al día. El piso puede
+          // quedar ANTES de hoy (quien no pagó septiembre y paga en octubre cubre
+          // septiembre primero) y también DESPUÉS (un alta de noviembre).
+          startAt: coverageFloor({ joinedAt: member.joinedAt, readmittedAt: readmission?.date ?? null }),
         });
         periods = allocation.toPay;
         toCreate = allocation.toCreate;

@@ -21,14 +21,34 @@ import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatARS } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
+import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
 import { feeValueReader, NO_FEE_VALUE_MESSAGE } from "@/lib/treasury/fee-values";
-import { categoryPaysFee } from "@/lib/treasury/rules";
+import { periodLabel, type Period } from "@/lib/treasury/periods";
+import { allocate, categoryPaysFee, coverageFloor } from "@/lib/treasury/rules";
 import { LinkForm } from "./link-form";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Link de pago — SIGeV" };
+
+/** Los períodos que un pago de este socio iría CREANDO, en orden, desde su piso
+ *  de cobertura. La pantalla los usa para nombrar a qué mes va el pago; el
+ *  servicio llama a `allocate` con el MISMO piso al imputarlo, así que lo que se
+ *  anuncia es lo que va a decir el recibo.
+ *
+ *  El reingreso entra por consulta aparte: `joinedAt` no se toca al reingresar
+ *  (REG-11), así que la fecha sale del `Movement` de tipo `readmission` más
+ *  nuevo. Sin ese término, a un ex socio que vuelve en noviembre la pantalla le
+ *  ofrecería cubrir septiembre y octubre, meses en los que no fue socio. */
+function upcomingPeriods(existing: Period[], joinedAt: Date, readmittedAt: Date | null): Period[] {
+  return allocate({
+    pending: [],
+    existing,
+    n: MAX_LINK_FEES,
+    startAt: coverageFloor({ joinedAt, readmittedAt }),
+  }).toCreate;
+}
 
 export default async function PaymentLinkPage(props: { params: Promise<{ id: string }> }) {
   const actor = await requireAdmin();
@@ -41,16 +61,22 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
   if (!Number.isInteger(memberId) || memberId <= 0) notFound();
 
   // El valor vigente no depende del socio: se pide en paralelo con la ficha.
-  const [member, feeValue] = await Promise.all([
+  const [member, feeValue, readmission] = await Promise.all([
     prisma.member.findUnique({
       where: { id: memberId },
       include: { memberships: { include: { book: true } } },
     }),
     feeValueReader.current(),
+    prisma.movement.findFirst({
+      where: { memberId, type: "readmission" },
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+      select: { date: true },
+    }),
   ]);
   if (!member) notFound();
 
   const account = await fetchMemberAccount(prisma, member, feeValue);
+  const upcoming = upcomingPeriods(account.fees.map((f) => f.period), member.joinedAt, readmission?.date ?? null);
   const number = member.memberships.find((m) => m.book.status === "open")?.memberNumber ?? null;
   const hasEmail = Boolean(member.email) && member.emailStatus !== "bounced";
 
@@ -122,7 +148,7 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
                     .
                   </>
                 ) : (
-                  <>Está al día. Un link le deja pagar por adelantado.</>
+                  <>Está al día. Un link le deja pagar por adelantado, desde {periodLabel(upcoming[0])}.</>
                 )}{" "}
                 Valor de la cuota:{" "}
                 <span className="font-mono tabular-nums">{formatARS(account.feeAmount)}</span>.
@@ -132,6 +158,7 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
                 feeAmount={account.feeAmount}
                 pendingCount={account.pendingCount}
                 oldestPending={account.oldestPending}
+                upcoming={upcoming}
                 hasEmail={hasEmail}
               />
             </>

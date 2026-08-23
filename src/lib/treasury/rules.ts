@@ -1,6 +1,7 @@
 // Reglas puras de tesorería (spec §3). Sin Prisma: la tabla de casos se prueba
 // sin fixtures. Los mensajes que llegan a pantalla viven en las actions.
 import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
+import { DEBT_SNAPSHOT_DATE } from "./debt-import";
 import { addMonths, comparePeriods, periodOf, type Period } from "./periods";
 
 export type FeeValueAmounts = { activeAmount: number; sharedAmount: number };
@@ -36,6 +37,44 @@ export const ACCRUING_CATEGORIES: readonly MemberCategory[] = ["active", "collab
  *  de alta (REG-14). Ingresó el 21/08 → primera cuota septiembre. */
 export function firstAccrualPeriod(joinedAt: Date): Period {
   return addMonths(periodOf(joinedAt), 1);
+}
+
+/** El primer período que la FOTO de deuda NO cubre.
+ *
+ *  `datos/deuda.xlsx` (21/08/2026) contó las cuotas impagas hasta agosto de 2026
+ *  INCLUSIVE: los morosos completos de ese año traen un 8 (enero..agosto) y el
+ *  import las materializó. La contracara es la que rompía: un socio del padrón
+ *  que estaba al día NO tiene ninguna fila, y "sin filas" no significa "sin
+ *  cuotas devengadas" sino **cubierto hasta la fecha de la foto**. Sale de
+ *  `DEBT_SNAPSHOT_DATE` y no de un literal suelto: si alguna vez se re-mide el
+ *  padrón de deuda, el piso se mueve con el archivo. */
+export const IMPORT_COVERAGE_FLOOR: Period = addMonths(periodOf(DEBT_SNAPSHOT_DATE), 1);
+
+/** El primer período que un pago de este socio puede llegar a CREAR.
+ *
+ *  Existe porque la cuenta corriente no tiene fila para lo que ya está cubierto,
+ *  y sin piso `allocate` arrancaba a crear en el mes calendario corriente — que
+ *  para un socio al día es justamente un mes ya cubierto (el 23/08/2026 un socio
+ *  del padrón sin deuda pagó y el sistema le cobró agosto de nuevo).
+ *
+ *  Tres términos, y gana el más nuevo:
+ *  - la foto de deuda cubre hasta agosto de 2026 (`IMPORT_COVERAGE_FLOOR`);
+ *  - para un alta posterior al padrón, la cuota de ingreso cubre el mes de alta
+ *    (REG-14), así que el piso es el mes siguiente — es `firstAccrualPeriod`;
+ *  - para un reingreso, lo mismo desde el mes del reingreso. Este término NO se
+ *    puede derivar de `joinedAt`: el reingreso deliberadamente no lo toca (REG-11,
+ *    la antigüedad no se reinicia), así que la fecha tiene que llegar de afuera
+ *    —el `Movement` de tipo `readmission` más nuevo—. Sin él, a un ex socio que
+ *    vuelve en noviembre se le crearían cuotas de septiembre y octubre, meses en
+ *    los que no fue socio y en los que no se devenga nada.
+ *
+ *  Puro a propósito, y compartido entre el servicio que imputa y las pantallas
+ *  que anuncian a qué período va el pago: si cada uno lo calculara por su cuenta,
+ *  la pantalla diría un mes y el recibo otro. */
+export function coverageFloor(m: { joinedAt: Date; readmittedAt?: Date | null }): Period {
+  const candidates: Period[] = [IMPORT_COVERAGE_FLOOR, firstAccrualPeriod(m.joinedAt)];
+  if (m.readmittedAt) candidates.push(addMonths(periodOf(m.readmittedAt), 1));
+  return candidates.reduce((a, b) => (comparePeriods(b, a) > 0 ? b : a));
 }
 
 // La suspensión es disciplinaria, no eximición: el suspendido sigue devengando.
@@ -75,19 +114,26 @@ export function debtAmount(pending: number, category: MemberCategory, v: FeeValu
 }
 
 /** Qué cuotas cubre un pago de `n` cuotas: las pendientes más antiguas primero;
- *  si faltan, períodos nuevos desde el corriente, salteando los que ya tienen fila
+ *  si faltan, períodos nuevos desde `startAt`, salteando los que ya tienen fila
  *  en `existing` — TODOS los períodos ya creados, incluidas las pendientes, no solo
- *  pagados/exentos — para no chocar con el unique (memberId, period). */
+ *  pagados/exentos — para no chocar con el unique (memberId, period).
+ *
+ *  `startAt` es el PISO DE COBERTURA del socio (`coverageFloor`), no el mes
+ *  calendario corriente, y puede quedar ANTERIOR a hoy: un socio que no pagó
+ *  septiembre y paga en octubre tiene que cubrir septiembre primero. El
+ *  parámetro se llama así, y no `currentPeriod`, para que la semántica vieja
+ *  —"empezar por el mes en curso", que le cobraba de nuevo un mes ya cubierto a
+ *  todo socio al día— no se pueda pasar por accidente. */
 export function allocate(input: {
   pending: Period[];
   existing: Period[];
   n: number;
-  currentPeriod: Period;
+  startAt: Period;
 }): { toPay: Period[]; toCreate: Period[] } {
   const toPay = [...input.pending].sort(comparePeriods).slice(0, input.n);
   const toCreate: Period[] = [];
   const taken = new Set([...input.existing, ...toPay]);
-  let p = input.currentPeriod;
+  let p = input.startAt;
   while (toPay.length < input.n) {
     if (!taken.has(p)) {
       toPay.push(p);
