@@ -60,6 +60,7 @@ export function AccountSection({ member, account, rows, admin, receiptHref }: {
       {admin && (
         <div className="flex flex-wrap gap-2">
           <Button asChild><Link href={`/admin/tesoreria/efectivo?socio=${member.id}`}>Registrar efectivo</Link></Button>
+          <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/link`}>Generar link de pago</Link></Button>
           <Button asChild variant="outline"><Link href="/admin/tesoreria/recibos">Ver recibos</Link></Button>
         </div>
       )}

@@ -246,3 +246,14 @@ export const resumeResendTargetLimiter = createRateLimiter({
   limit: RESUME_RESEND_LIMIT,
   windowMs: APPLICATION_WINDOW_MS,
 })
+
+export const MEMBER_PAY_LIMIT = 5
+
+/** "Pagar ahora" del panel de socio, por memberId: cada clic crea una
+ *  preferencia en MP. Cinco por minuto alcanzan para arrepentirse y volver;
+ *  más que eso es un script.
+ *
+ *  Por socio y no por IP: la pantalla es autenticada, así que hay una identidad
+ *  mejor que el origen, y dos vecinos detrás del mismo CGNAT no tienen por qué
+ *  gastarse el cupo entre ellos. */
+export const memberPayLimiter = createRateLimiter({ limit: MEMBER_PAY_LIMIT, windowMs: 60_000 })
