@@ -44,7 +44,7 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
   // El valor vigente de la cuota no depende del socio: se pide EN PARALELO con
   // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
   // cada render (mismo criterio que la ruta hermana `[accion]`).
-  const [member, feeValue, subscription] = await Promise.all([
+  const [member, feeValue, subscriptions] = await Promise.all([
     prisma.member.findUnique({
       where: { id: memberId },
       include: {
@@ -55,23 +55,32 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
       },
     }),
     feeValueReader.current(),
-    // La suscripción viva del socio, para la pestaña Cuenta corriente. "Viva"
-    // es todo lo que no está `cancelled`, el mismo criterio de
-    // `hasLiveAutoDebit`: el catálogo de estados es de Mercado Pago y puede
-    // crecer, así que un estado desconocido cuenta como débito posible. Si las
-    // dos pantallas usaran criterios distintos, el aviso de la baja avisaría de
-    // un débito que la ficha jura que no existe.
+    // TODAS las suscripciones del socio, para la pestaña Cuenta corriente: no
+    // sólo las vivas. "Viva" es todo lo que no está `cancelled`, el mismo
+    // criterio de `hasLiveAutoDebit` —el catálogo de estados es de Mercado Pago
+    // y puede crecer, así que un estado desconocido cuenta como débito posible—,
+    // pero la ficha necesita además saber si las que hay están canceladas: una
+    // suscripción cancelada NO es lo mismo que ninguna suscripción, y decir "no
+    // hay ninguna vinculada" sobre una que el sistema tiene delante y sabe
+    // muerta es mandar al operador a vincular lo que no hay que vincular (ver
+    // `AutoDebitView`).
+    //
+    // `findMany` y no `findFirst` tampoco por capricho: `memberId` es índice y
+    // NO unique, así que un socio puede tener dos preapprovals vivos —dos
+    // débitos por mes— y `findFirst` los mostraba como uno. Sigue siendo UNA
+    // consulta dentro del mismo `Promise.all`, y son 0-3 filas por socio.
     //
     // Sale de la BASE y no de Mercado Pago a propósito: la ficha del socio no
     // puede depender de que MP conteste. Lo que la base no tiene —el próximo
     // cobro— no se muestra.
-    prisma.mpSubscription.findFirst({
-      where: { memberId, status: { not: "cancelled" } },
+    prisma.mpSubscription.findMany({
+      where: { memberId },
       orderBy: { createdAt: "desc" },
       select: { preapprovalId: true, status: true, amount: true, linkedManually: true },
     }),
   ]);
   if (!member) notFound();
+  const liveSubscriptions = subscriptions.filter((s) => s.status !== "cancelled");
 
   // La cuenta corriente se carga siempre: la mora es un dato de encabezado
   // (el badge) y no solo del panel de la pestaña.
@@ -184,9 +193,10 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
                   flagged: member.autoDebit,
                   // El monto es `Decimal` en la base y número en la vista: el
                   // resto de la cuenta corriente ya viaja así (`fetchMemberAccount`).
-                  subscription: subscription
-                    ? { ...subscription, amount: subscription.amount === null ? null : Number(subscription.amount) }
-                    : null,
+                  live: liveSubscriptions.map((s) => ({
+                    ...s, amount: s.amount === null ? null : Number(s.amount),
+                  })),
+                  cancelledCount: subscriptions.length - liveSubscriptions.length,
                 }}
               />
             ),

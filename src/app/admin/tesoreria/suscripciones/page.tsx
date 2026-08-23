@@ -15,6 +15,7 @@
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería. La guarda
 // tampoco se hereda del layout (Next lo renderiza en paralelo con la página).
 import Link from "next/link";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
@@ -102,7 +103,7 @@ export default async function SuscripcionesPage(props: {
             Mercado Pago ya le cobra a estos vecinos todos los meses, pero el sistema no sabe de qué
             socio es cada cobro. Hasta que se vinculen, cada débito cae en{" "}
             <Link
-              className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              className={INLINE_LINK}
               href="/admin/tesoreria/sin-conciliar"
             >
               Sin conciliar
@@ -206,7 +207,7 @@ export default async function SuscripcionesPage(props: {
                     <TableCell>
                       {s.member && (
                         <Link
-                          className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                          className={INLINE_LINK}
                           href={`/admin/socios/${s.member.id}?tab=cuenta`}
                         >
                           {s.member.fullName}

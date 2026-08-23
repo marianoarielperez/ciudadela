@@ -18,6 +18,7 @@
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería. La guarda
 // tampoco se hereda de él (Next renderiza layout y página en paralelo).
 import Link from "next/link";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { PaginationNav } from "@/components/admin/pagination-nav";
@@ -243,7 +244,7 @@ export default async function OtrosIngresosPage(props: {
             Esto es para la plata que <strong>no</strong> es de un socio. Si un socio paga su cuota
             o hace un aporte,{" "}
             <Link
-              className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              className={INLINE_LINK}
               href="/admin/tesoreria/efectivo"
             >
               cobrale en Efectivo

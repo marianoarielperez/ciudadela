@@ -18,6 +18,7 @@
 // los meses, sobre la tarjeta de un vecino.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
@@ -239,13 +240,13 @@ export default async function VincularSuscripcionPage(props: {
               </p>
               <p className="flex flex-wrap gap-3">
                 <Link
-                  className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className={INLINE_LINK}
                   href={`/admin/socios/${member.id}?tab=cuenta`}
                 >
                   Ver cuenta corriente
                 </Link>
                 <Link
-                  className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className={INLINE_LINK}
                   href={`${BASE}/${preapprovalId}/vincular`}
                 >
                   Elegir otro socio

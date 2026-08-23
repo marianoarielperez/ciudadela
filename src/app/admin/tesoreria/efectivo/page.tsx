@@ -5,6 +5,7 @@
 //
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería.
 import Link from "next/link";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
@@ -165,7 +166,7 @@ export default async function EfectivoPage(props: {
       <p className="text-sm text-muted-foreground">
         ¿Cobraste algo que no es de un socio —el alquiler del salón, una rifa, un evento—?{" "}
         <Link
-          className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          className={INLINE_LINK}
           href="/admin/tesoreria/otros-ingresos"
         >
           Registralo en Otros ingresos

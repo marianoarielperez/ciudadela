@@ -8,6 +8,7 @@
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería. La guarda
 // tampoco se hereda de él (Next renderiza layout y página en paralelo).
 import Link from "next/link";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import type { Prisma } from "@/generated/prisma/client";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
@@ -192,7 +193,7 @@ export default async function SinConciliarPage(props: {
                     <TableCell>
                       {r.payment?.memberId ? (
                         <Link
-                          className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                          className={INLINE_LINK}
                           href={`/admin/socios/${r.payment.memberId}?tab=cuenta`}
                         >
                           {r.payment.member?.fullName ?? `Socio ${r.payment.memberId}`}

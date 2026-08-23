@@ -3,11 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AccountSection, type AutoDebitView } from "@/components/admin/account-section";
 import type { MemberAccount } from "@/lib/treasury/account";
-import { AUTO_DEBIT_WARNINGS, hasLiveAutoDebit } from "@/lib/members/auto-debit";
+import { AUTO_DEBIT_WARNINGS, autoDebitSignal, hasLiveAutoDebit } from "@/lib/members/auto-debit";
 
 // El aviso de la baja y del cambio de categoría: esas dos pantallas NO tocan el
 // débito automático del socio en Mercado Pago, así que tienen que decirlo. Lo
-// que se fija acá es a quién le sale el aviso.
+// que se fija acá es a quién le sale el aviso, CUÁL de las dos señales lo
+// disparó (que es lo que decide si el texto puede afirmar o tiene que preguntar)
+// y qué ve el operador en la ficha.
 
 describe("hasLiveAutoDebit", () => {
   it("avisa por el flag del padrón aunque no haya ninguna fila local", () => {
@@ -43,20 +45,58 @@ describe("hasLiveAutoDebit", () => {
   });
 });
 
+describe("autoDebitSignal", () => {
+  it("la fila viva GANA sobre el flag del padrón cuando están las dos", () => {
+    // El orden de las ramas es lo que se fija acá: al revés, el socio con las
+    // dos señales —una ficha vieja que además se afilió por la web— recibiría el
+    // texto en condicional sobre una suscripción que el sistema tiene delante.
+    expect(autoDebitSignal({ autoDebit: true, subscriptionStatuses: ["authorized"] })).toBe("subscription");
+    expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: ["pending"] })).toBe("subscription");
+  });
+
+  it("el flag con la fila CANCELADA sigue siendo flag: no hay suscripción viva", () => {
+    // Por eso el texto de `flag_only` dice "ninguna suscripción VIVA" y no
+    // "ninguna suscripción": acá hay una, cancelada.
+    expect(autoDebitSignal({ autoDebit: true, subscriptionStatuses: ["cancelled"] })).toBe("flag_only");
+    expect(autoDebitSignal({ autoDebit: true, subscriptionStatuses: [] })).toBe("flag_only");
+  });
+
+  it("sin flag y sin fila viva no hay señal", () => {
+    expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: [] })).toBe("none");
+    expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: ["cancelled"] })).toBe("none");
+  });
+});
+
 describe("AUTO_DEBIT_WARNINGS", () => {
   // No se fija el texto (eso obliga a editar el test por cada coma), sino el
-  // DESTINO de cada aviso: es lo único que el operador tiene que poder hacer
-  // después de leerlo, y es lo que se había desactualizado — el aviso del cambio
-  // de categoría mandaba al panel de Mercado Pago cuando el monto ya se empuja
-  // desde Tesorería → Valores de cuota (lote REG-34).
+  // DESTINO de cada aviso —lo único que el operador tiene que poder hacer
+  // después de leerlo— y el TIEMPO VERBAL, que es lo que distingue un hecho
+  // verificado de una suposición del Excel de 2026.
   it("la baja manda a cancelar en Mercado Pago; la categoría, al lote de Valores", () => {
-    expect(AUTO_DEBIT_WARNINGS.baja).toMatch(/cancelar la\s+suscripción a mano en el panel de Mercado Pago/);
-    expect(AUTO_DEBIT_WARNINGS.categoria).toMatch(/Valores de cuota/);
-    expect(AUTO_DEBIT_WARNINGS.baja).not.toBe(AUTO_DEBIT_WARNINGS.categoria);
-    // Y los dos nombran Mercado Pago, que es de dónde sale el cobro.
-    for (const text of Object.values(AUTO_DEBIT_WARNINGS)) {
-      expect(text).toContain("Mercado Pago");
+    expect(AUTO_DEBIT_WARNINGS.baja.subscription).toMatch(/cancelar la\s+suscripción a mano en el panel de Mercado Pago/);
+    expect(AUTO_DEBIT_WARNINGS.categoria.subscription).toMatch(/Valores de cuota/);
+    // Y los cuatro nombran Mercado Pago, que es de dónde sale el cobro.
+    for (const bySignal of Object.values(AUTO_DEBIT_WARNINGS)) {
+      for (const text of Object.values(bySignal)) expect(text).toContain("Mercado Pago");
     }
+  });
+
+  it("con la suscripción delante AFIRMA; con el flag del padrón a secas, pregunta", () => {
+    // El aviso de la baja decía en presente "Mercado Pago le va a seguir
+    // cobrando la cuota todos los meses" también para el socio cuya única señal
+    // es el flag del padrón, que nadie verificó nunca contra MP.
+    expect(AUTO_DEBIT_WARNINGS.baja.subscription).toContain("le va a seguir cobrando la cuota");
+    for (const byAction of Object.values(AUTO_DEBIT_WARNINGS)) {
+      expect(byAction.flag_only).toContain("Si ese débito todavía existe");
+      expect(byAction.flag_only).not.toContain("le va a seguir cobrando la cuota");
+    }
+  });
+
+  it("al socio con flag solo no lo manda al lote, que nunca lo va a listar", () => {
+    // `listDivergent` sólo mira filas de `mp_subscriptions`: una suscripción que
+    // el sistema no conoce no aparece ahí jamás.
+    expect(AUTO_DEBIT_WARNINGS.categoria.flag_only).toMatch(/no lo alcanza/);
+    expect(AUTO_DEBIT_WARNINGS.categoria.flag_only).toMatch(/panel de Mercado Pago/);
   });
 });
 
@@ -64,8 +104,9 @@ describe("AUTO_DEBIT_WARNINGS", () => {
 //
 // Se renderiza de verdad (mismo recurso que `treasury-income-exercise`) porque
 // lo que se afirma acá es sobre PANTALLA: que el identificador del mandato de
-// cobro nunca se muestra entero, y que la ficha no afirma "sin débito
-// automático" cuando el padrón dice lo contrario.
+// cobro nunca se muestra entero, y que la ficha no afirma nada que el sistema no
+// sepa — ni "sin débito automático" cuando el padrón dice lo contrario, ni "no
+// hay ninguna suscripción vinculada" cuando la hay y está cancelada.
 describe("AccountSection: la línea de débito automático", () => {
   const account: MemberAccount = {
     fees: [], payments: [], pendingCount: 0, pendingPeriods: [], oldestPending: null,
@@ -79,10 +120,10 @@ describe("AccountSection: la línea de débito automático", () => {
     }));
 
   const PREAPPROVAL = "9dd643d3b5da44bb9b15646b475db8bd";
-  const live: AutoDebitView = {
-    flagged: true,
-    subscription: { preapprovalId: PREAPPROVAL, status: "authorized", amount: 6000, linkedManually: true },
-  };
+  const OTHER = "1a2b3c4d5e6f47788990aabbccddeeff";
+  const sub = (preapprovalId: string, status = "authorized") =>
+    ({ preapprovalId, status, amount: 6000, linkedManually: true });
+  const live: AutoDebitView = { flagged: true, live: [sub(PREAPPROVAL)], cancelledCount: 0 };
 
   it("muestra estado, monto y origen, y el preapproval NUNCA entero", () => {
     const html = render(live);
@@ -96,18 +137,51 @@ describe("AccountSection: la línea de débito automático", () => {
   it("un estado que no conocemos se muestra crudo, nunca traducido a la ligera", () => {
     // El catálogo es de MP: inventarle un nombre en castellano a `algo_nuevo`
     // sería afirmar algo que nadie verificó.
-    const html = render({ ...live, subscription: { ...live.subscription!, status: "algo_nuevo" } });
+    const html = render({ ...live, live: [sub(PREAPPROVAL, "algo_nuevo")] });
     expect(html).toContain("algo_nuevo");
   });
 
-  it("el flag del padrón sin fila local avisa, en vez de decir 'sin débito automático'", () => {
-    const html = render({ flagged: true, subscription: null });
+  it("con dos suscripciones vivas no dice que hay una: las lista y avisa", () => {
+    // `mp_subscriptions.memberId` es índice y no unique, y el vinculador rechaza
+    // por `preapprovalId` repetido: dos preapprovals vivos son dos débitos por
+    // mes, plata real de más, y la ficha los mostraba como uno solo.
+    const html = render({ flagged: false, live: [sub(PREAPPROVAL), sub(OTHER)], cancelledCount: 0 });
+    expect(html).toContain("2 suscripciones vivas");
+    expect(html).toContain(PREAPPROVAL.slice(0, 8));
+    expect(html).toContain(OTHER.slice(0, 8));
+    expect(html).toContain("una vez por cada una");
+    expect(html).not.toContain(PREAPPROVAL);
+    expect(html).not.toContain(OTHER);
+  });
+
+  it("la suscripción CANCELADA no se cuenta como 'no hay ninguna vinculada'", () => {
+    // El estado estacionario de todo socio que se da de baja del débito: el cron
+    // escribe `cancelled` y nadie baja nunca `Member.autoDebit`. La caja ámbar
+    // decía para siempre que no había ninguna suscripción vinculada y mandaba a
+    // vincular lo que no hay que vincular.
+    const html = render({ flagged: true, live: [], cancelledCount: 1 });
+    expect(html).toContain("cancelado en Mercado Pago");
+    expect(html).not.toContain("Vincular la suscripción");
+    expect(html).not.toContain("Sin débito automático");
+    // Y dice que el que quedó viejo es el flag del padrón, no la suscripción.
+    expect(html).toContain("quedó viejo");
+  });
+
+  it("cancelada sin el flag del padrón no hace ruido con la discrepancia", () => {
+    const html = render({ flagged: false, live: [], cancelledCount: 1 });
+    expect(html).toContain("cancelado en Mercado Pago");
+    expect(html).not.toContain("quedó viejo");
+  });
+
+  it("el flag del padrón sin NINGUNA fila avisa, en vez de decir 'sin débito automático'", () => {
+    const html = render({ flagged: true, live: [], cancelledCount: 0 });
     expect(html).toContain("Sin conciliar");
+    expect(html).toContain("Vincular la suscripción");
     expect(html).not.toContain("Sin débito automático");
   });
 
   it("sin ninguna de las dos señales ofrece el camino para vincular una", () => {
-    const html = render({ flagged: false, subscription: null });
+    const html = render({ flagged: false, live: [], cancelledCount: 0 });
     expect(html).toContain("Sin débito automático");
     expect(html).toContain("/admin/tesoreria/suscripciones");
   });

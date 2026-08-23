@@ -13,6 +13,7 @@
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
@@ -216,7 +217,7 @@ export default async function UnmatchedDetailPage(props: {
                     )}
                     <p>
                       <Link
-                        className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                        className={INLINE_LINK}
                         href={`/admin/tesoreria/otros-ingresos?ingreso=${income.id}`}
                       >
                         Ver en Otros ingresos
@@ -234,7 +235,7 @@ export default async function UnmatchedDetailPage(props: {
                 <p>
                   Socio:{" "}
                   <Link
-                    className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                    className={INLINE_LINK}
                     href={`/admin/socios/${row.payment.member.id}?tab=cuenta`}
                   >
                     {row.payment.member.fullName}
@@ -278,13 +279,13 @@ export default async function UnmatchedDetailPage(props: {
               </p>
               <p className="flex flex-wrap gap-3">
                 <Link
-                  className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className={INLINE_LINK}
                   href={`/admin/socios/${member.id}?tab=cuenta`}
                 >
                   Ver cuenta corriente
                 </Link>
                 <Link
-                  className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className={INLINE_LINK}
                   href={`${BASE}/${row.id}`}
                 >
                   Elegir otro socio
