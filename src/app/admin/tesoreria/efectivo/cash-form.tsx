@@ -66,7 +66,7 @@ export function CashForm({ memberId, concepts, feeAmount, hasEmail, pendingCount
           maxLength={2}
           hint={pendingCount > 0
             ? `Debe ${pendingCount}. Se imputan a las más antiguas primero.`
-            : "Está al día: se imputa al período corriente y siguientes."}
+            : "Está al día: se imputa a la primera cuota no cubierta."}
         />
       ) : (
         <TextField
