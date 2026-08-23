@@ -15,6 +15,16 @@ export type MpPaymentDetails = {
   dateApproved: Date | null;
   payerEmail: string | null;
   description: string | null;
+  /** Preapproval del que salió este cobro, cuando lo hay.
+   *
+   *  MP manda DOS notificaciones por cada débito de suscripción —`payment` y
+   *  `subscription_authorized_payment`— y sólo la segunda trae el preapproval en
+   *  un campo obvio. Pero la primera también lo trae, enterrado en
+   *  `point_of_interaction.transaction_data.subscription_id` (verificado contra
+   *  la API el 23/08/2026). Sin leerlo, un `payment` de suscripción no resuelve
+   *  —ni siquiera con la suscripción ya vinculada al socio— y el cobro cae en la
+   *  bandeja a esperar que llegue la otra notificación. */
+  subscriptionId: string | null;
 };
 
 export type MpAuthorizedPayment = {
@@ -119,6 +129,9 @@ type RawPayment = {
   date_approved?: string | null;
   payer?: { email?: string | null } | null;
   description?: string | null;
+  point_of_interaction?: {
+    transaction_data?: { subscription_id?: string | null } | null;
+  } | null;
 };
 
 function mapPayment(res: RawPayment, fallbackId: string): MpPaymentDetails {
@@ -134,6 +147,10 @@ function mapPayment(res: RawPayment, fallbackId: string): MpPaymentDetails {
     dateApproved: isoToDate(res.date_approved),
     payerEmail: res.payer?.email ?? null,
     description: res.description ?? null,
+    // Cadena vacía tratada como ausente: `""` como id de suscripción sería peor
+    // que no tener ninguno —resolvería contra una fila inexistente— y MP manda
+    // el bloque entero sólo en los pagos que vienen de un preapproval.
+    subscriptionId: res.point_of_interaction?.transaction_data?.subscription_id || null,
   };
 }
 

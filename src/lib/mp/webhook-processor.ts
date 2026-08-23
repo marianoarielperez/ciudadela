@@ -454,7 +454,14 @@ export function makeWebhookProcessor(deps: Deps) {
 
   async function onPayment(dataId: string): Promise<WebhookResult> {
     const payment = await deps.gateway.getPayment(dataId);
-    return applyPayment(payment, null);
+    // El preapproval sale del PROPIO pago cuando viene de una suscripción (ver
+    // `MpPaymentDetails.subscriptionId`). Pasarlo acá es lo que hace que la
+    // notificación `payment` de un débito se baste sola: sin esto dependía de
+    // que llegara además la `subscription_authorized_payment`, y mientras tanto
+    // el cobro —plata que ya salió de la cuenta del vecino— esperaba en la
+    // bandeja con el motivo equivocado ("sin referencia", cuando la suscripción
+    // estaba ahí). Verificado contra la API real en la batería de la T14.
+    return applyPayment(payment, payment.subscriptionId);
   }
 
   async function onPreapproval(dataId: string): Promise<WebhookResult> {

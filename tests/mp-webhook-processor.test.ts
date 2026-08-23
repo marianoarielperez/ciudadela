@@ -12,7 +12,7 @@ vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 import { UNMATCHED_REASONS } from "@/lib/mp/unmatched";
 import { makeWebhookProcessor, WEBHOOK_RESULTS } from "@/lib/mp/webhook-processor";
 
-type PaymentOver = Partial<{ status: string; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null }>;
+type PaymentOver = Partial<{ status: string; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null; subscriptionId: string | null }>;
 
 function deps(over: {
   payment?: PaymentOver;
@@ -25,7 +25,7 @@ function deps(over: {
   const paidAt = new Date("2026-09-10T11:15:30Z");
   const payment = {
     id: "777", status: "approved", statusDetail: "accredited", transactionAmount: 6000,
-    externalReference: null as string | null, dateApproved: paidAt as Date | null, payerEmail: "v@x.com", description: "Cuota", ...over.payment,
+    externalReference: null as string | null, dateApproved: paidAt as Date | null, payerEmail: "v@x.com", description: "Cuota", subscriptionId: null as string | null, ...over.payment,
   };
   const application = {
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -136,6 +136,22 @@ describe("payment", () => {
     expect(d.db.mpSubscription.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { externalReference: "solicitud:9" } }));
     expect(d.treasury.registerPayment).toHaveBeenCalledWith(expect.objectContaining({ memberId: 306, type: "debit", n: 1, preapprovalId: null }));
   });
+  // Hallazgo de la batería de la T14 contra la API real: MP manda DOS
+  // notificaciones por cada débito de suscripción, y la de tipo `payment` trae
+  // el preapproval enterrado en `point_of_interaction.transaction_data`. Sin
+  // leerlo, este cobro no resolvía —ni con la suscripción ya vinculada— y caía
+  // en la bandeja como "sin referencia" a esperar la otra notificación.
+  it("payment de una suscripción: el preapproval sale del propio pago", async () => {
+    const d = deps({
+      payment: { externalReference: "t14b:debito", subscriptionId: "pre-1" },
+      subscription: { memberId: 306, applicationId: null },
+    });
+    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("debit_applied");
+    expect(d.treasury.registerPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: 306, type: "debit", n: 1, preapprovalId: "pre-1" }),
+    );
+  });
+
   it("solicitud:9 borrada y sin suscripción → bandeja application_missing", async () => {
     const d = deps({ payment: { externalReference: "solicitud:9" }, application: null });
     await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("unmatched_application_missing");

@@ -162,6 +162,35 @@ describe("getPayment (4B)", () => {
     expect(p.dateApproved).toBeNull();
     expect(p.payerEmail).toBeNull();
   });
+
+  // Verificado contra la API real el 23/08/2026: en un cobro de suscripción, el
+  // preapproval llega acá y en ningún campo de primer nivel. Es lo que hace que
+  // la notificación `payment` de un débito se baste sola.
+  it("saca el preapproval de point_of_interaction en un cobro de suscripción", async () => {
+    mocks.paymentGet.mockResolvedValue({
+      id: 9,
+      status: "approved",
+      transaction_amount: 6000,
+      external_reference: "t14b:debito",
+      point_of_interaction: {
+        type: "SUBSCRIPTIONS",
+        transaction_data: { subscription_id: "616cb7f93d7f43fa814d2c5437a38b35" },
+      },
+    });
+    const p = await makeMpGateway().getPayment("9");
+    expect(p.subscriptionId).toBe("616cb7f93d7f43fa814d2c5437a38b35");
+  });
+
+  it("un pago que no viene de una suscripción no inventa preapproval", async () => {
+    mocks.paymentGet.mockResolvedValue({ id: 9, status: "approved", transaction_amount: 500 });
+    expect((await makeMpGateway().getPayment("9")).subscriptionId).toBeNull();
+    // Cadena vacía tratada como ausente: resolvería contra una fila inexistente.
+    mocks.paymentGet.mockResolvedValue({
+      id: 9, status: "approved", transaction_amount: 500,
+      point_of_interaction: { transaction_data: { subscription_id: "" } },
+    });
+    expect((await makeMpGateway().getPayment("9")).subscriptionId).toBeNull();
+  });
 });
 
 describe("getAuthorizedPayment (4B)", () => {
