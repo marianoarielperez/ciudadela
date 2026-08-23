@@ -249,7 +249,15 @@ export function AccountSection({ member, account, rows, admin, receiptHref, auto
               {account.payments.map((p) => (
                 <TableRow key={p.id} className={p.status !== "applied" ? "text-muted-foreground line-through" : undefined}>
                   <TableCell>{formatDateAR(p.paidAt)}</TableCell>
-                  <TableCell>{paymentConcept(p.type, p.periods)}</TableCell>
+                  {/* El concepto CONGELADO del recibo gana sobre el derivado: al
+                      revertir un pago las cuotas se sueltan y `periods` queda
+                      vacío, así que la fila tachada decía "Cuota social" a secas
+                      —justo la fila donde saber qué se había cobrado importa
+                      más—. Es el mismo criterio que ya rige en `Receipt.concept`
+                      (REG-33): un recibo dice lo que se cobró, no lo que hoy
+                      queda imputado. El derivado sigue de respaldo por si algún
+                      día hay un pago sin recibo. */}
+                  <TableCell>{p.receipt?.concept ?? paymentConcept(p.type, p.periods)}</TableCell>
                   <TableCell>{PAYMENT_TYPE_LABELS[p.type]}</TableCell>
                   <TableCell className="text-right font-mono tabular-nums">{formatARS(p.amount)}</TableCell>
                   <TableCell className="font-mono tabular-nums">

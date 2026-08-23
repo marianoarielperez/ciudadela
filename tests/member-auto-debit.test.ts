@@ -111,6 +111,48 @@ describe("AUTO_DEBIT_WARNINGS", () => {
 // cobro nunca se muestra entero, y que la ficha no afirma nada que el sistema no
 // sepa — ni "sin débito automático" cuando el padrón dice lo contrario, ni "no
 // hay ninguna suscripción vinculada" cuando la hay y está cancelada.
+// Hallazgo de la tercera pasada de la batería (T14), mirando la pantalla real de
+// un socio: la fila TACHADA de un pago revertido decía "Cuota social" a secas,
+// mientras el recibo anulado mostraba el período completo. La tabla derivaba el
+// concepto de las cuotas VIVAS del pago, y al revertir las cuotas se sueltan.
+// Es la fila donde saber qué se había cobrado importa más.
+describe("AccountSection: el concepto de un pago revertido", () => {
+  const pago = (over: Partial<MemberAccount["payments"][number]>) => ({
+    id: 1, type: "link" as const, amount: 12000, paidAt: new Date("2026-08-23T12:00:00Z"),
+    status: "applied" as const, periods: [], receipt: null, note: null, ...over,
+  });
+  const render = (payments: MemberAccount["payments"]) =>
+    renderToStaticMarkup(createElement(AccountSection, {
+      member: { id: 7, category: "active" as const },
+      account: {
+        fees: [], payments, pendingCount: 0, pendingPeriods: [], oldestPending: null,
+        debt: null, feeAmount: 6000, level: 0,
+      },
+      rows: [], admin: true, receiptHref: (id: number) => `/admin/tesoreria/recibos/${id}`,
+    }));
+
+  const recibo = { id: 9, number: "2026-00005", concept: "Cuota social · abril a mayo 2026 (2 cuotas)" };
+
+  it("un pago revertido conserva lo que decía el recibo, no lo que hoy tiene imputado", () => {
+    const html = render([pago({
+      status: "refunded", periods: [], receipt: { ...recibo, voidedAt: new Date("2026-08-23T13:00:00Z") },
+    })]);
+    expect(html).toContain("abril a mayo 2026 (2 cuotas)");
+    expect(html).toContain("(anulado)");
+  });
+
+  it("un pago vigente también muestra el concepto congelado del recibo", () => {
+    const html = render([pago({ periods: ["2026-04", "2026-05"], receipt: { ...recibo, voidedAt: null } })]);
+    expect(html).toContain("abril a mayo 2026 (2 cuotas)");
+  });
+
+  // El derivado queda de respaldo: si algún día hay un pago sin recibo, la fila
+  // sigue diciendo algo en vez de quedar vacía.
+  it("sin recibo cae en el concepto derivado de las cuotas", () => {
+    expect(render([pago({ periods: ["2026-04"], receipt: null })])).toContain("abril 2026");
+  });
+});
+
 describe("AccountSection: la línea de débito automático", () => {
   const account: MemberAccount = {
     fees: [], payments: [], pendingCount: 0, pendingPeriods: [], oldestPending: null,
