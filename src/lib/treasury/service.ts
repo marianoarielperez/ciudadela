@@ -521,4 +521,8 @@ export function makeTreasuryService(deps: Deps) {
   };
 }
 
+/** La interfaz del servicio, para que los consumidores (el webhook, la
+ *  conciliación) la pidan por `Pick<>` sin importar el singleton. */
+export type TreasuryService = ReturnType<typeof makeTreasuryService>;
+
 export const treasuryService = makeTreasuryService({ db: prisma, feeValues: feeValueReader });

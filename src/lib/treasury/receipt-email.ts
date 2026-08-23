@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { readReceiptPdf, receiptRelativePath } from "./receipts-dir";
 import { treasuryService } from "./service";
 
-type Mailer = Pick<typeof mailer, "sendToMember">;
+type Mailer = Pick<typeof mailer, "sendToMember" | "sendToApplication">;
 
 export type ReceiptEmailResult =
   | { sent: true }
@@ -35,7 +35,12 @@ export function makeReceiptEmailer(deps: {
         where: { id: receiptId },
         include: {
           payment: {
-            include: { member: { select: { id: true, fullName: true, email: true, emailStatus: true } } },
+            include: {
+              member: { select: { id: true, fullName: true, email: true, emailStatus: true } },
+              // Un pago de cuota de ingreso cuelga de la solicitud: todavía no
+              // hay ficha, pero el recibo le corresponde igual (REG-33).
+              application: { select: { id: true, fullName: true, email: true } },
+            },
           },
         },
       });
@@ -44,7 +49,20 @@ export function makeReceiptEmailer(deps: {
       // cobrado, y el socio no tiene cómo saberlo desde el adjunto.
       if (r.voidedAt) return { sent: false, reason: "voided" };
       const member = r.payment.member;
-      if (!member?.email || member.emailStatus === "bounced") return { sent: false, reason: "no_email" };
+      const application = r.payment.application;
+      // Un pago de ingreso cuelga de la solicitud: el vecino todavía no es socio
+      // pero el recibo le corresponde igual (REG-33). Va por `sendToApplication`
+      // para que la Notification quede acreditada contra la solicitud.
+      // La ficha manda sobre la solicitud: si el socio existe y no tiene casilla
+      // utilizable, el recibo NO se desvía a la dirección de la solicitud vieja.
+      const target = member
+        ? (member.email && member.emailStatus !== "bounced"
+            ? { kind: "member" as const, id: member.id, name: member.fullName, to: member.email }
+            : null)
+        : application
+          ? { kind: "application" as const, id: application.id, name: application.fullName, to: application.email }
+          : null;
+      if (!target) return { sent: false, reason: "no_email" };
       try {
         let pdf: Buffer;
         try {
@@ -58,21 +76,22 @@ export function makeReceiptEmailer(deps: {
         // El concepto sale de la fila del recibo, congelado al emitir: no se
         // recalcula desde `payment.fees`, que al anular quedan despegadas.
         const message = receiptEmail({
-          name: member.fullName,
+          name: target.name,
           number: r.number,
           concept: r.concept,
           amount: Number(r.payment.amount),
         });
-        await deps.mailer.sendToMember({
-          memberId: member.id,
-          to: member.email,
-          type: "receipt",
+        const payload = {
+          to: target.to,
+          type: "receipt" as const,
           message: {
             ...message,
             attachments: [{ filename: `recibo-${r.number}.pdf`, content: pdf, contentType: "application/pdf" }],
           },
           summary: `recibo ${r.number}`,
-        });
+        };
+        if (target.kind === "member") await deps.mailer.sendToMember({ memberId: target.id, ...payload });
+        else await deps.mailer.sendToApplication({ applicationId: target.id, ...payload });
       } catch (e) {
         console.error("[treasury] no se pudo enviar el recibo por email", receiptId, codeOf(e));
         return { sent: false, reason: "error", code: codeOf(e) };
