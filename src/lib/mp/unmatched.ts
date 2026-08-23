@@ -9,6 +9,7 @@ export const UNMATCHED_REASONS = [
   "application_missing",  // `solicitud:{id}` de una solicitud que ya no existe
   "duplicate_entry",      // segundo cobro de una solicitud sin acta todavía
   "withdrawn_no_pending", // débito de un cesante sin cuotas pendientes
+  "treasury_rejected",    // MP cobró y tesorería lo rechazó por una regla de negocio
 ] as const;
 export type UnmatchedReason = (typeof UNMATCHED_REASONS)[number];
 

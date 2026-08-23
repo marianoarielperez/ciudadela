@@ -6,9 +6,13 @@ const facts = (over: Partial<{ preapprovalId: string | null; externalReference: 
   ({ mpPaymentId: "777", preapprovalId: null, externalReference: null, ...over });
 
 describe("resolveMpPayment", () => {
-  it("1. ya asentado → already_processed", () => {
+  it("1. ya asentado (existe el Payment) → already_processed", () => {
     expect(resolveMpPayment(facts({ preapprovalId: "pre-1" }), { ...empty, existingPayment: { id: 3 }, subscription: { memberId: 14, applicationId: null } }))
-      .toEqual({ kind: "already_processed", paymentId: 3, result: "already_processed" });
+      .toEqual({ kind: "already_processed", paymentId: 3 });
+  });
+  it("1 bis. la marca de ingreso NO corta: con el Payment presente manda la regla 1", () => {
+    expect(resolveMpPayment(facts({ externalReference: "solicitud:9" }), { ...empty, existingPayment: { id: 3 }, application: { id: 9, mpPaymentIdEntry: "777", memberId: 306 } }))
+      .toEqual({ kind: "already_processed", paymentId: 3 });
   });
   it("2. suscripción con socio → débito, aunque la referencia apunte a una solicitud borrada (caso 306)", () => {
     expect(resolveMpPayment(facts({ preapprovalId: "pre-1", externalReference: "solicitud:9" }), { ...empty, subscription: { memberId: 306, applicationId: null } }))
@@ -24,9 +28,19 @@ describe("resolveMpPayment", () => {
       ...empty, subscription: { memberId: null, applicationId: 9 }, application: { id: 9, mpPaymentIdEntry: "111", memberId: null },
     })).toEqual({ kind: "unmatched", reason: "duplicate_entry" });
   });
-  it("3c. el ingreso ya registrado en la solicitud con ESTE id (pre-4B) → entry_already_recorded", () => {
+  // La marca `mpPaymentIdEntry` se escribe ANTES de crear el `Payment`: si está
+  // la marca de ESTE cobro y no está el `Payment` (regla 1 no cortó), lo que
+  // falta es el `Payment` y hay que reponerlo. Devolver "ya registrado" acá
+  // dejaba el cobro sin `Payment` para siempre, y con eso sin la única barrera
+  // que impide que después se aplique como CUOTA.
+  it("3c. la solicitud tiene la marca de ESTE cobro pero no hay Payment → entry (se repone)", () => {
     expect(resolveMpPayment(facts({ externalReference: "solicitud:9" }), { ...empty, application: { id: 9, mpPaymentIdEntry: "777", memberId: 306 } }))
-      .toEqual({ kind: "already_processed", paymentId: null, result: "entry_already_recorded" });
+      .toEqual({ kind: "entry", applicationId: 9 });
+  });
+  it("3d. ídem por suscripción sin socio: marca de este cobro y sin Payment → entry", () => {
+    expect(resolveMpPayment(facts({ preapprovalId: "pre-1", externalReference: "solicitud:9" }), {
+      ...empty, subscription: { memberId: null, applicationId: 9 }, application: { id: 9, mpPaymentIdEntry: "777", memberId: null },
+    })).toEqual({ kind: "entry", applicationId: 9 });
   });
   it("4. pago:{memberId}:{n} con socio existente → link n cuotas; socio inexistente → bandeja no_reference", () => {
     expect(resolveMpPayment(facts({ externalReference: "pago:14:2" }), { ...empty, linkMember: { id: 14 } })).toEqual({ kind: "link", memberId: 14, n: 2 });

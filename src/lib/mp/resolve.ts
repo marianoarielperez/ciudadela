@@ -24,15 +24,35 @@ export type ResolveContext = {
 };
 
 export type Decision =
-  | { kind: "already_processed"; paymentId: number | null; result: "already_processed" | "entry_already_recorded" }
+  | { kind: "already_processed"; paymentId: number }
   | { kind: "debit"; memberId: number; preapprovalId: string | null }
   | { kind: "link"; memberId: number; n: number }
   | { kind: "entry"; applicationId: number }
   | { kind: "unmatched"; reason: UnmatchedReason };
 
+// ¿Este cobro es la cuota de ingreso de esta solicitud? Sí en dos casos: la
+// solicitud todavía no tiene ingreso cobrado, o el que tiene es ESTE mismo id.
+//
+// El segundo caso es el que importa. La marca `mpPaymentIdEntry` se escribe en
+// la solicitud ANTES de crear el `Payment`: si el proceso muere en el medio
+// (deadlock, restart, base caída), queda la marca sin `Payment` y MP reintenta.
+// Devolver "ya registrado" ahí dejaba el cobro sin `Payment` PARA SIEMPRE, y
+// con eso sin recibo, sin bandeja y sin la única barrera que impide que ese
+// mismo dinero se aplique después como CUOTA (regla 1) una vez asentada el
+// acta. Así que se devuelve `entry`: lo que falta es justamente el `Payment`, y
+// reponerlo es seguro porque `registerPaymentCore` es idempotente por
+// `mpPaymentId`. Si el `Payment` ya existía, no se llega hasta acá: cortó la
+// regla 1.
+function isEntryOf(application: { mpPaymentIdEntry: string | null }, facts: MpPaymentFacts): boolean {
+  return application.mpPaymentIdEntry === null || application.mpPaymentIdEntry === facts.mpPaymentId;
+}
+
 export function resolveMpPayment(facts: MpPaymentFacts, ctx: ResolveContext): Decision {
-  // 1. Ya asentado.
-  if (ctx.existingPayment) return { kind: "already_processed", paymentId: ctx.existingPayment.id, result: "already_processed" };
+  // 1. Ya asentado. Es la ÚNICA regla que corta por "esto ya se aplicó", y
+  // corta por el `Payment`, no por lo que diga la solicitud: mientras el
+  // `Payment` no exista, el cobro sigue estando sin asentar aunque la solicitud
+  // ya haya cambiado de estado (ver la nota de la marca de ingreso, abajo).
+  if (ctx.existingPayment) return { kind: "already_processed", paymentId: ctx.existingPayment.id };
 
   // 2–3. Por suscripción.
   if (facts.preapprovalId && ctx.subscription) {
@@ -41,10 +61,7 @@ export function resolveMpPayment(facts: MpPaymentFacts, ctx: ResolveContext): De
     }
     // Suscripción del wizard sin acta todavía: es el ingreso o un segundo cobro.
     if (ctx.application) {
-      if (ctx.application.mpPaymentIdEntry === null) return { kind: "entry", applicationId: ctx.application.id };
-      if (ctx.application.mpPaymentIdEntry === facts.mpPaymentId) {
-        return { kind: "already_processed", paymentId: null, result: "entry_already_recorded" };
-      }
+      if (isEntryOf(ctx.application, facts)) return { kind: "entry", applicationId: ctx.application.id };
       return { kind: "unmatched", reason: "duplicate_entry" };
     }
   }
@@ -59,10 +76,7 @@ export function resolveMpPayment(facts: MpPaymentFacts, ctx: ResolveContext): De
   const applicationId = parseApplicationReference(facts.externalReference);
   if (applicationId !== null) {
     if (ctx.application) {
-      if (ctx.application.mpPaymentIdEntry === null) return { kind: "entry", applicationId: ctx.application.id };
-      if (ctx.application.mpPaymentIdEntry === facts.mpPaymentId) {
-        return { kind: "already_processed", paymentId: null, result: "entry_already_recorded" };
-      }
+      if (isEntryOf(ctx.application, facts)) return { kind: "entry", applicationId: ctx.application.id };
       // Ingreso ya cobrado con otro id: es un débito recurrente del socio asentado.
       if (ctx.application.memberId !== null) return { kind: "debit", memberId: ctx.application.memberId, preapprovalId: facts.preapprovalId };
       return { kind: "unmatched", reason: "duplicate_entry" };

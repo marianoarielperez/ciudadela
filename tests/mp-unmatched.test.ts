@@ -46,6 +46,6 @@ describe("unmatched inbox", () => {
     expect(d.mpUnmatchedPayment.findMany.mock.calls[0][0].where).toEqual({ status: "open", OR: [{ preapprovalId: "pre-1" }] });
   });
   it("los motivos son exactamente los de la spec", () => {
-    expect([...UNMATCHED_REASONS]).toEqual(["no_reference", "no_subscription", "application_missing", "duplicate_entry", "withdrawn_no_pending"]);
+    expect([...UNMATCHED_REASONS]).toEqual(["no_reference", "no_subscription", "application_missing", "duplicate_entry", "withdrawn_no_pending", "treasury_rejected"]);
   });
 });

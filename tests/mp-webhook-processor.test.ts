@@ -9,7 +9,8 @@ vi.mock("@/lib/treasury/service", () => ({ treasuryService: {} }));
 vi.mock("@/lib/treasury/receipt-email", () => ({ sendReceiptEmail: vi.fn() }));
 vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 
-import { makeWebhookProcessor } from "@/lib/mp/webhook-processor";
+import { UNMATCHED_REASONS } from "@/lib/mp/unmatched";
+import { makeWebhookProcessor, WEBHOOK_RESULTS } from "@/lib/mp/webhook-processor";
 
 type PaymentOver = Partial<{ status: string; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null }>;
 
@@ -166,11 +167,41 @@ describe("payment", () => {
     await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved_after_expiry");
     expect(d.auditStrictMock).toHaveBeenCalledWith(expect.objectContaining({ entity: "application", entityId: 55 }));
   });
-  it("reintento del ingreso (mpPaymentIdEntry igual a este id) → entry_already_recorded sin email", async () => {
+  // La marca `mpPaymentIdEntry` se escribe y COMMITEA en la solicitud ANTES de
+  // crear el `Payment`: entre las dos escrituras el proceso puede morir
+  // (deadlock, restart, base caída), MP reintenta y este camino tiene que
+  // reponer la mitad que faltó. Antes devolvía "ya registrado" y el cobro
+  // quedaba sin `Payment` para siempre.
+  const retryAfterCrash = () => {
     const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "approved_pending_minute", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: "777", memberId: null } });
-    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("entry_already_recorded");
+    // La transición ya había ocurrido en el intento anterior: los dos updates
+    // condicionales no encuentran nada.
+    d.db.application.updateMany.mockResolvedValue({ count: 0 });
+    return d;
+  };
+
+  it("reintento tras un fallo técnico (marca escrita, Payment ausente) → repone el Payment con su recibo", async () => {
+    const d = retryAfterCrash();
+    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("entry_payment_recovered");
+    expect(d.treasury.registerPayment).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: null, applicationId: 55, type: "entry", n: 0, amount: 6000, mpPaymentId: "777",
+    }));
+    expect(d.sendReceiptEmail).toHaveBeenCalledWith(2);
+  });
+
+  it("ese reintento NO le manda de nuevo la bienvenida al vecino ni reescribe el asiento del pago tardío", async () => {
+    const d = retryAfterCrash();
+    await d.p.process({ topic: "payment", dataId: "777" });
     expect(d.mailerMock.sendToApplication).not.toHaveBeenCalled();
+    expect(d.auditStrictMock).not.toHaveBeenCalled();
+  });
+
+  it("reintento del ingreso con el Payment YA asentado → already_processed sin registrar nada (regla 1)", async () => {
+    const d = deps({ payment: { externalReference: "solicitud:55" }, existingPayment: { id: 3 }, application: { id: 55, status: "approved_pending_minute", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: "777", memberId: null } });
+    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("already_processed");
     expect(d.treasury.registerPayment).not.toHaveBeenCalled();
+    expect(d.mailerMock.sendToApplication).not.toHaveBeenCalled();
+    expect(d.db.application.updateMany).not.toHaveBeenCalled();
   });
   it("segundo cobro de una solicitud sin acta → bandeja duplicate_entry", async () => {
     const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "approved_pending_minute", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: "111", memberId: null } });
@@ -276,16 +307,22 @@ describe("contratos de las revisiones anteriores", () => {
   // 2 bis. El mismo razonamiento vale para `registerPayment`: también rechaza
   // por reglas de negocio (monto fuera de rango, ficha inexistente, cuotas que
   // cambiaron). MP ya cobró: un 500 acá es un reintento eterno del mismo cobro.
-  it("un TreasuryError de registerPayment NO se propaga: payment_not_applied con asiento", async () => {
+  it("un TreasuryError de registerPayment NO se propaga: va a la bandeja (treasury_rejected) con su asiento", async () => {
     const d = deps({ subscription: { memberId: 14, applicationId: null } });
     d.treasury.registerPayment.mockRejectedValue(
       Object.assign(new Error("El socio no existe."), { name: "TreasuryError" }),
     );
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(d.p.process({ topic: "subscription_authorized_payment", dataId: "9" })).resolves.toBe("payment_not_applied");
+    await expect(d.p.process({ topic: "subscription_authorized_payment", dataId: "9" })).resolves.toBe("unmatched_treasury_rejected");
+    // El asiento conserva el mensaje de la regla que lo rechazó...
     expect(d.auditMock).toHaveBeenCalledWith(expect.objectContaining({
       action: "payment_not_applied",
-      detail: expect.objectContaining({ mpPaymentId: "777", memberId: 14, amount: 6000 }),
+      detail: expect.objectContaining({ mpPaymentId: "777", memberId: 14, amount: 6000, message: "El socio no existe." }),
+    }));
+    // ...y la fila de la bandeja es lo único que un operador va a ver de verdad:
+    // `audit_log` no tiene pantalla y `audit()` es best-effort.
+    expect(d.unmatched.record).toHaveBeenCalledWith(expect.objectContaining({
+      mpPaymentId: "777", reason: "treasury_rejected", preapprovalId: "pre-1", amount: 6000,
     }));
     expect(d.sendReceiptEmail).not.toHaveBeenCalled();
     errorLog.mockRestore();
@@ -308,7 +345,25 @@ describe("contratos de las revisiones anteriores", () => {
     await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
     expect(d.mailerMock.sendToApplication).toHaveBeenCalledTimes(1);
     expect(d.auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "payment_not_applied" }));
+    // El result describe la transición (es el único que distingue el pago
+    // tardío), así que la plata sin asentar tiene que quedar en la bandeja: si
+    // no, no aparece en ninguna pantalla y un re-apply posterior la aplicaría
+    // como CUOTA.
+    expect(d.unmatched.record).toHaveBeenCalledWith(expect.objectContaining({ mpPaymentId: "777", reason: "treasury_rejected" }));
     errorLog.mockRestore();
+  });
+
+  // 3 bis. El camino del ingreso también puede toparse con la fila abierta: los
+  // dos eventos del mismo cobro llegan casi juntos y el otro puede haber
+  // asentado el `Payment` (y dejado su fila) mientras este hacía la transición.
+  it("el ingreso también cierra la fila abierta de la bandeja cuando el servicio dice already_processed", async () => {
+    const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "pending_payment", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: null, memberId: null } });
+    d.treasury.registerPayment.mockResolvedValue({ kind: "already_processed", paymentId: 8 });
+    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
+    expect(d.db.mpUnmatchedPayment.updateMany).toHaveBeenCalledWith({
+      where: { mpPaymentId: "777", status: "open" },
+      data: { status: "matched", paymentId: 8, resolvedAt: expect.any(Date) },
+    });
   });
 
   // 3. Si quedó una fila `open` en la bandeja para un cobro que YA está asentado,
@@ -342,17 +397,17 @@ describe("contratos de las revisiones anteriores", () => {
   });
 });
 
-// El `result` se persiste en `WebhookEvent.result`, que es VarChar(64).
+// El `result` se persiste en `WebhookEvent.result`, que es VarChar(64). La
+// lista NO se copia acá: `WEBHOOK_RESULTS` es un `Record<WebhookResult, true>`,
+// así que el compilador obliga a declarar cada result nuevo ahí y este test lo
+// mide solo.
 describe("todos los results entran en la columna", () => {
-  const RESULTS = [
-    "already_processed", "entry_already_recorded", "debit_applied", "link_applied",
-    "application_approved", "application_approved_after_expiry", "payment_refunded",
-    "refund_ignored", "payment_rejected_traced", "payment_ignored",
-    "unmatched_no_reference", "unmatched_no_subscription", "unmatched_application_missing",
-    "unmatched_duplicate_entry", "unmatched_withdrawn_no_pending", "payment_not_applied",
-    "authorized_payment_traced", "subscription_synced", "no_match", "unknown_topic",
-  ];
   it("ninguno supera los 64 caracteres", () => {
-    expect(RESULTS.filter((r) => r.length > 64)).toEqual([]);
+    expect(Object.keys(WEBHOOK_RESULTS).filter((r) => r.length > 64)).toEqual([]);
+  });
+  it("cada motivo de la bandeja tiene su result", () => {
+    for (const reason of UNMATCHED_REASONS) {
+      expect(WEBHOOK_RESULTS).toHaveProperty("unmatched_" + reason);
+    }
   });
 });
