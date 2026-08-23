@@ -112,14 +112,14 @@ export function ConfigForm({
           field={field("mpPlanActiveId")}
           maxLength={64}
           placeholder="2c93808491…"
-          hint="Se obtiene del instructivo de sandbox / panel de MP."
+          hint="Obligatorio: el alta web lee de ahí el monto del primer débito. El valor de la cuota, y el que se le empuja a las suscripciones vivas, sale de la tabla de valores. Se obtiene del instructivo de sandbox / panel de MP."
         />
         <TextField
           label="Id del plan de MP — SOCIO ADHERENTE/COLABORADOR"
           field={field("mpPlanSharedId")}
           maxLength={64}
           placeholder="2c93808491…"
-          hint="Se obtiene del instructivo de sandbox / panel de MP. Es el plan compartido por las dos categorías."
+          hint="Obligatorio, igual que el anterior; es el plan compartido por las dos categorías. Se obtiene del instructivo de sandbox / panel de MP."
         />
       </Section>
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
