@@ -33,7 +33,7 @@ function form(over: Partial<Record<"preapprovalId" | "memberId" | "confirmToken"
 beforeEach(() => {
   vi.clearAllMocks();
   requireSuperadmin.mockResolvedValue({ ok: true, actorId: 3 });
-  link.mockResolvedValue({ ok: true, applied: [{ paymentId: 8, receiptId: 9 }], unapplied: 0, amount: 6000, status: "authorized" });
+  link.mockResolvedValue({ ok: true, applied: [{ paymentId: 8, receiptId: 9 }], unapplied: 0, amount: 6000, status: "authorized", autoDebit: true });
 });
 
 describe("linkSubscriptionAction", () => {
@@ -61,7 +61,7 @@ describe("linkSubscriptionAction", () => {
     const entry = vi.mocked(audit).mock.calls[0][0];
     expect(entry).toMatchObject({
       userId: 3, action: "subscription_linked", entity: "mp_subscription", entityId: PRE,
-      detail: { preapprovalId: PRE, memberId: 14, amount: 6000, status: "authorized", applied: [8], unapplied: 0, emailed: 1 },
+      detail: { preapprovalId: PRE, memberId: 14, amount: 6000, status: "authorized", autoDebit: true, applied: [8], unapplied: 0, emailed: 1 },
     });
     // Ni el nombre del socio, ni el email del pagador, ni la descripción de la
     // suscripción: el asiento lleva ids, montos y estados (Ley 25.326).
@@ -78,6 +78,30 @@ describe("linkSubscriptionAction", () => {
     expect(await linkSubscriptionAction({}, form())).toEqual({ error: "Esa suscripción ya está vinculada." });
     expect(audit).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
+  });
+
+  // El SDK de Mercado Pago NO lanza `Error`: hace `throw await response.json()`,
+  // y ese cuerpo puede arrastrar el `payer_email` del vecino. Un `console.error`
+  // crudo lo dejaba entero en el log de PM2 (Ley 25.326).
+  it("un fallo de Mercado Pago no deja el email del vecino en el log", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    link.mockRejectedValue({
+      status: 400, message: "payer_email is invalid: vecino@ejemplo.com",
+      error: "bad_request", cause: [{ code: "2034", description: "payer_email vecino@ejemplo.com" }],
+    });
+    expect(await linkSubscriptionAction({}, form())).toEqual({
+      error: "No pudimos vincular la suscripción. Reintentá en un momento.",
+    });
+    const logged = spy.mock.calls.flat().join(" ");
+    expect(logged).not.toContain("vecino@ejemplo.com");
+    expect(logged).toContain("[email]");
+    // Y lo que SÍ sirve para diagnosticar sigue estando.
+    expect(logged).toContain("mp:linkSubscription");
+    expect(logged).toContain("status=400");
+    expect(logged).toContain(PRE);
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it("un id de suscripción con forma rara no llega a Mercado Pago", async () => {

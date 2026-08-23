@@ -19,10 +19,18 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
+import { mpErrorLog } from "@/lib/mp/error-log";
 import { subscriptionLinker } from "@/lib/mp/link-subscription";
 import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 
 type State = { error?: string };
+
+/** Los errores de nodemailer traen `envelope`, `rejected` y el `response` del
+ *  SMTP —o sea la dirección del vecino en claro— y el log de PM2 no está
+ *  cubierto por los cuidados de docs/08 (Ley 25.326). Al log va el código. */
+function codeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
+}
 
 const schema = z.object({
   preapprovalId: z.string("Suscripción inválida.").regex(/^[a-z0-9-]{1,64}$/, "Suscripción inválida."),
@@ -45,7 +53,12 @@ export async function linkSubscriptionAction(_prev: State, formData: FormData): 
   try {
     result = await subscriptionLinker.link({ preapprovalId, memberId, actorId: actor.actorId });
   } catch (e) {
-    console.error("[suscripciones] link", e instanceof Error ? e.message : e);
+    // Acá aterriza, entre otros, el fallo de `getPreapproval` que el vinculador
+    // no captura por diseño. El SDK de Mercado Pago NO lanza `Error`: hace
+    // `throw await response.json()`, así que un `console.error` crudo imprimiría
+    // el cuerpo entero de MP —que puede arrastrar el `payer_email` del vecino—.
+    // `mpErrorLog` enmascara y recorta (ver `@/lib/mp/error-log`).
+    console.error("[suscripciones] no se pudo vincular —", mpErrorLog("linkSubscription", { preapprovalId, memberId }, e));
     return { error: "No pudimos vincular la suscripción. Reintentá en un momento." };
   }
   if (!result.ok) return { error: result.error };
@@ -54,7 +67,13 @@ export async function linkSubscriptionAction(_prev: State, formData: FormData): 
   // asentada y el recibo se puede reenviar desde su pantalla.
   let emailed = 0;
   for (const a of result.applied) {
-    try { if ((await sendReceiptEmail(a.receiptId)).sent) emailed++; } catch { /* best-effort */ }
+    try {
+      if ((await sendReceiptEmail(a.receiptId)).sent) emailed++;
+    } catch (e) {
+      // Best-effort, pero no invisible: sin esta línea el único rastro del
+      // fallo es el `emailed` del asiento, que no dice cuál recibo ni por qué.
+      console.error("[suscripciones] no se pudo enviar el recibo", a.receiptId, "code:", codeOf(e));
+    }
   }
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   // Ids, montos y estados. Ni el nombre del socio, ni el email del pagador, ni
@@ -62,7 +81,7 @@ export async function linkSubscriptionAction(_prev: State, formData: FormData): 
   await audit({
     userId: actor.actorId, action: "subscription_linked", entity: "mp_subscription", entityId: preapprovalId,
     detail: {
-      preapprovalId, memberId, amount: result.amount, status: result.status,
+      preapprovalId, memberId, amount: result.amount, status: result.status, autoDebit: result.autoDebit,
       applied: result.applied.map((a) => a.paymentId), unapplied: result.unapplied, emailed,
     },
     ip,

@@ -157,12 +157,16 @@ export default async function SuscripcionesPage(props: {
                   {hint ? (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
                       <span>¿Es <strong>{hint.fullName}</strong>?</span>
-                      <Button asChild size="sm">
+                      {/* `min-h-11` y no `size="sm"` (28 px): el panel exige
+                          targets de 44 px en todo control, y estos dos son los
+                          únicos de la ficha. Mismo recurso que la paginación de
+                          Noticias. */}
+                      <Button asChild className="min-h-11">
                         <Link href={`${BASE}/${p.id}/vincular?socio=${hint.id}`}>Vincular a este socio</Link>
                       </Button>
                     </div>
                   ) : (
-                    <Button asChild variant="outline" className="self-start">
+                    <Button asChild variant="outline" className="min-h-11 self-start">
                       <Link href={`${BASE}/${p.id}/vincular`}>Vincular</Link>
                     </Button>
                   )}

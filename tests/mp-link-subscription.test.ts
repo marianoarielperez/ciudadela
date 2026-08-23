@@ -45,6 +45,7 @@ describe("subscriptionLinker.link", () => {
     const r = await d.linker.link({ preapprovalId: "pre-1", memberId: 14, actorId: 5 });
     expect(r).toEqual({
       ok: true, applied: [{ paymentId: 1, receiptId: 2 }], unapplied: 0, amount: 6000, status: "authorized",
+      autoDebit: true,
     });
     expect(d.tx.mpSubscription.create).toHaveBeenCalledWith({ data: {
       preapprovalId: "pre-1", memberId: 14, linkedManually: true, status: "authorized", amount: "6000.00",
@@ -104,6 +105,47 @@ describe("subscriptionLinker.link", () => {
       amount: null, payerEmail: null, externalReference: "solicitud:9", planId: null,
     }) });
   });
+  // El paso 2 no filtra por estado a propósito (hay que poder vincular una
+  // `paused`), así que por URL directa se llega a una `cancelled`. Marcar al
+  // socio con débito automático por una suscripción muerta es prometer un cobro
+  // que MP no va a hacer nunca.
+  it("una suscripción cancelada se vincula pero NO marca débito automático", async () => {
+    const d = deps();
+    d.gateway.getPreapproval.mockResolvedValueOnce({
+      id: "pre-1", status: "cancelled", payerEmail: "v@x.com", externalReference: null,
+      amount: 6000, reason: "Cuota", nextPaymentDate: null, dateCreated: null,
+    } as never);
+    const r = await d.linker.link({ preapprovalId: "pre-1", memberId: 14, actorId: 5 });
+    expect(r).toMatchObject({ ok: true, status: "cancelled", autoDebit: false });
+    expect(d.tx.mpSubscription.create).toHaveBeenCalled();
+    expect(d.tx.member.update).not.toHaveBeenCalled();
+  });
+  it("una pausada sí marca débito automático: puede volver a cobrar", async () => {
+    const d = deps();
+    d.gateway.getPreapproval.mockResolvedValueOnce({
+      id: "pre-1", status: "paused", payerEmail: null, externalReference: null,
+      amount: 6000, reason: null, nextPaymentDate: null, dateCreated: null,
+    } as never);
+    expect(await d.linker.link({ preapprovalId: "pre-1", memberId: 14, actorId: 5 })).toMatchObject({ autoDebit: true });
+    expect(d.tx.member.update).toHaveBeenCalled();
+  });
+
+  // Dos operadores a la vez: la guarda de arriba pasa en los dos y el UNIQUE
+  // frena al segundo dentro de la transacción. Sin traducir el P2002, ese
+  // operador leía "reintentá en un momento" y se enteraba en el segundo intento.
+  it("la carrera entre dos operadores devuelve 'ya está vinculada', no un error genérico", async () => {
+    const d = deps();
+    d.db.$transaction.mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+    expect(await d.linker.link({ preapprovalId: "pre-1", memberId: 14, actorId: 5 })).toEqual({
+      ok: false, error: "Esa suscripción ya está vinculada.",
+    });
+  });
+  it("cualquier otro fallo de la transacción se propaga", async () => {
+    const d = deps();
+    d.db.$transaction.mockRejectedValueOnce(Object.assign(new Error("deadlock"), { code: "P2034" }));
+    await expect(d.linker.link({ preapprovalId: "pre-1", memberId: 14, actorId: 5 })).rejects.toThrow("deadlock");
+  });
+
   it("busca las filas de la bandeja por el preapproval que devolvió MP y por su referencia", async () => {
     const d = deps();
     d.gateway.getPreapproval.mockResolvedValueOnce({

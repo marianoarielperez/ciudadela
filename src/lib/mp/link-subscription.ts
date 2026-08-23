@@ -16,6 +16,23 @@ import { mpErrorLog } from "./error-log";
 import { mpGateway, type MpGateway } from "./gateway";
 import { makeUnmatchedInbox } from "./unmatched";
 
+/** El `preapprovalId` es UNIQUE: dos operadores vinculando la misma suscripción
+ *  a la vez hacen que el segundo insert choque. Se reconoce por forma y no con
+ *  `instanceof`, mismo criterio que `unmatched.ts` y `service.ts`. */
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
+}
+
+/** Los estados en los que la suscripción TODAVÍA puede cobrar. Una `cancelled`
+ *  no vuelve nunca; el paso 2 no filtra por estado a propósito (hay que poder
+ *  vincular una `paused`), así que por URL directa se puede llegar a vincular
+ *  una muerta y no hay que prometer un débito que no va a existir. */
+const CHARGEABLE_STATUSES = new Set(["authorized", "pending", "paused"]);
+
+export function canStillCharge(status: string): boolean {
+  return CHARGEABLE_STATUSES.has(status);
+}
+
 type Deps = {
   db: Pick<PrismaClient, "mpSubscription" | "member" | "$transaction">;
   gateway: Pick<MpGateway, "getPreapproval">;
@@ -34,6 +51,10 @@ export type LinkResult =
       unapplied: number;
       amount: number | null;
       status: string;
+      /** Si al socio se lo marcó con débito automático. `false` cuando la
+       *  suscripción ya no puede cobrar: la marca sería una promesa que Mercado
+       *  Pago no va a cumplir. */
+      autoDebit: boolean;
     }
   | { ok: false; error: string };
 
@@ -50,18 +71,34 @@ export function makeSubscriptionLinker(deps: Deps) {
       // inventados sería peor que no tener fila.
       const remote = await deps.gateway.getPreapproval(input.preapprovalId);
 
-      await deps.db.$transaction(async (tx) => {
-        await tx.mpSubscription.create({
-          data: {
-            preapprovalId: remote.id, memberId: member.id, linkedManually: true, status: remote.status,
-            amount: remote.amount === null ? null : remote.amount.toFixed(2), payerEmail: remote.payerEmail,
-            // Una suscripción creada a mano en el panel de MP no tiene plan de
-            // referencia. `null`, nunca `""`.
-            externalReference: remote.externalReference, planId: null, lastSyncAt: now(),
-          },
+      // `autoDebit` es una promesa hacia el socio y hacia el panel: "esto se
+      // cobra solo". Con la suscripción cancelada en MP no se cobra nunca más,
+      // así que la marca no se pone. Tampoco se BAJA la que hubiera: puede venir
+      // de otra suscripción viva, y esta pantalla no vino a decidir eso.
+      const autoDebit = canStillCharge(remote.status);
+
+      try {
+        await deps.db.$transaction(async (tx) => {
+          await tx.mpSubscription.create({
+            data: {
+              preapprovalId: remote.id, memberId: member.id, linkedManually: true, status: remote.status,
+              amount: remote.amount === null ? null : remote.amount.toFixed(2), payerEmail: remote.payerEmail,
+              // Una suscripción creada a mano en el panel de MP no tiene plan de
+              // referencia. `null`, nunca `""`.
+              externalReference: remote.externalReference, planId: null, lastSyncAt: now(),
+            },
+          });
+          if (autoDebit) await tx.member.update({ where: { id: member.id }, data: { autoDebit: true } });
         });
-        await tx.member.update({ where: { id: member.id }, data: { autoDebit: true } });
-      });
+      } catch (e) {
+        // Dos operadores a la vez: la guarda de arriba pasó en los dos, y el
+        // UNIQUE del `preapprovalId` frena al segundo dentro de la transacción
+        // (que vuelve atrás entera). El hecho es el mismo que detecta la guarda,
+        // y merece el mismo mensaje: sin esto el segundo operador lee "reintentá
+        // en un momento", reintenta, y recién ahí se entera de qué pasó.
+        if (isUniqueViolation(e)) return { ok: false as const, error: "Esa suscripción ya está vinculada." };
+        throw e;
+      }
 
       // Lo que cayó en la bandeja esperando a este socio. Cada fila es un cobro
       // real: un débito = una cuota, fechado el día que MP lo cobró. Sólo las
@@ -88,7 +125,7 @@ export function makeSubscriptionLinker(deps: Deps) {
           console.error("[suscripciones] no se pudo aplicar un cobro de la bandeja —", mpErrorLog("linkSubscription", { preapprovalId: remote.id, mpPaymentId: row.mpPaymentId }, e));
         }
       }
-      return { ok: true as const, applied, unapplied, amount: remote.amount, status: remote.status };
+      return { ok: true as const, applied, unapplied, amount: remote.amount, status: remote.status, autoDebit };
     },
   };
 }

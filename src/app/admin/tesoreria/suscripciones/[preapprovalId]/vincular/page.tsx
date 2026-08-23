@@ -31,6 +31,7 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway, type MpPreapproval } from "@/lib/mp/gateway";
+import { canStillCharge } from "@/lib/mp/link-subscription";
 import { makeUnmatchedInbox } from "@/lib/mp/unmatched";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
@@ -140,15 +141,18 @@ export default async function VincularSuscripcionPage(props: {
   ]);
   const feeValue = member ? await feeValueReader.current() : null;
   const account = member ? await fetchMemberAccount(prisma, member, feeValue) : null;
-  // Cuántas filas de la bandeja se van a aplicar. Sólo las ABIERTAS: una que el
-  // operador descartó o registró como alquiler del salón es una decisión tomada
+  // CUÁLES filas de la bandeja se van a aplicar, no cuántas: `openRowsForSubscription`
+  // matchea por preapproval O por `externalReference`, y esa referencia es texto
+  // libre que alguien puede tipear en el panel de Mercado Pago. Si colisiona, se
+  // imputan cobros ajenos — y un número no deja verlo. Sólo las ABIERTAS: una que
+  // el operador descartó o registró como alquiler del salón es una decisión tomada
   // y la vinculación no la pisa.
   const pendingRows = member && remote
-    ? (await makeUnmatchedInbox(prisma).openRowsForSubscription({
+    ? await makeUnmatchedInbox(prisma).openRowsForSubscription({
         preapprovalId: remote.id,
         externalReference: remote.externalReference,
-      })).length
-    : 0;
+      })
+    : [];
 
   const expected = member && feeValue ? feeAmountFor(member.category, feeValue) : null;
   const divergent =
@@ -221,6 +225,15 @@ export default async function VincularSuscripcionPage(props: {
                 <span>· {CATEGORY_LABELS[member.category]} ·</span>
                 <Badge variant={memberStatusBadgeVariant(member.status)}>{STATUS_LABELS[member.status]}</Badge>
               </p>
+              {/* El email del socio está acá para que el operador pueda
+                  contrastarlo con el "Pagador" de la tarjeta de la izquierda con
+                  sus propios ojos: `Member.email` no es único en la base (un
+                  matrimonio, un padre y su hijo), así que la sugerencia por email
+                  de la lista pudo haber propuesto a un familiar. */}
+              <p className="break-all">
+                <span className="text-muted-foreground">Email: </span>
+                {member.email ?? "sin email"}
+              </p>
               <p>
                 Cuotas pendientes: <span className="font-mono tabular-nums">{account.pendingCount}</span>
               </p>
@@ -253,13 +266,23 @@ export default async function VincularSuscripcionPage(props: {
                   reason: remote.reason,
                   amountLabel: remote.amount !== null ? formatARS(remote.amount) : null,
                   statusLabel: subscriptionStatusLabel(remote.status).toLowerCase(),
+                  // El paso 2 no filtra por estado a propósito (hay que poder
+                  // vincular una `paused`), así que por URL directa se puede
+                  // llegar a una `cancelled`: la confirmación tiene que decir
+                  // que de esa no va a llegar ningún débito.
+                  chargeable: canStillCharge(remote.status),
                 }}
                 charges={
                   charges === null
                     ? null
                     : { count: charges.count, last: charges.last ? formatDateAR(charges.last) : null }
                 }
-                pendingRows={pendingRows}
+                pendingRows={pendingRows.map((r) => ({
+                  id: r.id,
+                  mpPaymentId: r.mpPaymentId,
+                  dateLabel: formatDateAR(r.paidAt),
+                  amountLabel: formatARS(r.amount),
+                }))}
                 divergentWith={divergent}
                 otherLive={otherLive}
               />

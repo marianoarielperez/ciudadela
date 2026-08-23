@@ -35,4 +35,30 @@ describe("suggestMember", () => {
   it("un socio sin email no matchea contra un pagador sin email", () => {
     expect(suggestMember({ payerEmail: null, reason: "nada" }, members)).toBeNull();
   });
+
+  // `Member.email` NO es único en el schema: un matrimonio o un padre y su hijo
+  // se cargan con la misma casilla. Sin la guarda, el `.find` devolvía el
+  // primero por id y la pantalla proponía al familiar equivocado.
+  it("dos socios con el mismo email no sugieren a ninguno", () => {
+    const familia = [
+      { id: 30, fullName: "Ruiz, Carlos", email: "familia@x.com" },
+      { id: 31, fullName: "Ruiz, Elena", email: "familia@x.com" },
+    ];
+    expect(suggestMember({ payerEmail: "familia@x.com", reason: "Cuota Ruiz" }, familia)).toBeNull();
+  });
+  it("un email ambiguo no baja a la pista del apellido", () => {
+    const pareja = [
+      { id: 32, fullName: "Ruiz, Carlos", email: "pareja@x.com" },
+      { id: 33, fullName: "Sosa, Elena", email: "pareja@x.com" },
+    ];
+    expect(suggestMember({ payerEmail: "pareja@x.com", reason: "Cuota Sosa" }, pareja)).toBeNull();
+  });
+
+  // El apellido se compara como PALABRA: "Cuota Romanelli" no es Roman.
+  it("el apellido no matchea como subcadena de otra palabra", () => {
+    const roman = [{ id: 40, fullName: "Roman, Juan", email: null }];
+    expect(suggestMember({ payerEmail: null, reason: "Cuota Romanelli" }, roman)).toBeNull();
+    expect(suggestMember({ payerEmail: null, reason: "Cuota Roman" }, roman)?.id).toBe(40);
+    expect(suggestMember({ payerEmail: null, reason: "cuota-roman-2026" }, roman)?.id).toBe(40);
+  });
 });

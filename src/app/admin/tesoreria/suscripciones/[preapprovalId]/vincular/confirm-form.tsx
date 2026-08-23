@@ -40,11 +40,20 @@ export function ConfirmForm({
     /** Ya formateado en es-AR, o `null` si MP no informa monto. */
     amountLabel: string | null;
     statusLabel: string;
+    /** Si la suscripción todavía puede cobrar. Con `false` (una `cancelled`) no
+     *  va a llegar ningún débito y el socio NO queda marcado con débito
+     *  automático: la confirmación tiene que decirlo antes, no después. */
+    chargeable: boolean;
   };
   /** `null` = Mercado Pago no contestó la búsqueda de cobros. `last` ya viene
    *  formateada en es-AR. */
   charges: { count: number; last: string | null } | null;
-  pendingRows: number;
+  /** Las filas ABIERTAS de la bandeja que se van a aplicar, con fecha, monto e
+   *  id del cobro. La lista y no el conteo: la bandeja se matchea también por
+   *  `externalReference`, que es texto libre del panel de MP, y una colisión
+   *  imputaría cobros ajenos sin que el operador llegue a verlo. Todo formateado
+   *  por el servidor. */
+  pendingRows: Array<{ id: number; mpPaymentId: string; dateLabel: string; amountLabel: string }>;
   /** Valor vigente de la cuota, ya formateado, cuando NO coincide con el monto
    *  que cobra la suscripción. `null` si coinciden o no hay con qué comparar. */
   divergentWith: string | null;
@@ -98,16 +107,40 @@ export function ConfirmForm({
           <div className="grid gap-x-4 sm:grid-cols-[8rem_1fr]">
             <dt className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Ahora</dt>
             <dd>
-              {pendingRows === 0
-                ? "No hay pagos esperando en la bandeja sin conciliar."
-                : `${pendingRows} ${pendingRows === 1 ? "pago que estaba" : "pagos que estaban"} en la bandeja se ${pendingRows === 1 ? "va" : "van"} a aplicar ahora, uno por cuota, con su recibo.`}
+              {pendingRows.length === 0 ? (
+                "No hay pagos esperando en la bandeja sin conciliar."
+              ) : (
+                <>
+                  {`${pendingRows.length} ${pendingRows.length === 1 ? "pago que estaba" : "pagos que estaban"} en la bandeja se ${pendingRows.length === 1 ? "va" : "van"} a aplicar ahora, uno por cuota, con su recibo:`}
+                  {/* Cuáles, no cuántos: el operador tiene que poder reconocer
+                      cada cobro antes de imputarlo. */}
+                  <ul className="mt-1 space-y-0.5">
+                    {pendingRows.map((r) => (
+                      <li key={r.id} className="font-mono text-xs tabular-nums break-all">
+                        {`${r.dateLabel} · ${r.amountLabel} · ${r.mpPaymentId}`}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </dd>
           </div>
           <div className="grid gap-x-4 sm:grid-cols-[8rem_1fr]">
             <dt className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">De acá en más</dt>
             <dd>
-              Cada débito mensual de esta suscripción se convierte en su cuota y se le emite el
-              recibo, sin que nadie toque nada. El socio queda marcado con débito automático.
+              {subscription.chargeable ? (
+                <>
+                  Cada débito mensual de esta suscripción se convierte en su cuota y se le emite el
+                  recibo, sin que nadie toque nada. El socio queda marcado con débito automático.
+                </>
+              ) : (
+                <>
+                  {`Esta suscripción está ${subscription.statusLabel} en Mercado Pago: `}
+                  <strong>no va a volver a cobrar</strong>. Se vincula para dejar registro y para
+                  aplicar lo que haya quedado en la bandeja, pero el socio{" "}
+                  <strong>no</strong> queda marcado con débito automático.
+                </>
+              )}
             </dd>
           </div>
         </dl>
