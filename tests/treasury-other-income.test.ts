@@ -130,14 +130,14 @@ describe("incomeWhere", () => {
     expect(incomeWhere({})).toEqual({});
   });
 
-  it("el rango se compara contra el DÍA CIVIL argentino, no contra el mediodía UTC", () => {
-    // Un cobro de MP de las 20:00 del 23/08 se guarda como 23/08 23:00 UTC: con
-    // un `lte` al mediodía quedaba afuera del rango que lo incluye, y la suma
-    // del período mentía por abajo. El día civil D va de D 03:00 a D+1 03:00 UTC.
-    const w = incomeWhere({ from: new Date("2026-08-01T12:00:00.000Z"), to: NOON });
+  it("el ejercicio se acota en hora ARGENTINA, no en UTC", () => {
+    // Un cobro de MP de las 22:00 del 31/12 se guarda como 01:00 UTC del 1/1:
+    // con el corte en UTC esa plata caía en el ejercicio siguiente. Los bordes
+    // finos están en `treasury-income-exercise.test.ts`.
+    const w = incomeWhere({ year: 2026 });
     expect(w.receivedAt).toEqual({
-      gte: new Date("2026-08-01T03:00:00.000Z"),
-      lt: new Date("2026-08-24T03:00:00.000Z"),
+      gte: new Date("2026-01-01T03:00:00.000Z"),
+      lt: new Date("2027-01-01T03:00:00.000Z"),
     });
   });
 

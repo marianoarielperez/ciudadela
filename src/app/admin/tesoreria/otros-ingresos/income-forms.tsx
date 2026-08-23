@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatARS } from "@/lib/format";
+import { incomeListHref } from "@/lib/treasury/income-nav";
 import {
   INCOME_CONCEPT_HINT,
   INCOME_CONCEPT_SUGGESTIONS,
@@ -43,32 +44,37 @@ export function RegisterIncomeForm({ today, autoFocus }: {
 
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
-      <TextField
-        label="Monto ($)"
-        // Sólo dígitos, como el mostrador: dejar entrar la coma o el punto
-        // obliga a adivinar si "2500,50" son dos mil quinientos con cincuenta o
-        // doscientos cincuenta mil.
-        field={field("amount", digitsOnly)}
-        inputMode="numeric"
-        maxLength={8}
-        placeholder="45000"
-        autoFocus={autoFocus}
-      />
-      <TextField
-        label="Fecha del ingreso"
-        field={field("receivedAt")}
-        type="date"
-        hint="El día en que entró la plata, no el día en que se carga."
-      />
-      <TextField
-        label="Concepto"
-        field={field("concept")}
-        maxLength={200}
-        placeholder="Alquiler del salón"
-        options={INCOME_CONCEPT_SUGGESTIONS}
-        hint={INCOME_CONCEPT_HINT}
-      />
-      <TextField label="Nota (opcional)" field={field("note")} maxLength={200} />
+      {/* Los cuatro campos en una fila y no en una columna: la carga es un
+          renglón de mostrador, y apilada empujaba el resumen del ejercicio
+          fuera de la pantalla, que es justo lo que el operador vino a mirar. */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <TextField
+          label="Monto ($)"
+          // Sólo dígitos, como el mostrador: dejar entrar la coma o el punto
+          // obliga a adivinar si "2500,50" son dos mil quinientos con cincuenta o
+          // doscientos cincuenta mil.
+          field={field("amount", digitsOnly)}
+          inputMode="numeric"
+          maxLength={8}
+          placeholder="45000"
+          autoFocus={autoFocus}
+        />
+        <TextField
+          label="Fecha del ingreso"
+          field={field("receivedAt")}
+          type="date"
+          hint="El día en que entró la plata, no el día en que se carga."
+        />
+        <TextField
+          label="Concepto"
+          field={field("concept")}
+          maxLength={200}
+          placeholder="Alquiler del salón"
+          options={INCOME_CONCEPT_SUGGESTIONS}
+          hint={INCOME_CONCEPT_HINT}
+        />
+        <TextField label="Nota (opcional)" field={field("note")} maxLength={200} />
+      </div>
       {/* Lo último que se lee antes de registrar, como en el mostrador: cuánto
           es y qué NO hace. Que no haya recibo es la mitad de esta pantalla. */}
       <p className="text-sm">
@@ -89,26 +95,31 @@ export function RegisterIncomeForm({ today, autoFocus }: {
   );
 }
 
-// Los filtros van por GET plano —quedan en la URL, se comparten y se recargan—,
-// así que no hay action ni reset de React 19 que sincronizar. Es cliente igual
-// porque el <select> del medio pasa por `SelectField`: un <select> crudo se ve
-// plano en modo oscuro (la deuda que anota CLAUDE.md).
+// El único filtro que queda es el MEDIO. Las fechas se fueron: el año lo da la
+// barra de ejercicios y el mes lo da la cinta, así que ya no hay bordes que
+// tipear. El año y el mes vigentes viajan como campos ocultos para que filtrar
+// por medio no devuelva al operador al ejercicio en curso.
+//
+// GET plano —queda en la URL, se comparte y se recarga—, así que no hay action
+// ni reset de React 19 que sincronizar. Es cliente igual porque el <select> del
+// medio pasa por `SelectField`: un <select> crudo se ve plano en modo oscuro
+// (la deuda que anota CLAUDE.md).
 //
 // Por qué NO hay campo de texto: el concepto y la nota son texto libre del
 // operador, y un `?q=…` en la URL queda escrito en el access log de Nginx y de
 // Cloudflare, que no están cubiertos por la retención de `audit_logs`.
-export function IncomeFilterForm({ desde, hasta, medio, filtered, base }: {
-  desde: string;
-  hasta: string;
+export function MethodFilterForm({ year, currentYear, month, medio }: {
+  year: number;
+  /** El ejercicio en curso vive en la URL limpia: su `anio` no se manda. */
+  currentYear: number;
+  month: number | null;
   medio: string;
-  filtered: boolean;
-  base: string;
 }) {
-  const { formRef, field } = useSyncedForm({ desde, hasta, medio });
+  const { formRef, field } = useSyncedForm({ medio });
   return (
     <form ref={formRef} className="flex flex-wrap items-end gap-3" method="get">
-      <TextField label="Desde" field={field("desde")} type="date" className="w-40" />
-      <TextField label="Hasta" field={field("hasta")} type="date" className="w-40" />
+      {year !== currentYear && <input type="hidden" name="anio" value={year} />}
+      {month !== null && <input type="hidden" name="mes" value={month} />}
       <div className="w-44">
         <SelectField
           label="Medio"
@@ -121,10 +132,32 @@ export function IncomeFilterForm({ desde, hasta, medio, filtered, base }: {
         />
       </div>
       <Button type="submit" variant="secondary">Filtrar</Button>
-      {filtered && (
-        <Button asChild variant="ghost"><Link href={base}>Limpiar</Link></Button>
+      {medio !== "" && (
+        <Button asChild variant="ghost">
+          <Link href={incomeListHref({ year, month }, currentYear)}>Todos los medios</Link>
+        </Button>
       )}
     </form>
+  );
+}
+
+/** De dónde salió el operador, para volver ahí después de corregir o anular.
+ *  Sólo enteros y el enum del medio: nada de texto libre a la URL. */
+export type IncomeBackParams = {
+  anio?: string;
+  mes?: string;
+  medio?: string;
+  ingreso?: string;
+};
+
+/** Los campos ocultos que reconstruyen esa vista del otro lado. */
+function BackFields({ back }: { back: IncomeBackParams }) {
+  return (
+    <>
+      {(["anio", "mes", "medio", "ingreso"] as const).map((k) =>
+        back[k] ? <input key={k} type="hidden" name={k} value={back[k]} /> : null,
+      )}
+    </>
   );
 }
 
@@ -137,10 +170,13 @@ export function IncomeFilterForm({ desde, hasta, medio, filtered, base }: {
 // ingreso venido de Mercado Pago ese camino no existe: la unique de
 // `mpPaymentId` no se libera al anular, así que un concepto mal escrito dejaba
 // al operador con dos salidas falsas y ninguna verdadera.
-export function EditIncomeForm({ incomeId, concept, note }: {
+export function EditIncomeForm({ incomeId, concept, note, back }: {
   incomeId: number;
   concept: string;
   note: string | null;
+  /** La vista de la que salió: se corrige y se vuelve al mismo ejercicio, mes y
+   *  medio. Sin esto, guardar el texto devolvía siempre al año en curso. */
+  back: IncomeBackParams;
 }) {
   const [state, formAction, pending] = useActionState(editOtherIncomeAction, {});
   // Un formulario por fila: sin prefijo, los `id` de "concept" y "note" se
@@ -159,6 +195,7 @@ export function EditIncomeForm({ incomeId, concept, note }: {
       </summary>
       <form ref={formRef} action={formAction} className="space-y-2 py-2">
         <input type="hidden" name="incomeId" value={incomeId} />
+        <BackFields back={back} />
         <TextField
           label="Concepto"
           field={field("concept")}
@@ -181,12 +218,14 @@ export function EditIncomeForm({ incomeId, concept, note }: {
   );
 }
 
-export function VoidIncomeForm({ incomeId, concept, fromMercadoPago }: {
+export function VoidIncomeForm({ incomeId, concept, fromMercadoPago, back }: {
   incomeId: number;
   concept: string;
   /** El ingreso vino de la bandeja sin conciliar: su `mpPaymentId` es único y no
    *  se libera al anular, así que la anulación es de ida. */
   fromMercadoPago: boolean;
+  /** La vista de la que salió: se anula y se vuelve al mismo ejercicio. */
+  back: IncomeBackParams;
 }) {
   const [state, formAction, pending] = useActionState(voidOtherIncomeAction, {});
   return (
@@ -201,6 +240,7 @@ export function VoidIncomeForm({ incomeId, concept, fromMercadoPago }: {
           valor que preservar del reset de React 19. */}
       <form action={formAction} className="space-y-2 py-2">
         <input type="hidden" name="incomeId" value={incomeId} />
+        <BackFields back={back} />
         <div className="space-y-1">
           <Label htmlFor={`void-reason-${incomeId}`}>Motivo</Label>
           <Input

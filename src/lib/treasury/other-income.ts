@@ -13,6 +13,7 @@
 import type { IncomeMethod, Prisma, PrismaClient } from "@/generated/prisma/client";
 import { paginate } from "@/lib/admin/pagination";
 import { prisma } from "@/lib/prisma";
+import { periodMonth, periodOf, periodYear } from "./periods";
 
 /** El techo de `Decimal(10,2)`. Un peso más y MariaDB trunca en silencio. */
 export const MAX_INCOME_AMOUNT = 99_999_999.99;
@@ -40,10 +41,12 @@ export type RecordIncomeResult =
   | { kind: "already_recorded"; id: number };
 
 export type IncomeFilters = {
-  /** Fecha civil al mediodía UTC (`parseCivilDate`), inclusive. */
-  from?: Date;
-  /** Fecha civil al mediodía UTC, inclusive: cubre el día entero. */
-  to?: Date;
+  /** El EJERCICIO: del 1/1 al 31/12 en hora argentina. Es la unidad de la
+   *  asociación y la única forma de acotar por fecha que ofrece la pantalla. */
+  year?: number;
+  /** Un mes del ejercicio, 1 a 12. Sin `year` no acota nada: un mes suelto no
+   *  es una unidad de nada. */
+  month?: number;
   method?: IncomeMethod;
   /** Un solo ingreso, para el enlace que llega desde la bandeja sin conciliar.
    *  Es un id: lo único que puede viajar en la URL sin arrastrar texto del
@@ -102,19 +105,26 @@ function toCents(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-const HOUR = 3_600_000;
+// Argentina es UTC-3 sin DST (docs/03): el día civil D empieza a las D 03:00
+// UTC. De ahí salen los dos bordes de abajo.
+const AR_OFFSET_HOURS = 3;
 
-// El filtro por fecha se compara contra el DÍA CIVIL argentino y no contra el
-// mediodía UTC con el que el proyecto guarda las fechas civiles: un cobro de
-// Mercado Pago de las 20:00 del último día del rango se guarda como las 23:00
-// UTC de ese día, y un `lte` al mediodía lo dejaba afuera — la suma del período
-// mentía por abajo justo el día que el operador mira. Argentina es UTC-3 sin
-// DST, así que el día civil D va de D 03:00 UTC a D+1 03:00 UTC.
-function startOfArDay(civilNoonUtc: Date): Date {
-  return new Date(civilNoonUtc.getTime() - 9 * HOUR);
-}
-function afterArDay(civilNoonUtc: Date): Date {
-  return new Date(civilNoonUtc.getTime() + 15 * HOUR);
+/**
+ * Los bordes del ejercicio (o de uno de sus meses) como instantes UTC, medio
+ * abierto: `[gte, lt)`.
+ *
+ * El corte es en hora ARGENTINA y no en UTC. Un alquiler cobrado a las 22:00
+ * del 31 de diciembre se guarda como la 01:00 UTC del 1 de enero: con el corte
+ * en UTC esa plata caía en el ejercicio siguiente, y los dos ejercicios que la
+ * Comisión presenta quedaban mal por el mismo importe.
+ *
+ * `Date.UTC` normaliza el mes 13, así que diciembre cierra solo contra el 1/1
+ * del año que viene.
+ */
+export function exerciseBounds(year: number, month?: number): { gte: Date; lt: Date } {
+  const at = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1, AR_OFFSET_HOURS));
+  if (month) return { gte: at(year, month), lt: at(year, month + 1) };
+  return { gte: at(year, 1), lt: at(year + 1, 1) };
 }
 
 /**
@@ -127,16 +137,97 @@ function afterArDay(civilNoonUtc: Date): Date {
  * tercero (Ley 25.326, docs/08): se leen en pantalla y no salen de ahí.
  */
 export function incomeWhere(f: IncomeFilters): Prisma.OtherIncomeWhereInput {
+  // El id manda sobre todo lo demás: es el enlace que llega desde la bandeja
+  // sin conciliar y tiene que abrir ESE ingreso, sea del ejercicio que sea.
+  if (f.id) return { id: f.id };
   const where: Prisma.OtherIncomeWhereInput = {};
-  if (f.from || f.to) {
-    where.receivedAt = {
-      ...(f.from ? { gte: startOfArDay(f.from) } : {}),
-      ...(f.to ? { lt: afterArDay(f.to) } : {}),
-    };
-  }
+  if (f.year) where.receivedAt = exerciseBounds(f.year, f.month);
   if (f.method) where.method = f.method;
-  if (f.id) where.id = f.id;
   return where;
+}
+
+/** Una celda de la cinta de doce meses. Sin monto no hay celda: los meses en
+ *  cero también son parte de la forma del ejercicio. */
+export type ExerciseMonth = { month: number; amount: number; count: number };
+
+export type ExerciseSummary = {
+  year: number;
+  /** Lo que entró en el ejercicio, sin los anulados. */
+  total: number;
+  /** Ingresos que suman. */
+  counted: number;
+  /** Anulados del ejercicio: se listan tachados, no suman en ninguna cifra. */
+  voided: number;
+  byMethod: { cash: number; mp: number };
+  /** Siempre doce, de enero a diciembre. */
+  months: ExerciseMonth[];
+  /** El mes más alto: es la escala de la cinta y nada más. */
+  max: number;
+};
+
+export type ExerciseRow = {
+  receivedAt: Date;
+  amount: number;
+  method: IncomeMethod;
+  voided: boolean;
+};
+
+/**
+ * El ejercicio entero resumido: total, desglose por medio y las doce celdas de
+ * la cinta. Puro y sobre TODAS las filas del año — nunca sobre la página, o el
+ * total diría una cosa distinta según dónde esté parado el operador.
+ *
+ * El mes de cada ingreso lo decide `periodOf`, que es la única función del
+ * proyecto que traduce instante a período civil argentino. Acá eso no es un
+ * detalle: es lo que pone un alquiler de las 22:00 del 31 de diciembre en
+ * diciembre y no en enero del ejercicio siguiente.
+ *
+ * Los anulados quedan afuera de las tres cifras y se cuentan aparte: el que
+ * anuló tiene que ver que anuló, y el total tiene que decir la verdad.
+ *
+ * Agregar en memoria y no en SQL es deliberado: son decenas de filas por año, y
+ * así el bucketing se prueba entero sin base y comparte la definición de "mes"
+ * con el resto del módulo en vez de re-derivarla en un `$queryRaw`.
+ */
+export function summarizeExercise(rows: ExerciseRow[], year: number): ExerciseSummary {
+  const months: ExerciseMonth[] = Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1,
+    amount: 0,
+    count: 0,
+  }));
+  const byMethod = { cash: 0, mp: 0 };
+  let counted = 0;
+  let voided = 0;
+  for (const r of rows) {
+    if (r.voided) {
+      voided++;
+      continue;
+    }
+    const p = periodOf(r.receivedAt);
+    // Defensivo: el WHERE ya acotó al ejercicio. Si algo se colara, no puede
+    // sumar en un mes que no es el suyo.
+    if (periodYear(p) !== year) continue;
+    const cell = months[periodMonth(p) - 1];
+    cell.amount = toCents(cell.amount + r.amount);
+    cell.count++;
+    byMethod[r.method] = toCents(byMethod[r.method] + r.amount);
+    counted++;
+  }
+  return {
+    year,
+    total: toCents(byMethod.cash + byMethod.mp),
+    counted,
+    voided,
+    byMethod,
+    months,
+    max: months.reduce((m, c) => Math.max(m, c.amount), 0),
+  };
+}
+
+/** Los años (argentinos) que tienen ingresos, descendentes y sin repetir. */
+export function incomeYearsOf(dates: Date[]): number[] {
+  const years = new Set(dates.map((d) => periodYear(periodOf(d))));
+  return [...years].sort((a, b) => b - a);
 }
 
 const ROW_SELECT = {
@@ -229,6 +320,46 @@ export function makeOtherIncome(db: IncomeDb) {
   return {
     record(input: RecordIncomeInput): Promise<RecordIncomeResult> {
       return recordOtherIncome(db, input);
+    },
+
+    /** Los años que ofrece la barra de ejercicios. Una sola columna de todas
+     *  las filas: son decenas por año, y el año hay que resolverlo en hora
+     *  argentina —lo que un `YEAR(received_at)` de SQL no hace—.
+     *
+     *  Incluye los años de los ingresos ANULADOS: se siguen listando, así que
+     *  tiene que haber una pestaña por la que llegar a ellos. */
+    async years(): Promise<number[]> {
+      const rows = await db.otherIncome.findMany({ select: { receivedAt: true } });
+      return incomeYearsOf(rows.map((r: { receivedAt: Date }) => r.receivedAt));
+    },
+
+    /** El ejercicio de un vistazo: total, desglose por medio y las doce celdas
+     *  de la cinta. Sin `skip` ni `take` a propósito. */
+    async exercise(year: number): Promise<ExerciseSummary> {
+      const rows = await db.otherIncome.findMany({
+        where: { receivedAt: exerciseBounds(year) },
+        select: { receivedAt: true, amount: true, method: true, voidedAt: true },
+      });
+      return summarizeExercise(
+        rows.map((r: { receivedAt: Date; amount: unknown; method: IncomeMethod; voidedAt: Date | null }) => ({
+          receivedAt: r.receivedAt,
+          amount: Number(r.amount),
+          method: r.method,
+          voided: r.voidedAt !== null,
+        })),
+        year,
+      );
+    },
+
+    /** El ejercicio al que pertenece un ingreso. Lo usa el enlace que llega
+     *  desde la bandeja sin conciliar: un cobro de diciembre mirado en enero
+     *  tiene que abrir SU ejercicio y no el que está en curso. */
+    async yearOf(id: number): Promise<number | null> {
+      const row = await db.otherIncome.findUnique({
+        where: { id },
+        select: { receivedAt: true },
+      });
+      return row ? periodYear(periodOf(row.receivedAt)) : null;
     },
 
     /** Los anulados se LISTAN (tachados) pero no SUMAN: el que anuló tiene que

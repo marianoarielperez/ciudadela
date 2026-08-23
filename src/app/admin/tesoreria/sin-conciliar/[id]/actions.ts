@@ -359,5 +359,10 @@ export async function registerAsOtherIncomeAction(_prev: State, formData: FormDa
   });
   // Al destino y no de vuelta a la bandeja: el operador tiene que ver dónde
   // quedó esa plata, que es justamente lo que esta pantalla no sabía decir.
-  redirect("/admin/tesoreria/otros-ingresos?registrado=1");
+  //
+  // Por id y no a la lista pelada: Otros ingresos se organiza por EJERCICIO, y
+  // un cobro de diciembre resuelto en enero no está en el ejercicio en curso.
+  // El `?ingreso=` resuelve el año del propio ingreso, así que la pantalla abre
+  // en el ejercicio correcto y con esa fila a la vista.
+  redirect(`/admin/tesoreria/otros-ingresos?ingreso=${result.incomeId}&registrado=1`);
 }

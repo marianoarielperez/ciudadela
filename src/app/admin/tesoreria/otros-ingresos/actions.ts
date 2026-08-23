@@ -17,12 +17,38 @@ import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseCivilDate } from "@/lib/dates";
 import { parseForm } from "@/lib/forms";
+import { INCOME_BASE } from "@/lib/treasury/income-nav";
 import { otherIncome, OtherIncomeError } from "@/lib/treasury/other-income";
-import { civilDayOf } from "@/lib/treasury/periods";
+import { civilDayOf, periodOf, periodYear } from "@/lib/treasury/periods";
 
 type State = { error?: string };
 
-const BASE = "/admin/tesoreria/otros-ingresos";
+/**
+ * Adónde vuelve el operador después de corregir o anular: a la MISMA vista de
+ * la que salió (ejercicio, mes y medio), no al ejercicio en curso. Sin esto,
+ * anular una fila de 2024 devolvía a 2026 y había que volver a navegar.
+ *
+ * Los valores salen de campos ocultos del formulario, así que se reconstruyen
+ * acá con lista blanca: sólo enteros en rango y los dos valores del enum del
+ * medio. Nada de texto libre —el concepto y la nota pueden nombrar a un tercero
+ * y la URL queda escrita en el access log (Ley 25.326, docs/08)—.
+ */
+function backHref(fd: FormData, flag: string): string {
+  const qs = new URLSearchParams();
+  const int = (key: string, max: number) => {
+    const v = fd.get(key);
+    if (typeof v !== "string" || !/^\d+$/.test(v)) return;
+    const n = Number(v);
+    if (n > 0 && n <= max) qs.set(key, String(n));
+  };
+  int("anio", 9999);
+  int("mes", 12);
+  int("ingreso", Number.MAX_SAFE_INTEGER);
+  const medio = fd.get("medio");
+  if (medio === "cash" || medio === "mp") qs.set("medio", medio);
+  qs.set(flag, "1");
+  return `${INCOME_BASE}?${qs.toString()}`;
+}
 
 async function clientIp(): Promise<string> {
   return (await headers()).get("x-real-ip") ?? "unknown";
@@ -105,8 +131,15 @@ export async function registerOtherIncomeAction(_prev: State, formData: FormData
     detail: { amount: parsed.data.amount, method: "cash", receivedAt: parsed.data.receivedAt },
     ip: await clientIp(),
   });
+  // Al EJERCICIO del ingreso y no al que está en curso: un alquiler de
+  // diciembre cargado en enero pertenece al ejercicio anterior, y mandar al
+  // operador al año nuevo lo dejaba mirando una pantalla donde lo que acaba de
+  // registrar no aparece. El año se resuelve con `periodOf`, en hora argentina.
+  // El ejercicio en curso vive en la URL limpia: una sola dirección por vista.
+  const year = periodYear(periodOf(receivedAt.value));
+  const anio = year === periodYear(periodOf(new Date())) ? "" : `anio=${year}&`;
   // Fuera del try: redirect() señaliza con una excepción y el catch se la comería.
-  redirect(`${BASE}?registrado=1`);
+  redirect(`${INCOME_BASE}?${anio}registrado=1`);
 }
 
 // Corregir SÓLO el texto: concepto y nota. El monto, la fecha, el medio y el
@@ -158,7 +191,7 @@ export async function editOtherIncomeAction(_prev: State, formData: FormData): P
     detail: { fields: ["concept", "note"] },
     ip: await clientIp(),
   });
-  redirect(`${BASE}?corregido=1`);
+  redirect(backHref(formData, "corregido"));
 }
 
 const voidSchema = z.object({
@@ -203,5 +236,5 @@ export async function voidOtherIncomeAction(_prev: State, formData: FormData): P
     detail: { reopened: result.reopened },
     ip: await clientIp(),
   });
-  redirect(`${BASE}?anulado=1`);
+  redirect(backHref(formData, "anulado"));
 }

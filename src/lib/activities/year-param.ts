@@ -5,24 +5,13 @@
 // render tienen que llegar EXACTAMENTE al mismo año, o el <title> y el
 // canonical describen un contenido distinto del que se muestra.
 
-// Año "actual" en hora argentina, no UTC del server: entre las 21 y las 24 del
-// 31 de diciembre el server ya está en enero y la página mostraría el año que
-// viene mientras el vecino todavía está en el anterior.
-export function currentYearAR(now: Date = new Date()): number {
-  return Number(
-    new Intl.DateTimeFormat("es-AR", {
-      timeZone: "America/Argentina/Buenos_Aires",
-      year: "numeric",
-    }).format(now),
-  );
-}
-
-// El año por defecto: el año en curso manda por sobre el más reciente cargado.
-// Si la Comisión ya dejó armado el calendario del año que viene, el vecino que
-// entra hoy tiene que ver el de hoy, no el que todavía no empezó.
-export function fallbackYear(years: number[], current: number): number {
-  return years.includes(current) ? current : (years[0] ?? current);
-}
+// `currentYearAR` y `fallbackYear` se mudaron a `@/lib/dates`: el ejercicio
+// anual de Tesorería necesita exactamente el mismo par y no tiene por qué
+// importar un módulo de /actividades. Se re-exportan desde acá para que esta
+// página —y sus tests— sigan teniendo un solo lugar del que traer todo lo del
+// `?anio=`.
+export { currentYearAR, fallbackYear } from "@/lib/dates";
+import { fallbackYear } from "@/lib/dates";
 
 // El año por defecto se sirve en /actividades a secas: es la URL que linkea el
 // menú y la que se comparte, y tener dos direcciones para el mismo contenido

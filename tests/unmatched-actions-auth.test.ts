@@ -444,7 +444,10 @@ describe("registerAsOtherIncomeAction", () => {
     expect(asiento).not.toContain("Ramírez");
     expect(asiento).not.toContain("mano");
     expect(asiento).not.toContain("vecino@example.com");
-    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?registrado=1");
+    // Por id: Otros ingresos se organiza por ejercicio, y un cobro de diciembre
+    // resuelto en enero no cae en el que está en curso. El `?ingreso=` abre el
+    // ejercicio del propio ingreso, con esa fila a la vista.
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?ingreso=77&registrado=1");
   });
 
   it("una fila ya resuelta no se vuelve a registrar", async () => {
@@ -499,7 +502,8 @@ describe("registerAsOtherIncomeAction", () => {
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
       detail: { action: "other_income", incomeId: 42, amount: 12000 },
     }));
-    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?registrado=1");
+    // Al ingreso que YA existía: es el mismo hecho, y es el que hay que mostrar.
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?ingreso=42&registrado=1");
   });
 
   it("si otro operador resuelve la fila en el medio, el ingreso recién escrito se revierte", async () => {
