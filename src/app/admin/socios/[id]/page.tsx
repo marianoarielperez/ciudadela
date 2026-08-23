@@ -44,7 +44,7 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
   // El valor vigente de la cuota no depende del socio: se pide EN PARALELO con
   // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
   // cada render (mismo criterio que la ruta hermana `[accion]`).
-  const [member, feeValue] = await Promise.all([
+  const [member, feeValue, subscription] = await Promise.all([
     prisma.member.findUnique({
       where: { id: memberId },
       include: {
@@ -55,6 +55,21 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
       },
     }),
     feeValueReader.current(),
+    // La suscripción viva del socio, para la pestaña Cuenta corriente. "Viva"
+    // es todo lo que no está `cancelled`, el mismo criterio de
+    // `hasLiveAutoDebit`: el catálogo de estados es de Mercado Pago y puede
+    // crecer, así que un estado desconocido cuenta como débito posible. Si las
+    // dos pantallas usaran criterios distintos, el aviso de la baja avisaría de
+    // un débito que la ficha jura que no existe.
+    //
+    // Sale de la BASE y no de Mercado Pago a propósito: la ficha del socio no
+    // puede depender de que MP conteste. Lo que la base no tiene —el próximo
+    // cobro— no se muestra.
+    prisma.mpSubscription.findFirst({
+      where: { memberId, status: { not: "cancelled" } },
+      orderBy: { createdAt: "desc" },
+      select: { preapprovalId: true, status: true, amount: true, linkedManually: true },
+    }),
   ]);
   if (!member) notFound();
 
@@ -165,6 +180,14 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
               <AccountSection
                 member={member} account={account} rows={grid} admin
                 receiptHref={(receiptId) => `/admin/tesoreria/recibos/${receiptId}`}
+                autoDebit={{
+                  flagged: member.autoDebit,
+                  // El monto es `Decimal` en la base y número en la vista: el
+                  // resto de la cuenta corriente ya viaja así (`fetchMemberAccount`).
+                  subscription: subscription
+                    ? { ...subscription, amount: subscription.amount === null ? null : Number(subscription.amount) }
+                    : null,
+                }}
               />
             ),
             historial: (

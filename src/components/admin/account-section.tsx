@@ -3,23 +3,50 @@
 // y cambia el tratamiento ("Debe" / "Debés").
 import Link from "next/link";
 import type { MemberCategory } from "@/generated/prisma/client";
+import { subscriptionStatusBadgeVariant } from "@/lib/admin/status-badges";
+import { subscriptionStatusLabel } from "@/lib/admin/unmatched-labels";
 import { formatARS, formatDateAR } from "@/lib/format";
 import type { GridRow, MemberAccount } from "@/lib/treasury/account";
 import { PAYMENT_TYPE_LABELS, paymentConcept } from "@/lib/treasury/labels";
 import { periodLabel } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES } from "@/lib/treasury/rules";
 import { EmptyState } from "@/components/admin/empty-state";
+import { FormMessage } from "@/components/admin/form-message";
 import { PeriodStrip } from "@/components/admin/period-strip";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-export function AccountSection({ member, account, rows, admin, receiptHref }: {
+/** Lo que la ficha sabe del débito automático del socio. Las DOS señales, por lo
+ *  mismo que las mira `hasLiveAutoDebit` (src/lib/members/auto-debit.ts): la
+ *  suscripción que el sistema conoce y el flag del padrón, que marca fichas
+ *  viejas cuyo débito se gestionó en el panel de MP y no tiene fila local. */
+export type AutoDebitView = {
+  /** `Member.autoDebit`. */
+  flagged: boolean;
+  /** La suscripción viva vinculada a este socio, si el sistema la conoce. */
+  subscription: {
+    preapprovalId: string;
+    /** Estado tal cual lo manda MP: el catálogo es de ellos y puede crecer. */
+    status: string;
+    amount: number | null;
+    linkedManually: boolean;
+  } | null;
+};
+
+const INLINE_LINK =
+  "text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring";
+
+export function AccountSection({ member, account, rows, admin, receiptHref, autoDebit }: {
   member: { id: number; category: MemberCategory };
   account: MemberAccount;
   rows: GridRow[];
   admin: boolean;
   /** Link al recibo por id. */
   receiptHref: (receiptId: number) => string;
+  /** Sólo lo pasa el admin: el mandato de cobro vive en Mercado Pago y es
+   *  información de gestión, no del libro que ve el socio en /mi/cuenta. */
+  autoDebit?: AutoDebitView;
 }) {
   const accruing = ACCRUING_CATEGORIES.includes(member.category);
   // La cinta conoce el NÚMERO del recibo (viene de `buildPeriodGrid`), pero el
@@ -50,6 +77,55 @@ export function AccountSection({ member, account, rows, admin, receiptHref }: {
           </p>
         )}
       </div>
+
+      {/* Cómo entra la plata todos los meses, debajo de cuánto debe. La línea
+          describe la suscripción con las MISMAS palabras que la pantalla de
+          Suscripciones (badge de estado, monto, id corto, origen): es la misma
+          suscripción vista desde dos lados y no puede llamarse distinto en cada
+          uno. El `preapprovalId` va recortado a propósito: es el identificador
+          del mandato de cobro contra la tarjeta de un vecino, y para reconocer
+          una fila alcanzan los primeros caracteres. */}
+      {admin && autoDebit && (
+        autoDebit.subscription ? (
+          <div className="border-l-2 border-border pl-3">
+            <p className="text-sm">
+              Débito automático:{" "}
+              <Badge className="align-middle" variant={subscriptionStatusBadgeVariant(autoDebit.subscription.status)}>
+                {subscriptionStatusLabel(autoDebit.subscription.status)}
+              </Badge>
+              {autoDebit.subscription.amount !== null ? (
+                <> · <span className="font-mono tabular-nums">{formatARS(autoDebit.subscription.amount)}</span> por mes</>
+              ) : (
+                <span className="text-muted-foreground"> · monto no informado</span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-mono">{autoDebit.subscription.preapprovalId.slice(0, 8)}…</span>
+              {" · "}
+              {autoDebit.subscription.linkedManually ? "Vinculada a mano" : "Alta web"}
+            </p>
+          </div>
+        ) : autoDebit.flagged ? (
+          // El flag del padrón sin fila local: puede haber un débito vivo del que
+          // el sistema no sabe nada, y entonces sus cobros no se imputan. Se
+          // afirma en condicional porque el flag es del Excel de 2026 y nadie
+          // verificó contra MP que ese débito siga existiendo.
+          // `role="none"`: es el ESTADO de la ficha, no la respuesta a una
+          // acción. Un `alert` acá interrumpiría al lector de pantalla cada vez
+          // que se abre la pestaña.
+          <FormMessage kind="warning" box as="div" role="none">
+            La ficha dice que tiene débito automático, pero no hay ninguna suscripción de Mercado
+            Pago vinculada a este socio. Si el débito sigue vivo, cada cobro cae en Sin conciliar en
+            lugar de imputarse a su cuota.{" "}
+            <Link className={INLINE_LINK} href="/admin/tesoreria/suscripciones">Vincular la suscripción</Link>
+          </FormMessage>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Sin débito automático.{" "}
+            <Link className={INLINE_LINK} href="/admin/tesoreria/suscripciones">Vincular una suscripción</Link>
+          </p>
+        )
+      )}
 
       {/* La cinta se muestra si la categoría devenga o si alguna vez hubo cuotas:
           para un honorario sin una sola fila sería una grilla vacía sin sentido. */}
