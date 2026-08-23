@@ -79,6 +79,10 @@ export type MpGateway = {
     externalReference: string;
     backUrl: string;
     notificationUrl: string;
+    /** Instante en que MP deja de aceptar el enlace. Obligatorio: sin él la
+     *  preferencia no vence nunca y el importe congelado sobrevive a una
+     *  actualización de cuota (REG-34). Ver `PAYMENT_LINK_TTL_HOURS`. */
+    expiresAt: Date;
   }): Promise<{ id: string; initPoint: string }>;
 };
 
@@ -95,6 +99,15 @@ function isoToDate(s: unknown): Date | null {
 
 function numberOrNull(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+/** El inverso de `isoToDate`: MP quiere las fechas de vencimiento en ISO 8601
+ *  CON offset (`yyyy-MM-ddTHH:mm:ss.SSS±hh:mm`). Argentina es UTC-3 fijo y sin
+ *  DST, así que la conversión es una resta y no hace falta Intl. Se escribe con
+ *  el offset argentino y no con `Z` porque es el formato que la documentación de
+ *  MP fija y el único que sus ejemplos muestran. */
+function toMpDateTime(d: Date): string {
+  return `${new Date(d.getTime() - 3 * 60 * 60_000).toISOString().slice(0, 23)}-03:00`;
 }
 
 type RawPayment = {
@@ -323,6 +336,12 @@ export function makeMpGateway(): MpGateway {
           back_urls: { success: input.backUrl, pending: input.backUrl, failure: input.backUrl },
           auto_return: "approved",
           notification_url: input.notificationUrl,
+          // El enlace vence de verdad: `expires` sin `expiration_date_to` no
+          // hace nada, y `expiration_date_to` sin `expires` tampoco. Van los
+          // dos. No mandamos `expiration_date_from`: sería "ahora", y un reloj
+          // de MP adelantado unos segundos rechazaría la preferencia entera.
+          expires: true,
+          expiration_date_to: toMpDateTime(input.expiresAt),
         },
       });
       if (!res.id || !res.init_point) throw new Error("MP no devolvió la preferencia creada.");

@@ -11,7 +11,7 @@ import type { MemberCategory } from "@/generated/prisma/client";
 import { feeValueReader, type makeFeeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
 import { mpGateway, type MpGateway } from "./gateway";
-import { MAX_LINK_FEES, paymentLinkReference } from "./references";
+import { MAX_LINK_FEES, PAYMENT_LINK_TTL_MS, paymentLinkReference } from "./references";
 
 /** Lo que el vecino lee en el checkout de MP y después en el resumen de su
  *  tarjeta. Por eso nombra a la institución y no dice "SIGeV". */
@@ -31,7 +31,7 @@ export const PAYMENT_LINK_ERRORS: Record<PaymentLinkError, string> = {
 };
 
 export type PaymentLinkResult =
-  | { ok: true; initPoint: string; amount: number; unit: number; reference: string }
+  | { ok: true; initPoint: string; amount: number; unit: number; reference: string; expiresAt: Date }
   | { ok: false; error: PaymentLinkError };
 
 type Deps = {
@@ -51,7 +51,8 @@ export function makePaymentLinks(deps: Deps) {
       if (!Number.isInteger(input.n) || input.n < 1 || input.n > MAX_LINK_FEES) {
         return { ok: false, error: "bad_n" };
       }
-      const value = await deps.feeValues.current(now());
+      const at = now();
+      const value = await deps.feeValues.current(at);
       if (!value) return { ok: false, error: "no_fee_value" };
       const unit = feeAmountFor(input.member.category, value);
       // Honorario, vitalicio y cadete no pagan cuota: no hay link que generar,
@@ -60,17 +61,25 @@ export function makePaymentLinks(deps: Deps) {
       const amount = unit * input.n;
       const reference = paymentLinkReference(input.member.id, input.n);
       const base = deps.baseUrl();
+      // El importe se congela acá, al valor de HOY. El vencimiento es lo que
+      // impide que ese precio sobreviva a una actualización de cuota: se cuenta
+      // desde el mismo instante con el que se leyó el valor, no desde el reloj.
+      const expiresAt = new Date(at.getTime() + PAYMENT_LINK_TTL_MS);
       const pref = await deps.gateway.createPreference({
         title: paymentLinkTitle(input.n),
         amount,
         externalReference: reference,
         // Los tres desenlaces (aprobado, pendiente, rechazado) vuelven a la
-        // misma pantalla: el socio no tiene por qué entender la diferencia, y
-        // la que manda es la acreditación que llega por webhook.
+        // MISMA pantalla, que los distingue leyendo la query que MP le agrega
+        // (`readReturnOutcome`). Una URL sola y no tres: la que manda es la
+        // acreditación que llega por webhook, y el desenlace de la vuelta sólo
+        // decide QUÉ SE LE DICE al vecino mientras tanto — sobre todo que un
+        // rechazo se nombre como rechazo y ofrezca reintentar.
         backUrl: `${base}/mi/cuenta?volvio=1`,
         notificationUrl: `${base}/api/webhooks/mp`,
+        expiresAt,
       });
-      return { ok: true, initPoint: pref.initPoint, amount, unit, reference };
+      return { ok: true, initPoint: pref.initPoint, amount, unit, reference, expiresAt };
     },
   };
 }

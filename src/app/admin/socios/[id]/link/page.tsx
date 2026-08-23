@@ -24,6 +24,7 @@ import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
 import { feeValueReader, NO_FEE_VALUE_MESSAGE } from "@/lib/treasury/fee-values";
+import { categoryPaysFee } from "@/lib/treasury/rules";
 import { LinkForm } from "./link-form";
 
 export const dynamic = "force-dynamic";
@@ -74,10 +75,16 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
         // cobrar la deuda que quedó (Art. 9 inc. c, REG-16), y el pago no lo
         // reincorpora. Lo que suma acá es la vuelta: su panel de socio está
         // cerrado, así que al volver de Mercado Pago no va a ver el recibo.
+        // El recibo lo emite y lo manda el webhook: lo único que falta es
+        // avisarle al operador que la VUELTA no la va a ver, no pedirle un
+        // envío que ya ocurrió (salvo que no haya email al que mandarlo).
         <FormMessage kind="warning" box as="div">
           Está dado de baja. El pago salda la deuda y emite recibo, pero <strong>no</strong> lo
           reincorpora — y como su panel de socio está cerrado, al volver de Mercado Pago no va a
-          ver la confirmación: el recibo se lo mandás vos desde Tesorería.
+          ver la confirmación.{" "}
+          {hasEmail
+            ? "El recibo le llega igual por email."
+            : "Y como no tiene un email válido cargado, el recibo se lo hacés llegar vos desde Tesorería."}
         </FormMessage>
       )}
 
@@ -86,17 +93,20 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
           <CardTitle>Generar link de pago</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* El orden importa: `account.feeAmount` es null por DOS motivos
-              distintos —no hay valor vigente, o la categoría no paga cuota— y
-              tienen salidas opuestas (registrar el valor / no hay nada que
-              hacer). Preguntar primero por la categoría le diría al operador
-              que un socio activo no paga cuota. */}
-          {feeValue === null ? (
-            <FormMessage kind="error" box>{NO_FEE_VALUE_MESSAGE}</FormMessage>
-          ) : account.feeAmount === null ? (
+          {/* El orden importa EN LOS DOS SENTIDOS: `account.feeAmount` es null
+              por dos motivos distintos —la categoría no paga cuota, o no hay
+              valor vigente— con salidas opuestas (no hay nada que hacer /
+              registrar el valor). Se pregunta primero por la CATEGORÍA, que es
+              un hecho definitivo y no depende de `fee_values`: preguntando por
+              el valor primero, a un vitalicio se le mandaba a registrar un
+              monto que igual no va a pagar. `categoryPaysFee` contesta esa
+              mitad sin necesitar el valor. */}
+          {!categoryPaysFee(member.category) ? (
             // Honorario, vitalicio o cadete: no hay cuota, así que no hay nada
             // que cobrar por link. Se dice y no se muestra el formulario.
             <EmptyState size="card" description="Esta categoría no paga cuota: no hay link que generar." />
+          ) : feeValue === null || account.feeAmount === null ? (
+            <FormMessage kind="error" box>{NO_FEE_VALUE_MESSAGE}</FormMessage>
           ) : (
             <>
               <p className="text-sm text-muted-foreground">

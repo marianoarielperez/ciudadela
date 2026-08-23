@@ -14,7 +14,8 @@ import { FormMessage } from "@/components/admin/form-message";
 import { TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatARS } from "@/lib/format";
+import { formatARS, formatDateTimeAR } from "@/lib/format";
+import { MAX_LINK_FEES, PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import { periodLabel, type Period } from "@/lib/treasury/periods";
 import { createPaymentLinkAction, emailPaymentLinkAction, type LinkState } from "./actions";
 
@@ -23,6 +24,8 @@ import { createPaymentLinkAction, emailPaymentLinkAction, type LinkState } from 
 function digitsOnly(raw: string): string {
   return raw.replace(/\D/g, "");
 }
+
+type LinkPayload = NonNullable<LinkState["link"]>;
 
 export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, hasEmail }: {
   memberId: number;
@@ -37,9 +40,14 @@ export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, has
   // operador tiene la plata en la mano y cobrar de más es irreversible—, acá el
   // link es una propuesta que el socio puede no usar, y lo natural es ofrecerle
   // saldar todo. Sigue siendo editable.
-  const { values, formRef, field } = useSyncedForm({ n: String(Math.max(1, pendingCount)) });
+  // Topeado también por arriba: la deuda importada arranca en 2022, así que un
+  // socio con 61 pendientes o más existe — y sin el tope la pantalla se abría
+  // con el total en "—" y un formulario que el servidor iba a rechazar.
+  const { values, formRef, field } = useSyncedForm({
+    n: String(Math.min(MAX_LINK_FEES, Math.max(1, pendingCount))),
+  });
   const n = Number(values.n);
-  const total = Number.isInteger(n) && n > 0 && n <= 60 ? feeAmount * n : null;
+  const total = Number.isInteger(n) && n > 0 && n <= MAX_LINK_FEES ? feeAmount * n : null;
 
   return (
     <div className="space-y-5">
@@ -50,7 +58,9 @@ export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, has
           field={field("n", digitsOnly)}
           inputMode="numeric"
           maxLength={2}
-          className="max-w-24"
+          // `Input` viene con `h-8`; `min-h-11` lo lleva al target táctil de la
+          // pantalla, igual que el resto de los controles de acá.
+          className="max-w-24 min-h-11"
           hint={
             pendingCount > 0
               ? `Debe ${pendingCount} ${pendingCount === 1 ? "cuota" : "cuotas"}${oldestPending ? ` desde ${periodLabel(oldestPending)}` : ""}. El pago se imputa a las más antiguas primero.`
@@ -84,7 +94,7 @@ export function LinkForm({ memberId, feeAmount, pendingCount, oldestPending, has
  *  destacado de la pantalla — todo lo demás queda en gris. */
 function GeneratedLink({ memberId, link, hasEmail }: {
   memberId: number;
-  link: { url: string; amount: number; n: number };
+  link: LinkPayload;
   hasEmail: boolean;
 }) {
   return (
@@ -101,9 +111,18 @@ function GeneratedLink({ memberId, link, hasEmail }: {
 
       <CopyRow url={link.url} />
 
+      {/* Dice lo que el gateway efectivamente setea (`expiration_date_to`), no
+          una política supuesta de MP: un operador que crea que el enlace vence
+          solo da por inofensivo uno viejo, y el importe quedó congelado al
+          valor del día en que se generó. */}
       <p className="text-xs text-muted-foreground">
-        Mercado Pago da de baja el enlace a las 24 h si no se usa. Cuando el pago se acredite, la
-        cuota se imputa sola y el recibo se emite acá.
+        El enlace vence en {PAYMENT_LINK_TTL_HOURS} horas —el{" "}
+        {formatDateTimeAR(link.expiresAt)}— porque el importe queda congelado al valor de cuota de
+        hoy. Después hay que generar uno nuevo. Cuando el pago se acredite, la cuota se imputa sola
+        y el recibo se emite{" "}
+        {hasEmail
+          ? "y se le manda por email: no hace falta que se lo mandes vos."
+          : "acá. Como no tiene un email válido cargado, el recibo se lo hacés llegar vos desde Tesorería."}
       </p>
 
       <EmailRow memberId={memberId} link={link} hasEmail={hasEmail} />
@@ -165,7 +184,7 @@ function CopyRow({ url }: { url: string }) {
 
 function EmailRow({ memberId, link, hasEmail }: {
   memberId: number;
-  link: { url: string; amount: number; n: number };
+  link: LinkPayload;
   hasEmail: boolean;
 }) {
   const [state, formAction, pending] = useActionState<LinkState, FormData>(emailPaymentLinkAction, {});
@@ -175,6 +194,10 @@ function EmailRow({ memberId, link, hasEmail }: {
       <input type="hidden" name="url" value={link.url} />
       <input type="hidden" name="n" value={link.n} />
       <input type="hidden" name="amount" value={link.amount} />
+      <input type="hidden" name="expiresAt" value={link.expiresAt.toISOString()} />
+      {/* Ata la tupla al socio: sin el sello, un POST armado a mano le mandaría
+          al socio A un enlace cuya referencia acredita al socio B. */}
+      <input type="hidden" name="seal" value={link.seal} />
       <Button
         type="submit"
         variant="outline"

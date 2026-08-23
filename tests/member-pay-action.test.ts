@@ -22,6 +22,7 @@ vi.mock("@/lib/mp/payment-link", async () => {
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/auth/require-member", () => ({ requireMember: mocks.member }));
 vi.mock("@/lib/auth/rate-limiter", () => ({ memberPayLimiter: { check: mocks.check } }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
 import { startMemberPaymentAction } from "@/app/mi/cuenta/actions";
 
@@ -76,12 +77,14 @@ describe("startMemberPaymentAction", () => {
   it("ok: devuelve la URL de checkout y audita con channel member", async () => {
     loggedIn();
     mocks.findUniqueOrThrow.mockResolvedValueOnce({ id: 14, category: "active" });
-    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 18000, unit: 6000, reference: "pago:14:3" });
+    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 18000, unit: 6000, reference: "pago:14:3", expiresAt: new Date("2026-08-26T15:00:00.000Z") });
     const r = await startMemberPaymentAction({}, form());
     expect(r).toEqual({ redirectUrl: MP_URL });
     expect(mocks.create).toHaveBeenCalledWith({ member: { id: 14, category: "active" }, n: 3 });
+    // Con `ip`, igual que los dos asientos del operador: es el canal donde la
+    // identidad es más débil (una sesión de 8 h en un teléfono).
     expect(mocks.audit).toHaveBeenCalledWith({
-      userId: 42,
+      userId: 42, ip: "unknown",
       action: "payment_link_create", entity: "member", entityId: 14,
       detail: { memberId: 14, n: 3, amount: 18000, channel: "member" },
     });
@@ -91,7 +94,7 @@ describe("startMemberPaymentAction", () => {
   it("un memberId colado en el formulario se ignora: el cobro es siempre para el socio de la sesión", async () => {
     loggedIn();
     mocks.findUniqueOrThrow.mockResolvedValueOnce({ id: 14, category: "active" });
-    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 6000, unit: 6000, reference: "pago:14:1" });
+    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 6000, unit: 6000, reference: "pago:14:1", expiresAt: new Date("2026-08-26T15:00:00.000Z") });
     await startMemberPaymentAction({}, form("1", { memberId: "306" }));
     expect(mocks.findUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 14 } }));
     expect(mocks.create).toHaveBeenCalledWith({ member: { id: 14, category: "active" }, n: 1 });

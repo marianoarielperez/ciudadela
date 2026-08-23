@@ -1,6 +1,7 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
 import { formatARS } from "@/lib/format";
+import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 
 type Rendered = { subject: string; text: string; html: string };
@@ -352,11 +353,14 @@ Te mandamos un link para pagar ${what} por ${amount} con Mercado Pago (tarjeta, 
 
 ${opts.url}
 
+El enlace vence en ${PAYMENT_LINK_TTL_HOURS} horas: pasado ese plazo pedinos uno nuevo, porque el importe cambia cuando cambia el valor de la cuota.
+
 Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagaste o tenés dudas, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
     html: layout("Tu link para pagar la cuota", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
 <p>Te mandamos un link para pagar <strong>${esc(what)}</strong> por <strong>${esc(amount)}</strong> con Mercado Pago (tarjeta, débito o dinero en cuenta).</p>
 <p><a href="${esc(opts.url)}" style="display:inline-block;padding:12px 20px;background:#0079BC;color:#fff;border-radius:6px;text-decoration:none">Pagar con Mercado Pago</a></p>
 <p style="font-size:12px;color:#555">Si el botón no funciona, copiá este enlace: ${esc(opts.url)}</p>
+<p>El enlace <strong>vence en ${PAYMENT_LINK_TTL_HOURS} horas</strong>: pasado ese plazo pedinos uno nuevo, porque el importe cambia cuando cambia el valor de la cuota.</p>
 <p>Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagaste o tenés dudas, respondé este mensaje o acercate a la sede.</p>`),
   };
 }

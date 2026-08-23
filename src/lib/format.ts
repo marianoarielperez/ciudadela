@@ -9,6 +9,19 @@ export function formatDateAR(date: Date): string {
   }).format(date)
 }
 
+/** Fecha y hora civiles argentinas: "26/08/2026 a las 15:40". Se usa donde la
+ *  hora es parte del hecho —el vencimiento de un link de pago— y no sólo el
+ *  día. */
+export function formatDateTimeAR(date: Date): string {
+  const time = new Intl.DateTimeFormat("es-AR", {
+    timeZone: TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date)
+  return `${formatDateAR(date)} a las ${time}`
+}
+
 // Tamaño de archivo legible en es-AR (coma decimal). Base 1024, como reporta el
 // sistema operativo: el operador compara este número con el que ve en su
 // carpeta. Sin decimales en kB (nadie necesita "1,4 kB") y uno solo en MB.

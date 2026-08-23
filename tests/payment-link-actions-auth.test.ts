@@ -28,9 +28,16 @@ vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/auth/require-admin", () => ({ requireAdmin: mocks.admin }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
+// El sello de pertenencia (`payment-link-seal`) se firma con AUTH_SECRET. En el
+// test se fija acá y no en la config global: el resto de la suite no tiene por
+// qué heredar un secreto.
+process.env.AUTH_SECRET = "test-auth-secret";
+
 import { createPaymentLinkAction, emailPaymentLinkAction } from "@/app/admin/socios/[id]/link/actions";
+import { sealPaymentLink } from "@/lib/mp/payment-link-seal";
 
 const MP_URL = "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=abc";
+const EXPIRES = new Date("2026-08-26T15:00:00.000Z");
 
 function createForm(n = "2", memberId = "14") {
   const f = new FormData();
@@ -39,12 +46,14 @@ function createForm(n = "2", memberId = "14") {
   return f;
 }
 
-function emailForm(url = MP_URL) {
+function emailForm(url = MP_URL, seal?: string) {
   const f = new FormData();
   f.append("memberId", "14");
   f.append("url", url);
   f.append("n", "2");
   f.append("amount", "12000");
+  f.append("expiresAt", EXPIRES.toISOString());
+  f.append("seal", seal ?? sealPaymentLink({ memberId: 14, n: 2, amount: 12000, url }));
   return f;
 }
 
@@ -64,9 +73,14 @@ describe("createPaymentLinkAction", () => {
   it("con admin devuelve el link y audita ids/cantidad/monto — SIN la URL", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "active" });
-    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 12000, unit: 6000, reference: "pago:14:2" });
+    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 12000, unit: 6000, reference: "pago:14:2", expiresAt: EXPIRES });
     const r = await createPaymentLinkAction({}, createForm());
-    expect(r).toEqual({ link: { url: MP_URL, amount: 12000, n: 2 } });
+    expect(r).toEqual({
+      link: {
+        url: MP_URL, amount: 12000, n: 2, expiresAt: EXPIRES,
+        seal: sealPaymentLink({ memberId: 14, n: 2, amount: 12000, url: MP_URL }),
+      },
+    });
     expect(mocks.create).toHaveBeenCalledWith({ member: { id: 14, category: "active" }, n: 2 });
     expect(mocks.audit).toHaveBeenCalledWith({
       userId: 9, ip: "unknown",
@@ -148,6 +162,30 @@ describe("emailPaymentLinkAction", () => {
     expect(mocks.sendToMember).not.toHaveBeenCalled();
   });
 
+  it("un link de OTRO socio se rechaza: el sello ata la tupla al destinatario", async () => {
+    // Inalcanzable desde la pantalla y sólo para admins, pero un POST armado a
+    // mano mandaría al socio A un enlace cuya referencia acredita al socio B: el
+    // vecino paga y la cuota se le imputa a otro. La URL sola no dice de quién
+    // es —es `.../redirect?pref_id=...`— y la preferencia no se persiste, así
+    // que la pertenencia tiene que viajar firmada.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const ajeno = sealPaymentLink({ memberId: 306, n: 2, amount: 12000, url: MP_URL });
+    const r = await emailPaymentLinkAction({}, emailForm(MP_URL, ajeno));
+    expect(r.error).toBe("Link inválido.");
+    expect(mocks.sendToMember).not.toHaveBeenCalled();
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("un monto retocado invalida el sello aunque la URL siga siendo la misma", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const f = emailForm();
+    f.set("amount", "1");
+    const r = await emailPaymentLinkAction({}, f);
+    expect(r.error).toBe("Link inválido.");
+    expect(mocks.sendToMember).not.toHaveBeenCalled();
+  });
+
   it("un socio sin email no dispara ningún envío", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce({ id: 14, fullName: "Juan Pérez", email: null, emailStatus: "none" });
@@ -170,7 +208,13 @@ describe("emailPaymentLinkAction", () => {
     mocks.findUnique.mockResolvedValueOnce({ id: 14, fullName: "Juan Pérez", email: "juan@example.com", emailStatus: "verified" });
     mocks.sendToMember.mockResolvedValueOnce({ messageId: "m1" });
     const r = await emailPaymentLinkAction({}, emailForm());
-    expect(r).toEqual({ link: { url: MP_URL, amount: 12000, n: 2 }, emailed: true });
+    expect(r).toEqual({
+      link: {
+        url: MP_URL, amount: 12000, n: 2, expiresAt: EXPIRES,
+        seal: sealPaymentLink({ memberId: 14, n: 2, amount: 12000, url: MP_URL }),
+      },
+      emailed: true,
+    });
     expect(mocks.sendToMember).toHaveBeenCalledWith(expect.objectContaining({
       memberId: 14, to: "juan@example.com", type: "fee_reminder", summary: "link de pago × 2",
     }));
@@ -191,7 +235,7 @@ describe("emailPaymentLinkAction", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await emailPaymentLinkAction({}, emailForm());
     expect(r.error).toContain("El link sigue siendo válido");
-    expect(r.link).toEqual({ url: MP_URL, amount: 12000, n: 2 });
+    expect(r.link).toMatchObject({ url: MP_URL, amount: 12000, n: 2, expiresAt: EXPIRES });
     expect(mocks.audit).not.toHaveBeenCalled();
     // El log lleva el código del fallo, nunca la dirección del socio.
     expect(spy).toHaveBeenCalledWith("[payment-link] email", "ECONNREFUSED");

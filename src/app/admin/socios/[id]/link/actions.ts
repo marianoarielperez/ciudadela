@@ -18,12 +18,16 @@ import { paymentLinkEmail } from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { PAYMENT_LINK_ERRORS, paymentLinks } from "@/lib/mp/payment-link";
+import { isPaymentLinkSealValid, sealPaymentLink } from "@/lib/mp/payment-link-seal";
 import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { prisma } from "@/lib/prisma";
 
 export type LinkState = {
   error?: string;
-  link?: { url: string; amount: number; n: number };
+  /** `seal` ata la tupla al socio: el reenvío por email lo verifica antes de
+   *  mandar nada (ver `payment-link-seal.ts`). No es un secreto — se deriva de
+   *  datos que ya están en el DOM— y por eso puede viajar en un `hidden`. */
+  link?: { url: string; amount: number; n: number; expiresAt: Date; seal: string };
   emailed?: true;
 };
 
@@ -67,7 +71,8 @@ export async function createPaymentLinkAction(_prev: LinkState, formData: FormDa
     detail: { memberId: member.id, n: parsed.data.n, amount: r.amount, channel: "admin" },
     ip,
   });
-  return { link: { url: r.initPoint, amount: r.amount, n: parsed.data.n } };
+  const link = { url: r.initPoint, amount: r.amount, n: parsed.data.n };
+  return { link: { ...link, expiresAt: r.expiresAt, seal: sealPaymentLink({ memberId: member.id, ...link }) } };
 }
 
 // La URL viaja en un hidden y vuelve del navegador, así que se valida como
@@ -88,6 +93,8 @@ const emailSchema = z.object({
     .refine((u) => MP_LINK_PREFIXES.some((p) => u.startsWith(p)), "Link inválido."),
   n: z.coerce.number("Cantidad inválida.").int("Cantidad inválida.").min(1, "Cantidad inválida.").max(MAX_LINK_FEES, "Cantidad inválida."),
   amount: z.coerce.number("Monto inválido.").positive("Monto inválido."),
+  expiresAt: z.coerce.date("Link inválido."),
+  seal: z.string().length(64, "Link inválido."),
 });
 
 export async function emailPaymentLinkAction(_prev: LinkState, formData: FormData): Promise<LinkState> {
@@ -96,6 +103,13 @@ export async function emailPaymentLinkAction(_prev: LinkState, formData: FormDat
   const parsed = parseForm(emailSchema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const d = parsed.data;
+  // La `refine` de arriba dice que la URL es de Mercado Pago; el sello dice que
+  // es la que ESTE servidor generó para ESTE socio por ESTE monto. Sin él, un
+  // POST armado a mano le manda al socio A un enlace cuya referencia acredita
+  // al socio B. Se verifica antes de tocar la base y antes de tocar el mailer.
+  if (!isPaymentLinkSealValid({ memberId: d.memberId, n: d.n, amount: d.amount, url: d.url }, d.seal)) {
+    return { error: "Link inválido." };
+  }
   const member = await prisma.member.findUnique({
     where: { id: d.memberId },
     select: { id: true, fullName: true, email: true, emailStatus: true },
@@ -121,7 +135,7 @@ export async function emailPaymentLinkAction(_prev: LinkState, formData: FormDat
     // copiarlo y mandarlo por WhatsApp.
     return {
       error: "No se pudo enviar el email. El link sigue siendo válido: copialo y mandalo por otro medio.",
-      link: { url: d.url, amount: d.amount, n: d.n },
+      link: { url: d.url, amount: d.amount, n: d.n, expiresAt: d.expiresAt, seal: d.seal },
     };
   }
 
@@ -134,5 +148,5 @@ export async function emailPaymentLinkAction(_prev: LinkState, formData: FormDat
     detail: { memberId: member.id, n: d.n, amount: d.amount, channel: "email" },
     ip,
   });
-  return { link: { url: d.url, amount: d.amount, n: d.n }, emailed: true };
+  return { link: { url: d.url, amount: d.amount, n: d.n, expiresAt: d.expiresAt, seal: d.seal }, emailed: true };
 }

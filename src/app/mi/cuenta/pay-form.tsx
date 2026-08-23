@@ -38,9 +38,12 @@ export function PayForm({ pendingCount, feeAmount, oldestPending }: {
 }) {
   const [state, formAction, pending] = useActionState<PayState, FormData>(startMemberPaymentAction, {});
   // Arranca en lo que debe: el caso frecuente es "quiero ponerme al día".
+  // Topeado en MAX y no sólo en MIN: la deuda importada arranca en 2022, así
+  // que 60 cuotas pendientes es alcanzable — y sin el tope la pantalla se abría
+  // con el total en "—" y el botón deshabilitado, o sea rota de entrada.
   // El estado es el TEXTO del campo y no un número, para que borrarlo y
   // volver a tipear no le pelee al vecino con un "1" que reaparece solo.
-  const [raw, setRaw] = useState(String(Math.max(MIN, pendingCount)));
+  const [raw, setRaw] = useState(String(clamp(pendingCount)));
   const n = Number(raw);
   const valid = raw !== "" && Number.isInteger(n) && n >= MIN && n <= MAX;
   const total = valid ? feeAmount * n : null;

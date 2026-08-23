@@ -313,7 +313,7 @@ describe("searchPayments", () => {
 });
 
 describe("createPreference", () => {
-  it("manda título, monto, referencia, back_urls y notification_url; devuelve init_point", async () => {
+  it("manda título, monto, referencia, back_urls, notification_url y vencimiento; devuelve init_point", async () => {
     mocks.preferenceCreate.mockResolvedValue({
       id: "pref-1",
       init_point: "https://mp/checkout/pref-1",
@@ -324,6 +324,7 @@ describe("createPreference", () => {
       externalReference: "pago:14:2",
       backUrl: "https://vecinalciudadela.ar/mi/cuenta?volvio=1",
       notificationUrl: "https://vecinalciudadela.ar/api/webhooks/mp",
+      expiresAt: new Date("2026-08-26T12:00:00.000Z"),
     });
     expect(r).toEqual({ id: "pref-1", initPoint: "https://mp/checkout/pref-1" });
     const body = mocks.preferenceCreate.mock.calls[0][0].body;
@@ -341,5 +342,15 @@ describe("createPreference", () => {
     });
     expect(body.auto_return).toBe("approved");
     expect(body.notification_url).toBe("https://vecinalciudadela.ar/api/webhooks/mp");
+    // El enlace VENCE. Sin esto la preferencia no caduca nunca y el importe,
+    // congelado al valor del día en que se generó, sobrevive a una
+    // actualización de cuota (REG-34). `expires` y `expiration_date_to` van
+    // juntos: uno sin el otro no hace nada.
+    expect(body.expires).toBe(true);
+    // Formato de MP: ISO 8601 con offset argentino, no con "Z".
+    expect(body.expiration_date_to).toBe("2026-08-26T09:00:00.000-03:00");
+    // Y NO se manda `expiration_date_from`: sería "ahora", y un reloj de MP
+    // unos segundos adelantado rechazaría la preferencia entera.
+    expect(body.expiration_date_from).toBeUndefined();
   });
 });

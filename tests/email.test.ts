@@ -6,8 +6,9 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { makeMailer } from "@/lib/email";
 import {
   invitationEmail, loginEmailMovedNotice, loginEmailVerification, passwordResetEmail,
-  portalInvite, receiptEmail, verificationEmail,
+  paymentLinkEmail, portalInvite, receiptEmail, verificationEmail,
 } from "@/lib/email/templates";
+import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import { getTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
@@ -144,6 +145,33 @@ describe("templates", () => {
     expect(r.text).toContain("$ 6.000,00");
     expect(r.text).toContain("adjunto");
     expect(r.html).toContain("Cuota social · marzo 2025");
+  });
+
+  // El vecino recibe un enlace de COBRO que no pidió: el correo tiene que
+  // dejarlo verificar cuánto y por qué sin abrirlo, y decirle hasta cuándo vale
+  // —el importe queda congelado al valor de cuota del día en que se generó—.
+  it("paymentLinkEmail dice cuánto, por cuántas cuotas, hasta cuándo vale y cómo salir", () => {
+    const r = paymentLinkEmail({ name: "Ana", count: 3, amount: 18000, url: "https://mpago.la/abc" });
+    expect(r.subject).toContain("link para pagar");
+    for (const body of [r.text, r.html]) {
+      expect(body).toContain("Ana");
+      expect(body).toContain("3 cuotas sociales");
+      expect(body).toContain("$ 18.000,00");
+      expect(body).toContain("https://mpago.la/abc");
+      // El vencimiento es real (`expiration_date_to` en la preferencia): el
+      // texto sale de la misma constante que el cuerpo que se le manda a MP.
+      expect(body).toContain(`${PAYMENT_LINK_TTL_HOURS} horas`);
+      // La salida, porque el operador puede mandarlo el mismo día en que el
+      // socio saldó en la sede.
+      expect(body).toContain("Si ya pagaste");
+    }
+  });
+
+  it("paymentLinkEmail usa el singular con una sola cuota y escapa el nombre", () => {
+    expect(paymentLinkEmail({ name: "A", count: 1, amount: 6000, url: "https://mpago.la/x" }).text)
+      .toContain("1 cuota social por $ 6.000,00");
+    expect(paymentLinkEmail({ name: 'Ana & "Co"', count: 1, amount: 1, url: "https://mpago.la/x" }).html)
+      .toContain("Ana &amp; &quot;Co&quot;");
   });
 });
 

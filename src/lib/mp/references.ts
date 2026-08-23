@@ -8,6 +8,22 @@ export const PAYMENT_LINK_REF = /^pago:(\d+):(\d+)$/;
 /** Tope de cuotas por link: el mismo techo que un pago en efectivo. */
 export const MAX_LINK_FEES = 60;
 
+/** Cuánto vale un link de pago antes de vencer.
+ *
+ *  EL PORQUÉ: el importe de la preferencia queda CONGELADO al valor de cuota
+ *  del día en que se generó. Si el link no venciera, uno olvidado en el buzón
+ *  se pagaría meses después al precio viejo: el webhook imputa igual las `n`
+ *  cuotas y sólo queda un asiento de divergencia que ninguna pantalla muestra.
+ *  Con hasta 4 actualizaciones de cuota por año (REG-34), 72 h es más corto que
+ *  cualquier ventana en la que un valor nuevo pase inadvertido, y alcanza para
+ *  el caso real que hay que cubrir: el operador manda el link un viernes a la
+ *  tarde, el vecino lo lee el sábado y lo paga el lunes.
+ *
+ *  Vive acá —módulo puro, sin gateway— porque lo leen tres lugares: el cuerpo
+ *  de la preferencia, el texto de la pantalla del operador y el del email. */
+export const PAYMENT_LINK_TTL_HOURS = 72;
+export const PAYMENT_LINK_TTL_MS = PAYMENT_LINK_TTL_HOURS * 60 * 60 * 1000;
+
 export function applicationReference(applicationId: number): string {
   return `solicitud:${applicationId}`;
 }

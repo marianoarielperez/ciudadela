@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { civilDateUtc } from "@/lib/dates";
 import {
-  accrues, allocate, arrearsLevel, cashConceptsFor, debtAmount, feeAmountFor, firstAccrualPeriod,
-  revertFees,
+  accrues, allocate, arrearsLevel, cashConceptsFor, categoryPaysFee, debtAmount, feeAmountFor,
+  firstAccrualPeriod, revertFees,
 } from "@/lib/treasury/rules";
 import { describePeriods, paymentConcept } from "@/lib/treasury/labels";
 
@@ -18,6 +18,23 @@ describe("feeAmountFor", () => {
     expect(feeAmountFor("honorary", V)).toBeNull();
     expect(feeAmountFor("lifetime", V)).toBeNull();
     expect(feeAmountFor("cadet", V)).toBeNull();
+  });
+});
+
+describe("categoryPaysFee", () => {
+  // Contesta la mitad de `feeAmountFor` que NO depende de que haya valor
+  // vigente: sin este predicado, una pantalla sin valor registrado le dice a un
+  // socio activo "tu categoría no paga cuota", y a un vitalicio "el valor
+  // todavía no está publicado". Las dos son mentiras con salidas opuestas.
+  it("coincide con feeAmountFor para las seis categorías, haya o no valor", () => {
+    for (const c of ["active", "adherent", "collaborator"] as const) {
+      expect(categoryPaysFee(c)).toBe(true);
+      expect(feeAmountFor(c, V)).not.toBeNull();
+    }
+    for (const c of ["honorary", "lifetime", "cadet"] as const) {
+      expect(categoryPaysFee(c)).toBe(false);
+      expect(feeAmountFor(c, V)).toBeNull();
+    }
   });
 });
 

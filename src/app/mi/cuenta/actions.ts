@@ -9,6 +9,7 @@
 //
 // PRIVACIDAD (Ley 25.326): la URL del checkout no va al asiento ni a ningún
 // log. El asiento lleva ids, cantidad y monto.
+import { headers } from "next/headers";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { memberPayLimiter } from "@/lib/auth/rate-limiter";
@@ -59,12 +60,18 @@ export async function startMemberPaymentAction(_prev: PayState, formData: FormDa
   }
   if (!r.ok) return { error: PAYMENT_LINK_ERRORS[r.error] };
 
+  // La IP también en el canal del socio, y no sólo en los dos del operador: es
+  // justo donde la identidad es más débil —una sesión de 8 h en un teléfono—,
+  // así que si algún día hay que reconstruir quién generó un cobro, este es el
+  // asiento que menos puede permitirse quedar sin origen.
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actor.userId,
     action: "payment_link_create",
     entity: "member",
     entityId: member.id,
     detail: { memberId: member.id, n: parsed.data.n, amount: r.amount, channel: "member" },
+    ip,
   });
   return { redirectUrl: r.initPoint };
 }
