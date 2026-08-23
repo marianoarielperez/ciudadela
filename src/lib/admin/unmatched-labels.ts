@@ -20,6 +20,10 @@ export const UNMATCHED_STATUS_LABELS: Record<UnmatchedStatus, string> = {
   open: "Pendiente",
   matched: "Aplicado",
   dismissed: "Descartado",
+  // La tercera salida: la plata entró y es de la asociación, pero no es de
+  // ningún socio. No dice "aplicado" (no hay socio ni recibo) ni "descartado"
+  // (la plata no se fue a ningún lado).
+  other_income: "Ingreso no societario",
 };
 
 // El catálogo de estados de una suscripción es de Mercado Pago y puede crecer

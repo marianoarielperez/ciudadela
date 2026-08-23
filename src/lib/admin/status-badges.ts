@@ -53,9 +53,20 @@ export function feeStatusBadgeVariant(status: FeeStatus): BadgeVariant {
 
 // La bandeja resalta lo que espera una decisión; lo resuelto va apagado. Mismo
 // criterio que las solicitudes: "default" (celeste) es "acá hay trabajo".
+//
+// Las tres salidas se distinguen entre sí porque significan cosas distintas y
+// el operador las revisa en la misma columna:
+//   matched      — outline: hay socio, hay Payment y hay recibo detrás.
+//   dismissed    — secondary: apagado, esa plata no se le imputa a nadie.
+//   other_income — ghost: la plata entró y es de la asociación, pero no hay
+//                  socio ni recibo. Sin caja ni borde: no es una etiqueta de
+//                  estado más, es una afirmación sobre a quién pertenece ese
+//                  dinero, y no puede leerse ni como "aplicado" ni como
+//                  "descartado".
 export function unmatchedStatusBadgeVariant(status: UnmatchedStatus): BadgeVariant {
   if (status === "open") return "default";
   if (status === "dismissed") return "secondary";
+  if (status === "other_income") return "ghost";
   return "outline"; // matched
 }
 

@@ -1,5 +1,5 @@
 // Etiquetas es-AR de tesorería. Un solo lugar: pantalla, PDF y email dicen lo mismo.
-import type { FeeStatus, PaymentType } from "@/generated/prisma/client";
+import type { FeeStatus, IncomeMethod, PaymentType } from "@/generated/prisma/client";
 import { addMonths, comparePeriods, monthName, periodLabel, periodMonth, periodYear, type Period } from "./periods";
 import type { CashConcept } from "./rules";
 
@@ -17,6 +17,14 @@ export const FEE_STATUS_LABELS: Record<FeeStatus, string> = {
   paid: "Pagada",
   exempt: "Exenta",
   voided: "Anulada",
+};
+
+// Por dónde entró un ingreso NO societario. "Efectivo" dice lo mismo que en
+// `PAYMENT_TYPE_LABELS` a propósito: para el operador es el mismo mostrador,
+// aunque acá no haya socio ni recibo.
+export const INCOME_METHOD_LABELS: Record<IncomeMethod, string> = {
+  cash: "Efectivo",
+  mp: "Mercado Pago",
 };
 
 export const CASH_CONCEPT_LABELS: Record<CashConcept, string> = {
