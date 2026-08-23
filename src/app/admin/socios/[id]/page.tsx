@@ -57,7 +57,7 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
     feeValueReader.current(),
     // TODAS las suscripciones del socio, para la pestaña Cuenta corriente: no
     // sólo las vivas. "Viva" es todo lo que no está `cancelled`, el mismo
-    // criterio de `hasLiveAutoDebit` —el catálogo de estados es de Mercado Pago
+    // criterio de `autoDebitSignal` —el catálogo de estados es de Mercado Pago
     // y puede crecer, así que un estado desconocido cuenta como débito posible—,
     // pero la ficha necesita además saber si las que hay están canceladas: una
     // suscripción cancelada NO es lo mismo que ninguna suscripción, y decir "no

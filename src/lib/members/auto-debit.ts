@@ -15,10 +15,13 @@
 // --------------------------------------
 // Ninguna de las dos alcanza sola:
 //
-//  - `Member.autoDebit` es la columna `debito_automatico` del padrón importado
-//    (`scripts/import-padron.ts`). Marca fichas viejas cuyo débito se gestionó
-//    en el panel de MP a mano, mucho antes de que existiera este sistema: hay
-//    débito vivo y NO hay ninguna fila local que lo represente.
+//  - `Member.autoDebit` se escribe desde TRES lugares, no uno: el padrón
+//    importado (`padron/mapping.ts`, fichas viejas cuyo débito se gestionó a
+//    mano en el panel de MP antes de que existiera este sistema), el alta web y
+//    el reingreso (`applications/record.ts`, con `app.wantsDebit`) y la
+//    vinculación manual (`mp/link-subscription.ts`). Ninguno lo BAJA nunca. Por
+//    eso el flag solo dice "en algún momento hubo intención de débito" y NO de
+//    dónde salió: los textos de abajo no pueden atribuirle una procedencia.
 //  - `MpSubscription` con `memberId` es la suscripción que el sistema conoce:
 //    la creó el Módulo 3 al asociarse el vecino, o la vinculó un admin. Una
 //    ficha nueva tiene fila y puede tener el flag en `false` (nadie lo edita al
@@ -63,7 +66,8 @@ export type AutoDebitSignal =
  *  recibiría el texto débil ("si ese débito todavía existe") sobre una
  *  suscripción que el sistema tiene delante. */
 export function autoDebitSignal(input: {
-  /** `Member.autoDebit`: el flag importado del padrón. */
+  /** `Member.autoDebit`: la intención de débito, venga de donde venga (ver la
+   *  cabecera: son tres escrituras y ninguna lo baja). */
   autoDebit: boolean;
   /** Estados de las filas de `mp_subscriptions` de este socio (puede haber más
    *  de una: una cancelada y una viva, si el débito se rehízo). */
@@ -71,14 +75,6 @@ export function autoDebitSignal(input: {
 }): AutoDebitSignal {
   if (input.subscriptionStatuses.some((s) => s !== "cancelled")) return "subscription";
   return input.autoDebit ? "flag_only" : "none";
-}
-
-/** ¿Hay que avisar que este socio puede tener un débito vivo en MP? */
-export function hasLiveAutoDebit(input: {
-  autoDebit: boolean;
-  subscriptionStatuses: string[];
-}): boolean {
-  return autoDebitSignal(input) !== "none";
 }
 
 /** El texto es distinto por acción porque lo que hay que hacer es distinto: en
@@ -144,8 +140,8 @@ export const AUTO_DEBIT_WARNINGS = {
       "cancelar la suscripción a mano en el panel de Mercado Pago.",
     flag_only:
       "La ficha de este socio dice que tiene débito automático, pero el sistema no conoce ninguna " +
-      "suscripción viva suya en Mercado Pago: ese dato viene del padrón importado y nadie lo " +
-      "verificó contra Mercado Pago. Si ese débito todavía existe, el sistema tampoco lo cancela, " +
+      "suscripción viva suya en Mercado Pago, ni vinculada ni cancelada: ese dato quedó viejo o " +
+      "nunca se vinculó. Si ese débito todavía existe, el sistema tampoco lo cancela, " +
       "y cada cobro va a caer en Tesorería → Sin conciliar en lugar de imputarse a una cuota. " +
       "Buscalo en el panel de Mercado Pago: si está vivo, cancelalo ahí; si no, no hay nada que " +
       "hacer.",
@@ -160,7 +156,7 @@ export const AUTO_DEBIT_WARNINGS = {
       "y el débito hay que cancelarlo a mano en el panel de Mercado Pago.",
     flag_only:
       "La ficha de este socio dice que tiene débito automático, pero el sistema no conoce ninguna " +
-      "suscripción viva suya en Mercado Pago: ese dato viene del padrón importado. El lote «Aplicar " +
+      "suscripción viva suya en Mercado Pago: ese dato quedó viejo. El lote «Aplicar " +
       "valor vigente» de Tesorería → Valores de cuota no lo alcanza, porque sólo toca suscripciones " +
       "que el sistema conoce. Si ese débito todavía existe, va a seguir cobrando el monto viejo: " +
       "buscalo en el panel de Mercado Pago y ajustalo o cancelalo ahí.",

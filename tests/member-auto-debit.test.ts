@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AccountSection, type AutoDebitView } from "@/components/admin/account-section";
 import type { MemberAccount } from "@/lib/treasury/account";
-import { AUTO_DEBIT_WARNINGS, autoDebitSignal, hasLiveAutoDebit } from "@/lib/members/auto-debit";
+import { AUTO_DEBIT_WARNINGS, autoDebitSignal } from "@/lib/members/auto-debit";
 
 // El aviso de la baja y del cambio de categoría: esas dos pantallas NO tocan el
 // débito automático del socio en Mercado Pago, así que tienen que decirlo. Lo
@@ -11,36 +11,40 @@ import { AUTO_DEBIT_WARNINGS, autoDebitSignal, hasLiveAutoDebit } from "@/lib/me
 // disparó (que es lo que decide si el texto puede afirmar o tiene que preguntar)
 // y qué ve el operador en la ficha.
 
-describe("hasLiveAutoDebit", () => {
-  it("avisa por el flag del padrón aunque no haya ninguna fila local", () => {
+describe("autoDebitSignal: a quién le sale el aviso", () => {
+  it("avisa por el flag aunque no haya ninguna fila local", () => {
     // La ficha vieja: el débito se gestionó en el panel de MP mucho antes de que
     // existiera este sistema, así que `mp_subscriptions` no sabe nada de él.
-    expect(hasLiveAutoDebit({ autoDebit: true, subscriptionStatuses: [] })).toBe(true);
+    expect(autoDebitSignal({ autoDebit: true, subscriptionStatuses: [] })).toBe("flag_only");
   });
 
   it("avisa por la suscripción local aunque el flag esté en false", () => {
     // La ficha nueva: la suscripción la creó el M3 al asociarse el vecino y
     // nadie edita `autoDebit` al completar el asiento.
-    expect(hasLiveAutoDebit({ autoDebit: false, subscriptionStatuses: ["authorized"] })).toBe(true);
+    expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: ["authorized"] })).toBe(
+      "subscription",
+    );
   });
 
   it("no avisa cuando no hay ninguna de las dos señales", () => {
-    expect(hasLiveAutoDebit({ autoDebit: false, subscriptionStatuses: [] })).toBe(false);
+    expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: [] })).toBe("none");
   });
 
   it("`cancelled` es lo único que se puede afirmar como 'acá no hay débito'", () => {
-    expect(hasLiveAutoDebit({ autoDebit: false, subscriptionStatuses: ["cancelled"] })).toBe(false);
+    expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: ["cancelled"] })).toBe("none");
     // Y si el débito se rehízo, la fila cancelada no tapa a la viva.
     expect(
-      hasLiveAutoDebit({ autoDebit: false, subscriptionStatuses: ["cancelled", "authorized"] }),
-    ).toBe(true);
+      autoDebitSignal({ autoDebit: false, subscriptionStatuses: ["cancelled", "authorized"] }),
+    ).toBe("subscription");
   });
 
   it("cualquier estado desconocido de MP cuenta como débito posible", () => {
     // El catálogo es de MP y puede crecer sin avisarnos: no saber en qué estado
     // está es peor que avisar de más (mismo criterio que `lateEntryNotice`).
     for (const status of ["pending", "paused", "authorized", "algo_nuevo_de_mp"]) {
-      expect(hasLiveAutoDebit({ autoDebit: false, subscriptionStatuses: [status] })).toBe(true);
+      expect(autoDebitSignal({ autoDebit: false, subscriptionStatuses: [status] })).toBe(
+        "subscription",
+      );
     }
   });
 });

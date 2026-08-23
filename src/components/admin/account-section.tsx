@@ -28,12 +28,12 @@ export type MpSubscriptionView = {
 };
 
 /** Lo que la ficha sabe del débito automático del socio. Las DOS señales, por lo
- *  mismo que las mira `hasLiveAutoDebit` (src/lib/members/auto-debit.ts): las
+ *  mismo que las mira `autoDebitSignal` (src/lib/members/auto-debit.ts): las
  *  suscripciones que el sistema conoce y el flag del padrón, que marca fichas
  *  viejas cuyo débito se gestionó en el panel de MP y no tiene fila local.
  *
  *  `cancelledCount` está separado a propósito, y es lo que hace que la ficha
- *  tenga TRES estados y no dos: "no hay ninguna fila" y "las que hay están
+ *  tenga un estado propio: "no hay ninguna fila" y "las que hay están
  *  canceladas" son cosas distintas. La segunda es el estado estacionario de todo
  *  socio que se da de baja del débito —el cron de conciliación escribe
  *  `cancelled` en la fila y NADIE baja nunca `Member.autoDebit`—, y tratarla
@@ -55,8 +55,8 @@ export type AutoDebitView = {
   cancelledCount: number;
 };
 
-/** La línea de débito automático de la Cuenta corriente. Son TRES estados y no
- *  dos, y el ORDEN de las ramas es la mitad del asunto:
+/** La línea de débito automático de la Cuenta corriente. Son CUATRO estados y
+ *  el ORDEN de las ramas es la mitad del asunto:
  *
  *   1. hay suscripción viva  — lo que el sistema SABE gana sobre el flag del
  *                              padrón, que puede estar en cualquier valor.
@@ -144,8 +144,8 @@ function AutoDebitLine({ flagged, live, cancelledCount }: AutoDebitView) {
             hacer: es una discrepancia que hay que poder leer, no una alarma. */}
         {flagged && (
           <FormMessage kind="neutral" box as="p" role="none">
-            La pestaña Ficha todavía dice «Débito automático: Sí»: ese dato viene del padrón
-            importado y quedó viejo. No hay nada que vincular.
+            La pestaña Ficha todavía dice «Débito automático: Sí»: ese dato quedó viejo —el sistema
+            nunca lo baja solo—. No hay nada que vincular.
           </FormMessage>
         )}
       </div>
