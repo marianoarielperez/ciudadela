@@ -308,6 +308,79 @@ export function makeTreasuryService(deps: Deps) {
     return { kind: "registered", ...created, periods: [...periods].sort(comparePeriods), amount, pdfWritten };
   }
 
+  // Núcleo de la reversión: devuelve las cuotas, marca el pago y anula el
+  // recibo. Es el MISMO movimiento para el mostrador (`voided`, con operador) y
+  // para Mercado Pago (`refunded`, sin operador): lo único que cambia es el
+  // estado que queda en el pago y quién firma la anulación. Toma el mutex del
+  // socio; los dos métodos públicos lo llaman desde afuera de cualquier mutex
+  // (no hay mutex reentrante: volver a tomarlo se bloquearía solo).
+  async function revertCore(input: {
+    receiptId: number; status: "voided" | "refunded"; actorId: number | null; reason: string;
+  }): Promise<{ paymentId: number; number: string; periodsReverted: number }> {
+    const at = now();
+    // Lectura mínima, solo para saber sobre qué socio serializar. El socio de un
+    // pago no cambia nunca, así que leerlo afuera del mutex no abre ninguna
+    // ventana; la foto de la que dependen las ESCRITURAS se toma adentro.
+    const head = await db.receipt.findUnique({
+      where: { id: input.receiptId },
+      select: { payment: { select: { memberId: true } } },
+    });
+    if (!head) throw new TreasuryError("El recibo no existe.");
+    const memberId = head.payment.memberId;
+    return memberMutex.run(`member:${memberId ?? 0}`, async () => {
+      // Recién acá se lee el recibo con sus cuotas, y recién acá se controla que
+      // no esté anulado: si la lectura vivía afuera, dos anulaciones simultáneas
+      // pasaban las dos el control y la segunda escribía sobre una foto vieja.
+      const r = await db.receipt.findUnique({
+        where: { id: input.receiptId },
+        include: { payment: { include: { fees: { select: { id: true, period: true } } } } },
+      });
+      if (!r) throw new TreasuryError("El recibo no existe.");
+      if (r.voidedAt) throw new TreasuryError("El recibo ya está anulado.");
+      const { toPending, toDelete } = revertFees(r.payment.fees.map((f) => f.period), currentPeriod(at));
+      let periodsReverted = 0;
+      await db.$transaction(async (tx) => {
+        if (memberId !== null && toPending.length > 0) {
+          // `paymentId` en el `where` es la guarda que impide devolver a pendiente
+          // una cuota que ya se reimputó a OTRO pago con recibo válido: sin él,
+          // (memberId, period) alcanzaba para pisar dinero cobrado por otro lado.
+          const reverted = await tx.fee.updateMany({
+            where: { memberId, paymentId: r.payment.id, period: { in: toPending } },
+            data: { status: "pending", paymentId: null },
+          });
+          periodsReverted += reverted.count;
+        }
+        if (toDelete.length > 0) {
+          const ids = r.payment.fees.filter((f) => toDelete.includes(f.period)).map((f) => f.id);
+          // Una anulación solo puede tocar las cuotas que este pago cubrió: sin la guarda
+          // de `paymentId`, el deleteMany podría eliminar una cuota que ya se reimputó a
+          // OTRO pago con recibo válido.
+          const deleted = await tx.fee.deleteMany({ where: { id: { in: ids }, paymentId: r.payment.id } });
+          periodsReverted += deleted.count;
+        }
+        await tx.payment.update({ where: { id: r.payment.id }, data: { status: input.status } });
+        await tx.receipt.update({
+          where: { id: r.id },
+          data: { voidedAt: at, voidReason: input.reason, voidedById: input.actorId },
+        });
+        // Regla de la bandeja (deuda anotada en 4A): una fila nunca apunta a un
+        // pago anulado. Vuelve a `open` para que el operador la resuelva de nuevo.
+        // Va DENTRO de la transacción: si la reversión se cae, la fila se queda
+        // como estaba, cerrada contra un pago que sigue asentado. Se acota por
+        // `paymentId` y no por `mpPaymentId` porque lo que dejó de valer es este
+        // pago: un efectivo de mostrador también puede haber cerrado una fila.
+        await tx.mpUnmatchedPayment.updateMany({
+          where: { paymentId: r.payment.id },
+          data: { status: "open", paymentId: null, resolvedAt: null, resolvedById: null },
+        });
+      });
+      // El PDF se regenera con la marca ANULADO; si falla, se regenera al pedirlo.
+      await writePdfBestEffort(r.id, r.pdfPath ?? receiptRelativePath(r.number));
+      // El número devuelto es lo que se hizo, no lo que se pensaba hacer.
+      return { paymentId: r.payment.id, number: r.number, periodsReverted };
+    });
+  }
+
   return {
     /** Asienta un cobro de cualquier origen. Serializa por socio (o por
      *  solicitud, en la cuota de ingreso) como lo hace el mostrador. */
@@ -412,59 +485,29 @@ export function makeTreasuryService(deps: Deps) {
       });
     },
 
+    /** Anulación de mostrador: la firma un operador y el pago queda `voided`. */
     async voidReceipt(input: { receiptId: number; actorId: number; reason: string }) {
-      const at = now();
-      // Lectura mínima, solo para saber sobre qué socio serializar. El socio de un
-      // pago no cambia nunca, así que leerlo afuera del mutex no abre ninguna
-      // ventana; la foto de la que dependen las ESCRITURAS se toma adentro.
-      const head = await db.receipt.findUnique({
-        where: { id: input.receiptId },
-        select: { payment: { select: { memberId: true } } },
+      return revertCore({ ...input, status: "voided" });
+    },
+
+    /** Reembolso o contracargo en Mercado Pago. No hay operador detrás
+     *  (`voidedById` queda en null) y el recibo se busca por el id del cobro de
+     *  MP, que es lo único que trae el webhook. Idempotente: un pago ya
+     *  revertido —por reembolso o por anulación de mostrador— no se revierte de
+     *  nuevo, así el reintento de MP no vuelve a contar la deuda. */
+    async refundPayment(input: { mpPaymentId: string; reason: string }): Promise<
+      | { kind: "refunded"; paymentId: number; number: string; periodsReverted: number }
+      | { kind: "not_found" }
+      | { kind: "already_reverted"; status: "refunded" | "voided" }
+    > {
+      const r = await db.receipt.findFirst({
+        where: { payment: { mpPaymentId: input.mpPaymentId } },
+        select: { id: true, payment: { select: { status: true } } },
       });
-      if (!head) throw new TreasuryError("El recibo no existe.");
-      const memberId = head.payment.memberId;
-      return memberMutex.run(`member:${memberId ?? 0}`, async () => {
-        // Recién acá se lee el recibo con sus cuotas, y recién acá se controla que
-        // no esté anulado: si la lectura vivía afuera, dos anulaciones simultáneas
-        // pasaban las dos el control y la segunda escribía sobre una foto vieja.
-        const r = await db.receipt.findUnique({
-          where: { id: input.receiptId },
-          include: { payment: { include: { fees: { select: { id: true, period: true } } } } },
-        });
-        if (!r) throw new TreasuryError("El recibo no existe.");
-        if (r.voidedAt) throw new TreasuryError("El recibo ya está anulado.");
-        const { toPending, toDelete } = revertFees(r.payment.fees.map((f) => f.period), currentPeriod(at));
-        let periodsReverted = 0;
-        await db.$transaction(async (tx) => {
-          if (memberId !== null && toPending.length > 0) {
-            // `paymentId` en el `where` es la guarda que impide devolver a pendiente
-            // una cuota que ya se reimputó a OTRO pago con recibo válido: sin él,
-            // (memberId, period) alcanzaba para pisar dinero cobrado por otro lado.
-            const reverted = await tx.fee.updateMany({
-              where: { memberId, paymentId: r.payment.id, period: { in: toPending } },
-              data: { status: "pending", paymentId: null },
-            });
-            periodsReverted += reverted.count;
-          }
-          if (toDelete.length > 0) {
-            const ids = r.payment.fees.filter((f) => toDelete.includes(f.period)).map((f) => f.id);
-            // Una anulación solo puede tocar las cuotas que este pago cubrió: sin la guarda
-            // de `paymentId`, el deleteMany podría eliminar una cuota que ya se reimputó a
-            // OTRO pago con recibo válido.
-            const deleted = await tx.fee.deleteMany({ where: { id: { in: ids }, paymentId: r.payment.id } });
-            periodsReverted += deleted.count;
-          }
-          await tx.payment.update({ where: { id: r.payment.id }, data: { status: "voided" } });
-          await tx.receipt.update({
-            where: { id: r.id },
-            data: { voidedAt: at, voidReason: input.reason, voidedById: input.actorId },
-          });
-        });
-        // El PDF se regenera con la marca ANULADO; si falla, se regenera al pedirlo.
-        await writePdfBestEffort(r.id, r.pdfPath ?? receiptRelativePath(r.number));
-        // El número devuelto es lo que se hizo, no lo que se pensaba hacer.
-        return { paymentId: r.payment.id, number: r.number, periodsReverted };
-      });
+      if (!r) return { kind: "not_found" };
+      if (r.payment.status !== "applied") return { kind: "already_reverted", status: r.payment.status };
+      const done = await revertCore({ receiptId: r.id, status: "refunded", actorId: null, reason: input.reason });
+      return { kind: "refunded", ...done };
     },
 
     receiptPdfData: pdfDataFor,

@@ -28,6 +28,22 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[]; applicatio
     // el servicio y las escrituras de su transacción.
     beforeTransaction: null as null | (() => void),
   };
+  // Un recibo con su pago expandido, como el `include`/`select` de Prisma: sin
+  // `memberId` el pago no trae socio, `application` sólo viene si cuelga de una
+  // solicitud, y las cuotas y el `status` del pago se leen VIVOS de `state` (una
+  // anulación anterior tiene que verse acá, como la vería la base).
+  const receiptWithPayment = (r: Row) => {
+    const payment = state.payments.find((p) => p.id === r.paymentId)!;
+    return {
+      ...r,
+      payment: {
+        ...payment,
+        fees: state.fees.filter((f) => f.paymentId === payment.id),
+        member: payment.memberId != null ? opts.member : null,
+        application: payment.applicationId != null ? (opts.application ?? null) : null,
+      },
+    };
+  };
   const tx = {
     member: { findUnique: vi.fn(async () => opts.member) },
     fee: {
@@ -96,19 +112,18 @@ function fakeDb(opts: { member: Record<string, unknown>; fees: Fee[]; applicatio
       }),
       findUnique: vi.fn(async (args: { where: { id: number } }) => {
         const r = state.receipts.find((x) => x.id === args.where.id);
-        if (!r) return null;
-        const payment = state.payments.find((p) => p.id === r.paymentId)!;
-        // Como Prisma de verdad: sin `memberId` el `include` no trae socio, y
-        // `application` sólo viene si el pago cuelga de una solicitud.
-        return {
-          ...r,
-          payment: {
-            ...payment,
-            fees: state.fees.filter((f) => f.paymentId === payment.id),
-            member: payment.memberId != null ? opts.member : null,
-            application: payment.applicationId != null ? (opts.application ?? null) : null,
-          },
-        };
+        return r ? receiptWithPayment(r) : null;
+      }),
+      // `refundPayment` no conoce el id local: llega desde el webhook con el id
+      // del cobro de Mercado Pago y busca el recibo por el pago. El fake resuelve
+      // el `where` anidado como Prisma —del pago hacia el recibo— y devuelve la
+      // misma forma que `findUnique`, así que trae `payment.status` vivo: sin eso
+      // la idempotencia (un pago ya revertido) no sería asertable.
+      findFirst: vi.fn(async (args: { where: { payment: { mpPaymentId: string } } }) => {
+        const p = state.payments.find((x) => x.mpPaymentId === args.where.payment.mpPaymentId);
+        if (!p) return null;
+        const r = state.receipts.find((x) => x.paymentId === p.id);
+        return r ? receiptWithPayment(r) : null;
       }),
       update: vi.fn(async (args: { where: { id: number }; data: Record<string, unknown> }) => {
         const r = state.receipts.find((x) => x.id === args.where.id)!;
@@ -591,5 +606,81 @@ describe("registerPayment (núcleo 4B)", () => {
     const data = await svc.receiptPdfData(r.receiptId);
     expect(data.memberName).toBe("Juana Pérez");
     expect(data.memberNumber).toBeNull();
+  });
+});
+
+// Reembolso o contracargo en Mercado Pago: el MISMO movimiento que la anulación
+// de mostrador (mutex por socio, relectura adentro, cuotas a pendiente, futuras
+// borradas, PDF con la marca ANULADO), pero sin operador detrás —`voidedById`
+// null—, con el pago en `refunded` y buscando el recibo por el id del cobro de
+// MP. Y la regla que 4A dejó anotada: una fila de la bandeja de sin conciliar
+// nunca puede quedar apuntando a un pago anulado, así que revertir la reabre.
+describe("refundPayment / reapertura de bandeja", () => {
+  const member = { id: 1, category: "active", status: "active", joinedAt: civilDateUtc(2020, 1, 1), memberships: [] };
+  const paidAt = new Date("2026-09-10T11:15:30Z");
+
+  it("reembolso: Payment.refunded, recibo anulado sin actor con el motivo, cuotas a pendiente, bandeja reabierta", async () => {
+    const { db, mocks, state } = fakeDb({ member, fees: [
+      { id: 1, memberId: 1, period: "2025-11", status: "pending", origin: "import", paymentId: null },
+    ] });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, now: () => new Date("2026-09-12T12:00:00Z"),
+      renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 6000, paidAt, mpPaymentId: "777", actorId: null });
+    const r = await svc.refundPayment({ mpPaymentId: "777", reason: "Reembolso en Mercado Pago" });
+    expect(r).toMatchObject({ kind: "refunded", paymentId: 1, periodsReverted: 1 });
+    expect(state.payments[0].status).toBe("refunded");
+    expect(state.receipts[0]).toMatchObject({
+      voidReason: "Reembolso en Mercado Pago", voidedById: null, voidedAt: expect.any(Date),
+    });
+    expect(state.fees[0]).toMatchObject({ status: "pending", paymentId: null });
+    expect(mocks.mpUnmatchedPayment.updateMany).toHaveBeenLastCalledWith({
+      where: { paymentId: 1 }, data: { status: "open", paymentId: null, resolvedAt: null, resolvedById: null },
+    });
+    // La reapertura va DENTRO de la transacción que revierte, igual que el cierre
+    // va dentro de la que registra: si quedara afuera y la reversión fallara, la
+    // bandeja mostraría como pendiente un cobro que sigue asentado. Primera
+    // terna: el registro; segunda: la reversión.
+    expect(state.unmatchedUpdates).toEqual(["start", "update", "end", "start", "update", "end"]);
+  });
+
+  it("reembolso de un pago desconocido → not_found; dos veces → already_reverted", async () => {
+    const { db } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    expect(await svc.refundPayment({ mpPaymentId: "nope", reason: "x" })).toEqual({ kind: "not_found" });
+    await svc.registerPayment({ memberId: 1, type: "debit", n: 1, amount: 6000, paidAt, mpPaymentId: "1", actorId: null });
+    await svc.refundPayment({ mpPaymentId: "1", reason: "x" });
+    expect(await svc.refundPayment({ mpPaymentId: "1", reason: "x" })).toEqual({ kind: "already_reverted", status: "refunded" });
+  });
+
+  it("voidReceipt también reabre la bandeja", async () => {
+    const { db, mocks } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    const r = await svc.registerPayment({ memberId: 1, type: "link", n: 1, amount: 6000, paidAt, mpPaymentId: "2", actorId: 5 });
+    if (r.kind !== "registered") throw new Error();
+    await svc.voidReceipt({ receiptId: r.receiptId, actorId: 5, reason: "error de carga" });
+    expect(mocks.mpUnmatchedPayment.updateMany).toHaveBeenLastCalledWith({
+      where: { paymentId: r.paymentId }, data: { status: "open", paymentId: null, resolvedAt: null, resolvedById: null },
+    });
+  });
+
+  // Un recibo anulado desde el mostrador y después reembolsado en MP no puede
+  // revertirse dos veces: la plata volvería a contarse como deuda una vez, pero
+  // el pago ya está en `voided` y ese estado es el que ve el webhook.
+  it("un pago anulado desde el mostrador devuelve already_reverted con status voided", async () => {
+    const { db } = fakeDb({ member, fees: [] });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    const r = await svc.registerPayment({ memberId: 1, type: "link", n: 1, amount: 6000, paidAt, mpPaymentId: "3", actorId: 5 });
+    if (r.kind !== "registered") throw new Error();
+    await svc.voidReceipt({ receiptId: r.receiptId, actorId: 5, reason: "error de carga" });
+    expect(await svc.refundPayment({ mpPaymentId: "3", reason: "Reembolso en Mercado Pago" }))
+      .toEqual({ kind: "already_reverted", status: "voided" });
   });
 });
