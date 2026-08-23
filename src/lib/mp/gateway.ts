@@ -286,6 +286,19 @@ export function makeMpGateway(): MpGateway {
           // webhook usa para encontrar la solicitud (`^solicitud:(\d+)$`).
           external_reference: input.externalReference,
           back_url: input.backUrl,
+          // NO existe `notification_url` acá, y NO es un olvido: probado contra
+          // la API el 23/08/2026, MP ACEPTA la request con ese campo y lo IGNORA
+          // en silencio (el recurso devuelto no lo trae). O sea que el intento
+          // de emparejar esto con `createPreference` —que sí manda el suyo— se
+          // ve exitoso y no hace nada.
+          //
+          // Consecuencia que hay que tener presente: los avisos de una
+          // suscripción dependen ENTERAMENTE de la configuración de webhooks de
+          // la aplicación en el panel de MP. Si esa config se borra, apunta a
+          // otro lado o queda en el modo equivocado, los débitos dejan de
+          // avisar sin ninguna señal. La única red que queda es el paso 2 de la
+          // conciliación diaria (`searchAuthorizedPayments`), que por eso no
+          // puede volver a romperse en silencio como estuvo hasta la T14.
           status: "pending",
         },
       });
