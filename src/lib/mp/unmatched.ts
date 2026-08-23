@@ -31,7 +31,22 @@ function isUniqueViolation(e: unknown): boolean {
 export function makeUnmatchedInbox(db: Pick<PrismaClient, "mpUnmatchedPayment">) {
   return {
     /** Deja la fila. Si ya estaba (mismo cobro llegando por dos eventos), no es
-     *  un error: la bandeja dice lo mismo que antes. */
+     *  un error: la bandeja dice lo mismo que antes.
+     *
+     *  Con una excepción: el segundo evento puede traer MÁS información que el
+     *  primero. El caso real es el débito de una suscripción creada a mano en el
+     *  panel de MP: el tópico `payment` llega sin referencia y deja la fila con
+     *  `preapprovalId: null`; el `subscription_authorized_payment` posterior sí
+     *  sabe de qué suscripción es. Si esa fila sigue abierta y no tenía
+     *  preapproval, se le completa —sólo ese campo—: sin eso la información más
+     *  rica se descartaba y la fila quedaba inalcanzable para la pantalla de
+     *  vinculación, que busca por `preapprovalId` o por referencia.
+     *
+     *  Devuelve `"exists"` igual: hacia afuera el hecho no cambió (no se creó
+     *  una fila nueva, la bandeja tiene los mismos cobros esperando). Completar
+     *  un campo vacío de la fila que ya estaba es terminar de escribir ese mismo
+     *  hecho, no uno distinto; un tercer valor obligaría a cada llamador a
+     *  distinguir dos casos que para él significan lo mismo. */
     async record(input: UnmatchedInput): Promise<"recorded" | "exists"> {
       try {
         await db.mpUnmatchedPayment.create({
@@ -48,8 +63,17 @@ export function makeUnmatchedInbox(db: Pick<PrismaClient, "mpUnmatchedPayment">)
         });
         return "recorded";
       } catch (e) {
-        if (isUniqueViolation(e)) return "exists";
-        throw e;
+        if (!isUniqueViolation(e)) throw e;
+        if (input.preapprovalId !== null) {
+          // `status: "open"` y `preapprovalId: null` en el `where`: una fila que
+          // el operador ya resolvió o descartó no se toca, y un preapproval ya
+          // escrito no se pisa con otro.
+          await db.mpUnmatchedPayment.updateMany({
+            where: { mpPaymentId: input.mpPaymentId, status: "open", preapprovalId: null },
+            data: { preapprovalId: input.preapprovalId },
+          });
+        }
+        return "exists";
       }
     },
 

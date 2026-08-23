@@ -18,7 +18,7 @@ const pay = (id: string, over: Record<string, unknown> = {}) =>
 type Sub = { preapprovalId: string; memberId: number | null; status: string; amount: string | null; externalReference: string | null; member: { category: string } | null };
 
 function deps(over: Partial<{
-  payments: ReturnType<typeof pay>[]; localIds: string[]; inboxIds: string[]; subs: Sub[];
+  payments: ReturnType<typeof pay>[]; localIds: string[]; inboxIds: string[]; inboxStatus: Record<string, "open" | "matched" | "dismissed">; subs: Sub[];
   authorized: Array<{ id: string; preapprovalId: string; status: string; paymentId: string | null }>;
   remote: Record<string, { status: string; amount: number | null; payerEmail: string | null; externalReference: string | null }>;
   preapprovals: Array<{ id: string; status: string; externalReference: string | null; amount: number | null; payerEmail: string | null }>;
@@ -30,7 +30,12 @@ function deps(over: Partial<{
   const subs = over.subs ?? [];
   const db = {
     payment: { findUnique: vi.fn(async ({ where }: { where: { mpPaymentId: string } }) => (localIds.has(where.mpPaymentId) ? { id: 1 } : null)) },
-    mpUnmatchedPayment: { findUnique: vi.fn(async ({ where }: { where: { mpPaymentId: string } }) => (inboxIds.has(where.mpPaymentId) ? { id: 1 } : null)) },
+    // La bandeja devuelve el estado: el paso 1 saltea cualquier fila, el paso 2
+    // sólo las resueltas. `inboxIds` sin estado explícito = fila `open`.
+    mpUnmatchedPayment: {
+      findUnique: vi.fn(async ({ where }: { where: { mpPaymentId: string } }) =>
+        inboxIds.has(where.mpPaymentId) ? { id: 1, status: over.inboxStatus?.[where.mpPaymentId] ?? "open" } : null),
+    },
     mpSubscription: {
       findMany: vi.fn(async () => subs),
       findUnique: vi.fn(async ({ where }: { where: { preapprovalId: string } }) => subs.find((s) => s.preapprovalId === where.preapprovalId) ?? null),
@@ -157,12 +162,39 @@ describe("reconcile", () => {
     expect(s.errors[0]).not.toContain("juan@example.com");
   });
 
-  it("paso 2 saltea un cobro que ya está en la bandeja (aunque el operador lo haya descartado)", async () => {
-    const d = deps({ inboxIds: ["777"], subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
+  // El caso para el que existe la red: el `payment` de una suscripción creada a
+  // mano llega sin referencia, cae a la bandeja como `no_reference` y el segundo
+  // evento (el que traía el preapproval) se pierde. El paso 2 llega con ese
+  // preapproval y es lo único que puede resolverla.
+  it("paso 2 APLICA un cobro cuya fila de bandeja sigue abierta, con el preapproval de la suscripción", async () => {
+    const d = deps({ inboxIds: ["777"], inboxStatus: { "777": "open" }, subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
+    const s = await d.r.run();
+    expect(d.gateway.getPayment).toHaveBeenCalledWith("777");
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1");
+    expect(s.debitsRecovered).toBe(1);
+  });
+
+  it("paso 2 saltea un cobro cuya fila la descartó el operador (dismissed): es una decisión tomada", async () => {
+    const d = deps({ inboxIds: ["777"], inboxStatus: { "777": "dismissed" }, subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
     const s = await d.r.run();
     expect(d.gateway.getPayment).not.toHaveBeenCalled();
     expect(d.processor.applyPayment).not.toHaveBeenCalled();
     expect(s.debitsRecovered).toBe(0);
+  });
+
+  it("paso 2 saltea un cobro cuya fila ya se resolvió (matched)", async () => {
+    const d = deps({ inboxIds: ["777"], inboxStatus: { "777": "matched" }, subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
+    const s = await d.r.run();
+    expect(d.gateway.getPayment).not.toHaveBeenCalled();
+    expect(d.processor.applyPayment).not.toHaveBeenCalled();
+    expect(s.debitsRecovered).toBe(0);
+  });
+
+  it("paso 1, en cambio, saltea cualquier fila de la bandeja: ahí el cron no sabe más que el webhook", async () => {
+    const d = deps({ payments: [pay("1")], inboxIds: ["1"], inboxStatus: { "1": "open" } });
+    const s = await d.r.run();
+    expect(d.processor.applyPayment).not.toHaveBeenCalled();
+    expect(s.paymentsRecovered).toBe(0);
   });
 
   it("lo que va a la bandeja o ya estaba procesado NO cuenta como recuperado", async () => {

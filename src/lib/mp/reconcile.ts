@@ -140,11 +140,26 @@ export function makeReconcile(deps: Deps) {
       };
       const hasLocal = async (mpPaymentId: string) =>
         Boolean(await deps.db.payment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
-      // La bandeja se consulta sin filtrar por estado a propósito: una fila que
-      // el operador descartó (`dismissed`) o resolvió sigue siendo una decisión
-      // tomada, y volver a aplicar ese cobro sería pisarla.
+      // Paso 1: cualquier fila de la bandeja frena. Ahí el cron no sabe nada que
+      // el webhook no supiera —le pasa el mismo `payment` y `preapprovalId: null`—,
+      // así que re-procesar una fila abierta sería ruido, y una que el operador
+      // descartó (`dismissed`) o resolvió (`matched`) es una decisión tomada que
+      // volver a aplicar sería pisar.
       const inInbox = async (mpPaymentId: string) =>
         Boolean(await deps.db.mpUnmatchedPayment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
+      // Paso 2: sólo frenan las RESUELTAS. La justificación de arriba vale para
+      // `dismissed`/`matched`, no para `open`: acá el cron llega con algo que el
+      // webhook no tenía —el `preapprovalId` de la suscripción vinculada—, que es
+      // justamente lo que a esa fila le falta. Caso real: el débito de una
+      // suscripción creada a mano en el panel de MP, cuyo `payment` no trae
+      // referencia; si el evento `subscription_authorized_payment` se pierde,
+      // esta es la única red que lo levanta. Aplicar una fila `open` es seguro:
+      // `registerPaymentCore` la cierra (`matched`) dentro de la misma
+      // transacción que asienta el pago.
+      const resolvedInInbox = async (mpPaymentId: string) => {
+        const row = await deps.db.mpUnmatchedPayment.findUnique({ where: { mpPaymentId }, select: { status: true } });
+        return row !== null && row.status !== "open";
+      };
       const count = (result: string, kind: "payments" | "debits") => {
         const outcome = outcomeOf(result);
         if (kind === "payments") {
@@ -193,7 +208,7 @@ export function makeReconcile(deps: Deps) {
               if (!c.paymentId || c.status !== "processed") continue;
               try {
                 const paymentId = c.paymentId;
-                if ((await hasLocal(paymentId)) || (await inInbox(paymentId))) continue;
+                if ((await hasLocal(paymentId)) || (await resolvedInInbox(paymentId))) continue;
                 const p = await deps.gateway.getPayment(paymentId);
                 count(await deps.processor.applyPayment(p, sub.preapprovalId), "debits");
               } catch (e) { fail("debits.apply", { preapprovalId: sub.preapprovalId, mpPaymentId: c.paymentId }, e); }
