@@ -203,15 +203,31 @@ export function makeMpGateway(): MpGateway {
   // `/authorized_payments` y su `payments.search` no pagina por nosotros. Una
   // respuesta no-2xx lanza (es un fallo técnico, que el llamador convierte en
   // 500 o en `errors[]` del cron), nunca se traduce a "no hay resultados".
+  //
+  // `pageSize` es OPCIONAL y no por prolijidad: `/authorized_payments/search`
+  // RECHAZA el parámetro `limit` por encima de ~15 con
+  // `{"message":"Invalid value for limit","status":400}`, así que mandarle el
+  // `PAGE` de 100 lo hacía fallar SIEMPRE. Verificado contra la API el
+  // 23/08/2026: sin `limit` responde 200 y pagina de a 12 por su cuenta;
+  // `/v1/payments/search`, en cambio, acepta 100 sin chistar.
+  //
+  // El bucle ya avanza con `page.length` y corta contra `paging.total`, así que
+  // omitir `limit` es correcto para cualquier tamaño de página que elija MP —
+  // y es más robusto que adivinarle el tope, que es de ellos y puede cambiar.
   async function searchAll<T>(
     path: string,
     params: Record<string, string>,
     label: string,
+    pageSize?: number,
   ): Promise<T[]> {
     const out: T[] = [];
     let offset = 0;
     for (;;) {
-      const qs = new URLSearchParams({ ...params, limit: String(PAGE), offset: String(offset) });
+      const qs = new URLSearchParams({
+        ...params,
+        ...(pageSize === undefined ? {} : { limit: String(pageSize) }),
+        offset: String(offset),
+      });
       const res = await fetch(`${API}${path}?${qs}`, {
         headers: { Authorization: `Bearer ${accessToken()}` },
       });
@@ -290,10 +306,15 @@ export function makeMpGateway(): MpGateway {
         "/preapproval/search",
         params,
         "preapproval/search",
+        PAGE,
       );
       return rows.map((r) => mapPreapproval(r, r.id ?? ""));
     },
     async searchAuthorizedPayments(preapprovalId) {
+      // SIN `limit`: este endpoint lo rechaza (ver la cabecera de `searchAll`).
+      // Es el que sostiene el paso 2 de la conciliación —recuperar un débito
+      // cuyo webhook no llegó—, así que mandárselo lo dejaba caído en silencio:
+      // el cron contaba el error y seguía, y nadie miraba `errors[]`.
       const rows = await searchAll<RawAuthorized>(
         "/authorized_payments/search",
         { preapproval_id: preapprovalId },
@@ -313,6 +334,7 @@ export function makeMpGateway(): MpGateway {
           status: "approved",
         },
         "payments/search",
+        PAGE,
       );
       // Un resultado sin monto se descarta en vez de tirar: el cron no puede
       // caerse entero por una fila rara de MP.

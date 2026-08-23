@@ -282,6 +282,49 @@ describe("searchAuthorizedPayments", () => {
       "authorized_payments/search?preapproval_id=pre-1",
     );
   });
+
+  // El bug que la batería de la T14 encontró contra la API real: este endpoint
+  // RECHAZA `limit` por encima de ~15 con `Invalid value for limit` (400), así
+  // que mandarle el PAGE de 100 lo hacía fallar SIEMPRE. Como es el que sostiene
+  // el paso 2 de la conciliación —recuperar un débito cuyo webhook no llegó—, la
+  // red de contención estuvo caída desde que se escribió, y en silencio: el cron
+  // sumaba el error a `errors[]` y seguía.
+  it("NO manda `limit`: la API lo rechaza en este endpoint", async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ paging: { total: 0, limit: 12, offset: 0 }, results: [] }),
+        { status: 200 },
+      ),
+    );
+    await makeMpGateway().searchAuthorizedPayments("pre-1");
+    const url = String(mocks.fetch.mock.calls[0][0]);
+    expect(url).not.toContain("limit=");
+    expect(url).toContain("offset=0");
+  });
+
+  // Sin `limit` el tamaño de página lo elige MP (hoy 12). El bucle tiene que
+  // seguir paginando contra `paging.total` y no contra un tamaño supuesto.
+  it("pagina con el tamaño que elige MP, no con uno propio", async () => {
+    const page = (offset: number, n: number) =>
+      new Response(
+        JSON.stringify({
+          paging: { total: 14, limit: 12, offset },
+          results: Array.from({ length: n }, (_, i) => ({
+            id: offset + i,
+            preapproval_id: "pre-1",
+            status: "processed",
+            payment: { id: 1000 + offset + i },
+            transaction_amount: 6000,
+          })),
+        }),
+        { status: 200 },
+      );
+    mocks.fetch.mockResolvedValueOnce(page(0, 12)).mockResolvedValueOnce(page(12, 2));
+    const rows = await makeMpGateway().searchAuthorizedPayments("pre-1");
+    expect(rows).toHaveLength(14);
+    expect(String(mocks.fetch.mock.calls[1][0])).toContain("offset=12");
+    expect(String(mocks.fetch.mock.calls[1][0])).not.toContain("limit=");
+  });
 });
 
 describe("searchPayments", () => {
