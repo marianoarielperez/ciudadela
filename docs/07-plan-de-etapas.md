@@ -274,6 +274,35 @@ documentado.
 - **`/admin/salud` tiene que mostrar `cron_runs`**, que ya escribe la conciliación
   diaria de la 4B: hoy el resultado sólo se lee por SQL.
 
+**El devengo tiene FECHA DURA: antes del 01/10/2026.** No es una prioridad entre
+otras, es un vencimiento. El modelo que confirmó el operador el 23/08/2026 es de dos
+niveles: la cuota del mes M **nace el 01/M** (está al cobro, se puede pagar durante
+el mes) y recién es **deuda/mora el 01/M+1**. El padrón (`deuda.xlsx`, foto del
+21/08) cubre a todos hasta **agosto 2026 inclusive**, y el import trajo **sólo lo
+impago**: un socio al día no tiene ninguna fila. Consecuencia: **desde el 01/10 los
+socios al día se van a mostrar "al día" debiendo septiembre**, porque no hay fila que
+contar. La fase 4B tapó la mitad del problema —`coverageFloor` (`treasury/rules.ts`)
+hace que un pago impute el primer mes NO cubierto, así que la plata cae bien— pero la
+deuda visible (Deudores, la ficha, `/mi`) cuenta filas, y esas filas sólo las crea el
+devengo.
+
+Tres cosas que el devengo tiene que hacer, y que no son obvias:
+
+1. **Backfillear desde `coverageFloor`, no crear sólo el mes corriente.** El piso ya
+   existe y es la pieza que este cron necesita: es la misma función que decide a qué
+   mes va un pago, así que devengo e imputación no pueden divergir. Si el cron corre
+   por primera vez en noviembre, tiene que crear septiembre Y octubre.
+2. **No devengar el mes en curso como deuda.** Con el modelo de dos niveles, el 15 de
+   octubre la cuota de octubre existe (al cobro) pero no es mora. O el cron devenga el
+   día 1 del mes siguiente, o las pantallas distinguen los dos estados — pero alguna de
+   las dos cosas hay que hacer, o Deudores va a acusar de morosos a socios que están en
+   fecha.
+3. **Tope o agrupación de emails.** El 23/08/2026 la conciliación recuperó 24 débitos
+   históricos de un solo socio y **le mandó 24 recibos de golpe** (verificado: llegaron
+   los 24). Con 160 socios vigentes y sin `EMAIL_ALLOWLIST`, un devengo o una
+   conciliación con backlog son cientos de correos en minutos. Brevo tiene cuota, y un
+   vecino que recibe 24 mails no lee ninguno.
+
 CA: correr el devengo dos veces el mismo día crea una sola cuota por socio; el
 aviso de mora en un día que no es 30 no envía nada y el 30 envía una sola vez a
 cada deudor; el resumen sin novedades no se envía; un email con el transporte roto

@@ -295,6 +295,15 @@ suscripción de MP al dar de baja a un socio** —reasignado desde el M5 el 23/0
 las bajas del panel ya corren, así que hoy se puede dejar de ser socio y seguir
 siendo debitado—. Ver `docs/07-plan-de-etapas.md`.
 
+**El devengo tiene fecha dura: antes del 01/10/2026.** El padrón cubre a todos hasta
+agosto de 2026 y el import trajo sólo lo impago, así que un socio al día no tiene
+ninguna fila de cuota. Desde octubre, los que estén al día se van a mostrar "al día"
+debiendo septiembre: no hay fila que contar. `coverageFloor` (`treasury/rules.ts`) ya
+resuelve la IMPUTACIÓN —un pago cae siempre en el primer mes no cubierto— pero la
+deuda VISIBLE cuenta filas, y esas las crea el devengo. El cron tiene que
+**backfillear desde el piso**, no crear sólo el mes corriente. Detalle y los otros dos
+requisitos no obvios: `docs/07-plan-de-etapas.md`, fase 4C.
+
 Verificación real pendiente de la 4B: el **débito del socio 14 del 10/09/2026** tiene
 que entrar solo. Y en el primer `reconcile` de producción hay que confirmar que
 `GET /v1/payments/search` indexa (en sandbox no lo hace).
