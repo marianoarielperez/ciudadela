@@ -80,11 +80,10 @@ function watchUniqueViolations(client: PrismaClient, spy: UniqueSpy): PrismaClie
 }
 
 describe.skipIf(!url)("aplicación concurrente de un cobro de MP (MariaDB)", () => {
-  // 1998 y no 1999: `receipt-sequence.test.ts` usa la serie 1999 y vitest corre
-  // los archivos EN PARALELO contra la MISMA base. Compartir año hacía que un
-  // `beforeEach` de un archivo borrara la fila que el otro estaba contando —
-  // números repetidos y un falso "el rollback consumió número". Cada archivo de
-  // integración se queda con un año propio.
+  // 1998 y no 1999 porque `receipt-sequence.test.ts` usa la serie 1999. Los dos
+  // archivos ya no corren en paralelo (`fileParallelism: false` en
+  // `vitest.integration.config.mts`, que es lo que de verdad lo resuelve), pero
+  // un año propio por archivo sigue siendo más barato que depender de eso.
   const YEAR = 1998; // serie que ningún recibo real va a usar
   const PAID_AT = new Date("1998-06-15T12:00:00Z");
   const AMOUNT = 6000;
