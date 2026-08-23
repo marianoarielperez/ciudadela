@@ -9,6 +9,7 @@
 // `useSyncedForm` en el de imputar: React 19 resetea el <form action> cuando la
 // action termina, y con un <select> controlado el concepto volvería al primero
 // justo cuando el operador está leyendo por qué se rechazó.
+import Link from "next/link";
 import { useActionState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
@@ -79,7 +80,26 @@ export function ResolveForm({ rowId, memberId, amount, paidAt, pendingCount, wit
         <span className="font-mono font-semibold tabular-nums">{formatARS(amount)}</span> con recibo,
         fechado el {paidAt}, que es el día en que Mercado Pago lo cobró.
       </p>
-      {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
+      {/* El duplicado es el único rechazo que trae a dónde ir: el cobro ya tiene
+          recibo y el operador necesita verlo para entender qué pasó —sobre todo
+          si ese recibo se anuló—. Y el caso "ya estaba bien asentado" viene con
+          `kind: "warning"`: no se perdió plata, no corresponde el rojo. */}
+      {state.error && (
+        <FormMessage kind={state.kind ?? "error"} box>
+          {state.error}
+          {state.receipt && (
+            <>
+              {" "}
+              <Link
+                className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                href={`/admin/tesoreria/recibos/${state.receipt.id}`}
+              >
+                Ver el recibo N° {state.receipt.number}
+              </Link>
+            </>
+          )}
+        </FormMessage>
+      )}
       <Button type="submit" disabled={pending}>{pending ? "Aplicando…" : "Aplicar y emitir recibo"}</Button>
     </form>
   );

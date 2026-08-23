@@ -8,6 +8,9 @@ import type { AdminActor } from "@/lib/auth/require-admin";
 const mocks = vi.hoisted(() => ({
   register: vi.fn(),
   findUnique: vi.fn(),
+  // El pago que ganó el `mpPaymentId`: es lo que distingue "ya está bien
+  // asentado" de "se había asentado y ese recibo se anuló".
+  paymentFindUnique: vi.fn(),
   updateMany: vi.fn(async () => ({ count: 1 })),
   sendEmail: vi.fn(async () => ({ sent: true })),
   audit: vi.fn(async () => {}),
@@ -18,7 +21,10 @@ const mocks = vi.hoisted(() => ({
   )),
 }));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { mpUnmatchedPayment: { findUnique: mocks.findUnique, updateMany: mocks.updateMany } },
+  prisma: {
+    mpUnmatchedPayment: { findUnique: mocks.findUnique, updateMany: mocks.updateMany },
+    payment: { findUnique: mocks.paymentFindUnique },
+  },
 }));
 vi.mock("@/lib/treasury/service", () => ({
   treasuryService: { registerPayment: mocks.register },
@@ -31,6 +37,7 @@ vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { redirect } from "next/navigation";
+import { TreasuryError } from "@/lib/treasury/service";
 import {
   dismissUnmatchedAction,
   resolveUnmatchedAction,
@@ -60,6 +67,16 @@ function openRow() {
     reason: "no_reference",
     status: "open" as const,
   };
+}
+
+// El formulario mínimo para imputar: una cuota al socio 1 sobre la fila 5.
+function applyForm(): FormData {
+  const form = new FormData();
+  form.append("rowId", "5");
+  form.append("memberId", "1");
+  form.append("concept", "fees");
+  form.append("count", "1");
+  return form;
 }
 
 describe("resolveUnmatchedAction", () => {
@@ -156,19 +173,84 @@ describe("resolveUnmatchedAction", () => {
     expect(redirect).not.toHaveBeenCalled();
   });
 
-  it("already_processed: el operador lo lee en castellano y no se audita ni se redirige", async () => {
+  it("already_processed con el pago aplicado: dice el número de recibo, lo linkea y no lo pinta de error", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
     mocks.register.mockResolvedValueOnce({ kind: "already_processed", paymentId: 3 });
+    mocks.paymentFindUnique.mockResolvedValueOnce({
+      status: "applied", receipt: { id: 7, number: "2026-00007" },
+    });
+    const r = await resolveUnmatchedAction({}, applyForm());
+    expect(r.error).toBe(
+      "Este cobro de Mercado Pago ya está asentado: se registró con el recibo N° 2026-00007. No hace falta volver a aplicarlo.",
+    );
+    // El cobro está bien asentado: no se perdió plata y no corresponde el rojo.
+    expect(r.kind).toBe("warning");
+    expect(r.receipt).toEqual({ id: 7, number: "2026-00007" });
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  // La fila que reabre una anulación vuelve a "Resolver" y choca contra el
+  // mismo `mpPaymentId`. Decirle "ya está registrado" a secas la dejaba muda:
+  // el operador tiene que leer que ese recibo se anuló y poder ir a verlo.
+  it("already_processed con el recibo anulado: lo dice, linkea el recibo y avisa que desde acá no se reimputa", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.register.mockResolvedValueOnce({ kind: "already_processed", paymentId: 3 });
+    mocks.paymentFindUnique.mockResolvedValueOnce({
+      status: "voided", receipt: { id: 7, number: "2026-00007" },
+    });
+    const r = await resolveUnmatchedAction({}, applyForm());
+    expect(r.error).toBe(
+      "Este cobro de Mercado Pago ya se había asentado con el recibo N° 2026-00007 y ese recibo se anuló."
+      + " Por ahora esta plata no se puede volver a imputar desde acá: la fila queda pendiente.",
+    );
+    expect(r.kind).toBeUndefined();
+    expect(r.receipt).toEqual({ id: 7, number: "2026-00007" });
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("una regla de negocio del servicio se le muestra al operador tal como la redactó", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.register.mockRejectedValueOnce(new TreasuryError("El monto no puede ser cero."));
+    const r = await resolveUnmatchedAction({}, applyForm());
+    expect(r.error).toBe("El monto no puede ser cero.");
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("la nota del operador llega al pago y NO entra al asiento", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.register.mockResolvedValueOnce({
+      kind: "registered", paymentId: 3, receiptId: 7, number: "2026-00007",
+      periods: ["2026-08"], amount: 12000, pdfWritten: true,
+    });
+    const form = applyForm();
+    form.append("note", "Lo pagó la hija por transferencia");
+    await resolveUnmatchedAction({}, form);
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ note: "Lo pagó la hija por transferencia" }),
+    );
+    // Texto libre del operador: puede nombrar a un vecino y no va a la auditoría.
+    expect(JSON.stringify(auditedEntry())).not.toContain("transferencia");
+  });
+
+  it("más de 60 cuotas se rechaza en castellano antes de tocar la base", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     const form = new FormData();
     form.append("rowId", "5");
     form.append("memberId", "1");
     form.append("concept", "fees");
-    form.append("count", "1");
+    form.append("count", "72");
     const r = await resolveUnmatchedAction({}, form);
-    expect(r.error).toBe("Ese cobro de Mercado Pago ya está registrado como pago.");
-    expect(mocks.audit).not.toHaveBeenCalled();
-    expect(redirect).not.toHaveBeenCalled();
+    expect(r.error).toBe("Como máximo 60 cuotas.");
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.register).not.toHaveBeenCalled();
   });
 
   it("no_pending_withdrawn: se explica por qué no hay a qué imputarlo", async () => {

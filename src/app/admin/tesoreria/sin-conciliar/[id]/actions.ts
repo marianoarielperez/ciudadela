@@ -9,6 +9,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import type { PaymentStatus } from "@/generated/prisma/client";
 import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
@@ -17,9 +18,65 @@ import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { treasuryService, TreasuryError } from "@/lib/treasury/service";
 
-type State = { error?: string };
+// El recibo viaja aparte del texto: un string no puede llevar un link, y sin
+// link al recibo el mensaje del duplicado deja al operador sin a dónde ir.
+// `kind` es para el duplicado que YA está bien asentado: ahí no hay nada roto
+// —el recibo existe— y pintarlo de rojo diría que se perdió plata.
+type State = {
+  error?: string;
+  kind?: "error" | "warning";
+  receipt?: { id: number; number: string };
+};
 
 const BASE = "/admin/tesoreria/sin-conciliar";
+
+// Del error se loguea SOLO el código o el nombre. El `message` de Prisma vuelca
+// los argumentos de la consulta —incluida la nota que escribió el operador— y
+// el de nodemailer trae la dirección en claro: los dos son dato personal
+// (Ley 25.326) y no van al log.
+function errCode(e: unknown): string {
+  const o = e as { code?: unknown; name?: unknown } | null;
+  if (typeof o?.code === "string") return o.code;
+  if (typeof o?.name === "string") return o.name;
+  return "unknown";
+}
+
+// Ese `mpPaymentId` ya tiene un Payment. Son dos historias muy distintas y el
+// operador tiene que poder distinguirlas:
+//  - `applied`: el cobro está bien asentado (reenvío de MP, o dos operadores
+//    sobre la misma fila). No hay nada que hacer.
+//  - `voided` / `refunded`: se había asentado y ese recibo se anuló o se
+//    reembolsó. El Payment sobrevive a la anulación, así que sigue frenando el
+//    duplicado: la reimputación no se puede hacer desde esta pantalla, y
+//    decirle "ya está registrado" a secas lo dejaría sin entender por qué.
+// En los dos casos se le da el número de recibo y el link, que es lo único
+// accionable que hay. Que un pago anulado deje de contar como duplicado es otra
+// discusión —toca la barrera contra el reenvío de MP— y no se decide acá.
+function alreadyProcessedState(
+  existing: { status: PaymentStatus; receipt: { id: number; number: string } | null } | null,
+): State {
+  if (!existing) return { error: "Ese cobro de Mercado Pago ya está registrado como pago." };
+  const receipt = existing.receipt ?? undefined;
+  if (existing.status === "applied") {
+    return {
+      kind: "warning",
+      error: receipt
+        ? `Este cobro de Mercado Pago ya está asentado: se registró con el recibo N° ${receipt.number}. No hace falta volver a aplicarlo.`
+        : "Este cobro de Mercado Pago ya está asentado como pago. No hace falta volver a aplicarlo.",
+      receipt,
+    };
+  }
+  const head = receipt
+    ? `Este cobro de Mercado Pago ya se había asentado con el recibo N° ${receipt.number}`
+    : "Este cobro de Mercado Pago ya se había asentado";
+  const tail = existing.status === "voided"
+    ? receipt ? " y ese recibo se anuló." : " y ese pago se anuló."
+    : " y después figura como reembolsado.";
+  return {
+    error: `${head}${tail} Por ahora esta plata no se puede volver a imputar desde acá: la fila queda pendiente.`,
+    receipt,
+  };
+}
 
 // Todo mensaje va explícito y en castellano, incluida la COERCIÓN: sin mensaje
 // propio, un valor que no es número llega a zod como NaN y el operador lee
@@ -75,11 +132,15 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
     // Toda regla de negocio ya viene redactada en es-AR desde el servicio; lo
     // demás es un error nuestro y no se le muestra crudo al operador.
     if (e instanceof TreasuryError) return { error: e.message };
-    console.error("[unmatched] registerPayment", e instanceof Error ? e.message : e);
+    console.error("[unmatched] registerPayment falló", errCode(e));
     return { error: "No se pudo aplicar el pago. Reintentá en un momento." };
   }
   if (result.kind === "already_processed") {
-    return { error: "Ese cobro de Mercado Pago ya está registrado como pago." };
+    const existing = await prisma.payment.findUnique({
+      where: { id: result.paymentId },
+      select: { status: true, receipt: { select: { id: true, number: true } } },
+    });
+    return alreadyProcessedState(existing);
   }
   if (result.kind === "no_pending_withdrawn") {
     return {
@@ -91,10 +152,19 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
   // `matched` con el paymentId): acá sólo se sella QUIÉN la resolvió. El
   // `updateMany` acotado a `status: "matched"` es a propósito — si por lo que
   // fuera la fila no quedó cerrada, esto no le inventa un responsable.
-  await prisma.mpUnmatchedPayment.updateMany({
-    where: { id: row.id, status: "matched" },
-    data: { resolvedById: actor.actorId },
-  });
+  //
+  // Envuelto en try como el email de al lado: para acá el pago, la imputación y
+  // el recibo numerado ya están commiteados. Perder el sello de quién resolvió
+  // es cosmético; perder el redirect al recibo —que ya existe y ya tiene
+  // número— no: el operador vería un error genérico y no encontraría el recibo.
+  try {
+    await prisma.mpUnmatchedPayment.updateMany({
+      where: { id: row.id, status: "matched" },
+      data: { resolvedById: actor.actorId },
+    });
+  } catch (e) {
+    console.error("[unmatched] sellado de resolvedById falló", errCode(e));
+  }
 
   // Best-effort, igual que en Efectivo: para acá el pago, la imputación y el
   // recibo numerado ya están commiteados. Si el email explota, el resultado se
@@ -105,9 +175,7 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
     const r = await sendReceiptEmail(result.receiptId);
     emailed = r.sent ? "sent" : r.reason;
   } catch (e) {
-    // Sólo el código: el error de nodemailer trae la dirección en claro.
-    const code = (e as { code?: unknown } | null)?.code;
-    console.error("[unmatched] sendReceiptEmail lanzó", typeof code === "string" ? code : "unknown");
+    console.error("[unmatched] sendReceiptEmail lanzó", errCode(e));
     emailed = "error";
   }
 

@@ -63,8 +63,9 @@ export default async function SinConciliarPage(props: {
     take: pg.take,
     include: {
       payment: {
+        // Se trae lo que la tabla muestra y nada más: a quién se le aplicó y con
+        // qué recibo.
         select: {
-          id: true,
           memberId: true,
           member: { select: { fullName: true } },
           receipt: { select: { id: true, number: true } },
@@ -138,6 +139,10 @@ export default async function SinConciliarPage(props: {
                 <TableHead>Referencia</TableHead>
                 <TableHead>Motivo</TableHead>
                 <TableHead>Estado</TableHead>
+                {/* Sólo en Resueltos: en Pendientes no hay a quién mostrar todavía,
+                    y una columna de guiones no dice nada. Revisar lo ya
+                    conciliado es justamente preguntarse a quién fue a parar. */}
+                {resolved && <TableHead>Aplicado a</TableHead>}
                 <TableHead><span className="sr-only">Acción</span></TableHead>
               </TableRow>
             </TableHeader>
@@ -150,7 +155,9 @@ export default async function SinConciliarPage(props: {
                       muestra sólo acá, que es panel de admin, y nunca viaja a
                       la auditoría ni al log. Suele ser la única pista de quién
                       pagó, así que es la columna que el operador lee primero. */}
-                  <TableCell className="max-w-[14rem] truncate">{r.payerEmail ?? "—"}</TableCell>
+                  <TableCell className="max-w-[14rem] truncate" title={r.payerEmail ?? undefined}>
+                    {r.payerEmail ?? "—"}
+                  </TableCell>
                   <TableCell className="font-mono text-xs">{r.externalReference ?? "—"}</TableCell>
                   <TableCell>{UNMATCHED_REASON_LABELS[r.reason as UnmatchedReason] ?? r.reason}</TableCell>
                   <TableCell>
@@ -164,6 +171,22 @@ export default async function SinConciliarPage(props: {
                       </Link>
                     )}
                   </TableCell>
+                  {resolved && (
+                    <TableCell>
+                      {r.payment?.memberId ? (
+                        <Link
+                          className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                          href={`/admin/socios/${r.payment.memberId}?tab=cuenta`}
+                        >
+                          {r.payment.member?.fullName ?? `Socio ${r.payment.memberId}`}
+                        </Link>
+                      ) : (
+                        // Una fila descartada no se le aplicó a nadie, y eso es
+                        // exactamente lo que declara el descarte.
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <Link
                       className="inline-flex min-h-11 items-center text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
