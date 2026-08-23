@@ -112,14 +112,14 @@ export function ConfigForm({
           field={field("mpPlanActiveId")}
           maxLength={64}
           placeholder="2c93808491…"
-          hint="Obligatorio: el alta web lee de ahí el monto del primer débito. El valor de la cuota, y el que se le empuja a las suscripciones vivas, sale de la tabla de valores. Se obtiene del instructivo de sandbox / panel de MP."
+          hint="Opcional. Los montos salen de la tabla de valores de cuota, no de acá: el alta web, el ajuste por recategorización y el lote de actualización leen de ahí. Cargado, la conciliación diaria avisa si el plan de MP quedó con otro monto. Se obtiene del panel de MP."
         />
         <TextField
           label="Id del plan de MP — SOCIO ADHERENTE/COLABORADOR"
           field={field("mpPlanSharedId")}
           maxLength={64}
           placeholder="2c93808491…"
-          hint="Obligatorio, igual que el anterior; es el plan compartido por las dos categorías. Se obtiene del instructivo de sandbox / panel de MP."
+          hint="Opcional, igual que el anterior; es el plan compartido por las dos categorías."
         />
       </Section>
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}

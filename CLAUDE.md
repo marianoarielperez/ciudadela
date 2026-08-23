@@ -227,9 +227,10 @@ Los ids de los dos planes de Mercado Pago **no son variables de entorno**: viven
 en `Configuration` (`mp_plan_active_id`, `mp_plan_shared_id`) y se cargan desde
 `/admin/configuracion`. Ver `docs/06` y el instructivo `docs/11`.
 Desde el Módulo 4 el **monto** ya no sale de ahí: la tabla `fee_values` es la
-única fuente (ver más abajo). Los ids **siguen siendo obligatorios** igual porque
-`startPaymentAction` del wizard lee el monto del plan con `getPlan()` — eso se
-migra en la fase 4B; hasta entonces, sin ids el paso 2 de ASOCIATE no avanza.
+única fuente (ver más abajo). Desde la fase 4B los ids son **opcionales**: el
+alta web, la recategorización y el lote REG-34 leen el monto de `fee_values`, y
+el único uso que les queda es el aviso de divergencia plan-vs-valor de la
+conciliación diaria, que simplemente no corre si no están cargados.
 
 ## Prioridad actual
 

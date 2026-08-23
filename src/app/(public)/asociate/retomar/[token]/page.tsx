@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { applicationService } from "@/lib/applications/service";
 import { getLegalTexts } from "@/lib/config";
-import { getFeeAmounts } from "@/lib/mp/plans";
 import { prisma } from "@/lib/prisma";
+import { feeAmountsForWizard, feeValueReader } from "@/lib/treasury/fee-values";
 import { AsociateWizard } from "../../asociate-wizard";
 
 // El token viene en la URL: nada de esto se puede cachear ni prerenderizar.
@@ -51,7 +51,7 @@ export default async function RetomarPage({ params }: { params: Promise<{ token:
       select: { type: true },
     }),
     getLegalTexts(),
-    getFeeAmounts(),
+    feeValueReader.current().then(feeAmountsForWizard),
   ]);
 
   return (

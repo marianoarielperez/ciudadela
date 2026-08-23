@@ -30,6 +30,8 @@ import { mpGateway } from "@/lib/mp/gateway";
 import { subscriptionReason } from "@/lib/mp/reason";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
+import { feeValueReader } from "@/lib/treasury/fee-values";
+import { feeAmountFor } from "@/lib/treasury/rules";
 import { verifyTurnstile } from "@/lib/turnstile";
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
@@ -564,52 +566,28 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
   const complete = requiredDocsComplete(await docsOf(app.id), app.requestedCategory);
   if (!complete.ok) return { error: complete.error };
 
-  const planKey =
-    app.requestedCategory === "active" ? CONFIG_KEYS.mpPlanActiveId : CONFIG_KEYS.mpPlanSharedId;
-  const planId = await configReader.getString(planKey);
-  if (!planId) {
+  // El monto sale de `fee_values` (única fuente, REG-34): la suscripción se
+  // crea SIN plan asociado (docs/06 §2), así que lo que mandamos acá es
+  // literalmente lo que MP le va a debitar al vecino todos los meses. Sin valor
+  // vigente NO se crea la suscripción — cobrar mal es peor que no cobrar.
+  const value = await feeValueReader.current();
+  if (!value) {
     return {
-      error: "El sistema de pagos no está configurado todavía. Probá más tarde o consultá en la sede.",
+      error: "El valor de la cuota todavía no está configurado. Probá más tarde o consultá en la sede.",
     };
   }
-
-  // Lectura FRESCA del monto, sin caché, y a propósito.
-  //
-  // La suscripción se crea SIN plan asociado (ver el comentario de
-  // `createPreapproval` y `docs/06` §2), así que el monto que mandamos es
-  // literalmente el que MP le va a debitar al vecino todos los meses: el plan
-  // queda como registro del valor, no como vínculo.
-  //
-  // `getFeeAmounts` (src/lib/mp/plans.ts) NO sirve acá: es una caché de 24 h
-  // con stale-on-error, pensada para MOSTRAR el monto en el paso 2. Un valor
-  // viejo ahí es una pantalla desactualizada; acá sería debitarle a un socio un
-  // importe que la Comisión ya cambió, mes a mes, hasta que alguien lo note.
-  //
-  // Y si la lectura falla, NO se crea la suscripción: es preferible un "probá
-  // en unos minutos" a un débito con el monto equivocado. Cobrar mal es peor
-  // que no cobrar.
-  let plan: { id: string; reason: string; amount: number };
-  try {
-    plan = await mpGateway.getPlan(planId);
-  } catch (e) {
-    console.error(
-      "[asociate] no se pudo leer el monto del plan —",
-      mpErrorLog("getPlan", { planId, applicationId: app.id }, e),
-    );
-    return {
-      error:
-        "No pudimos confirmar el valor de la cuota en este momento. Para no adherirte a un débito por un monto equivocado, no iniciamos el pago: probá de nuevo en unos minutos.",
-    };
-  }
+  const amount = feeAmountFor(app.requestedCategory, value);
+  if (amount === null) return { error: "La categoría elegida no paga cuota por débito." };
 
   let sub: { id: string; initPoint: string; status: string };
   try {
     sub = await mpGateway.createPreapproval({
       // Lo que el vecino ve en el checkout de MP y en el resumen de su tarjeta.
-      // Sale del `reason` del plan para que lo gobierne la CD desde el panel de
-      // MP, con un respaldo por si el plan viene sin nombre.
-      reason: subscriptionReason(plan.reason),
-      amount: plan.amount,
+      // Ya no sale del `reason` del plan: sin plan de por medio, el sufijo
+      // queda vacío y `subscriptionReason` cae en su base, "Cuota Vecinal
+      // Ciudadela" (ver `mp/reason.ts`, tope de 60 caracteres de la API).
+      reason: subscriptionReason(""),
+      amount,
       payerEmail: app.email,
       externalReference: `solicitud:${app.id}`,
       backUrl: `${baseUrl()}/asociate/retomar/${resumeToken}`,
@@ -620,7 +598,7 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
     // el mensaje. Al log, nunca a la pantalla.
     console.error(
       "[asociate] falló la creación de la suscripción —",
-      mpErrorLog("createPreapproval", { applicationId: app.id, planId }, e),
+      mpErrorLog("createPreapproval", { applicationId: app.id, amount }, e),
     );
     return { error: "No pudimos iniciar el pago en Mercado Pago. Probá de nuevo en unos minutos." };
   }
@@ -645,14 +623,17 @@ export async function startPaymentAction(_prev: PayState, formData: FormData): P
         where: { id: app.id },
         data: { status: "pending_payment", preapprovalId: sub.id },
       });
-      // `planId` es el plan de REFERENCIA: de dónde salió el monto, no un
-      // vínculo. La suscripción se crea sin `preapproval_plan_id` y lleva el
-      // monto copiado en su propio `auto_recurring`, así que tocar el plan en
-      // MP no la mueve (docs/06 §2).
+      // `planId: null`: no hay plan de referencia porque el monto no salió de
+      // ninguno. Lo que queda registrado es el `amount` que se le mandó a MP
+      // —el mismo que lleva la suscripción en su `auto_recurring` (docs/06
+      // §2)—, que es contra lo que la conciliación compara. `externalReference`
+      // se guarda acá y no sólo en MP: es la única llave para reencontrar una
+      // suscripción huérfana.
       await tx.mpSubscription.create({
         data: {
-          preapprovalId: sub.id, planId, applicationId: app.id,
-          status: sub.status, payerEmail: app.email,
+          preapprovalId: sub.id, planId: null, applicationId: app.id, status: sub.status,
+          payerEmail: app.email,
+          amount: amount.toFixed(2), externalReference: `solicitud:${app.id}`,
         },
       });
     });

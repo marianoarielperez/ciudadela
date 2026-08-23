@@ -59,6 +59,17 @@ export function makeFeeValueReader(db: Db) {
   };
 }
 
+/** Los dos montos en la forma que muestra el wizard ASOCIATE.
+ *
+ *  Pura y separada del reader porque el wizard es la única pantalla PÚBLICA que
+ *  muestra el valor de la cuota: si no hay valor vigente devuelve `null` y el
+ *  paso 2 lo dice, en vez de mostrar un cero o un monto inventado. */
+export function feeAmountsForWizard(
+  v: { activeAmount: number; sharedAmount: number } | null,
+): { active: number; shared: number } | null {
+  return v ? { active: v.activeAmount, shared: v.sharedAmount } : null;
+}
+
 export const feeValueReader = makeFeeValueReader(prisma);
 
 /** Mensaje único para los caminos que necesitan un valor y no lo hay. */
