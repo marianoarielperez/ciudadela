@@ -44,7 +44,19 @@ export type DivergentSubscription = {
 };
 
 export type BatchFailure = { preapprovalId: string; memberId: number; code: string };
-export type BatchRun = { updated: number; failed: BatchFailure[]; remaining: number };
+export type BatchRun = {
+  updated: number;
+  /** Los preapprovals que ESTA tanda empujó de verdad, en orden.
+   *
+   *  El conteo solo no alcanza para pintar la pantalla: una fila que dejó de
+   *  ser divergente entre el render y la corrida no se toca, y sin la lista la
+   *  pantalla la pintaría "Aplicado" sin que nadie la haya tocado — una
+   *  afirmación falsa sobre la plata de un vecino. Con la lista, "Aplicado" es
+   *  sólo lo que volvió acá. */
+  applied: string[];
+  failed: BatchFailure[];
+  remaining: number;
+};
 
 /** Las suscripciones que HOY cobran un monto distinto al vigente para la
  *  categoría de su socio.
@@ -138,7 +150,7 @@ export function makeFeeValueBatch(deps: Deps) {
     async run(input: { only?: string[] }): Promise<BatchRun> {
       const value = await deps.feeValues.current(now());
       // Sin valor vigente no hay nada que empujar, y menos que inventar.
-      if (!value) return { updated: 0, failed: [], remaining: 0 };
+      if (!value) return { updated: 0, applied: [], failed: [], remaining: 0 };
 
       let pending = await listDivergent(deps.db, value);
       if (input.only) {
@@ -147,7 +159,7 @@ export function makeFeeValueBatch(deps: Deps) {
       }
       const batch = pending.slice(0, BATCH_SIZE);
 
-      let updated = 0;
+      const applied: string[] = [];
       const failed: BatchFailure[] = [];
       for (const p of batch) {
         // El orden ES la recuperabilidad: primero Mercado Pago, después el
@@ -187,9 +199,9 @@ export function makeFeeValueBatch(deps: Deps) {
           failed.push({ preapprovalId: p.preapprovalId, memberId: p.memberId, code: MIRROR_FAILED });
           continue;
         }
-        updated++;
+        applied.push(p.preapprovalId);
       }
-      return { updated, failed, remaining: pending.length - batch.length };
+      return { updated: applied.length, applied, failed, remaining: pending.length - batch.length };
     },
   };
 }

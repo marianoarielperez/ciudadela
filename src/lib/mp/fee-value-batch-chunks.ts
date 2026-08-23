@@ -19,8 +19,17 @@ export const BATCH_SIZE = 25;
  *  El `remaining > 0` solo NO alcanza: si el token de MP está vencido fallan
  *  las 25, la cola de divergentes no se achica y `remaining` se queda clavado
  *  en el mismo número. Un bucle que mire sólo eso llama a Mercado Pago para
- *  siempre. Una tanda que no actualizó NINGUNA no va a mejorar en la siguiente:
- *  se corta y la pantalla lo dice. */
-export function shouldContinue(r: { updated: number; remaining: number }): boolean {
-  return r.remaining > 0 && r.updated > 0;
+ *  siempre. Una tanda que FALLÓ entera no va a mejorar en la siguiente: se
+ *  corta y la pantalla lo dice.
+ *
+ *  Pero "no actualizó ninguna" no alcanza como motivo: una tanda que no tenía
+ *  NADA que hacer —otro superadmin corrió el lote entre medio, no hay mutex—
+ *  vuelve con `updated: 0` y `failed: []`, y cortar ahí haría que la pantalla
+ *  dijera "la última tanda no pudo actualizar ninguna", que es mentira: no
+ *  falló nada. Por eso se corta sólo cuando hubo fallos de verdad. */
+export function shouldContinue(r: { updated: number; failed: number; remaining: number }): boolean {
+  if (r.remaining <= 0) return false;
+  if (r.updated > 0) return true;
+  // Ninguna actualizada: sólo es motivo de corte si el motivo fueron fallos.
+  return r.failed === 0;
 }

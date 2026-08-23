@@ -26,7 +26,7 @@
 // formateados del servidor, y el monto que se empuja lo recalcula la action.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
@@ -59,11 +59,23 @@ type RowMark =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "done" }
+  /** La miramos y no hubo nada que empujar: ya estaba en el valor vigente
+   *  cuando le tocó el turno. NO es "Aplicado": nadie la tocó. */
+  | { kind: "skipped" }
   | { kind: "failed"; code: string };
 
 type Failure = { preapprovalId: string; memberId: number; fullName: string; code: string };
 
 type Phase = "idle" | "confirm" | "running" | "finished";
+
+/** La action TIRÓ en vez de devolver un rechazo: 504 de Nginx (25 updates en
+ *  serie contra MP a ~3 s pasan el `proxy_read_timeout` por defecto), la red
+ *  que se corta, Prisma que explota antes del `return`. Lo que el operador
+ *  necesita saber es que el servidor siguió trabajando: lo aplicado quedó
+ *  aplicado y la lista al recargar dice qué falta. */
+const CONNECTION_LOST =
+  "Se cortó la conexión con el servidor mientras se aplicaba una tanda. " +
+  "Lo que ya se aplicó quedó aplicado: recargá la pantalla para ver cuáles faltan.";
 
 export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[]; superadmin: boolean }) {
   const router = useRouter();
@@ -77,8 +89,30 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
   const [untried, setUntried] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  /** El bloque de confirmación recibe el foco al montarse: el botón que lo
+   *  abrió se desmonta, el foco caería a <body> y un lector de pantalla no
+   *  anunciaría la advertencia de consecuencia — justo la que dice a cuántos
+   *  vecinos se les va a cambiar el débito. Mismo patrón que `ConfirmForm` de
+   *  la vinculación. */
+  const confirmRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (phase === "confirm") confirmRef.current?.focus();
+  }, [phase]);
+
   const n = divergent.length;
   const withdrawn = divergent.filter((d) => d.withdrawn).length;
+
+  /** Vuelve a dejar la pantalla lista para otra corrida. Limpia las marcas: si
+   *  quedaran, una fila que ya se aplicó seguiría en verde sobre una lista que
+   *  el servidor volvió a calcular. */
+  function reset() {
+    setPhase("idle");
+    setError(null);
+    setUpdated(0);
+    setFailures([]);
+    setUntried(0);
+    setMarks({});
+  }
 
   async function run(ids: string[]) {
     setPhase("running");
@@ -100,7 +134,26 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
       for (const id of chunk) next[id] = { kind: "running" };
       setMarks({ ...next });
 
-      const r = await applyFeeValueBatchAction({ only: chunk });
+      let r: Awaited<ReturnType<typeof applyFeeValueBatchAction>>;
+      try {
+        r = await applyFeeValueBatchAction({ only: chunk });
+      } catch {
+        // La action TIRÓ (no devolvió un rechazo): 504 de Nginx, la red que se
+        // cae, Prisma que explota antes del return. Sin este catch la promesa
+        // quedaba rechazada, `phase` clavado en "running" y el operador
+        // mirando "Aplicando… No cierres la pestaña" para siempre, en la
+        // operación más peligrosa del sistema. El detalle NO se muestra: puede
+        // ser un HTML de error del proxy y no le dice nada al operador.
+        for (const id of chunk) next[id] = { kind: "idle" };
+        setMarks({ ...next });
+        setError(CONNECTION_LOST);
+        // Sólo las que NI SE MANDARON. De la tanda en vuelo no sabemos qué
+        // alcanzó a aplicarse allá, y por eso el mensaje manda a recargar.
+        setUntried(Math.max(0, ids.length - i - chunk.length));
+        setPhase("finished");
+        router.refresh();
+        return;
+      }
       if ("error" in r) {
         // Sesión caída o pedido rechazado: la tanda no se ejecutó. Las filas
         // vuelven a "sin tocar" para no dejar 25 renglones diciendo "aplicando".
@@ -109,19 +162,27 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
         setError(r.error);
         setUntried(ids.length - i);
         setPhase("finished");
+        // Las tandas anteriores YA se aplicaron: sin esto siguen listadas como
+        // divergentes hasta que el operador recargue a mano.
+        router.refresh();
         return;
       }
 
       const byId = new Map(r.failed.map((f) => [f.preapprovalId, f]));
+      // "Aplicado" es sólo lo que el servidor dice que empujó. Inferirlo de "no
+      // falló" pintaba de verde filas que nadie tocó — y con el valor vigente
+      // desaparecido entre el render y el clic, las 25 de la primera tanda sin
+      // una sola llamada a Mercado Pago.
+      const pushed = new Set(r.applied);
       for (const id of chunk) {
         const f = byId.get(id);
         if (f) {
           next[id] = { kind: "failed", code: f.code };
           fails.push(f);
-        } else {
-          // Sin fallo, la suscripción quedó en el valor vigente: o la empujamos
-          // recién, o alguien la había dejado al día entre medio.
+        } else if (pushed.has(id)) {
           next[id] = { kind: "done" };
+        } else {
+          next[id] = { kind: "skipped" };
         }
       }
       ok += r.updated;
@@ -132,9 +193,10 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
 
       const left = ids.length - (i + chunk.length);
       // La guarda que evita seguir llamando a Mercado Pago cuando nada avanza
-      // (token vencido, API caída): la tanda que no actualizó ninguna no va a
-      // mejorar en la siguiente.
-      if (left > 0 && !shouldContinue({ updated: r.updated, remaining: left })) {
+      // (token vencido, API caída): la tanda que falló entera no va a mejorar
+      // en la siguiente. Una tanda sin nada que hacer NO corta: otro superadmin
+      // pudo correr el lote entre medio y ahí no falló nada.
+      if (left > 0 && !shouldContinue({ updated: r.updated, failed: r.failed.length, remaining: left })) {
         setUntried(left);
         break;
       }
@@ -219,9 +281,11 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
 
       {superadmin && phase === "confirm" && (
         <div
+          ref={confirmRef}
+          tabIndex={-1}
           role="group"
           aria-labelledby="lote-confirm-title"
-          className="space-y-3 rounded-md border border-primary bg-primary/5 p-3"
+          className="space-y-3 rounded-md border border-primary bg-primary/5 p-3 outline-hidden focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <p id="lote-confirm-title" className="font-medium">
             {`Se le va a cambiar el monto del débito a ${n} ${n === 1 ? "vecino" : "vecinos"} en Mercado Pago. Es lo que van a ver en su resumen de tarjeta desde el próximo cobro.`}
@@ -238,7 +302,7 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
             <Button type="button" onClick={() => run(divergent.map((d) => d.preapprovalId))}>
               Confirmar y aplicar
             </Button>
-            <Button type="button" variant="outline" onClick={() => setPhase("idle")}>
+            <Button type="button" variant="outline" onClick={reset}>
               Cancelar
             </Button>
           </div>
@@ -259,17 +323,39 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
         </div>
       )}
 
-      {error && <FormMessage kind="error" box>{error}</FormMessage>}
+      {error && (
+        <div className="space-y-3">
+          <FormMessage kind="error" box>{error}</FormMessage>
+          {/* Sin fallos que reintentar el bloque de abajo no se dibuja, y sin
+              este botón la pantalla queda en "finished" sin forma de arrancar
+              otra corrida: el de "Aplicar valor vigente" sólo existe en idle. */}
+          {phase === "finished" && failures.length === 0 && untried === 0 && (
+            <Button type="button" variant="outline" onClick={reset}>
+              Volver a empezar
+            </Button>
+          )}
+        </div>
+      )}
 
       {phase === "finished" && !error && failures.length === 0 && untried === 0 && (
         <FormMessage kind="success" box>
-          {`Actualizadas ${updated} ${updated === 1 ? "suscripción" : "suscripciones"}. Desde el próximo cobro se debita el valor vigente.`}
+          {/* Cero actualizadas y cero fallos no es un lote vacío de trabajo: es
+              que ya estaban al día cuando les tocó el turno (otro superadmin
+              corrió el lote entre medio). Decir "Actualizadas 0" ahí suena a
+              que algo salió mal. */}
+          {updated === 0
+            ? "No hubo nada que aplicar: esas suscripciones ya cobraban el valor vigente."
+            : `Actualizadas ${updated} ${updated === 1 ? "suscripción" : "suscripciones"}. Desde el próximo cobro se debita el valor vigente.`}
         </FormMessage>
       )}
 
+      {/* El contenedor NO anuncia (`role="none"`): adentro van una lista y dos
+          botones, y un `role="alert"` alrededor de controles hace que el lector
+          reanuncie todo al interactuar. El anuncio queda en el resumen de una
+          sola línea, con `role="status"`. */}
       {phase === "finished" && (failures.length > 0 || untried > 0) && (
-        <FormMessage kind="warning" box as="div">
-          <p>
+        <FormMessage kind="warning" box as="div" role="none">
+          <p role="status">
             {`Actualizadas ${updated}. `}
             {failures.length > 0 && `Quedaron ${failures.length} sin actualizar. `}
             {/* Con `error` la corrida se cortó por la sesión o por un pedido
@@ -308,7 +394,7 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
               </Button>
             )}
             {untried > 0 && (
-              <Button type="button" variant="outline" onClick={() => setPhase("idle")}>
+              <Button type="button" variant="outline" onClick={reset}>
                 Volver a empezar
               </Button>
             )}
@@ -324,6 +410,9 @@ export function ApplyBatch({ divergent, superadmin }: { divergent: DivergentRow[
 function RowStatus({ mark }: { mark: RowMark }) {
   if (mark.kind === "running") return <span className="text-muted-foreground">Aplicando…</span>;
   if (mark.kind === "done") return <span className="text-success">Aplicado</span>;
+  // Se la miró y ya cobraba el valor vigente: decir "Aplicado" ahí sería
+  // afirmar una llamada a Mercado Pago que no ocurrió.
+  if (mark.kind === "skipped") return <span className="text-muted-foreground">Sin cambios</span>;
   if (mark.kind === "failed") return <span className="font-mono text-xs text-destructive">{mark.code}</span>;
   return <span className="text-muted-foreground">—</span>;
 }

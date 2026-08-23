@@ -44,6 +44,12 @@ const schema = z.object({
 export type BatchResult =
   | {
       updated: number;
+      /** Cuáles se empujaron de verdad en ESTA tanda. La pantalla marca
+       *  "Aplicado" sólo lo que vuelve acá: inferirlo de "no falló" pintaba de
+       *  verde filas que nadie tocó (una que dejó de ser divergente entre el
+       *  render y el clic, o las 25 de la primera tanda si el valor vigente
+       *  desapareció en el medio). */
+      applied: string[];
       /** El nombre se muestra en pantalla (que es panel de admin) y NO va al
        *  asiento. Sale de la base, nunca del cliente. */
       failed: Array<{ preapprovalId: string; memberId: number; fullName: string; code: string }>;
@@ -59,6 +65,12 @@ export async function applyFeeValueBatchAction(raw: unknown): Promise<BatchResul
 
   const r = await feeValueBatch.run({ only: parsed.data.only });
 
+  // Nada que asentar cuando no pasó nada: un `only` que ya no diverge, o una
+  // corrida sin valor vigente, no son decisiones — y el asiento se exporta y se
+  // lee fuera del panel. `updated + failed` es exactamente el largo de la tanda
+  // procesada, así que con los dos en cero no se tocó ninguna suscripción.
+  const touched = r.updated > 0 || r.failed.length > 0;
+
   // Los nombres de las que fallaron, para que el operador sepa a QUIÉN
   // reintentarle. Se consultan sólo si hubo fallos.
   const names =
@@ -73,26 +85,29 @@ export async function applyFeeValueBatchAction(raw: unknown): Promise<BatchResul
           ).map((m) => [m.id, m.fullName] as const),
         );
 
-  // Sólo X-Real-IP, como en el resto del panel: las demás cabeceras de IP las
-  // puede fijar el cliente si le pega directo al origen.
-  const ip = (await headers()).get("x-real-ip") ?? "unknown";
-  await audit({
-    userId: actor.actorId,
-    action: FEE_VALUE_APPLIED,
-    entity: "mp_subscription",
-    // Ids, montos y códigos. NUNCA nombres, emails ni el `reason` de la
-    // suscripción (docs/08, Ley 25.326): el asiento se exporta y se lee fuera
-    // del panel.
-    detail: {
-      updated: r.updated,
-      failed: r.failed.map((f) => ({ preapprovalId: f.preapprovalId, memberId: f.memberId, code: f.code })),
-      remaining: r.remaining,
-    },
-    ip,
-  });
+  if (touched) {
+    // Sólo X-Real-IP, como en el resto del panel: las demás cabeceras de IP las
+    // puede fijar el cliente si le pega directo al origen.
+    const ip = (await headers()).get("x-real-ip") ?? "unknown";
+    await audit({
+      userId: actor.actorId,
+      action: FEE_VALUE_APPLIED,
+      entity: "mp_subscription",
+      // Ids, montos y códigos. NUNCA nombres, emails ni el `reason` de la
+      // suscripción (docs/08, Ley 25.326): el asiento se exporta y se lee fuera
+      // del panel.
+      detail: {
+        updated: r.updated,
+        failed: r.failed.map((f) => ({ preapprovalId: f.preapprovalId, memberId: f.memberId, code: f.code })),
+        remaining: r.remaining,
+      },
+      ip,
+    });
+  }
 
   return {
     updated: r.updated,
+    applied: r.applied,
     remaining: r.remaining,
     failed: r.failed.map((f) => ({ ...f, fullName: names.get(f.memberId) ?? `Socio ${f.memberId}` })),
   };

@@ -129,6 +129,10 @@ describe("feeValueBatch.run", () => {
       data: { amount: "7000.00", lastSyncAt: new Date("2026-10-01T12:00:00Z") },
     });
     expect(r).toMatchObject({ updated: 25, failed: [], remaining: 5 });
+    // La lista de aplicadas es lo que la pantalla usa para pintar "Aplicado":
+    // el conteo solo la haría pintar filas que nadie tocó.
+    expect(r.applied).toHaveLength(25);
+    expect(r.applied[0]).toBe("pre-1");
   });
 
   it("primero Mercado Pago y después el espejo local, suscripción por suscripción", async () => {
@@ -152,6 +156,8 @@ describe("feeValueBatch.run", () => {
     });
     const r = await d.batch.run({});
     expect(r.updated).toBe(1);
+    // La que falló NO figura entre las aplicadas.
+    expect(r.applied).toEqual(["pre-2"]);
     expect(r.failed).toEqual([{ preapprovalId: "pre-1", memberId: 1, code: expect.stringContaining("403") }]);
     // La que falló NO se escribe en el espejo local: si se escribiera, dejaría
     // de figurar divergente y nadie la volvería a intentar.
@@ -188,6 +194,7 @@ describe("feeValueBatch.run", () => {
     const r = await d.batch.run({});
     expect(d.gateway.updatePreapprovalAmount).toHaveBeenCalledTimes(1);
     expect(r.updated).toBe(0);
+    expect(r.applied).toEqual([]);
     expect(r.failed).toEqual([{ preapprovalId: "pre-1", memberId: 1, code: MIRROR_FAILED }]);
   });
 
@@ -203,7 +210,8 @@ describe("feeValueBatch.run", () => {
     // El cliente manda la lista que el operador vio; entre medio pudo cambiar.
     // La divergencia se recalcula SIEMPRE en el servidor.
     const d = deps([sub(1, "7000.00")]);
-    expect(await d.batch.run({ only: ["pre-1"] })).toEqual({ updated: 0, failed: [], remaining: 0 });
+    // Ni aplicada ni fallada: la pantalla la marca "Sin cambios", no "Aplicado".
+    expect(await d.batch.run({ only: ["pre-1"] })).toEqual({ updated: 0, applied: [], failed: [], remaining: 0 });
     expect(d.gateway.updatePreapprovalAmount).not.toHaveBeenCalled();
   });
 
@@ -219,7 +227,7 @@ describe("feeValueBatch.run", () => {
     const d = deps([sub(1, "6000.00")]);
     const feeValues = { current: vi.fn(async () => null) };
     const b = makeFeeValueBatch({ db: d.db as never, gateway: d.gateway as never, feeValues: feeValues as never });
-    expect(await b.run({})).toEqual({ updated: 0, failed: [], remaining: 0 });
+    expect(await b.run({})).toEqual({ updated: 0, applied: [], failed: [], remaining: 0 });
     expect(d.gateway.updatePreapprovalAmount).not.toHaveBeenCalled();
   });
 });
@@ -229,12 +237,21 @@ describe("shouldContinue", () => {
   // siempre: con el token vencido TODAS fallan, la lista de divergentes no se
   // achica nunca y `remaining` se queda clavado en el mismo número.
   it("sigue mientras haya cola y la tanda haya avanzado", () => {
-    expect(shouldContinue({ updated: 25, remaining: 10 })).toBe(true);
+    expect(shouldContinue({ updated: 25, failed: 0, remaining: 10 })).toBe(true);
   });
   it("corta cuando no queda cola", () => {
-    expect(shouldContinue({ updated: 25, remaining: 0 })).toBe(false);
+    expect(shouldContinue({ updated: 25, failed: 0, remaining: 0 })).toBe(false);
   });
-  it("corta cuando la tanda no actualizó ninguna, aunque quede cola", () => {
-    expect(shouldContinue({ updated: 0, remaining: 10 })).toBe(false);
+  it("corta cuando la tanda FALLÓ entera, aunque quede cola", () => {
+    expect(shouldContinue({ updated: 0, failed: 25, remaining: 10 })).toBe(false);
+  });
+  it("una tanda sin nada que hacer NO corta la corrida", () => {
+    // No hay mutex: otro superadmin pudo correr el lote entre medio y dejar
+    // tandas enteras al día. Cortar ahí hacía que la pantalla dijera "la última
+    // tanda no pudo actualizar ninguna", que es mentira: no falló nada.
+    expect(shouldContinue({ updated: 0, failed: 0, remaining: 10 })).toBe(true);
+  });
+  it("sigue si la tanda avanzó aunque algunas hayan fallado", () => {
+    expect(shouldContinue({ updated: 20, failed: 5, remaining: 10 })).toBe(true);
   });
 });
