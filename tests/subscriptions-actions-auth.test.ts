@@ -1,0 +1,88 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// `linkSubscriptionAction` es un endpoint despachado por el id del encabezado
+// `Next-Action`, así que el proxy de /admin no la cubre y se autoriza sola. Y
+// no alcanza con "es admin": lo que se autoriza acá es un cobro que después se
+// repite solo sobre la tarjeta de un vecino, así que es superadmin.
+const requireSuperadmin = vi.hoisted(() => vi.fn());
+const link = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/auth/require-admin", () => ({
+  requireSuperadmin,
+  SUPERADMIN_BLOCKED_MESSAGE: "Solo el superadmin puede cambiar la configuración.",
+}));
+vi.mock("@/lib/mp/link-subscription", () => ({ subscriptionLinker: { link } }));
+vi.mock("@/lib/treasury/receipt-email", () => ({ sendReceiptEmail: vi.fn(async () => ({ sent: true })) }));
+vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
+vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+
+import { redirect } from "next/navigation";
+import { audit } from "@/lib/audit";
+import { SUPERADMIN_BLOCKED_MESSAGE } from "@/lib/auth/require-admin";
+import { linkSubscriptionAction } from "@/app/admin/tesoreria/suscripciones/[preapprovalId]/vincular/actions";
+
+const PRE = "a69d4b7c9e65472bb46c0489897880af";
+
+function form(over: Partial<Record<"preapprovalId" | "memberId" | "confirmToken", string>> = {}) {
+  const fd = new FormData();
+  const values = { preapprovalId: PRE, memberId: "14", confirmToken: `${PRE}|14`, ...over };
+  for (const [k, v] of Object.entries(values)) fd.append(k, v);
+  return fd;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  requireSuperadmin.mockResolvedValue({ ok: true, actorId: 3 });
+  link.mockResolvedValue({ ok: true, applied: [{ paymentId: 8, receiptId: 9 }], unapplied: 0, amount: 6000, status: "authorized" });
+});
+
+describe("linkSubscriptionAction", () => {
+  it("un admin común no vincula: ni link, ni asiento, ni redirect", async () => {
+    requireSuperadmin.mockResolvedValue({ ok: false, reason: "not_admin", error: SUPERADMIN_BLOCKED_MESSAGE });
+    expect(await linkSubscriptionAction({}, form())).toEqual({ error: SUPERADMIN_BLOCKED_MESSAGE });
+    expect(link).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("superadmin con un token que no coincide: se vuelve a pedir, sin vincular", async () => {
+    const result = await linkSubscriptionAction({}, form({ confirmToken: `${PRE}|306` }));
+    expect(result.error).toBe(
+      "Lo que confirmaste no coincide con lo que se iba a vincular. Volvé a leer y confirmá de nuevo.",
+    );
+    expect(link).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("superadmin: vincula, asienta sin datos personales y redirige con el resultado", async () => {
+    await linkSubscriptionAction({}, form());
+    expect(link).toHaveBeenCalledWith({ preapprovalId: PRE, memberId: 14, actorId: 3 });
+    const entry = vi.mocked(audit).mock.calls[0][0];
+    expect(entry).toMatchObject({
+      userId: 3, action: "subscription_linked", entity: "mp_subscription", entityId: PRE,
+      detail: { preapprovalId: PRE, memberId: 14, amount: 6000, status: "authorized", applied: [8], unapplied: 0, emailed: 1 },
+    });
+    // Ni el nombre del socio, ni el email del pagador, ni la descripción de la
+    // suscripción: el asiento lleva ids, montos y estados (Ley 25.326).
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toMatch(/@/);
+    expect(serialized.toLowerCase()).not.toContain("perez");
+    expect(redirect).toHaveBeenCalledWith(
+      `/admin/tesoreria/suscripciones?vinculada=${PRE}&aplicados=1&pendientes=0`,
+    );
+  });
+
+  it("un rechazo del vinculador se muestra tal cual y no se asienta nada", async () => {
+    link.mockResolvedValue({ ok: false, error: "Esa suscripción ya está vinculada." });
+    expect(await linkSubscriptionAction({}, form())).toEqual({ error: "Esa suscripción ya está vinculada." });
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("un id de suscripción con forma rara no llega a Mercado Pago", async () => {
+    const result = await linkSubscriptionAction({}, form({ preapprovalId: "../../etc/passwd", confirmToken: "../../etc/passwd|14" }));
+    expect(result.error).toBe("Suscripción inválida.");
+    expect(link).not.toHaveBeenCalled();
+  });
+});
