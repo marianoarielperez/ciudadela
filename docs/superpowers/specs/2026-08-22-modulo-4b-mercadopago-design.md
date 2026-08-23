@@ -58,8 +58,18 @@ quedan registrados por el sistema como pago + cuota + recibo, sin intervención 
 
 **No entra** (queda en 4C o M5): email `payment_rejected`, cron de devengo, aviso de mora
 del día 30, digest, `/admin/salud`, reintento de `Notification.failed`, padrón electoral,
-cancelar el débito al dar de baja (M5), desvincular una suscripción desde el panel, importar
+cancelar el débito al dar de baja, desvincular una suscripción desde el panel, importar
 cobros históricos de una suscripción al vincularla.
+
+> **Enmiendas al cerrar la fase (23/08/2026).**
+> 1. **Entró de más**: los **ingresos no societarios** (alquiler del salón, eventos,
+>    rifas) — decisión del cliente del 23/08. Tabla `other_incomes`, tercera salida en
+>    la bandeja, opción en Efectivo y pestaña propia con ejercicio anual. No emite
+>    recibo y no toca el núcleo de plata. Ver `docs/01`, `docs/04` y `docs/05` §5.
+> 2. **Cancelar el débito al dar de baja** decía "(M5)" y `docs/07` no se lo asignaba a
+>    ninguna fase. **Queda asignado a la fase 4C**: las bajas del panel —cesantía por
+>    mora y baja por acta— ya existen y ya corren, así que el agujero está abierto hoy
+>    y no depende del panel del socio. `docs/06` §8 y `docs/07` quedaron alineados.
 
 ## 2. Modelo de datos (migración nº 8, `add_module_4b_mercadopago`)
 

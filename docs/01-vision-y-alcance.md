@@ -53,6 +53,12 @@ reciben una invitación "creá tu contraseña" cuando se les registra un email.
   (van por sede / asamblea; el sistema sí las modela y puede registrarlas desde el panel).
 - **No** implementa contabilidad general ni facturación electrónica ARCA
   (pendiente externo: el contador de la vecinal confirmará si el recibo interno alcanza).
+  Desde la fase 4B **sí registra los ingresos que no son de ningún socio** —alquiler
+  del salón, eventos, rifas, donaciones—, porque descartarlos de la bandeja de
+  Mercado Pago mentía sobre plata que había entrado. Es un **registro**: fecha,
+  monto, concepto libre, medio y quién lo cargó, agrupado por ejercicio anual. **No
+  hay plan de cuentas, ni asientos, ni egresos, y no emite recibo** (la serie
+  numerada es de las cuotas sociales). Sigue sin ser contabilidad.
 - **No** maneja votación electrónica ni el proceso electoral (solo exporta el padrón
   electoral para la Junta Electoral).
 - **No** almacena datos de tarjetas: todo pago pasa por Mercado Pago.

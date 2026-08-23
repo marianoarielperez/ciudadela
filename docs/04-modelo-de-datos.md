@@ -150,6 +150,15 @@ Identidad única de la persona a través de todos los libros.
   viejas** primero.
 - El socio se borra con `SetNull` y el pago sobrevive: un cobro asentado no
   desaparece porque la ficha salga del libro.
+- **`mp_payment_id` es la barrera de idempotencia del dinero de Mercado Pago**
+  (fase 4B). Es UNIQUE, y `registerPayment` consulta por él **antes** de escribir y
+  además atrapa el `P2002` de la unique: un mismo cobro llegando dos veces —por los
+  dos tópicos del webhook, por un reintento de MP o por la conciliación— devuelve
+  `already_processed` y no crea un segundo pago. **Anular el recibo NO lo borra**: si
+  se borrara, un reenvío de MP volvería a cobrar. Corolario conocido: un cobro cuyo
+  recibo se anuló **no se puede reimputar** (deuda anotada en `docs/07`).
+- `registerPayment` es el **único** camino que escribe pago + cuotas + recibo.
+  Efectivo, webhook, bandeja y vinculación lo llaman; no hay una segunda escritura.
 
 ### Recibo — `Receipt` / tabla `receipts`
 - `numero` correlativo único global formato `AAAA-NNNNN` (una sola serie para todos
@@ -185,13 +194,23 @@ Identidad única de la persona a través de todos los libros.
   concurrentes contra MariaDB real.
 
 ### SuscripcionMP — `MpSubscription` / tabla `mp_subscriptions` (Módulo 3)
-- `preapprovalId` (UNIQUE), `planId` (el id del plan de MP, no un enum: los planes
-  son **dos** y viven en `Configuration`, ver `docs/06`), `status` (el string crudo
-  de MP: `pending` | `authorized` | `paused` | `cancelled`…), `payerEmail`,
-  `linkedManually` (bool, para las preexistentes que vincula el Módulo 4),
-  `lastSyncAt`
+- `preapprovalId` (UNIQUE), `planId`, `status` (el string crudo de MP:
+  `pending` | `authorized` | `paused` | `cancelled`…; string y no enum porque el
+  catálogo es de MP y puede crecer sin avisarnos), `payerEmail`, `linkedManually`
+  (bool, para las preexistentes que vincula la fase 4B), `amount`,
+  `externalReference`, `lastSyncAt`
 - `applicationId` (nullable): la solicitud que la originó. `memberId` (nullable) se
   completa **al asentar el alta**: antes del acta no hay socio al que colgarla.
+- **`planId` y `payerEmail` son nullable desde la fase 4B.** Una suscripción creada
+  a mano desde el panel de MP no tiene plan de referencia, y `GET /preapproval/{id}`
+  puede no traer el email. `""` como centinela queda **prohibido**: un id de plan
+  vacío no es un plan.
+- `amount` es el **último monto conocido o empujado**: contra él compara la
+  conciliación (divergencia con `fee_values`) y sobre él escribe el lote REG-34.
+- **`memberId` es índice, NO unique**, y el vinculador rechaza por `preapprovalId`
+  repetido pero no por socio repetido: un socio puede terminar con **dos
+  preapprovals vivos** (dos débitos por mes). La ficha lo avisa; nada lo impide.
+  Deuda anotada en `docs/07`.
 
 ### ValorCuota — `FeeValue` / tabla `fee_values` (historial, REG-34)
 - `monto_activo`, `monto_compartido` (adherente y colaborador comparten monto,
@@ -210,24 +229,72 @@ Identidad única de la persona a través de todos los libros.
 - **El plan NO gobierna a las suscripciones ya creadas** (corregido el
   21/08/2026): se crean sin plan asociado y **copian** el monto (`docs/06` §2), así
   que cambiar el plan no mueve ni un débito vivo. Aplicar el valor nuevo a las
-  suscripciones vigentes es una acción explícita del panel, alcance de la fase 4B
-  (REG-34). El sync diario avisa de divergencias, no las corrige.
+  suscripciones vigentes es una acción explícita del panel
+  (`/admin/tesoreria/valores`, superadmin), implementada en la fase 4B (REG-34). El
+  cron diario **avisa** de divergencias, no las corrige.
 - Valor sembrado: activo $6.000 / compartido $3.000, vigente desde el 01/08/2026
   (y no el 01/09, o el sistema se quedaba sin monto con que cobrar hoy).
 
 ### PagoSinConciliar — `MpUnmatchedPayment` / tabla `mp_unmatched_payments` (fase 4B)
 - `mp_payment_id` (UNIQUE), `monto`, `fecha`, `payer_email`, `external_reference`,
-  `descripcion`, `estado` (`open` | `matched` | `dismissed`), `pago_id` (FK real a
-  Pago, `SetNull`), `resuelto_por`, `resuelto_at`
-- Bandeja de los pagos de MP que no se pudieron atribuir a un socio. La tabla ya
-  existe (migración 7); la pantalla que la consume llega con la fase 4B.
-- `payer_email` es dato personal: se muestra sólo al admin.
+  `descripcion`, **`preapproval_id`**, **`motivo`**,
+  `estado` (`open` | `matched` | `dismissed` | **`other_income`**), `pago_id` (FK
+  real a Pago, `SetNull`), `resuelto_por`, `resuelto_at`
+- Bandeja de los pagos de MP que no se pudieron atribuir a un socio: es el único
+  lugar donde esa plata existe, así que el encabezado de Pendientes muestra la
+  **suma en pesos**, no el recuento.
+- **`preapproval_id`** (fase 4B): con qué suscripción llegó el cobro, si se supo.
+  Lo completa también un **segundo** evento del mismo cobro que traiga más
+  información que el primero, y es lo que hace que vincular una suscripción **cierre
+  sola** las filas que la estaban esperando.
+- **`motivo`** (`reason`): por qué no se pudo aplicar. Los valores son cerrados en
+  código (`UnmatchedReason`, `src/lib/mp/unmatched.ts`) y no un enum de SQL, para no
+  migrar por cada motivo nuevo: `no_reference`, `no_subscription`,
+  `application_missing`, `duplicate_entry`, `withdrawn_no_pending`,
+  `treasury_rejected`.
+- **La fila se cierra sola al aplicar y se reabre al anular**: `registerPayment`
+  marca `matched` dentro de la misma transacción del cobro, y anular el recibo o
+  recibir un reembolso la devuelve a `open` con `pago_id`, `resuelto_por` y
+  `resuelto_at` en NULL.
+- `payer_email` y `descripcion` son datos personales: viven en la fila (la lee sólo
+  el admin) y **nunca** van a la auditoría ni al log.
 
-### CorridaDeCron — `CronRun` / tabla `cron_runs` (fase 4C)
+### CorridaDeCron — `CronRun` / tabla `cron_runs`
 - `job`, `iniciada_at`, `terminada_at`, `ok`, `summary` (JSON con contadores),
   `error`
-- Última corrida de cada cron, para `/admin/salud`. La tabla ya existe; la escriben
-  los crons de la fase 4C.
+- Última corrida de cada cron. **La estrenó la conciliación diaria de la fase 4B**
+  (`job = "reconcile"`): escribe la fila al empezar y la cierra con el resumen
+  completo, aunque haya errores. Los crons de notificación de la 4C se suman ahí.
+- Hasta que exista `/admin/salud` (fase 4C), **esta tabla y el asiento
+  `reconcile_cron` son el único lugar donde mirar** si la red de contención anduvo.
+  El endpoint devuelve **207** cuando corrió entera con errores, y la causa de cada
+  uno viaja en `summary.errors[]`.
+
+### IngresoNoSocietario — `OtherIncome` / tabla `other_incomes` (fase 4B)
+- `monto`, `recibido_at` (la fecha **real** del ingreso, nunca el reloj de la
+  corrida), `concepto` (texto libre), `medio` (`cash` | `mp`), `mp_payment_id`
+  (UNIQUE, nullable: sólo cuando viene de la bandeja), `nota`, `registrado_por`,
+  `anulado_at` / `motivo_anulacion` / `anulado_por`
+- Plata que entró y es de la asociación pero **no es de ningún socio**: alquiler del
+  salón, eventos, rifas, donaciones (decisión del cliente, 23/08/2026). Antes, la
+  bandeja sólo ofrecía "vincular a socio" o "descartar", y descartar **mentía** sobre
+  plata que había entrado.
+- **No emite recibo.** La serie numerada es de las cuotas sociales y está armada
+  alrededor del socio (REG-33); meterle un tercero era tocar el núcleo de plata. Por
+  eso esta tabla **no tiene ninguna FK** a `payments`, `fees` ni `receipts`: es
+  independiente por diseño.
+- Es un **registro**, no contabilidad general: no hay plan de cuentas, ni asientos,
+  ni egresos (`docs/01`).
+- `concepto` y `nota` pueden nombrar a un tercero (el inquilino del salón): viven en
+  la fila y **no van a la auditoría, ni a los logs, ni a la URL** — el filtro por
+  texto se sacó a propósito, porque ponía el concepto en los access logs de Nginx y
+  Cloudflare (Ley 25.326).
+- Se anula, no se borra; los anulados se listan tachados y quedan **fuera** de todas
+  las sumas. Un ingreso de MP mal escrito se puede **editar** en concepto y nota
+  (nunca en monto, fecha ni `mp_payment_id`), con asiento.
+- La pestaña "Otros ingresos" agrupa por **ejercicio anual** (1 de enero a 31 de
+  diciembre, que es el de la asociación), con la cinta de 12 meses y el desglose
+  efectivo/MP.
 
 ### ProcesoReempadronamiento
 - `id`, `libro_id`, `estado` (`preparacion` | `primera_instancia` | `segunda_instancia`

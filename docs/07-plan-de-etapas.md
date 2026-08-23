@@ -101,10 +101,22 @@ plata de verdad.
       lo que quedó probado es la rama del monto *compartido* y el plan
       `mp_plan_shared_id`. La rama del socio activo —el otro plan, el otro monto—
       todavía no la caminó nadie.
-- [ ] Que el cuerpo del webhook de MP traiga efectivamente `body.id`. Si no lo
-      trajera, el fallback que arma la clave de idempotencia pasa a ser crítico.
+- [x] **Que el cuerpo del webhook de MP traiga efectivamente `body.id`.**
+      **Contestado el 23/08/2026: sí lo trae**, y es un id de **evento**, distinto
+      del id del pago (ejemplos reales `136606437047`, `136766467098`). La
+      idempotencia de la ruta usa ése; el fallback quedó para las notificaciones
+      que se disparan a mano.
 - [ ] Rechazo y expiración cancelando una suscripción **real** en MP.
 - [ ] Recategorización contra una suscripción real (hoy solo cubierta con dobles).
+
+**Deuda conocida del Módulo 3, encontrada por un usuario real (23/08/2026).** En el
+wizard ASOCIATE, un error de validación del servidor se muestra **pegado al botón de
+enviar y sin indicar el campo**: Mariano leyó "Ingresá tu teléfono" al lado del
+captcha y concluyó que fallaba Turnstile. La causa es `parseForm`
+(`src/lib/forms.ts`): se queda con el `message` del primer issue de zod y **descarta
+`path`**, que es donde viene el nombre del campo. **Afecta a todos los formularios
+públicos**, no sólo al wizard. Arreglo propuesto: devolver también el campo y que el
+formulario lleve el foco ahí. No es 4B; queda por decidir en qué fase entra.
 
 Ideas incorporadas durante el desarrollo del Módulo 1: bloqueo del botón ASOCIATE
 según el estado de la persona (socio vigente → avisarle que ya está asociado; ex
@@ -115,6 +127,8 @@ continuar). Resumen mensual de socios aceptados para confeccionar el acta.
 
 Se ejecuta en **tres fases**, cada una con su branch, su merge a `main` con los
 tests en verde y su despliegue antes de empezar la siguiente.
+
+**Estado al 23/08/2026: 4A y 4B cerradas; la prioridad es la 4C.**
 
 ### Fase 4A — Cuenta corriente y efectivo — **CERRADA** (22/08/2026)
 
@@ -135,46 +149,138 @@ está bloqueado.
 
 Despliegue: `docs/10` §4, bloque "Específico de la fase 4A".
 
-### Fase 4B — Mercado Pago (pendiente)
+### Fase 4B — Mercado Pago — **CERRADA** (23/08/2026)
 
-Gateway ampliado, webhook que **aplica** el pago (cuota + recibo + email), links de
-Checkout Pro, bandeja sin conciliar, vinculación de suscripciones preexistentes,
-conciliación diaria de respaldo, lote REG-34 ("aplicar el valor vigente a las
-suscripciones") y **eliminación de la caché de planes**: recién ahí el wizard deja
-de leer el monto de Mercado Pago y pasa a leer `fee_values`.
+Migraciones `20260822230724_add_module_4b_mercadopago` y
+`20260823132536_add_other_income`. Gateway de **once** métodos; **el webhook
+aplica** el pago (cuota + recibo + email) en vez de sólo trazarlo; links de
+Checkout Pro desde la ficha (admin, con envío por email) y desde `/mi/cuenta`
+(socio); bandeja **Sin conciliar** con tres salidas; **ingresos no societarios**
+con su pestaña y su ejercicio anual; vinculación de suscripciones preexistentes en
+dos pasos; conciliación diaria `/api/cron/reconcile` con **dos fuentes**;
+lote REG-34 en `/admin/tesoreria/valores`; suscripción viva en la ficha del socio;
+y la **eliminación de la caché de planes**: el wizard dejó de leer el monto de
+Mercado Pago y los ids de plan pasaron a ser **opcionales**.
 
-CA (sandbox local, notificaciones disparadas a mano): un
-`subscription_authorized_payment` de prueba genera pago + cuota del período +
-recibo por email; un pago `pago:{id}:2` aplica dos cuotas; un pago sin referencia
-cae en la bandeja y se vincula desde ahí; matar el webhook y correr la conciliación
-registra el pago igual; el lote actualiza el monto de una suscripción de prueba y
-reporta la que falla.
+Suite al cerrar: **130 archivos / 1786 tests**, más 3 de integración contra MariaDB
+real que se saltean sin `DATABASE_URL_TEST`.
 
-### Fase 4C — Notificaciones y salud (pendiente)
+**Estado de los CA** (spec 4B §18). Se verificaron en **tres pasadas contra Mercado Pago real** —cuenta de prueba aislada más túnel—, no con notificaciones simuladas:
+a partir de la segunda pasada MP entregó todo por su cuenta (ver `docs/11` Parte J).
+
+| # | Criterio | Estado |
+|---|---|---|
+| 1 | Débito de suscripción vinculada → pago + cuota del período + recibo por email; el mismo cobro llegando como `payment` no duplica | ✅ verificado contra MP real (recibo `2026-00004`, concepto congelado, PDF y email; las **dos** capas de idempotencia probadas) |
+| 2 | Débito de suscripción **no** vinculada → bandeja `no_subscription`; vincular aplica esa fila sola | ✅ verificado |
+| 3 | `solicitud:{id}` inexistente + suscripción vinculada → se aplica como débito (el caso del 306) | ⚠️ cubierto por tests y verificado en la revisión de código; no se reprodujo a mano |
+| 4 | `pago:{id}:2` aplica las dos cuotas más viejas; con monto distinto, `link_amount_mismatch` | ✅ el pago aplicó abril y mayo (recibo `2026-00005`); el mismatch, por tests |
+| 5 | Pago sin referencia → bandeja → se resuelve desde ahí; anular el recibo reabre la fila | ⚠️ el pago sin referencia cayó en la bandeja y se resolvió como **ingreso no societario**; resolverlo **hacia un socio** se ejercitó con una fila `no_subscription`, y la **reapertura al anular** está fijada por tests (el `updateMany` dentro de la transacción, probado por orden) |
+| 6 | `refunded` → anula el recibo y devuelve las cuotas a pendientes | ✅ reembolso real desde el panel del vendedor: anuló solo, la serie no se reutilizó, y el segundo aviso dio `refund_ignored` |
+| 7 | Débito de un cesante se imputa a su deuda congelada; sin pendientes, a la bandeja | ⚠️ cubierto por tests. No se reprodujo a mano a propósito: exigía autorizar otra suscripción entera para un solo mensaje de pantalla |
+| 8 | Débito de un adherente crea y paga la cuota del período | ⚠️ cubierto por tests; el socio de la batería es activo |
+| 9 | Con el webhook apagado, `reconcile` registra igual y deja `CronRun` | ⚠️ parcial: corrigió el espejo de una suscripción y escribió `cron_runs` con el resumen completo y HTTP 207. El **paso 1** no se puede validar en sandbox (ver abajo) |
+| 10 | El lote actualiza el monto en MP y reporta las que fallan, con reintento | ✅ verificado contra la API: 6000 → 7000 en MP y en el espejo local |
+| 11 | ASOCIATE paso 2 cobra el valor de `fee_values` sin ids de plan cargados | ✅ alta web completa: `Payment.entry`, recibo `2026-00007`, **cero cuotas devengadas** (REG-14) |
+| 12 | Checkout Pro desde `/mi/cuenta` y link del admin por email | ✅ pago real de $12.000; la tarjeta "tu pago quedó registrado" salió en el primer render |
+| 13 | **En producción**: las dos suscripciones vinculadas y el débito del 10/09 registrado | ⏳ **pendiente** — es lo que se hace al desplegar (ver "Lanzamiento") |
+
+**Lo que NO se pudo probar y hay que confirmar en producción:**
+`GET /v1/payments/search` **no indexa en sandbox** (devuelve `total=0` aun sin
+filtros, con el pago existiendo y aprobado; sólo lo encuentra `?id=`). Por eso el
+**paso 1 de la conciliación** —recuperar pagos de Checkout Pro perdidos— se apoya
+en los tests unitarios y en que la consulta responde 200 bien formada. El paso 2,
+que es el que cubre los **débitos**, sí quedó verificado.
+
+**Seis bugs que sólo aparecieron probando contra MP real** (todos arreglados; el
+detalle técnico está en `docs/11` Parte J y en el ledger):
+
+1. `searchAuthorizedPayments` mandaba `limit=100` a un endpoint que lo rechaza:
+   devolvía **400 siempre, en silencio**, así que el paso 2 de la conciliación
+   **nunca había funcionado** y la vinculación decía "Cobros previos: no
+   disponible". Era justo la red que tiene que atajar el débito del 10/09.
+2. El gateway no leía el preapproval que **viene en el propio pago**
+   (`point_of_interaction.transaction_data.subscription_id`), así que la
+   notificación `payment` de un débito nunca resolvía sola.
+3. Las notificaciones que no atendemos (IPN legacy y `merchant_order`) respondían
+   4xx y MP las reintentaba; ahora responden 200 "recibido, no procesado".
+4. Un id sembrado que MP no puede parsear hacía que el cron devolviera 207 en toda
+   corrida local: un cron que siempre falla un poco es un cron cuyos errores nadie
+   mira.
+5. El concepto congelado del recibo no llegaba a la cuenta corriente: la fila
+   tachada de un pago revertido decía "Cuota social" a secas, que es justo donde
+   saber qué se había cobrado importa más.
+6. La fila tachada de un pago anulado escondía qué había cubierto.
+
+Y un **hallazgo de producto** que no es un bug: cuando la tarjeta rechaza, MP
+**retiene al vecino en su checkout** ofreciéndole otro medio; no lo devuelve con
+`collection_status=rejected`. La pantalla de rechazo es defensiva, no el camino
+habitual.
+
+**Deuda que la fase deja anotada** (decidir en 4C o M5):
+
+- **Cuatro definiciones de "suscripción viva"** conviven en el repo
+  (`["authorized","paused"]`, `["authorized","pending","paused"]`,
+  `["authorized","pending"]` y `"authorized"` a secas). Consecuencia real: una
+  `paused` no dispara el aviso "el socio ya tiene otra viva" del vinculador, pero
+  la ficha sí la muestra como débito automático.
+- **`Member.autoDebit` no se puede corregir desde ninguna pantalla.** Tiene tres
+  escrituras y ninguna lo baja. La ficha avisa de la discrepancia; el dato sigue mal
+  en la pestaña Ficha, en la columna del padrón y en la exportación.
+- **`mp_subscriptions.member_id` es índice, no unique**: un socio puede terminar con
+  dos preapprovals vivos (dos débitos por mes). La ficha avisa; nada lo impide.
+- **Reimputar un cobro cuyo recibo se anuló** no tiene camino: el pago anulado
+  conserva su `mpPaymentId`, que es la barrera contra reenvíos de MP. Arreglarlo de
+  fondo exige decidir qué pasa con esa barrera.
+- **La ventana del link de pago con precio viejo** (hasta 72 h) no la muestra
+  ninguna pantalla: sólo queda el asiento `link_amount_mismatch`. Verla es 4C.
+- **La navegación por ejercicio** existe en Otros ingresos pero no en Deudores,
+  Efectivo ni Recibos (decisión del cliente: no ensanchar la fase antes del 10/09).
+
+### Fase 4C — Notificaciones y salud (pendiente) — **prioridad actual**
 
 Crons de devengo (día 1), aviso de mora (día 30) y resumen diario a la Comisión;
 `payment_rejected` que avisa al socio; `Notification.failed` + reintento desde el
 panel; `/admin/salud`; export del padrón electoral (REG-31); crontab completo
 documentado.
 
+**Se le suman, de la fase 4B (23/08/2026):**
+
+- **Cancelar la suscripción de MP al dar de baja a un socio.** Reasignado acá desde
+  el "Módulo 5" que decían `docs/06` §8 y la spec de 4B, donde no tenía fase
+  asignada en este documento. El motivo: las bajas del **panel** —cesantía por mora
+  en lote (4A) y baja por acta (M1)— **ya existen y ya corren**, así que hoy se
+  puede dejar de ser socio y seguir siendo debitado todos los meses. Es el mismo
+  agujero que el M5 iba a tapar, pero está abierto ahora y no depende del panel del
+  socio. Alcance: llamar a `cancelPreapproval` al confirmar la baja, best-effort
+  con **fallo visible en pantalla** (mismo criterio que el rechazo de solicitudes:
+  la baja no se deshace por un error de red, pero tampoco se calla).
+- **Ver la ventana del link de pago con precio viejo**: hoy un pago por link
+  posterior a una actualización REG-34 se imputa igual y sólo deja el asiento
+  `link_amount_mismatch`, que ninguna pantalla muestra.
+- **`/admin/salud` tiene que mostrar `cron_runs`**, que ya escribe la conciliación
+  diaria de la 4B: hoy el resultado sólo se lee por SQL.
+
 CA: correr el devengo dos veces el mismo día crea una sola cuota por socio; el
 aviso de mora en un día que no es 30 no envía nada y el 30 envía una sola vez a
 cada deudor; el resumen sin novedades no se envía; un email con el transporte roto
 queda `failed` y "Reintentar" lo saca; `/admin/salud` muestra las cinco corridas y
-el backup.
+el backup; **declarar la baja de un socio con débito cancela su suscripción en MP y,
+si MP falla, la pantalla lo dice**.
 
 **Alcance agregado el 21/08/2026 — propagación del valor de cuota (REG-34).**
+**Cerrado en la fase 4B**: el lote vive en `/admin/tesoreria/valores` y quedó
+verificado contra la API real. Lo que sigue es el enunciado original, que explica
+por qué hizo falta.
 Las suscripciones se crean **sin plan asociado** en MP y **copian** el monto
 (`docs/06` §2, corregido tras medirlo contra la API real), así que **cambiar el
 monto en el panel de Mercado Pago ya no se propaga solo a las suscripciones
 vivas**. El M4 tiene que incluir una acción "aplicar el nuevo valor de cuota a
 las suscripciones vigentes": recorre las suscripciones activas de la categoría y
-les empuja el monto por API (`updatePreapprovalAmount`, ya implementado y
-probado), con progreso, reintento de las que fallen, asiento de auditoría y
-pantalla de "quedaron N sin actualizar". Es un lote de decenas o pocos cientos de
-llamadas, hasta 4 veces al año: no es un problema de escala. Queda atado al acta,
-que es más fiel al estatuto que el sync. **Hasta que exista, un cambio de cuota
-en MP sólo afecta a las altas nuevas.**
+les empuja el monto por API (`updatePreapprovalAmount`), con progreso, reintento de
+las que fallen, asiento de auditoría y pantalla de "quedaron N sin actualizar". Es
+un lote de decenas o pocos cientos de llamadas, hasta 4 veces al año: no es un
+problema de escala. Queda atado al acta, que es más fiel al estatuto que el sync.
+**Mientras no se corra, un valor de cuota nuevo sólo afecta a las altas nuevas.**
 
 Ideas incorporadas durante el desarrollo del Módulo 1: recibo automático por email
 para los débitos acreditados; registro de pago en efectivo con envío automático
@@ -190,41 +296,33 @@ Cosas que se encontraron construyendo el M3, que **no** entraban en su alcance y
 que el M4 tiene que levantar. No son ideas sueltas: cada una tapa un agujero
 concreto.
 
-Reparto tras cerrar la fase 4A: **1, 3, 4, 5 y 6 van a la 4B** (todo lo que toca
-Mercado Pago); **2 va a la 4C** (junto con el resto de las notificaciones); **7
-está cerrado**; **8 queda abierto** y sin fase asignada. La 4A no levantó ninguno:
-su alcance era la cuenta corriente local.
+Reparto tras cerrar la fase 4B (23/08/2026): **1, 3, 4 y 5 están cerrados**;
+**2 sigue en la 4C** (junto con el resto de las notificaciones); **6 quedó sin
+efecto**; **7 está cerrado**; **8 queda abierto** y sin fase asignada.
 
-1. **La conciliación debe barrer preapprovals sin fila local.** Si
-   `createPreapproval` sale bien contra MP y la escritura local falla, queda un
-   débito autorizado del que SIGeV no sabe nada. El único recupero posible es
-   buscar en `GET /preapproval/search` los que tengan `external_reference =
-   solicitud:{id}` y no tengan `MpSubscription`. Hoy el único rastro es un
-   `console.error` en el log de PM2, que rota.
+1. ~~**La conciliación debe barrer preapprovals sin fila local.**~~ **Cerrado en la
+   fase 4B**: es el paso 4 de `/api/cron/reconcile` (`orphanPreapprovals`,
+   `orphanCreated`, `orphanCancelled`).
 2. **`payment_rejected` todavía no le avisa a nadie.** El webhook registra el
    rechazo del débito y la solicitud sigue esperando, pero el socio no recibe el
    "no pudimos debitar tu cuota; MP va a reintentar" que promete `docs/06` §4.
    Confirmar que entra en el alcance del M4 junto con el seguimiento de mora.
-3. **Un débito recurrente futuro puede revivir una solicitud vencida.** Comparte
-   el mismo `external_reference` que el pago de ingreso, y `getPayment` no expone
-   ni la fecha ni el tipo de pago, así que hoy no hay forma de distinguirlos.
-   Requiere dos fallos coincidentes (webhook del ingreso perdido + cancelación
-   fallida), pero se cierra solo agregando esos campos al gateway.
-4. **Dos pagos de ingreso reales distintos sobre la misma solicitud** caen hoy en
-   `already_processed`, indistinguibles de un reintento. Recuperable por el
-   payload crudo; candidato a un `result` propio (`duplicate_entry_payment`).
-5. **Cambiar los ids de plan no invalida la caché de montos** (hasta 24 h de
-   retraso). Acotado el 21/08/2026: **ningún** camino que escriba un monto en MP usa
-   ya la caché —ni `startPaymentAction` ni la recategorización: las dos leen el plan
-   fresco y abortan si falla—, así que lo que queda es un monto viejo **en pantalla**
-   (paso 2 del wizard), no un débito por el importe equivocado. **Sigue abierto
-   después de la 4A**: la fase creó la tabla de valores de cuota y la hizo la única
-   fuente de montos de tesorería, pero **no tocó `startPaymentAction`**, que sigue
-   leyendo el plan de MP. La caché y esta lectura se van juntas en la 4B.
+3. ~~**Un débito recurrente futuro puede revivir una solicitud vencida.**~~
+   **Cerrado en la fase 4B**: el gateway expone `dateApproved` y el pago de un
+   débito trae su propio preapproval, y la regla de resolución consulta
+   `mpPaymentIdEntry` **antes** que la de suscripción, así que la plata de ingreso
+   no puede re-imputarse como cuota social.
+4. ~~**Dos pagos de ingreso reales distintos sobre la misma solicitud.**~~
+   **Cerrado en la fase 4B**: el segundo cae en la bandeja con el motivo
+   `duplicate_entry` ("segundo cobro de una solicitud sin acta todavía"), visible y
+   resoluble a mano.
+5. ~~**Cambiar los ids de plan no invalida la caché de montos.**~~ **Cerrado en la
+   fase 4B**: la caché (`src/lib/mp/plans.ts`) **se borró** y el wizard lee
+   `fee_values`. Los ids de plan quedaron opcionales.
 6. **Una solicitud re-suscripta a mano** (tras revivir por pago tardío) queda
    describiendo la suscripción nueva con la copia "verificá antes de gestionar".
-   No es alcanzable hoy porque la re-suscripción es manual; si el M4 automatiza el
-   alta de suscripciones, hay que revisar ese texto.
+   Sigue sin ser alcanzable: la 4B **no** automatizó el alta de suscripciones. Si
+   alguna fase lo hace, hay que revisar ese texto.
 7. ~~**Recategorizar con `planIdForCategory = null`** re-abre en silencio la
    divergencia entre el plan local y el de MP.~~ **Cerrado el 21/08/2026**: la
    recategorización resuelve el plan nuevo ANTES de tocar MP y, si no está
@@ -274,15 +372,16 @@ débito funcionó. Desde entonces el dominio corre en producción contra Mercado
 Checklist que queda: **borrar `EMAIL_ALLOWLIST` del `.env` del VPS** (mientras esté
 definida, los avisos a los socios NO salen) → SPF/DKIM/DMARC del dominio (ya
 autenticado en Brevo) → carga de fichas completa (160 vigentes: 36 activos +
-124 adherentes) → suscripciones preexistentes vinculadas (fase 4B) → acta marco de
+124 adherentes) → **suscripciones preexistentes vinculadas** (la pantalla existe
+desde la fase 4B; se hace al desplegarla, ver `docs/10` §4.4) → acta marco de
 admisión digital dictada (REG-12) → **textos legales aprobados por la CD y cargados
-en `/admin/configuracion`** → **crontab instalado en el VPS** (`docs/11`, Parte H:
-hoy `/api/cron/applications`; la fase 4C suma devengo, mora, resumen y
-conciliación) → activar `asociate_activo` → convocar re-empadronamiento dentro de
-los 90 días.
+en `/admin/configuracion`** → **crontab con sus dos líneas** (`docs/11`, Parte H:
+`/api/cron/applications` 08:05 y `/api/cron/reconcile` 03:00; la fase 4C suma
+devengo, mora y resumen) → activar `asociate_activo` → convocar re-empadronamiento
+dentro de los 90 días.
 
-Nota sobre los ids de plan: desde la fase 4A **el monto ya no sale de ahí** —la
-tabla de valores de cuota es la única fuente—, pero los ids **siguen siendo
-obligatorios** porque `startPaymentAction` del wizard todavía lee el monto del plan
-con `getPlan()`. Sin ellos, el paso 2 de ASOCIATE no avanza. Eso se migra en la
-fase 4B; recién entonces los ids pasan a ser opcionales.
+Nota sobre los ids de plan: desde la fase 4A el monto no sale de ahí —`fee_values`
+es la única fuente— y desde la fase 4B **los ids son opcionales**: el alta web, la
+recategorización y el lote REG-34 leen la tabla local. Lo único que dejan de andar
+sin ellos es el aviso de divergencia plan-vs-valor de la conciliación diaria, que
+simplemente no corre.
