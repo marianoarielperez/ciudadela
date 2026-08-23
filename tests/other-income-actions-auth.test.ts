@@ -7,6 +7,7 @@ import type { AdminActor } from "@/lib/auth/require-admin";
 // a un tercero, el inquilino del salón (Ley 25.326).
 const mocks = vi.hoisted(() => ({
   record: vi.fn(),
+  edit: vi.fn(),
   voidIncome: vi.fn(),
   audit: vi.fn(async () => {}),
   // Tipado explícito: sin él TS infiere la forma del rechazo y el
@@ -22,7 +23,7 @@ vi.mock("@/lib/treasury/other-income", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/treasury/other-income")>();
   return {
     ...real,
-    otherIncome: { record: mocks.record, void: mocks.voidIncome },
+    otherIncome: { record: mocks.record, edit: mocks.edit, void: mocks.voidIncome },
   };
 });
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
@@ -32,6 +33,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { redirect } from "next/navigation";
 import {
+  editOtherIncomeAction,
   registerOtherIncomeAction,
   voidOtherIncomeAction,
 } from "@/app/admin/tesoreria/otros-ingresos/actions";
@@ -136,6 +138,86 @@ describe("registerOtherIncomeAction", () => {
     mocks.record.mockRejectedValueOnce(Object.assign(new Error("Alquiler del salón a Ramírez"), { code: "P2010" }));
     const r = await registerOtherIncomeAction({}, incomeForm());
     expect(r.error).toBe("No se pudo registrar el ingreso. Reintentá en un momento.");
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+});
+
+describe("editOtherIncomeAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.edit.mockResolvedValue({ kind: "edited" });
+  });
+
+  function editForm(over: Record<string, string> = {}): FormData {
+    const form = new FormData();
+    const values = {
+      incomeId: "12",
+      concept: "Alquiler del salón a Ramírez",
+      note: "Pagó en mano",
+      ...over,
+    };
+    for (const [k, v] of Object.entries(values)) if (v !== "") form.append(k, v);
+    return form;
+  }
+
+  it("sin admin no corrige, no audita y no redirige", async () => {
+    const r = await editOtherIncomeAction({}, editForm());
+    expect(r.error).toBe("Necesitás permisos de administrador.");
+    expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("con admin: corrige SÓLO el texto y audita sin el concepto ni la nota", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    await editOtherIncomeAction({}, editForm());
+    expect(mocks.edit).toHaveBeenCalledWith({
+      id: 12,
+      concept: "Alquiler del salón a Ramírez",
+      note: "Pagó en mano",
+    });
+    // El monto y la fecha no son argumentos de esta acción: no hay forma de
+    // que una corrección de texto mueva plata.
+    expect(Object.keys(mocks.edit.mock.calls[0][0] as object).sort()).toEqual([
+      "concept", "id", "note",
+    ]);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 9, action: "other_income_edit", entity: "other_income", entityId: 12,
+      detail: { fields: ["concept", "note"] },
+    }));
+    const asiento = JSON.stringify(auditedEntry());
+    expect(asiento).not.toContain("Ramírez");
+    expect(asiento).not.toContain("mano");
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?corregido=1");
+  });
+
+  it("un concepto de dos letras se rechaza y no llega al módulo", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const r = await editOtherIncomeAction({}, editForm({ concept: "no" }));
+    expect(r.error).toBe("Ingresá a qué corresponde el ingreso.");
+    expect(mocks.edit).not.toHaveBeenCalled();
+  });
+
+  it("un ingreso anulado no se corrige, y se distingue del inexistente", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.edit.mockResolvedValueOnce({ kind: "voided" });
+    expect((await editOtherIncomeAction({}, editForm())).error).toBe(
+      "Ese ingreso está anulado: un asiento anulado no se corrige.",
+    );
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.edit.mockResolvedValueOnce({ kind: "not_found" });
+    expect((await editOtherIncomeAction({}, editForm())).error).toBe("Ese ingreso ya no existe.");
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("un error nuestro no se muestra crudo: el message de Prisma trae el texto libre", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.edit.mockRejectedValueOnce(
+      Object.assign(new Error("Alquiler del salón a Ramírez"), { code: "P2010" }),
+    );
+    const r = await editOtherIncomeAction({}, editForm());
+    expect(r.error).toBe("No se pudo guardar la corrección. Reintentá en un momento.");
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 });

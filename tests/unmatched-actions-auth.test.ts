@@ -470,7 +470,49 @@ describe("registerAsOtherIncomeAction", () => {
       .mockResolvedValueOnce({ voidedAt: new Date("2026-08-20T12:00:00Z") }); // y está anulado
     const r = await registerAsOtherIncomeAction({}, incomeForm());
     expect(r.error).toContain("ese registro se anuló");
+    // El mensaje ya no es un callejón: nombra la corrección y lleva al ingreso.
+    // Viaja el id, nunca el concepto (Ley 25.326).
+    expect(r.error).toContain("editalo en Otros ingresos");
+    expect(r.income).toEqual({ id: 42 });
     expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("si ese cobro ya tiene un ingreso VIGENTE, cierra la fila y no falla", async () => {
+    // El segundo operador sobre la misma fila, o el mismo cobro llegando por dos
+    // caminos: es el MISMO hecho, no una falla. El ingreso anterior sigue
+    // vigente, así que la fila queda apuntando a un registro que vale.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.incomeCreate.mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "P2002" }));
+    mocks.incomeFindUnique
+      .mockResolvedValueOnce({ id: 42 })        // el ingreso que ganó la unique
+      .mockResolvedValueOnce({ voidedAt: null }); // y sigue vigente
+    // Sin `error`: la action redirige, y una action que redirige no devuelve nada.
+    expect(await registerAsOtherIncomeAction({}, incomeForm())).toBeUndefined();
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: 5, status: "open" },
+      data: expect.objectContaining({ status: "other_income", resolvedById: 9 }),
+    });
+    // El asiento apunta al ingreso que YA existía, no a uno nuevo.
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      detail: { action: "other_income", incomeId: 42, amount: 12000 },
+    }));
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?registrado=1");
+  });
+
+  it("si otro operador resuelve la fila en el medio, el ingreso recién escrito se revierte", async () => {
+    // La carrera: entre el findUnique y el updateMany, el otro operador cerró la
+    // fila. El `status: "open"` del where deja el count en 0 y la excepción hace
+    // rollback del ingreso — si no, quedaría plata registrada dos veces y una
+    // fila resuelta de otra manera.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+    const r = await registerAsOtherIncomeAction({}, incomeForm());
+    expect(r.error).toBe("Esta fila ya fue resuelta.");
+    expect(mocks.incomeCreate).toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
   });

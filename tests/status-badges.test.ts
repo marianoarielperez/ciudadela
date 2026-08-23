@@ -90,8 +90,14 @@ describe("unmatchedStatusBadgeVariant", () => {
   // "descartado" y "es plata nuestra pero de nadie" son afirmaciones opuestas.
   it("le da una variante propia a cada estado", () => {
     const variants = (["open", "matched", "dismissed", "other_income"] as const).map(unmatchedStatusBadgeVariant);
-    expect(variants).toEqual(["default", "outline", "secondary", "ghost"]);
+    expect(variants).toEqual(["default", "outline", "secondary", "success"]);
     expect(new Set(variants).size).toBe(4);
+  });
+  it("ninguna de las cuatro es 'ghost': esa variante no se ve como pastilla", () => {
+    // `ghost` no tiene fondo y su borde es transparente: en la columna Estado
+    // se leía como texto suelto de 12 px al lado de una pastilla de verdad.
+    const variants = (["open", "matched", "dismissed", "other_income"] as const).map(unmatchedStatusBadgeVariant);
+    expect(variants).not.toContain("ghost");
   });
   it("cada estado tiene su etiqueta en es-AR y ninguna se repite", () => {
     const labels = Object.values(UNMATCHED_STATUS_LABELS);

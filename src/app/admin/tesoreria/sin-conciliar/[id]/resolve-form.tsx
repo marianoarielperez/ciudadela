@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatARS } from "@/lib/format";
+import { INCOME_CONCEPT_HINT, INCOME_CONCEPT_SUGGESTIONS } from "@/lib/treasury/labels";
 import { dismissUnmatchedAction, registerAsOtherIncomeAction, resolveUnmatchedAction } from "./actions";
 
 const digits = (v: string) => v.replace(/\D/g, "");
@@ -181,16 +182,14 @@ export function OtherIncomeForm({ rowId, amount, paidAt }: {
             placeholder="Alquiler del salón, rifa, evento…"
             list="income-concept-opciones"
           />
-          {/* Sugerencias, no categorías: el campo sigue siendo texto libre (el
-              cliente descartó una lista fija). Sirven para que dos alquileres
-              cargados con seis meses de diferencia se escriban igual y el filtro
-              de la lista los encuentre juntos. */}
+          {/* Las sugerencias salen de la MISMA constante que el formulario de
+              Otros ingresos: dos listas escritas a mano divergen. Y llevan la
+              misma aclaración, porque un desplegable sin explicación es lo más
+              fácil de leer como lista cerrada — y esto es texto libre. */}
           <datalist id="income-concept-opciones">
-            <option value="Alquiler del salón" />
-            <option value="Evento" />
-            <option value="Rifa" />
-            <option value="Donación" />
+            {INCOME_CONCEPT_SUGGESTIONS.map((o) => <option key={o} value={o} />)}
           </datalist>
+          <p className="text-xs text-muted-foreground">{INCOME_CONCEPT_HINT}</p>
         </div>
         <div className="space-y-1">
           <Label htmlFor="income-note">Nota (opcional)</Label>
@@ -204,7 +203,25 @@ export function OtherIncomeForm({ rowId, amount, paidAt }: {
             No emite recibo: la serie numerada es de las cuotas sociales.
           </span>
         </p>
-        {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
+        {/* El rechazo por un registro anterior anulado ya no es un callejón:
+            lleva al ingreso del que habla, donde el concepto se corrige sin
+            anular. Viaja el id, nunca el texto que escribió el operador. */}
+        {state.error && (
+          <FormMessage kind="error">
+            {state.error}
+            {state.income && (
+              <>
+                {" "}
+                <Link
+                  className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  href={`/admin/tesoreria/otros-ingresos?ingreso=${state.income.id}`}
+                >
+                  Ver ese ingreso en Otros ingresos
+                </Link>
+              </>
+            )}
+          </FormMessage>
+        )}
         <Button type="submit" variant="secondary" disabled={pending}>
           {pending ? "Registrando…" : "Registrar el ingreso"}
         </Button>

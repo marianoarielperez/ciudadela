@@ -98,7 +98,7 @@ export default async function UnmatchedDetailPage(props: {
   const income = row.status === "other_income"
     ? await prisma.otherIncome.findUnique({
         where: { mpPaymentId: row.mpPaymentId },
-        select: { concept: true, note: true, voidedAt: true },
+        select: { id: true, concept: true, note: true, voidedAt: true },
       })
     : null;
 
@@ -217,7 +217,7 @@ export default async function UnmatchedDetailPage(props: {
                     <p>
                       <Link
                         className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                        href="/admin/tesoreria/otros-ingresos"
+                        href={`/admin/tesoreria/otros-ingresos?ingreso=${income.id}`}
                       >
                         Ver en Otros ingresos
                       </Link>

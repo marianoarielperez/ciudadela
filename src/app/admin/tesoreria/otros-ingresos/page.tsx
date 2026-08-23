@@ -20,8 +20,6 @@ import { PaginationNav } from "@/components/admin/pagination-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { pageHref, paginate, parsePage } from "@/lib/admin/pagination";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -34,7 +32,7 @@ import {
   type IncomeFilters,
 } from "@/lib/treasury/other-income";
 import { civilDayOf } from "@/lib/treasury/periods";
-import { RegisterIncomeForm, VoidIncomeForm } from "./income-forms";
+import { EditIncomeForm, IncomeFilterForm, RegisterIncomeForm, VoidIncomeForm } from "./income-forms";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Otros ingresos — SIGeV" };
@@ -59,7 +57,16 @@ export default async function OtrosIngresosPage(props: {
   const desde = one(sp.desde)?.trim() ?? "";
   const hasta = one(sp.hasta)?.trim() ?? "";
   const medio = one(sp.medio);
-  const q = one(sp.q)?.trim() ?? "";
+  // Un solo ingreso, por id: es el destino del enlace que sale de la bandeja
+  // sin conciliar. NO hay filtro por texto del concepto — un `?q=Ramírez` queda
+  // escrito en el access log de Nginx y de Cloudflare, que no están alcanzados
+  // por la retención que sí cubre `audit_logs` (Ley 25.326, docs/08).
+  const ingresoId = Number(one(sp.ingreso));
+  const single = Number.isInteger(ingresoId) && ingresoId > 0 ? ingresoId : null;
+  // Hay un aviso arriba de la pantalla: el formulario no se roba el foco.
+  const hasNotice =
+    one(sp.registrado) === "1" || one(sp.corregido) === "1" || one(sp.anulado) === "1"
+    || single !== null;
 
   // Una fecha ilegible en la URL no se ignora en silencio: sin el aviso, el
   // operador leería un total que no es el del rango que creyó pedir.
@@ -73,7 +80,7 @@ export default async function OtrosIngresosPage(props: {
   if (fromDate) filters.from = fromDate;
   if (toDate) filters.to = toDate;
   if (medio === "cash" || medio === "mp") filters.method = medio;
-  if (q) filters.q = q;
+  if (single) filters.id = single;
   const filtered = Object.keys(filters).length > 0;
 
   const page = parsePage(sp);
@@ -83,7 +90,7 @@ export default async function OtrosIngresosPage(props: {
     desde: fromDate ? desde : undefined,
     hasta: toDate ? hasta : undefined,
     medio: filters.method,
-    q: filters.q,
+    ingreso: single ? String(single) : undefined,
   };
 
   // El desglose por medio es lo único que la tabla no puede resumir, y es
@@ -98,6 +105,18 @@ export default async function OtrosIngresosPage(props: {
       {one(sp.registrado) === "1" && (
         <FormMessage kind="success" box>Ingreso registrado.</FormMessage>
       )}
+      {one(sp.corregido) === "1" && (
+        <FormMessage kind="success" box>Se guardó el texto del ingreso.</FormMessage>
+      )}
+      {/* El operador llegó por el enlace de la bandeja sin conciliar: le
+          mostramos ese ingreso solo, y le decimos qué puede hacer con él. */}
+      {single && total > 0 && (
+        <FormMessage kind="neutral" box>
+          Estás viendo un solo ingreso. Si el concepto o la nota están mal, corregilos con
+          <strong> Editar</strong>, al lado del concepto: no hace falta anularlo.{" "}
+          <Link className="underline" href={BASE}>Ver todos</Link>.
+        </FormMessage>
+      )}
       {one(sp.anulado) === "1" && (
         <FormMessage kind="success" box>
           Ingreso anulado. Si venía de Mercado Pago, su fila volvió a Pendientes en{" "}
@@ -109,7 +128,10 @@ export default async function OtrosIngresosPage(props: {
         <Card>
           <CardHeader><CardTitle>Registrar un ingreso</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <RegisterIncomeForm today={isoCivilDay()} />
+            {/* El foco no salta al monto cuando la pantalla llegó con un
+                aviso arriba: es el destino del redirect de la bandeja, y mover
+                el foco se lleva por delante el mensaje sin leer. */}
+            <RegisterIncomeForm today={isoCivilDay()} autoFocus={!hasNotice} />
             <p className="text-sm text-muted-foreground">
               Esto es para la plata que <strong>no</strong> es de un socio. Si un socio paga su
               cuota o hace un aporte,{" "}
@@ -126,7 +148,11 @@ export default async function OtrosIngresosPage(props: {
 
         <Card>
           <CardHeader>
-            <CardTitle>{filtered ? "Total del período filtrado" : "Total registrado"}</CardTitle>
+            {/* Con `?ingreso=` en la URL la tarjeta muestra UN ingreso: llamar
+                a eso "el total del período" sería falso. */}
+            <CardTitle>
+              {single ? "Este ingreso" : filtered ? "Total del período filtrado" : "Total registrado"}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {/* El titular es la plata, con la misma tipografía monoespaciada con
@@ -171,37 +197,13 @@ export default async function OtrosIngresosPage(props: {
         </Card>
       </div>
 
-      <form className="flex flex-wrap items-end gap-2" method="get">
-        <div className="space-y-1">
-          <Label htmlFor="desde">Desde</Label>
-          <Input id="desde" name="desde" type="date" defaultValue={desde} className="w-40" />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="hasta">Hasta</Label>
-          <Input id="hasta" name="hasta" type="date" defaultValue={hasta} className="w-40" />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="medio">Medio</Label>
-          <select
-            id="medio"
-            name="medio"
-            defaultValue={filters.method ?? ""}
-            className="h-9 rounded-md border bg-transparent px-2 text-sm shadow-xs"
-          >
-            <option value="">Todos</option>
-            <option value="cash">{INCOME_METHOD_LABELS.cash}</option>
-            <option value="mp">{INCOME_METHOD_LABELS.mp}</option>
-          </select>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="q">Concepto</Label>
-          <Input id="q" name="q" defaultValue={q} className="w-52" placeholder="Alquiler, rifa…" />
-        </div>
-        <Button type="submit" variant="secondary">Filtrar</Button>
-        {filtered && (
-          <Button asChild variant="ghost"><Link href={BASE}>Limpiar</Link></Button>
-        )}
-      </form>
+      <IncomeFilterForm
+        desde={desde}
+        hasta={hasta}
+        medio={filters.method ?? ""}
+        filtered={filtered}
+        base={BASE}
+      />
 
       {badDates && (
         <FormMessage kind="warning" box>
@@ -248,6 +250,13 @@ export default async function OtrosIngresosPage(props: {
                           admin, y no viajan a la auditoría ni al log. */}
                       <span className={voided ? "line-through" : undefined}>{r.concept}</span>
                       {r.note && <span className="block text-xs text-muted-foreground">{r.note}</span>}
+                      {/* La corrección vive acá, pegada al texto que corrige, y
+                          no en la columna de acciones: ahí competiría con
+                          "Anular", que es la salida terminal de la fila. Un
+                          ingreso anulado ya no se corrige. */}
+                      {!voided && (
+                        <EditIncomeForm incomeId={r.id} concept={r.concept} note={r.note} />
+                      )}
                       {voided && (
                         <span className="block text-xs">
                           Anulado el {formatDateAR(r.voidedAt!)}
@@ -262,7 +271,11 @@ export default async function OtrosIngresosPage(props: {
                       {voided ? (
                         <Badge variant="destructive">Anulado</Badge>
                       ) : (
-                        <VoidIncomeForm incomeId={r.id} concept={r.concept} />
+                        <VoidIncomeForm
+                          incomeId={r.id}
+                          concept={r.concept}
+                          fromMercadoPago={r.mpPaymentId !== null}
+                        />
                       )}
                     </TableCell>
                   </TableRow>

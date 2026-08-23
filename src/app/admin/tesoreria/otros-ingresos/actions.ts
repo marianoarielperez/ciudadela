@@ -1,6 +1,6 @@
 "use server";
-// Las dos acciones de Otros ingresos: registrar lo que se cobró en la sede y
-// anular un registro.
+// Las tres acciones de Otros ingresos: registrar lo que se cobró en la sede,
+// corregir el texto de un registro y anularlo.
 //
 // La regla vive en `@/lib/treasury/other-income`; acá se valida la forma, se
 // traduce el resultado a una frase para el operador y se AUDITA. La auditoría es
@@ -107,6 +107,58 @@ export async function registerOtherIncomeAction(_prev: State, formData: FormData
   });
   // Fuera del try: redirect() señaliza con una excepción y el catch se la comería.
   redirect(`${BASE}?registrado=1`);
+}
+
+// Corregir SÓLO el texto: concepto y nota. El monto, la fecha, el medio y el
+// `mpPaymentId` no se editan — para cambiar cualquiera de esos el camino sigue
+// siendo anular y registrar de nuevo.
+const editSchema = z.object({
+  incomeId: z.coerce
+    .number("No pudimos identificar el ingreso.")
+    .int("No pudimos identificar el ingreso.")
+    .positive("No pudimos identificar el ingreso."),
+  concept: z
+    .string("Ingresá a qué corresponde el ingreso.")
+    .min(3, "Ingresá a qué corresponde el ingreso.")
+    .max(200, "El concepto no puede superar los 200 caracteres."),
+  note: z.string().max(200, "La nota no puede superar los 200 caracteres.").optional(),
+});
+
+export async function editOtherIncomeAction(_prev: State, formData: FormData): Promise<State> {
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
+  const parsed = parseForm(editSchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+
+  let result;
+  try {
+    result = await otherIncome.edit({
+      id: parsed.data.incomeId,
+      concept: parsed.data.concept,
+      note: parsed.data.note ?? null,
+    });
+  } catch (e) {
+    if (e instanceof OtherIncomeError) return { error: e.message };
+    console.error("[other-income] edit falló", errCode(e));
+    return { error: "No se pudo guardar la corrección. Reintentá en un momento." };
+  }
+  if (result.kind === "not_found") return { error: "Ese ingreso ya no existe." };
+  if (result.kind === "voided") {
+    return { error: "Ese ingreso está anulado: un asiento anulado no se corrige." };
+  }
+
+  await audit({
+    userId: actor.actorId,
+    action: "other_income_edit",
+    entity: "other_income",
+    entityId: parsed.data.incomeId,
+    // Ni el concepto nuevo ni el viejo: son texto libre y pueden nombrar a un
+    // tercero. Lo que queda escrito es QUÉ campos pudo tocar esta acción, que es
+    // el alcance de la corrección — el monto y la fecha no están en la lista.
+    detail: { fields: ["concept", "note"] },
+    ip: await clientIp(),
+  });
+  redirect(`${BASE}?corregido=1`);
 }
 
 const voidSchema = z.object({

@@ -27,6 +27,11 @@ type State = {
   error?: string;
   kind?: "error" | "warning";
   receipt?: { id: number; number: string };
+  /** El ingreso no societario del que habla el mensaje. Igual que `receipt`:
+   *  un rechazo que no lleva a ningún lado es un callejón, y este ahora tiene
+   *  salida —corregir el texto en Otros ingresos—. Viaja el id, no el concepto:
+   *  el texto libre del operador no va a la URL (Ley 25.326, docs/08). */
+  income?: { id: number };
 };
 
 const BASE = "/admin/tesoreria/sin-conciliar";
@@ -268,7 +273,11 @@ export async function registerAsOtherIncomeAction(_prev: State, formData: FormDa
   if (!parsed.ok) return { error: parsed.error };
   const d = parsed.data;
 
-  let result: { kind: "gone" } | { kind: "resolved" } | { kind: "ok"; incomeId: number; amount: number };
+  let result:
+    | { kind: "gone" }
+    | { kind: "resolved" }
+    | { kind: "voided_previous"; incomeId: number }
+    | { kind: "ok"; incomeId: number; amount: number };
   try {
     result = await prisma.$transaction(async (tx) => {
       const row = await tx.mpUnmatchedPayment.findUnique({
@@ -292,19 +301,18 @@ export async function registerAsOtherIncomeAction(_prev: State, formData: FormDa
       // ahora la dejaría apuntando a un registro anulado, que es exactamente lo
       // que la anulación deshizo cuando devolvió la fila a Pendientes. La unique
       // de `mpPaymentId` no se puede liberar (MariaDB no tiene índices únicos
-      // parciales), así que la salida es decirlo: esta plata se aplica a un
-      // socio o se descarta.
+      // parciales), así que no hay forma de escribirlo de nuevo.
+      //
+      // Se sale por `return` y no por excepción: el `create` chocó con la unique,
+      // así que en esta transacción no se escribió nada que haya que revertir, y
+      // el id del ingreso anulado tiene que llegar a la pantalla para armar el
+      // enlace. La respuesta se redacta afuera.
       if (income.kind === "already_recorded") {
         const previous = await tx.otherIncome.findUnique({
           where: { id: income.id },
           select: { voidedAt: true },
         });
-        if (previous?.voidedAt) {
-          throw new OtherIncomeError(
-            "Este cobro ya se había registrado como ingreso no societario y ese registro se anuló. "
-              + "Aplicalo a un socio o descartá la fila.",
-          );
-        }
+        if (previous?.voidedAt) return { kind: "voided_previous" as const, incomeId: income.id };
       }
       // El `status: "open"` del where es lo que serializa a dos operadores sobre
       // la misma fila: si el otro la resolvió entre el findUnique y esto, el
@@ -323,6 +331,19 @@ export async function registerAsOtherIncomeAction(_prev: State, formData: FormDa
   }
   if (result.kind === "gone") return { error: "La fila ya no existe." };
   if (result.kind === "resolved") return { error: "Esta fila ya fue resuelta." };
+  // El único rechazo de esta pantalla que ya no es un callejón: el registro
+  // anulado no revive, pero el concepto de un ingreso VIGENTE se corrige sin
+  // anular, y ahí es a donde hay que ir la próxima vez.
+  if (result.kind === "voided_previous") {
+    return {
+      error:
+        "Este cobro ya se había registrado como ingreso no societario y ese registro se anuló. "
+        + "Un cobro de Mercado Pago no se puede registrar dos veces, así que esta plata se aplica "
+        + "a un socio o se descarta la fila. Para corregir un concepto mal escrito, editalo en "
+        + "Otros ingresos en vez de anularlo.",
+      income: { id: result.incomeId },
+    };
+  }
 
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   // Ni el concepto ni la nota entran al asiento: son texto libre del operador y

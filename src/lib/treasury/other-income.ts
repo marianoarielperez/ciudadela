@@ -45,7 +45,10 @@ export type IncomeFilters = {
   /** Fecha civil al mediodía UTC, inclusive: cubre el día entero. */
   to?: Date;
   method?: IncomeMethod;
-  q?: string;
+  /** Un solo ingreso, para el enlace que llega desde la bandeja sin conciliar.
+   *  Es un id: lo único que puede viajar en la URL sin arrastrar texto del
+   *  operador a los logs de Nginx y de Cloudflare (Ley 25.326, docs/08). */
+  id?: number;
 };
 
 export type OtherIncomeRow = {
@@ -73,6 +76,12 @@ export type ListIncomeResult = {
   sum: number;
   byMethod: { cash: number; mp: number };
 };
+
+export type EditIncomeResult =
+  | { kind: "edited" }
+  | { kind: "not_found" }
+  /** Un ingreso anulado es un asiento cerrado: no se reescribe. */
+  | { kind: "voided" };
 
 export type VoidIncomeResult =
   /** `reopened`: el ingreso venía de la bandeja y su fila volvió a Pendientes. */
@@ -108,7 +117,15 @@ function afterArDay(civilNoonUtc: Date): Date {
   return new Date(civilNoonUtc.getTime() + 15 * HOUR);
 }
 
-/** El `where` de la lista. Exportado para probarlo sin base. */
+/**
+ * El `where` de la lista. Exportado para probarlo sin base.
+ *
+ * NO hay filtro por texto del concepto a propósito: los filtros viajan por GET
+ * y un `?q=Ramírez` queda escrito en el access log de Nginx y de Cloudflare, que
+ * no están alcanzados por el circuito de retención que sí cubre `audit_logs`.
+ * El concepto y la nota son texto libre del operador y pueden nombrar a un
+ * tercero (Ley 25.326, docs/08): se leen en pantalla y no salen de ahí.
+ */
 export function incomeWhere(f: IncomeFilters): Prisma.OtherIncomeWhereInput {
   const where: Prisma.OtherIncomeWhereInput = {};
   if (f.from || f.to) {
@@ -118,9 +135,7 @@ export function incomeWhere(f: IncomeFilters): Prisma.OtherIncomeWhereInput {
     };
   }
   if (f.method) where.method = f.method;
-  // El concepto es lo único que se busca: la nota puede tener el teléfono del
-  // inquilino y no es un índice que convenga ofrecer como buscador.
-  if (f.q) where.concept = { contains: f.q };
+  if (f.id) where.id = f.id;
   return where;
 }
 
@@ -247,6 +262,35 @@ export function makeOtherIncome(db: IncomeDb) {
         counted += g._count._all;
       }
       return { rows: rows.map(toRow), total, counted, sum: toCents(byMethod.cash + byMethod.mp), byMethod };
+    },
+
+    /**
+     * Corrige el texto de un ingreso: SÓLO el concepto y la nota.
+     *
+     * No toca monto, fecha, medio ni `mpPaymentId` — para cambiar cualquiera de
+     * esos, el camino sigue siendo anular y registrar de nuevo. Existe porque
+     * para un ingreso venido de Mercado Pago ese camino NO existe: la unique de
+     * `mpPaymentId` no se libera al anular (MariaDB no tiene índices únicos
+     * parciales), así que un concepto mal escrito dejaba al operador con dos
+     * salidas falsas —imputárselo a un socio o descartarlo— y ninguna verdadera.
+     *
+     * El `voidedAt: null` va en el WHERE y no en un `if` sobre una lectura
+     * previa: es lo que impide que una edición pise un asiento que otro operador
+     * acaba de anular.
+     */
+    async edit(input: { id: number; concept: string; note?: string | null }): Promise<EditIncomeResult> {
+      const concept = input.concept.trim();
+      if (concept === "") throw new OtherIncomeError("Ingresá a qué corresponde el ingreso.");
+      const { count } = await db.otherIncome.updateMany({
+        where: { id: input.id, voidedAt: null },
+        data: { concept: concept.slice(0, 200), note: input.note?.trim().slice(0, 200) || null },
+      });
+      if (count > 0) return { kind: "edited" };
+      const exists = await db.otherIncome.findUnique({
+        where: { id: input.id },
+        select: { id: true },
+      });
+      return exists ? { kind: "voided" } : { kind: "not_found" };
     },
 
     /** Anular es idempotente y no borra: el ingreso queda con motivo, fecha y

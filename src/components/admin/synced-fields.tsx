@@ -27,7 +27,15 @@ export type FieldBinding = {
   onChange: (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
 };
 
-export function useSyncedForm<T extends Record<string, string>>(initial: T | (() => T)) {
+/** `idPrefix` es para los formularios que se repiten por FILA (la corrección de
+ *  un ingreso, una por renglón de la tabla): sin él los `id` de los inputs se
+ *  duplican en el documento y cada <label> apunta al primero, así que el clic
+ *  sobre la etiqueta de la fila 7 enfoca el campo de la fila 1. El `name` no
+ *  cambia: es lo que viaja en el FormData. */
+export function useSyncedForm<T extends Record<string, string>>(
+  initial: T | (() => T),
+  opts?: { idPrefix?: string },
+) {
   const [values, setValues] = useState<T>(initial);
   const formRef = useRef<HTMLFormElement>(null);
   useFormResetSync(formRef, values);
@@ -40,7 +48,7 @@ export function useSyncedForm<T extends Record<string, string>>(initial: T | (()
   // pelados) sin que cada pantalla arme su propio onChange.
   function field(name: keyof T & string, clean?: (raw: string) => string): FieldBinding {
     return {
-      id: name,
+      id: opts?.idPrefix ? `${opts.idPrefix}-${name}` : name,
       name,
       value: values[name] ?? "",
       onChange: (e) => setValue(name, clean ? clean(e.target.value) : e.target.value),
@@ -74,9 +82,9 @@ export function TextField(props: {
   hint?: ReactNode;
   className?: string;
 }) {
-  const listId = props.options ? `${props.field.name}-opciones` : undefined;
+  const listId = props.options ? `${props.field.id}-opciones` : undefined;
   return (
-    <Wrapper htmlFor={props.field.name} label={props.label} hint={props.hint}>
+    <Wrapper htmlFor={props.field.id} label={props.label} hint={props.hint}>
       <Input
         {...props.field}
         type={props.type ?? "text"}
@@ -111,7 +119,7 @@ export function TextareaField(props: {
   className?: string;
 }) {
   return (
-    <Wrapper htmlFor={props.field.name} label={props.label} hint={props.hint}>
+    <Wrapper htmlFor={props.field.id} label={props.label} hint={props.hint}>
       <Textarea
         {...props.field}
         rows={props.rows}
@@ -131,7 +139,7 @@ export function SelectField(props: {
   hint?: ReactNode;
 }) {
   return (
-    <Wrapper htmlFor={props.field.name} label={props.label} hint={props.hint}>
+    <Wrapper htmlFor={props.field.id} label={props.label} hint={props.hint}>
       <select
         {...props.field}
         autoFocus={props.autoFocus}

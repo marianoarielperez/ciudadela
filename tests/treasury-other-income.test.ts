@@ -141,10 +141,74 @@ describe("incomeWhere", () => {
     });
   });
 
-  it("medio y texto arman el where esperado", () => {
-    expect(incomeWhere({ method: "mp", q: "salón" })).toEqual({
-      method: "mp",
-      concept: { contains: "salón" },
+  it("el medio arma el where esperado", () => {
+    expect(incomeWhere({ method: "mp" })).toEqual({ method: "mp" });
+  });
+
+  it("un id filtra un solo ingreso: es lo que sostiene el enlace de la bandeja", () => {
+    expect(incomeWhere({ id: 42 })).toEqual({ id: 42 });
+  });
+
+  it("NO hay filtro por texto del concepto: no puede llegar a la URL ni al access log", () => {
+    // Ley 25.326 (docs/08): el concepto es texto libre del operador y puede
+    // nombrar a un tercero. Un `?q=…` lo escribe en el log de Nginx y de
+    // Cloudflare, que no están alcanzados por la retención de `audit_logs`.
+    const w = incomeWhere({ q: "Ramírez" } as never);
+    expect(w).toEqual({});
+    expect(w.concept).toBeUndefined();
+  });
+});
+
+describe("makeOtherIncome().edit", () => {
+  function editDb(count: number, exists: boolean) {
+    const updateMany = vi.fn(async () => ({ count }));
+    const findUnique = vi.fn(async () => (exists ? { id: 5 } : null));
+    return { db: { otherIncome: { updateMany, findUnique } } as never, updateMany, findUnique };
+  }
+
+  it("corrige concepto y nota, recortados, y NO toca monto ni fecha ni medio", async () => {
+    const { db, updateMany } = editDb(1, true);
+    const r = await makeOtherIncome(db).edit({
+      id: 5,
+      concept: "  Alquiler del salón  ",
+      note: "  contrato firmado  ",
+    });
+    expect(r).toEqual({ kind: "edited" });
+    expect(updateMany).toHaveBeenCalledWith({
+      // El `voidedAt: null` va en el WHERE: es lo que impide reescribir un
+      // asiento que otro operador acaba de anular.
+      where: { id: 5, voidedAt: null },
+      data: { concept: "Alquiler del salón", note: "contrato firmado" },
+    });
+    // El mock va sin parámetros, así que para TS `calls[0]` es una tupla vacía:
+    // el ensanchado deja inspeccionar el `data` igual.
+    const [args] = updateMany.mock.calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(Object.keys(args.data).sort()).toEqual(["concept", "note"]);
+  });
+
+  it("una nota vacía se guarda como null", async () => {
+    const { db, updateMany } = editDb(1, true);
+    await makeOtherIncome(db).edit({ id: 5, concept: "Rifa", note: "   " });
+    const [args] = updateMany.mock.calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(args.data.note).toBeNull();
+  });
+
+  it("un concepto vacío se rechaza en castellano y no escribe", async () => {
+    const { db, updateMany } = editDb(1, true);
+    await expect(makeOtherIncome(db).edit({ id: 5, concept: "  " })).rejects.toThrow(
+      "Ingresá a qué corresponde el ingreso.",
+    );
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("un ingreso anulado no se corrige, y se distingue del inexistente", async () => {
+    const anulado = editDb(0, true);
+    expect(await makeOtherIncome(anulado.db).edit({ id: 5, concept: "Rifa" })).toEqual({
+      kind: "voided",
+    });
+    const inexistente = editDb(0, false);
+    expect(await makeOtherIncome(inexistente.db).edit({ id: 5, concept: "Rifa" })).toEqual({
+      kind: "not_found",
     });
   });
 });

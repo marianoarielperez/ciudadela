@@ -4,7 +4,7 @@
 import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, UnmatchedStatus } from "@/generated/prisma/client";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
 
-export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "link";
+export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "success" | "link";
 
 export function memberStatusBadgeVariant(status: MemberStatus): BadgeVariant {
   if (status === "active") return "default";
@@ -56,17 +56,20 @@ export function feeStatusBadgeVariant(status: FeeStatus): BadgeVariant {
 //
 // Las tres salidas se distinguen entre sí porque significan cosas distintas y
 // el operador las revisa en la misma columna:
-//   matched      — outline: hay socio, hay Payment y hay recibo detrás.
-//   dismissed    — secondary: apagado, esa plata no se le imputa a nadie.
-//   other_income — ghost: la plata entró y es de la asociación, pero no hay
-//                  socio ni recibo. Sin caja ni borde: no es una etiqueta de
-//                  estado más, es una afirmación sobre a quién pertenece ese
-//                  dinero, y no puede leerse ni como "aplicado" ni como
-//                  "descartado".
+//   matched      — outline: hay socio, hay Payment y hay recibo detrás. Borde
+//                  fino, sin relleno: es el desenlace normal.
+//   dismissed    — secondary: relleno gris. Esa plata no se le imputa a nadie y
+//                  no suma en ningún lado.
+//   other_income — success: relleno verde tenue. Es el único de los tres que
+//                  deja plata sumando en un total (el de Otros ingresos), y la
+//                  columna se barre de un vistazo porque las tres se distinguen
+//                  por PESO además de por color: borde / gris / verde.
+//                  Antes era "ghost" —sin fondo y con borde transparente—, que
+//                  en pantalla se leía como texto suelto y no como etiqueta.
 export function unmatchedStatusBadgeVariant(status: UnmatchedStatus): BadgeVariant {
   if (status === "open") return "default";
   if (status === "dismissed") return "secondary";
-  if (status === "other_income") return "ghost";
+  if (status === "other_income") return "success";
   return "outline"; // matched
 }
 
