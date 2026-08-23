@@ -127,8 +127,10 @@ type LoadedContext = Omit<ResolveContext, "linkMember"> & {
 };
 
 /** Centavos redondeados: los montos de MP son floats y compararlos crudos
- *  (`6000.000000000001`) inventa divergencias que no existen. */
-function cents(amount: number): number {
+ *  (`6000.000000000001`) inventa divergencias que no existen. Exportada para
+ *  que la conciliación compare con el MISMO criterio y no invente divergencias
+ *  que el webhook no ve. */
+export function cents(amount: number): number {
   return Math.round(amount * 100);
 }
 

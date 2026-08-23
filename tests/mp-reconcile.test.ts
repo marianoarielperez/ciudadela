@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-vi.mock("@/lib/mp/webhook-processor", () => ({ webhookProcessor: {} }));
+// `WEBHOOK_RESULTS` y `cents` van REALES: la clasificación de results y la
+// comparación en centavos son justamente lo que se está probando. Sólo se
+// reemplaza el singleton, que arrastraría media app al importarse.
+vi.mock("@/lib/mp/webhook-processor", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  webhookProcessor: {},
+}));
 vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 vi.mock("@/lib/config", () => ({ configReader: {}, CONFIG_KEYS: { mpPlanActiveId: "mp_plan_active_id", mpPlanSharedId: "mp_plan_shared_id" } }));
 import { makeReconcile, RECONCILE_WINDOW_MS } from "@/lib/mp/reconcile";
@@ -16,7 +22,7 @@ function deps(over: Partial<{
   authorized: Array<{ id: string; preapprovalId: string; status: string; paymentId: string | null }>;
   remote: Record<string, { status: string; amount: number | null; payerEmail: string | null; externalReference: string | null }>;
   preapprovals: Array<{ id: string; status: string; externalReference: string | null; amount: number | null; payerEmail: string | null }>;
-  applications: Record<number, { id: number; status: string }>;
+  applications: Record<number, { id: number; status: string; memberId?: number | null }>;
   planIds: { active: string | null; shared: string | null }; plans: Record<string, number>;
 }> = {}) {
   const localIds = new Set(over.localIds ?? []);
@@ -46,7 +52,7 @@ function deps(over: Partial<{
   const feeValues = { current: vi.fn(async () => ({ activeAmount: 6000, sharedAmount: 3000 })) };
   const config = { getString: vi.fn(async (k: string) => (k === "mp_plan_active_id" ? over.planIds?.active ?? null : over.planIds?.shared ?? null)) };
   const r = makeReconcile({ db: db as never, gateway: gateway as never, processor, feeValues: feeValues as never, config, now: () => NOW });
-  return { r, db, gateway, processor };
+  return { r, db, gateway, processor, feeValues, config };
 }
 
 const liveSub = (preapprovalId: string, memberId: number): Sub =>
@@ -97,10 +103,10 @@ describe("reconcile", () => {
         { id: "p-gone", status: "authorized", externalReference: "solicitud:3", amount: 6000, payerEmail: null },
         { id: "p-manual", status: "authorized", externalReference: null, amount: 6000, payerEmail: null },
       ],
-      applications: { 1: { id: 1, status: "pending_payment" }, 2: { id: 2, status: "expired" } },
+      applications: { 1: { id: 1, status: "pending_payment", memberId: null }, 2: { id: 2, status: "expired" } },
     });
     const s = await d.r.run();
-    expect(d.db.mpSubscription.create).toHaveBeenCalledWith({ data: expect.objectContaining({ preapprovalId: "p-live", applicationId: 1, status: "authorized", amount: "6000.00", externalReference: "solicitud:1", planId: null }) });
+    expect(d.db.mpSubscription.create).toHaveBeenCalledWith({ data: expect.objectContaining({ preapprovalId: "p-live", applicationId: 1, memberId: null, status: "authorized", amount: "6000.00", externalReference: "solicitud:1", planId: null }) });
     expect(d.gateway.cancelPreapproval).toHaveBeenCalledWith("p-exp");
     expect(s).toMatchObject({ orphanCreated: 1, orphanCancelled: 1, orphanPreapprovals: 2 });
   });
@@ -131,5 +137,131 @@ describe("reconcile", () => {
     expect(d.gateway.searchAuthorizedPayments).toHaveBeenCalledTimes(2);
     expect(s.errors).toHaveLength(1);
     expect(s.debitsRecovered).toBe(1);
+  });
+
+  // ── Hallazgos de la revisión ─────────────────────────────────────────────
+  it("errors[] conserva la CAUSA del fallo (status/code/message), no sólo el paso y los ids", async () => {
+    const d = deps({ subs: [liveSub("pre-0123456789abcdef0123456789abcdef", 14)], authorized: [{ id: "a1", preapprovalId: "x", status: "processed", paymentId: "777" }] });
+    d.gateway.getPayment.mockRejectedValue({ status: 403, error: "forbidden", message: "no tiene permisos sobre este recurso" });
+    const s = await d.r.run();
+    expect(s.errors).toHaveLength(1);
+    expect(s.errors[0]).toContain("status=403");
+    expect(s.errors[0]).toContain("code=forbidden");
+    expect(s.errors[0]).toContain("no tiene permisos sobre este recurso");
+  });
+
+  it("errors[] no arrastra el email del pagador que venga en el mensaje de MP", async () => {
+    const d = deps({ payments: [pay("1")] });
+    d.processor.applyPayment.mockRejectedValue({ status: 400, message: "payer_email is invalid: juan@example.com" });
+    const s = await d.r.run();
+    expect(s.errors[0]).not.toContain("juan@example.com");
+  });
+
+  it("paso 2 saltea un cobro que ya está en la bandeja (aunque el operador lo haya descartado)", async () => {
+    const d = deps({ inboxIds: ["777"], subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
+    const s = await d.r.run();
+    expect(d.gateway.getPayment).not.toHaveBeenCalled();
+    expect(d.processor.applyPayment).not.toHaveBeenCalled();
+    expect(s.debitsRecovered).toBe(0);
+  });
+
+  it("lo que va a la bandeja o ya estaba procesado NO cuenta como recuperado", async () => {
+    const d = deps({ payments: [pay("1"), pay("2"), pay("3")], subs: [liveSub("pre-1", 14)],
+      authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
+    d.processor.applyPayment
+      .mockResolvedValueOnce("unmatched_withdrawn_no_pending")
+      .mockResolvedValueOnce("already_processed")
+      .mockResolvedValueOnce("link_applied")
+      .mockResolvedValueOnce("unmatched_treasury_rejected");
+    const s = await d.r.run();
+    expect(s).toMatchObject({
+      paymentsRecovered: 1, paymentsInbox: 1, paymentsSkipped: 1,
+      debitsRecovered: 0, debitsInbox: 1, debitsSkipped: 0,
+    });
+    expect(s.errors).toEqual([]);
+  });
+
+  it("el fallo al leer fee_values deja su entrada en errors y no simula 'sin divergencias'", async () => {
+    const d = deps({ subs: [liveSub("pre-1", 14)], planIds: { active: "plan-a", shared: null } });
+    d.feeValues.current.mockRejectedValue(new Error("db down"));
+    const s = await d.r.run();
+    expect(s.errors).toEqual([expect.stringMatching(/^feeValue: /)]);
+    expect(s.errors[0]).toContain("db down");
+    expect(d.gateway.getPlan).not.toHaveBeenCalled();
+    // Los pasos que no dependen del valor corren igual.
+    expect(s.subscriptionsSynced).toBe(1);
+    expect(d.gateway.searchPreapprovals).toHaveBeenCalled();
+  });
+
+  it("un plan que explota no impide chequear el otro", async () => {
+    const d = deps({ planIds: { active: "plan-a", shared: "plan-s" }, plans: { "plan-s": 2500 } });
+    d.gateway.getPlan.mockRejectedValueOnce({ status: 404, message: "plan not found" });
+    const s = await d.r.run();
+    expect(d.gateway.getPlan).toHaveBeenCalledTimes(2);
+    expect(s.planDivergent).toBe(1);
+    expect(s.errors).toEqual([expect.stringMatching(/^plans\.one: /)]);
+  });
+
+  it("montos con ruido de float no inventan divergencia (comparación en centavos)", async () => {
+    const d = deps({ subs: [liveSub("pre-1", 14)], remote: { "pre-1": { status: "authorized", amount: 6000.000000000001, payerEmail: null, externalReference: null } },
+      planIds: { active: "plan-a", shared: null }, plans: { "plan-a": 5999.999999999999 } });
+    const s = await d.r.run();
+    expect(s.amountDivergent).toBe(0);
+    expect(s.planDivergent).toBe(0);
+  });
+
+  it("paso 4: la suscripción recreada queda vinculada al socio de la solicitud", async () => {
+    const d = deps({
+      preapprovals: [{ id: "p-live", status: "authorized", externalReference: "solicitud:9", amount: 6000, payerEmail: null }],
+      applications: { 9: { id: 9, status: "completed", memberId: 213 } },
+    });
+    await d.r.run();
+    expect(d.db.mpSubscription.create).toHaveBeenCalledWith({ data: expect.objectContaining({ preapprovalId: "p-live", applicationId: 9, memberId: 213 }) });
+  });
+
+  it("un preapproval que explota en el paso 4 no frena a los demás", async () => {
+    const d = deps({
+      preapprovals: [
+        { id: "p-boom", status: "pending", externalReference: "solicitud:2", amount: 6000, payerEmail: null },
+        { id: "p-live", status: "authorized", externalReference: "solicitud:1", amount: 6000, payerEmail: null },
+      ],
+      applications: { 1: { id: 1, status: "pending_payment", memberId: 7 }, 2: { id: 2, status: "expired" } },
+    });
+    d.gateway.cancelPreapproval.mockRejectedValue({ status: 500, message: "MP caído" });
+    const s = await d.r.run();
+    expect(s.orphanCreated).toBe(1);
+    expect(s.orphanCancelled).toBe(0);
+    expect(s.errors).toEqual([expect.stringMatching(/^orphans\.one: /)]);
+  });
+
+  it("un fallo en debits y otro en sync dejan correr el paso 4", async () => {
+    const d = deps({ subs: [liveSub("pre-1", 14)],
+      preapprovals: [{ id: "p-live", status: "authorized", externalReference: "solicitud:1", amount: 6000, payerEmail: null }],
+      applications: { 1: { id: 1, status: "pending_payment", memberId: 7 } } });
+    d.gateway.searchAuthorizedPayments.mockRejectedValue({ status: 500, message: "search down" });
+    d.gateway.getPreapproval.mockRejectedValue({ status: 500, message: "preapproval down" });
+    const s = await d.r.run();
+    expect(s.errors).toEqual([expect.stringMatching(/^debits: /), expect.stringMatching(/^sync: /)]);
+    expect(s.subscriptionsSynced).toBe(0);
+    expect(s.orphanCreated).toBe(1);
+  });
+
+  it("si falla la consulta de suscripciones queda su error y los pasos independientes corren igual", async () => {
+    const d = deps({ payments: [pay("1")],
+      preapprovals: [{ id: "p-live", status: "authorized", externalReference: "solicitud:1", amount: 6000, payerEmail: null }],
+      applications: { 1: { id: 1, status: "pending_payment", memberId: 7 } } });
+    d.db.mpSubscription.findMany.mockRejectedValue(new Error("subs down"));
+    const s = await d.r.run();
+    expect(s.errors).toEqual([expect.stringMatching(/^subscriptions: /)]);
+    expect(s.paymentsRecovered).toBe(1);
+    expect(s.orphanCreated).toBe(1);
+  });
+
+  it("errors[] tiene tope y lo que se pasa se cuenta en errorsOmitted", async () => {
+    const d = deps({ payments: Array.from({ length: 60 }, (_, i) => pay(String(i + 1))) });
+    d.processor.applyPayment.mockRejectedValue(new Error("base caída"));
+    const s = await d.r.run();
+    expect(s.errors).toHaveLength(50);
+    expect(s.errorsOmitted).toBe(10);
   });
 });

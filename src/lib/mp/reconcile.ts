@@ -7,10 +7,10 @@ import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { feeValueReader, type makeFeeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
-import { mpErrorLog } from "./error-log";
+import { describeMpError, mpErrorLog } from "./error-log";
 import { mpGateway, type MpGateway, type MpPaymentDetails } from "./gateway";
 import { parseApplicationReference } from "./references";
-import { webhookProcessor } from "./webhook-processor";
+import { cents, WEBHOOK_RESULTS, webhookProcessor, type WebhookResult } from "./webhook-processor";
 
 export const RECONCILE_WINDOW_MS = 72 * 60 * 60_000;
 /** Estados de MP con los que una suscripción puede seguir cobrando. */
@@ -18,9 +18,74 @@ const LIVE_STATUSES = ["authorized", "paused"];
 /** Solicitudes por las que vale la pena conservar un preapproval huérfano. */
 const LIVE_APPLICATION_STATUSES = ["started", "pending_payment", "approved_pending_minute", "pending_board", "completed"];
 
+/** Tope de entradas en `errors`. El summary va a `CronRun.summary` y al asiento
+ *  de auditoría, y con la base caída cada fila devuelta por MP deja una entrada:
+ *  sin tope, una noche mala escribe cientos y el JSON deja de ser legible. Lo
+ *  que se pasa del tope se cuenta en `errorsOmitted`. */
+const MAX_ERRORS = 50;
+/** Largo de cada entrada. Alcanza para status + code + el message de MP, que es
+ *  justamente la causa: el prefijo del paso y los ids ya no van acá (van al log
+ *  completo), porque se comían el recorte y dejaban el error sin diagnóstico. */
+const ERROR_MAX = 240;
+
+/** Qué significó para la conciliación lo que devolvió el procesador:
+ *  - `applied`: se asentó plata (o su devolución). Es lo único "recuperado".
+ *  - `inbox`: quedó en la bandeja de sin conciliar, esperando al operador.
+ *  - `skipped`: el procesador no escribió nada (ya estaba, o no correspondía). */
+type ApplyOutcome = "applied" | "inbox" | "skipped";
+
+/** Clasificación de CADA result del procesador. Es un `Record` sobre la unión
+ *  `WebhookResult` a propósito: cuando 4B/4C agreguen un result nuevo, este
+ *  archivo no compila hasta que alguien decida si cuenta como recuperado. Sin
+ *  esto el contador decía "recuperado" para todo, incluido lo que se fue a la
+ *  bandeja, y el summary salía en verde justo cuando la red estaba trabada. */
+const OUTCOME_OF: Record<WebhookResult, ApplyOutcome> = {
+  // Escribieron plata.
+  debit_applied: "applied",
+  link_applied: "applied",
+  application_approved: "applied",
+  application_approved_after_expiry: "applied",
+  entry_payment_recovered: "applied",
+  // Una devolución también es un movimiento asentado: si el cron la recuperó,
+  // hizo su trabajo.
+  payment_refunded: "applied",
+  // A la bandeja: hay una fila esperando decisión humana.
+  unmatched_no_reference: "inbox",
+  unmatched_no_subscription: "inbox",
+  unmatched_application_missing: "inbox",
+  unmatched_duplicate_entry: "inbox",
+  unmatched_withdrawn_no_pending: "inbox",
+  unmatched_treasury_rejected: "inbox",
+  // No escribieron nada.
+  already_processed: "skipped",
+  payment_ignored: "skipped",
+  payment_rejected_traced: "skipped",
+  refund_ignored: "skipped",
+  no_match: "skipped",
+  authorized_payment_traced: "skipped",
+  subscription_synced: "skipped",
+  unknown_topic: "skipped",
+};
+
+/** El procesador devuelve `string` (así lo declara el contrato inyectado): si
+ *  llegara algo fuera del catálogo, no se cuenta como recuperado. */
+function outcomeOf(result: string): ApplyOutcome {
+  return result in WEBHOOK_RESULTS ? OUTCOME_OF[result as WebhookResult] : "skipped";
+}
+
 export type ReconcileSummary = {
+  /** Pagos sueltos (paso 1) que el procesador efectivamente asentó. */
   paymentsRecovered: number;
+  /** Pagos sueltos que terminaron en la bandeja de sin conciliar. */
+  paymentsInbox: number;
+  /** Pagos sueltos que el procesador no escribió (ya estaban, o no correspondía). */
+  paymentsSkipped: number;
+  /** Débitos de suscripción (paso 2) efectivamente asentados. */
   debitsRecovered: number;
+  /** Débitos que terminaron en la bandeja. */
+  debitsInbox: number;
+  /** Débitos que el procesador no escribió. */
+  debitsSkipped: number;
   subscriptionsSynced: number;
   subscriptionsDrifted: number;
   orphanCreated: number;
@@ -28,7 +93,10 @@ export type ReconcileSummary = {
   orphanPreapprovals: number;
   amountDivergent: number;
   planDivergent: number;
+  /** `paso: causa` — sin datos personales, con tope `MAX_ERRORS`. */
   errors: string[];
+  /** Errores que no entraron en `errors` por el tope. */
+  errorsOmitted: number;
 };
 
 type Deps = {
@@ -47,19 +115,48 @@ export function makeReconcile(deps: Deps) {
     async run(): Promise<ReconcileSummary> {
       const t = now();
       const s: ReconcileSummary = {
-        paymentsRecovered: 0, debitsRecovered: 0, subscriptionsSynced: 0, subscriptionsDrifted: 0,
-        orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0, amountDivergent: 0, planDivergent: 0, errors: [],
+        paymentsRecovered: 0, paymentsInbox: 0, paymentsSkipped: 0,
+        debitsRecovered: 0, debitsInbox: 0, debitsSkipped: 0,
+        subscriptionsSynced: 0, subscriptionsDrifted: 0,
+        orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0,
+        amountDivergent: 0, planDivergent: 0, errors: [], errorsOmitted: 0,
       };
-      // Al summary va un código corto; el detalle completo (enmascarado) al log.
+      // Al summary va el paso y LA CAUSA (status/code/message, ya enmascarados
+      // por `describeMpError`). Los ids y el prefijo `mp:` van sólo al log
+      // completo: repetirlos acá desplazaba la causa fuera del recorte y dejaba
+      // a `/admin/salud` mostrando "falló" y nada más.
       const fail = (step: string, refs: Record<string, string | number>, e: unknown) => {
-        const detail = mpErrorLog(`reconcile.${step}`, refs, e);
-        console.error("[reconcile]", detail);
-        s.errors.push(`${step}:${detail.slice(0, 80)}`);
+        console.error("[reconcile]", mpErrorLog(`reconcile.${step}`, refs, e));
+        if (s.errors.length >= MAX_ERRORS) { s.errorsOmitted++; return; }
+        const d = describeMpError(e);
+        const parts: string[] = [];
+        if (d.status !== null) parts.push(`status=${d.status}`);
+        if (d.code) parts.push(`code=${d.code}`);
+        parts.push(d.message === "" ? "(sin mensaje)" : d.message);
+        if (d.cause.length > 0) {
+          parts.push(`cause=[${d.cause.map((c) => (c.code === "" ? c.description : `${c.code}: ${c.description}`)).join(" | ")}]`);
+        }
+        s.errors.push(`${step}: ${parts.join(" ")}`.slice(0, ERROR_MAX));
       };
       const hasLocal = async (mpPaymentId: string) =>
         Boolean(await deps.db.payment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
+      // La bandeja se consulta sin filtrar por estado a propósito: una fila que
+      // el operador descartó (`dismissed`) o resolvió sigue siendo una decisión
+      // tomada, y volver a aplicar ese cobro sería pisarla.
       const inInbox = async (mpPaymentId: string) =>
         Boolean(await deps.db.mpUnmatchedPayment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
+      const count = (result: string, kind: "payments" | "debits") => {
+        const outcome = outcomeOf(result);
+        if (kind === "payments") {
+          if (outcome === "applied") s.paymentsRecovered++;
+          else if (outcome === "inbox") s.paymentsInbox++;
+          else s.paymentsSkipped++;
+        } else {
+          if (outcome === "applied") s.debitsRecovered++;
+          else if (outcome === "inbox") s.debitsInbox++;
+          else s.debitsSkipped++;
+        }
+      };
 
       // ── 1. Pagos aprobados de las últimas 72 h sin rastro local ─────────────
       try {
@@ -67,8 +164,7 @@ export function makeReconcile(deps: Deps) {
         for (const p of payments) {
           try {
             if ((await hasLocal(p.id)) || (await inInbox(p.id))) continue;
-            await deps.processor.applyPayment(p, null);
-            s.paymentsRecovered++;
+            count(await deps.processor.applyPayment(p, null), "payments");
           } catch (e) { fail("payments.apply", { mpPaymentId: p.id }, e); }
         }
       } catch (e) { fail("payments", {}, e); }
@@ -81,7 +177,13 @@ export function makeReconcile(deps: Deps) {
           select: { preapprovalId: true, memberId: true, member: { select: { category: true } } },
         });
       } catch (e) { fail("subscriptions", {}, e); }
-      const feeValue = await deps.feeValues.current(t).catch(() => null);
+      // Si esto falla, los chequeos de divergencia (5a y 5b) no pueden correr:
+      // que se vea en `errors`, porque `amountDivergent: 0` sin explicación es
+      // indistinguible de "no hay divergencias".
+      let feeValue: Awaited<ReturnType<typeof deps.feeValues.current>> | null = null;
+      try {
+        feeValue = await deps.feeValues.current(t);
+      } catch (e) { fail("feeValue", {}, e); }
 
       for (const sub of subs) {
         if (sub.memberId !== null) {
@@ -90,10 +192,10 @@ export function makeReconcile(deps: Deps) {
             for (const c of charges) {
               if (!c.paymentId || c.status !== "processed") continue;
               try {
-                if (await hasLocal(c.paymentId)) continue;
-                const p = await deps.gateway.getPayment(c.paymentId);
-                await deps.processor.applyPayment(p, sub.preapprovalId);
-                s.debitsRecovered++;
+                const paymentId = c.paymentId;
+                if ((await hasLocal(paymentId)) || (await inInbox(paymentId))) continue;
+                const p = await deps.gateway.getPayment(paymentId);
+                count(await deps.processor.applyPayment(p, sub.preapprovalId), "debits");
               } catch (e) { fail("debits.apply", { preapprovalId: sub.preapprovalId, mpPaymentId: c.paymentId }, e); }
             }
           } catch (e) { fail("debits", { preapprovalId: sub.preapprovalId }, e); }
@@ -109,10 +211,11 @@ export function makeReconcile(deps: Deps) {
           });
           s.subscriptionsSynced++;
           if (remote.status !== "authorized") s.subscriptionsDrifted++;
-          // 5a. Monto de la suscripción vs. valor vigente de la categoría.
+          // 5a. Monto de la suscripción vs. valor vigente de la categoría, en
+          // centavos redondeados: mismo criterio que el webhook (`cents`).
           if (feeValue && sub.member && remote.amount !== null) {
             const expected = feeAmountFor(sub.member.category, feeValue);
-            if (expected !== null && Math.abs(expected - remote.amount) >= 0.01) s.amountDivergent++;
+            if (expected !== null && cents(expected) !== cents(remote.amount)) s.amountDivergent++;
           }
         } catch (e) { fail("sync", { preapprovalId: sub.preapprovalId }, e); }
       }
@@ -125,12 +228,15 @@ export function makeReconcile(deps: Deps) {
             if (await deps.db.mpSubscription.findUnique({ where: { preapprovalId: pre.id }, select: { preapprovalId: true } })) continue;
             const applicationId = parseApplicationReference(pre.externalReference);
             if (applicationId === null) { s.orphanPreapprovals++; continue; }
-            const app = await deps.db.application.findUnique({ where: { id: applicationId }, select: { id: true, status: true } });
+            // El `memberId` de la solicitud no es opcional acá: sin él la fila
+            // recreada queda inerte (el paso 2 saltea las suscripciones sin
+            // socio) y todos sus débitos futuros terminan en la bandeja.
+            const app = await deps.db.application.findUnique({ where: { id: applicationId }, select: { id: true, status: true, memberId: true } });
             if (!app) { s.orphanPreapprovals++; continue; }
             if (LIVE_APPLICATION_STATUSES.includes(app.status)) {
               await deps.db.mpSubscription.create({
                 data: {
-                  preapprovalId: pre.id, applicationId: app.id, status: pre.status, payerEmail: pre.payerEmail,
+                  preapprovalId: pre.id, applicationId: app.id, memberId: app.memberId ?? null, status: pre.status, payerEmail: pre.payerEmail,
                   amount: pre.amount === null ? null : pre.amount.toFixed(2), externalReference: pre.externalReference, planId: null, lastSyncAt: t,
                 },
               });
@@ -144,19 +250,23 @@ export function makeReconcile(deps: Deps) {
       } catch (e) { fail("orphans", {}, e); }
 
       // ── 5b. Planes de referencia (si están cargados) vs. fee_values ─────────
-      try {
-        if (feeValue) {
+      if (feeValue) {
+        const value = feeValue;
+        try {
           const [activeId, sharedId] = await Promise.all([
             deps.config.getString(CONFIG_KEYS.mpPlanActiveId), deps.config.getString(CONFIG_KEYS.mpPlanSharedId),
           ]);
-          const checks: Array<[string | null, number]> = [[activeId, feeValue.activeAmount], [sharedId, feeValue.sharedAmount]];
+          const checks: Array<[string | null, number]> = [[activeId, value.activeAmount], [sharedId, value.sharedAmount]];
           for (const [planId, expected] of checks) {
             if (!planId) continue;
-            const plan = await deps.gateway.getPlan(planId);
-            if (Math.abs(plan.amount - expected) >= 0.01) s.planDivergent++;
+            // Un `try` por plan: si el primero explota, el segundo se chequea igual.
+            try {
+              const plan = await deps.gateway.getPlan(planId);
+              if (cents(plan.amount) !== cents(expected)) s.planDivergent++;
+            } catch (e) { fail("plans.one", { planId }, e); }
           }
-        }
-      } catch (e) { fail("plans", {}, e); }
+        } catch (e) { fail("plans", {}, e); }
+      }
 
       return s;
     },
