@@ -445,12 +445,15 @@ sandbox). Queda para reprocesar un cobro puntual a mano, para probar el endpoint
 contra `localhost` sin túnel, y para el caso raro de un evento que MP ya dio por
 entregado y no va a reenviar.
 
-Todo lo variable va **arriba**, en su propia línea. `URL` sale del entorno si está
-definida, así que el mismo bloque sirve en local y en el VPS:
+Todo lo variable va **arriba**, en su propia línea. El mismo bloque sirve en local y
+en el VPS, pero el **default es local**: pegado tal cual, este bloque no le habla a
+producción. Para apuntar al VPS hay que escribir el dominio a propósito, que es la
+única forma de que nadie lo haga sin querer — el bloque se copia justo cuando algo
+falló y se lee poco.
 
 ```bash
 cd /root/dev/ciudadela
-URL=${URL:-https://vecinalciudadela.ar}   # en local: URL=http://localhost:3000
+URL=${URL:-http://localhost:3000}         # contra el VPS: URL=https://vecinalciudadela.ar
 TYPE=payment                              # o subscription_authorized_payment, o subscription_preapproval
 DATA_ID=PEGAR_ID                          # id del pago, del authorized_payment o del preapproval
 
