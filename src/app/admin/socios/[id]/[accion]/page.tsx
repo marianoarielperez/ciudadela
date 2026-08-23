@@ -12,7 +12,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { formatARS, formatDateAR } from "@/lib/format";
-import { AUTO_DEBIT_WARNINGS, hasLiveAutoDebit } from "@/lib/members/auto-debit";
+import { AUTO_DEBIT_WARNINGS, autoDebitSignal, type AutoDebitSignal } from "@/lib/members/auto-debit";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, REASON_LABELS } from "@/lib/members/labels";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "@/lib/members/rules";
 import { electionsOngoing } from "@/lib/members/service";
@@ -61,7 +61,7 @@ function blockedBy(r: { ok: true } | { ok: false; error: string }): string | und
 type Debt = { pendingCount: number; amount: number | null };
 
 function screenFor(
-  slug: Slug, member: Member, elections: boolean, autoDebit: boolean, debt: Debt,
+  slug: Slug, member: Member, elections: boolean, autoDebit: AutoDebitSignal, debt: Debt,
 ): Screen {
   switch (slug) {
     case "baja":
@@ -73,8 +73,10 @@ function screenFor(
         // Se muestra aunque la pantalla esté bloqueada, y a propósito: si la
         // baja ya está hecha y el débito sigue vivo, es todavía más urgente que
         // el operador lo vea. El aviso no bloquea nada, sólo cuenta lo que este
-        // formulario no hace (ver members/auto-debit.ts).
-        warning: autoDebit ? AUTO_DEBIT_WARNINGS.baja : undefined,
+        // formulario no hace (ver members/auto-debit.ts). El texto depende de
+        // QUÉ señal lo disparó: con la suscripción delante se afirma, con el
+        // flag del padrón a secas se manda a verificar en el panel de MP.
+        warning: autoDebit === "none" ? undefined : AUTO_DEBIT_WARNINGS.baja[autoDebit],
         action: withdrawAction,
         submitLabel: "Registrar baja",
         fields: [
@@ -96,7 +98,7 @@ function screenFor(
         blocked: blockedBy(canChangeCategory(member, probe, elections, debt.pendingCount)),
         // La cuota la fija la categoría: cambiarla acá no reajusta el monto que
         // MP le sigue debitando (ver members/auto-debit.ts).
-        warning: autoDebit ? AUTO_DEBIT_WARNINGS.categoria : undefined,
+        warning: autoDebit === "none" ? undefined : AUTO_DEBIT_WARNINGS.categoria[autoDebit],
         action: changeCategoryAction,
         submitLabel: "Cambiar categoría",
         fields: [{ kind: "select", name: "newCategory", label: "Nueva categoría", options }],
@@ -188,7 +190,7 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
   const minutes = minuteRows.map((m) => ({
     id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
-  const autoDebit = hasLiveAutoDebit({
+  const autoDebit = autoDebitSignal({
     autoDebit: member.autoDebit,
     subscriptionStatuses: subscriptions.map((s) => s.status),
   });

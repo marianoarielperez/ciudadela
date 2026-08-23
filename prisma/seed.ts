@@ -115,6 +115,39 @@ async function main() {
     if (!testPass) throw new Error(`${TEST_USERS_OPT_IN}="true" pero falta SEED_TEST_PASSWORD`)
     await upsertUser("admin.prueba@sigev.local", "Admin de Prueba", testPass, ["admin"])
     await upsertUser("socio.prueba@sigev.local", "Socio de Prueba", testPass, ["socio"])
+    // 4B: una suscripción vinculada y una fila de bandeja, para ver las
+    // pantallas sin Mercado Pago. Sólo con cuentas de prueba: en producción la
+    // bandeja y las suscripciones son datos reales.
+    //
+    // El id es HEXADECIMAL de 32 como los de verdad, y no algo legible tipo
+    // "5eed0000000000000000000000000001", porque MP valida la FORMA antes de buscar:
+    // `/authorized_payments/search?preapproval_id=seed-...` responde
+    // `Invalid value 'seed', Field 'id' must match this pattern: '[a-f0-9-]+'`.
+    // Con un id legible, el cron de conciliación devolvía 207 con dos errores
+    // en TODA corrida local — y un cron que siempre falla un poco es un cron
+    // cuyos errores nadie mira. Verificado en la batería de la T14.
+    const seedMember = await prisma.member.findFirst({ where: { status: "active" }, select: { id: true } })
+    if (seedMember) {
+      await prisma.mpSubscription.upsert({
+        where: { preapprovalId: "5eed0000000000000000000000000001" },
+        update: {},
+        create: {
+          preapprovalId: "5eed0000000000000000000000000001", memberId: seedMember.id, status: "authorized",
+          payerEmail: "socio.prueba@sigev.local", linkedManually: true, amount: "6000.00",
+          externalReference: null, planId: null, lastSyncAt: new Date(),
+        },
+      })
+      await prisma.mpUnmatchedPayment.upsert({
+        where: { mpPaymentId: "seed-payment-0001" },
+        update: {},
+        create: {
+          mpPaymentId: "seed-payment-0001", amount: "3000.00", paidAt: new Date(),
+          payerEmail: "vecino@example.com", externalReference: null, description: "Cuota Vecinal",
+          reason: "no_reference",
+        },
+      })
+      console.log("new  4B: suscripción y fila de bandeja de prueba")
+    }
   } else {
     // Log explícito: el silencio no distingue "no se crearon" de "no se miró".
     console.log(`skip cuentas de prueba: ${testUsers.reason}`)

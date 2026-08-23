@@ -37,6 +37,8 @@ model User {
   paymentsRegistered Payment[]            @relation("PaymentRegisteredBy")
   receiptsVoided     Receipt[]            @relation("ReceiptVoidedBy")
   unmatchedResolved  MpUnmatchedPayment[] @relation("UnmatchedResolvedBy")
+  incomesRegistered  OtherIncome[]        @relation("OtherIncomeRegisteredBy")
+  incomesVoided      OtherIncome[]        @relation("OtherIncomeVoidedBy")
 
   @@map("users")
 }
@@ -529,7 +531,9 @@ model MpSubscription {
   // redirigir al vecino, ver docs/06 §2) y llevan el monto copiado en su propio
   // `auto_recurring`: cambiar el plan en MP no las mueve, hay que empujarles el
   // monto nuevo una por una con `updatePreapprovalAmount` (REG-34, lote del M4).
-  planId            String       @map("plan_id") @db.VarChar(64)
+  // Nullable desde 4B: una suscripción creada a mano desde el panel de MP no
+  // tiene plan de referencia. `""` como centinela queda prohibido.
+  planId            String?      @map("plan_id") @db.VarChar(64)
   applicationId     Int?         @map("application_id")
   application       Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   memberId          Int?         @map("member_id")
@@ -537,7 +541,8 @@ model MpSubscription {
   // Estados de MP tal cual llegan (pending | authorized | paused | cancelled…):
   // string y no enum, porque el catálogo es de MP y puede crecer sin avisarnos.
   status            String       @db.VarChar(32)
-  payerEmail        String       @map("payer_email") @db.VarChar(191)
+  // Nullable desde 4B: `GET /preapproval/{id}` puede no traerlo.
+  payerEmail        String?      @map("payer_email") @db.VarChar(191)
   linkedManually    Boolean      @default(false) @map("linked_manually")
   // Último monto conocido/empujado (4B: lote REG-34 y divergencia).
   amount            Decimal?     @db.Decimal(10, 2)
@@ -606,10 +611,22 @@ enum PaymentStatus {
   voided
 }
 
+// `matched` = se aplicó a un socio y hay `Payment`; `dismissed` = no es plata
+// nuestra o fue un error. `other_income` es la tercera salida (4B, tarea 8B): la
+// plata entró y es de la asociación, pero no es de ningún socio — un alquiler
+// del salón, una rifa. Llamarla `dismissed` declaraba que ese dinero no se le
+// imputa a nadie, que es falso.
 enum UnmatchedStatus {
   open
   matched
   dismissed
+  other_income
+}
+
+// Por dónde entró un ingreso no societario: el mostrador o Mercado Pago.
+enum IncomeMethod {
+  cash
+  mp
 }
 
 // Historial de valores de cuota (REG-34). El vigente es el de mayor `validFrom`
@@ -725,6 +742,12 @@ model MpUnmatchedPayment {
   payerEmail        String?         @map("payer_email") @db.VarChar(191)
   externalReference String?         @map("external_reference") @db.VarChar(128)
   description       String?         @db.VarChar(200)
+  // Con qué suscripción llegó (si se supo): la vinculación de 4B resuelve sola
+  // las filas que esperaban a su socio.
+  preapprovalId     String?         @map("preapproval_id") @db.VarChar(64)
+  // Por qué no se pudo aplicar. Valores cerrados en código (`UnmatchedReason`,
+  // src/lib/mp/unmatched.ts); string y no enum para no migrar por cada motivo.
+  reason            String          @db.VarChar(32)
   status            UnmatchedStatus @default(open)
   paymentId         Int?            @map("payment_id")
   // FK real y no un Int suelto: un puntero a un pago borrado no puede quedar
@@ -737,6 +760,7 @@ model MpUnmatchedPayment {
 
   @@index([status])
   @@index([paymentId])
+  @@index([preapprovalId])
   @@map("mp_unmatched_payments")
 }
 
@@ -752,4 +776,41 @@ model CronRun {
 
   @@index([job, startedAt])
   @@map("cron_runs")
+}
+
+// Ingresos NO societarios (4B, tarea 8B): alquiler del salón, eventos, rifas,
+// donaciones. Plata que entró y es de la asociación pero no es de ningún socio.
+//
+// Es un REGISTRO, no contabilidad (docs/01): no hay plan de cuentas, ni asientos,
+// ni egresos, y NO emite recibo de la serie societaria — esa serie y su PDF están
+// armados alrededor del socio (REG-33) y meterles un tercero era tocar el núcleo
+// de plata, que ya está cerrado. Por eso esta tabla no tiene ninguna FK a
+// `payments`, `fees` ni `receipts`: es independiente por diseño.
+//
+// `concept` y `note` son texto libre del operador y pueden nombrar a un tercero
+// (el inquilino del salón): viven acá, que lo lee sólo el panel, y no van a la
+// auditoría ni a ningún log (Ley 25.326).
+model OtherIncome {
+  id             Int          @id @default(autoincrement())
+  amount         Decimal      @db.Decimal(10, 2)
+  // La fecha REAL del ingreso: la del cobro de MP, o la que carga el operador.
+  // Nunca el reloj de la corrida.
+  receivedAt     DateTime     @map("received_at")
+  concept        String       @db.VarChar(200)
+  method         IncomeMethod
+  // Sólo cuando viene de la bandeja. Única = un cobro de Mercado Pago no se
+  // puede registrar dos veces, ni siquiera con dos operadores a la vez.
+  mpPaymentId    String?      @unique @map("mp_payment_id") @db.VarChar(64)
+  note           String?      @db.VarChar(200)
+  registeredById Int?         @map("registered_by_id")
+  registeredBy   User?        @relation("OtherIncomeRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
+  voidedAt       DateTime?    @map("voided_at")
+  voidReason     String?      @map("void_reason") @db.VarChar(200)
+  voidedById     Int?         @map("voided_by_id")
+  voidedBy       User?        @relation("OtherIncomeVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([receivedAt])
+  @@index([method])
+  @@map("other_incomes")
 }

@@ -1,10 +1,10 @@
 // Mapa único estado→variante de Badge. Antes cada pantalla tenía su ternario y
 // divergieron: un suspendido se veía "secondary" en el padrón y "outline" en su
 // propia ficha. El del padrón era el más expresivo: queda como canónico.
-import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus } from "@/generated/prisma/client";
+import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, UnmatchedStatus } from "@/generated/prisma/client";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
 
-export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "link";
+export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "success" | "link";
 
 export function memberStatusBadgeVariant(status: MemberStatus): BadgeVariant {
   if (status === "active") return "default";
@@ -49,4 +49,35 @@ export function feeStatusBadgeVariant(status: FeeStatus): BadgeVariant {
   if (status === "paid") return "default";
   if (status === "pending") return "secondary";
   return "outline"; // exempt, voided
+}
+
+// La bandeja resalta lo que espera una decisión; lo resuelto va apagado. Mismo
+// criterio que las solicitudes: "default" (celeste) es "acá hay trabajo".
+//
+// Las tres salidas se distinguen entre sí porque significan cosas distintas y
+// el operador las revisa en la misma columna:
+//   matched      — outline: hay socio, hay Payment y hay recibo detrás. Borde
+//                  fino, sin relleno: es el desenlace normal.
+//   dismissed    — secondary: relleno gris. Esa plata no se le imputa a nadie y
+//                  no suma en ningún lado.
+//   other_income — success: relleno verde tenue. Es el único de los tres que
+//                  deja plata sumando en un total (el de Otros ingresos), y la
+//                  columna se barre de un vistazo porque las tres se distinguen
+//                  por PESO además de por color: borde / gris / verde.
+//                  Antes era "ghost" —sin fondo y con borde transparente—, que
+//                  en pantalla se leía como texto suelto y no como etiqueta.
+export function unmatchedStatusBadgeVariant(status: UnmatchedStatus): BadgeVariant {
+  if (status === "open") return "default";
+  if (status === "dismissed") return "secondary";
+  if (status === "other_income") return "success";
+  return "outline"; // matched
+}
+
+// El catálogo de estados es de Mercado Pago (string, no enum). Sólo tres se
+// afirman; cualquier otro es "no sé" y va neutro, nunca en verde.
+export function subscriptionStatusBadgeVariant(status: string): BadgeVariant {
+  if (status === "authorized") return "default";
+  if (status === "paused") return "secondary";
+  if (status === "cancelled") return "destructive";
+  return "outline";
 }

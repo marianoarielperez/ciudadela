@@ -1557,7 +1557,7 @@ export function makeWebhookProcessor(deps: Deps): {
 };
 export const REFUND_REASON = "Reembolso en Mercado Pago";
 ```
-- Results posibles de `applyPayment` (≤ 64 chars): `already_processed`, `entry_already_recorded`, `debit_applied`, `link_applied`, `application_approved`, `application_approved_after_expiry`, `payment_refunded`, `refund_ignored`, `payment_rejected_traced`, `payment_ignored`, `unmatched_no_reference`, `unmatched_no_subscription`, `unmatched_application_missing`, `unmatched_duplicate_entry`, `unmatched_withdrawn_no_pending`.
+- Results posibles de `applyPayment` (≤ 64 chars) — **la lista viva es `WEBHOOK_RESULTS` en `webhook-processor.ts`**; la revisión de la Task 6 sacó `entry_already_recorded` (ahora repone el `Payment`) y agregó `entry_payment_recovered` y `unmatched_treasury_rejected`: `already_processed`, `debit_applied`, `link_applied`, `application_approved`, `application_approved_after_expiry`, `payment_refunded`, `refund_ignored`, `payment_rejected_traced`, `payment_ignored`, `unmatched_no_reference`, `unmatched_no_subscription`, `unmatched_application_missing`, `unmatched_duplicate_entry`, `unmatched_withdrawn_no_pending`, `unmatched_treasury_rejected`, `entry_payment_recovered`.
 - `process` con `subscription_authorized_payment` devuelve además `authorized_payment_traced` (sin `paymentId` o no `processed`).
 - Asientos nuevos: `payment_applied` (`{ paymentId, memberId|applicationId, type, amount, mpPaymentId, receiptId, emailed }`), `payment_refunded`, `link_amount_mismatch` (`{ paymentId, memberId, n, expected, amount }`), `payment_unmatched` (`{ mpPaymentId, reason, amount }`).
 - `service.ts`: `export type TreasuryService = ReturnType<typeof makeTreasuryService>;`
@@ -2664,6 +2664,7 @@ export const UNMATCHED_REASON_LABELS: Record<UnmatchedReason, string> = {
   application_missing: "Solicitud inexistente",
   duplicate_entry: "Segundo cobro de ingreso",
   withdrawn_no_pending: "Cesante sin deuda",
+  treasury_rejected: "Rechazado por tesorería",
 };
 
 export const UNMATCHED_STATUS_LABELS: Record<UnmatchedStatus, string> = {
@@ -2824,6 +2825,7 @@ const REASON_HELP: Record<UnmatchedReason, string> = {
   application_missing: "Trae la referencia de una solicitud que ya no existe en el sistema.",
   duplicate_entry: "Es un segundo cobro sobre una solicitud cuyo ingreso ya se cobró y todavía no tiene acta.",
   withdrawn_no_pending: "El socio está dado de baja y no le quedan cuotas pendientes: no hay a qué imputarlo.",
+  treasury_rejected: "MP cobró y tesorería rechazó el asiento por una regla (monto fuera de rango, ficha inexistente, cuotas que cambiaron). El motivo exacto está en la auditoría (`payment_not_applied`).",
 };
 
 export default async function UnmatchedDetailPage(props: {

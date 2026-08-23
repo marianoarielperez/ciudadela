@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatBytes, formatDateAR, formatARS } from "@/lib/format"
+import { formatBytes, formatDateAR, formatDateTimeAR, formatARS } from "@/lib/format"
 
 describe("formatDateAR", () => {
   it("formats a UTC date in Argentina timezone as DD/MM/AAAA", () => {
@@ -8,6 +8,16 @@ describe("formatDateAR", () => {
   })
   it("formats midday dates plainly", () => {
     expect(formatDateAR(new Date("2026-01-05T15:00:00Z"))).toBe("05/01/2026")
+  })
+})
+
+describe("formatDateTimeAR", () => {
+  it("da día civil y hora argentinos, en 24 h", () => {
+    // 26/08 15:00Z = 26/08 12:00 en Argentina (UTC-3).
+    expect(formatDateTimeAR(new Date("2026-08-26T15:00:00Z"))).toBe("26/08/2026 a las 12:00")
+  })
+  it("cruza el día cuando la hora UTC es de madrugada", () => {
+    expect(formatDateTimeAR(new Date("2026-08-27T02:30:00Z"))).toBe("26/08/2026 a las 23:30")
   })
 })
 

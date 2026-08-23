@@ -103,35 +103,40 @@ function DebitBranch({
     <form action={formAction}>
       <input type="hidden" name="resumeToken" value={resumeToken} />
 
-      <div className="overflow-hidden rounded-xl border-2 border-border">
-        {fee !== null ? (
-          <ul className="divide-y divide-border">
-            <FeeRow when="Ahora, al autorizar" what="Cuota de ingreso" amount={fee} emphasis />
-            <FeeRow
-              when="Después, todos los meses"
-              what={CATEGORY_FEE_LABEL[category] ?? "Cuota mensual"}
-              amount={fee}
-            />
-          </ul>
-        ) : (
-          <p className="px-4 py-3.5 text-sm text-muted-foreground">
-            No podemos mostrarte los montos en este momento. Vas a verlos en Mercado Pago antes de
-            autorizar nada.
-          </p>
-        )}
-        {/* Texto de docs/05 §2, palabra por palabra: es lo que el vecino acepta
-            y lo que el email de rechazo va a citar si la CD no hace lugar. */}
-        <p className="border-t-2 border-warning/40 bg-warning/10 px-4 py-3.5 text-sm text-warning">
-          El primer débito corresponde a la <strong>cuota de ingreso</strong> (equivale a un mes de
-          cuota). <strong>No es reembolsable</strong>, cualquiera sea el resultado de tu solicitud.
-          Luego se debitará la cuota mensual.
-        </p>
-      </div>
+      {fee !== null ? (
+        <>
+          <div className="overflow-hidden rounded-xl border-2 border-border">
+            <ul className="divide-y divide-border">
+              <FeeRow when="Ahora, al autorizar" what="Cuota de ingreso" amount={fee} emphasis />
+              <FeeRow
+                when="Después, todos los meses"
+                what={CATEGORY_FEE_LABEL[category] ?? "Cuota mensual"}
+                amount={fee}
+              />
+            </ul>
+            {/* Texto de docs/05 §2, palabra por palabra: es lo que el vecino acepta
+                y lo que el email de rechazo va a citar si la CD no hace lugar. */}
+            <p className="border-t-2 border-warning/40 bg-warning/10 px-4 py-3.5 text-sm text-warning">
+              El primer débito corresponde a la <strong>cuota de ingreso</strong> (equivale a un mes de
+              cuota). <strong>No es reembolsable</strong>, cualquiera sea el resultado de tu solicitud.
+              Luego se debitará la cuota mensual.
+            </p>
+          </div>
 
-      <p className="mt-5 text-sm text-muted-foreground">
-        Te llevamos a Mercado Pago para que autorices el débito automático. Cuando vuelvas, te
-        confirmamos el resultado acá mismo.
-      </p>
+          <p className="mt-5 text-sm text-muted-foreground">
+            Te llevamos a Mercado Pago para que autorices el débito automático. Cuando vuelvas, te
+            confirmamos el resultado acá mismo.
+          </p>
+        </>
+      ) : (
+        // Sin valor de cuota vigente, `startPaymentAction` corta antes de crear
+        // la suscripción (REG-34: cobrar mal es peor que no cobrar) — mismo
+        // criterio que `step-category`: mensaje honesto y el botón de avance no
+        // se puede disparar, en vez de prometer un checkout que no va a pasar.
+        <FormMessage kind="error" box>
+          El valor de la cuota todavía no está configurado. Probá más tarde o consultá en la sede.
+        </FormMessage>
+      )}
 
       {state.error && (
         <FormMessage kind="error" box className="mt-5">
@@ -144,7 +149,7 @@ function DebitBranch({
         backLabel="Volver a la documentación"
         nextLabel="Ir a Mercado Pago"
         submit
-        nextDisabled={blocked}
+        nextDisabled={blocked || fee === null}
         pending={pending || leaving}
         pendingLabel={leaving ? "Abriendo Mercado Pago…" : "Preparando el pago…"}
       />

@@ -3,20 +3,25 @@
 //
 // El hecho que lo justifica: `withdrawAction` y `changeCategoryAction`
 // (admin/socios/[id]/actions.ts) escriben la ficha, el acta y la auditoría, y
-// nada más. Cancelar o reajustar el preapproval está planificado para los
-// Módulos 4/5. Hasta entonces, a un socio dado de baja se le sigue debitando la
-// cuota todos los meses, y a uno recategorizado se le sigue cobrando el monto
-// viejo. Es plata real de un vecino: la pantalla tiene que decirlo antes, no el
-// socio tres meses después.
+// nada más. Ninguna de las dos toca Mercado Pago, así que a un socio dado de
+// baja se le sigue debitando la cuota todos los meses y a uno recategorizado se
+// le sigue cobrando el monto viejo hasta que alguien haga algo. Lo que cambió
+// con el Módulo 4 es QUÉ hay que hacer: el monto ya se empuja desde el panel
+// (lote REG-34, /admin/tesoreria/valores), la cancelación sigue siendo a mano en
+// Mercado Pago. Es plata real de un vecino: la pantalla tiene que decirlo antes,
+// no el socio tres meses después.
 //
 // QUÉ SE MIRA, y por qué las dos señales
 // --------------------------------------
 // Ninguna de las dos alcanza sola:
 //
-//  - `Member.autoDebit` es la columna `debito_automatico` del padrón importado
-//    (`scripts/import-padron.ts`). Marca fichas viejas cuyo débito se gestionó
-//    en el panel de MP a mano, mucho antes de que existiera este sistema: hay
-//    débito vivo y NO hay ninguna fila local que lo represente.
+//  - `Member.autoDebit` se escribe desde TRES lugares, no uno: el padrón
+//    importado (`padron/mapping.ts`, fichas viejas cuyo débito se gestionó a
+//    mano en el panel de MP antes de que existiera este sistema), el alta web y
+//    el reingreso (`applications/record.ts`, con `app.wantsDebit`) y la
+//    vinculación manual (`mp/link-subscription.ts`). Ninguno lo BAJA nunca. Por
+//    eso el flag solo dice "en algún momento hubo intención de débito" y NO de
+//    dónde salió: los textos de abajo no pueden atribuirle una procedencia.
 //  - `MpSubscription` con `memberId` es la suscripción que el sistema conoce:
 //    la creó el Módulo 3 al asociarse el vecino, o la vinculó un admin. Una
 //    ficha nueva tiene fila y puede tener el flag en `false` (nadie lo edita al
@@ -27,6 +32,15 @@
 // más manda al operador a mirar el panel de MP y no encontrar nada; uno de
 // menos le sigue cobrando a un vecino que se dio de baja.
 //
+// PERO LAS DOS SEÑALES NO VALEN LO MISMO, y por eso el aviso sabe cuál lo
+// disparó. Con una fila local viva, el sistema SABE que el mandato de cobro
+// existe y puede hablar en presente. Con el flag del padrón a secas no sabe
+// nada: ese dato salió de un Excel de 2026, nadie lo verificó contra MP y el
+// socio pudo haber cancelado su débito hace años. Afirmarle al operador que
+// "Mercado Pago le va a seguir cobrando" sobre esa base es inventar un hecho:
+// exactamente lo que estos textos vinieron a sacar de la pantalla. El aviso del
+// flag solo va en condicional y manda a VERIFICAR, no a dar por sentado.
+//
 // Sobre el estado de la suscripción: `cancelled` es lo ÚNICO que se puede
 // afirmar como "acá no hay débito". El catálogo de estados es de MP y puede
 // crecer (`pending`, `authorized`, `paused`…), así que se descarta por lista
@@ -34,29 +48,117 @@
 // posible — el mismo criterio, invertido, que `lateEntryNotice` en
 // applications/query.ts, donde no saber es peor que avisar.
 
-/** ¿Hay que avisar que este socio puede tener un débito vivo en MP? */
-export function hasLiveAutoDebit(input: {
-  /** `Member.autoDebit`: el flag importado del padrón. */
+/** Cuál de las dos señales de débito automático hay, si hay alguna. */
+export type AutoDebitSignal =
+  /** Hay al menos una fila en `mp_subscriptions` que no está `cancelled`. */
+  | "subscription"
+  /** Sólo el flag del padrón: ninguna fila local viva. Puede haber filas
+   *  CANCELADAS, y por eso el texto de esta señal dice "ninguna suscripción
+   *  viva" y no "ninguna suscripción": la ficha, que sí tiene las filas
+   *  delante, distingue los dos casos (ver `AutoDebitView`). */
+  | "flag_only"
+  /** Ni flag ni fila viva. */
+  | "none";
+
+/** El ORDEN de las dos ramas importa: la fila local viva gana sobre el flag del
+ *  padrón, porque es la única que el sistema puede afirmar. Al revés, un socio
+ *  con las dos señales —el caso normal de un alta web sobre una ficha vieja—
+ *  recibiría el texto débil ("si ese débito todavía existe") sobre una
+ *  suscripción que el sistema tiene delante. */
+export function autoDebitSignal(input: {
+  /** `Member.autoDebit`: la intención de débito, venga de donde venga (ver la
+   *  cabecera: son tres escrituras y ninguna lo baja). */
   autoDebit: boolean;
   /** Estados de las filas de `mp_subscriptions` de este socio (puede haber más
    *  de una: una cancelada y una viva, si el débito se rehízo). */
   subscriptionStatuses: string[];
-}): boolean {
-  if (input.autoDebit) return true;
-  return input.subscriptionStatuses.some((s) => s !== "cancelled");
+}): AutoDebitSignal {
+  if (input.subscriptionStatuses.some((s) => s !== "cancelled")) return "subscription";
+  return input.autoDebit ? "flag_only" : "none";
 }
 
-/** El texto es distinto por acción porque lo que hay que hacer en MP es
- *  distinto: en la baja hay que CANCELAR el débito; en el cambio de categoría,
- *  AJUSTAR el monto a la cuota de la categoría nueva. Decir "gestionalo" a secas
- *  deja al operador adivinando. */
+/** El texto es distinto por acción porque lo que hay que hacer es distinto: en
+ *  la baja hay que CANCELAR el débito —y eso sigue siendo a mano en el panel de
+ *  Mercado Pago—; en el cambio de categoría, empujarle el monto nuevo, que
+ *  desde el Módulo 4 se hace desde acá con el lote REG-34. Decir "gestionalo" a
+ *  secas deja al operador adivinando.
+ *
+ *  Y es distinto por SEÑAL (`autoDebitSignal`): con la fila local delante se
+ *  afirma, con el flag del padrón a secas se pregunta. El destino también
+ *  cambia: el lote REG-34 no alcanza una suscripción que el sistema no conoce
+ *  (`listDivergent` sólo mira filas propias), así que mandar ahí a un socio con
+ *  flag solo sería mandarlo a una lista donde nunca va a aparecer.
+ *
+ *  CADA AFIRMACIÓN DE ESTOS TEXTOS SALE DE CÓDIGO, no de lo que el sistema
+ *  debería hacer. Si alguno de estos caminos cambia, el texto cambia con él:
+ *
+ *  `baja`
+ *   - Nada cancela la suscripción al dar de baja: `memberService.withdraw`
+ *     (members/service.ts) escribe `Member`, los tokens, el `User` y el
+ *     `Movement`, y no toca `MpSubscription` ni llama a MP. Los tres llamadores
+ *     de `cancelPreapproval` son de SOLICITUDES (rechazo en
+ *     admin/solicitudes/actions.ts, vencimiento en applications/cron.ts y
+ *     preapproval huérfano en mp/reconcile.ts): ninguno mira socios. Que la
+ *     cancelación automática llegue algún día está escrito (docs/06 §8 y la
+ *     spec de 4B la ponen en el Módulo 5), pero HOY no existe: el texto habla
+ *     del sistema que hay, y por eso no nombra ningún módulo.
+ *   - Un cobro que llega con la suscripción vinculada resuelve como `debit`
+ *     (mp/resolve.ts) y `registerPaymentCore` acota `n` a las cuotas pendientes
+ *     porque el socio está `withdrawn` (treasury/service.ts): imputa la MÁS
+ *     VIEJA (`allocate`), emite recibo y no devenga ni una cuota nueva.
+ *   - Sin pendientes devuelve `no_pending_withdrawn`, y el procesador lo manda a
+ *     la bandeja con motivo `withdrawn_no_pending` — "Cesante sin deuda" en
+ *     pantalla (admin/unmatched-labels.ts).
+ *   - Un cobro cuya suscripción el sistema NO conoce cae en la misma bandeja
+ *     desde el primer mes, pero el MOTIVO depende de la referencia que traiga el
+ *     pago (mp/resolve.ts): con una `solicitud:{id}` cuya solicitud ya no existe
+ *     sale `application_missing` (fila 7 — el caso real que documenta el
+ *     encabezado de resolve.ts) y sólo sin esa referencia sale `no_subscription`
+ *     (fila 8). Por eso el texto nombra la BANDEJA, que es lo único igual en los
+ *     dos casos, y nunca el motivo.
+ *
+ *  `categoria`
+ *   - `memberService.changeCategory` sólo escribe `Member.category` y el
+ *     `Movement`: no toca MP.
+ *   - El lote REG-34 (`listDivergent`, mp/fee-value-batch.ts) calcula el monto
+ *     esperado con `feeAmountFor(member.category, valor vigente)`, o sea contra
+ *     la categoría que el socio tiene AHORA: un recategorizado aparece
+ *     divergente en /admin/tesoreria/valores y el lote le empuja el monto nuevo.
+ *   - Tres huecos que el lote NO cubre y por eso están en los textos: sólo mira
+ *     suscripciones `authorized` con socio vinculado; saltea las categorías sin
+ *     cuota (`feeAmountFor` devuelve null para honorario, vitalicio y cadete),
+ *     donde lo que corresponde no es un monto nuevo sino cancelar; y no sabe
+ *     nada de un débito que no tiene fila local. */
 export const AUTO_DEBIT_WARNINGS = {
-  baja:
-    "Este socio tiene débito automático en Mercado Pago. El sistema NO lo cancela: la baja queda " +
-    "registrada acá, pero la cuota se le va a seguir debitando todos los meses hasta que canceles " +
-    "la suscripción a mano en el panel de Mercado Pago.",
-  categoria:
-    "Este socio tiene débito automático en Mercado Pago. El sistema NO ajusta el monto: el cambio " +
-    "de categoría queda registrado acá, pero se le va a seguir debitando la cuota de la categoría " +
-    "anterior hasta que actualices la suscripción a mano en el panel de Mercado Pago.",
+  baja: {
+    subscription:
+      "Este socio tiene una suscripción de débito automático viva en Mercado Pago. El sistema NO la " +
+      "cancela: mientras la suscripción siga activa, Mercado Pago le va a seguir cobrando la cuota " +
+      "todos los meses. Mientras le queden cuotas pendientes, cada cobro se imputa a la más vieja y " +
+      "emite recibo; cuando no queden, el cobro cae en Tesorería → Sin conciliar y esa plata, que ya " +
+      "salió de la cuenta del vecino, queda esperando una decisión. Para cortar el débito hay que " +
+      "cancelar la suscripción a mano en el panel de Mercado Pago.",
+    flag_only:
+      "La ficha de este socio dice que tiene débito automático, pero el sistema no conoce ninguna " +
+      "suscripción viva suya en Mercado Pago, ni vinculada ni cancelada: ese dato quedó viejo o " +
+      "nunca se vinculó. Si ese débito todavía existe, el sistema tampoco lo cancela, " +
+      "y cada cobro va a caer en Tesorería → Sin conciliar en lugar de imputarse a una cuota. " +
+      "Buscalo en el panel de Mercado Pago: si está vivo, cancelalo ahí; si no, no hay nada que " +
+      "hacer.",
+  },
+  categoria: {
+    subscription:
+      "Este socio tiene una suscripción de débito automático viva en Mercado Pago. El monto NO se " +
+      "ajusta solo: después de registrar el cambio, un superadmin tiene que correr «Aplicar valor " +
+      "vigente» en Tesorería → Valores de cuota para empujarle a Mercado Pago la cuota de la " +
+      "categoría nueva. Ese lote sólo alcanza a las suscripciones activas y vinculadas a un socio: " +
+      "si la categoría nueva no paga cuota (honorario, vitalicio, cadete), no hay monto que empujar " +
+      "y el débito hay que cancelarlo a mano en el panel de Mercado Pago.",
+    flag_only:
+      "La ficha de este socio dice que tiene débito automático, pero el sistema no conoce ninguna " +
+      "suscripción viva suya en Mercado Pago: ese dato quedó viejo. El lote «Aplicar " +
+      "valor vigente» de Tesorería → Valores de cuota no lo alcanza, porque sólo toca suscripciones " +
+      "que el sistema conoce. Si ese débito todavía existe, va a seguir cobrando el monto viejo: " +
+      "buscalo en el panel de Mercado Pago y ajustalo o cancelalo ahí.",
+  },
 } as const;

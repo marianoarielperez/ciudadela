@@ -199,7 +199,14 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
   // no llega nunca a `webhook_events`, muere en el `bad_json` de arriba. El
   // asiento se escribe igual —sin depender de las cabeceras— para que el
   // operador no salga a buscarlo a una tabla donde no está.
-  it("un IPN legacy real (sin body, sin cabeceras de firma) se rechaza con 400 y se audita como legacy_ipn_shape", async () => {
+  //
+  // Responde 200 y no 400 desde la batería de la T14: verificado contra el
+  // sandbox, MP manda CUATRO requests por cada pago de Checkout Pro —la moderna
+  // firmada más la IPN legacy y dos de `merchant_order`— y reintenta las que
+  // fallan. Un 4xx sostenido es algo que MP puede terminar deshabilitando, y
+  // ahí se perdería también la buena. No es un error: es una notificación
+  // legítima en un formato que no implementamos.
+  it("un IPN legacy real (sin body, sin cabeceras de firma) se reconoce con 200 y se audita como legacy_ipn_shape", async () => {
     const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
       method: "POST",
       headers: new Headers({ "x-real-ip": "10.0.0.9" }),
@@ -207,13 +214,32 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
     const res = await POST(req);
 
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: "bad_json" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ignored: "legacy_ipn" });
+    // 200 es "recibido", NO "procesado": nada se persiste ni se aplica.
     expect(create).not.toHaveBeenCalled();
     expect(audit).toHaveBeenCalledTimes(1);
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
       action: "webhook_rejected_signature",
-      detail: { reason: "legacy_ipn_shape" },
+      detail: { reason: "legacy_ipn_shape", topic: "payment" },
+    });
+  });
+
+  // `merchant_order` llega por el `notification_url` de la preferencia, no por
+  // los eventos tildados en el panel, así que aparece igual aunque nadie lo
+  // pida. Cae por la misma rama; el `topic` del asiento es lo que los distingue.
+  it("una notificación merchant_order se reconoce con 200 y deja el topic en el asiento", async () => {
+    const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=merchant_order&id=43882884816", {
+      method: "POST",
+      headers: new Headers({ "x-real-ip": "10.0.0.9" }),
+    }) as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(create).not.toHaveBeenCalled();
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      detail: { reason: "legacy_ipn_shape", topic: "merchant_order" },
     });
   });
 

@@ -96,7 +96,23 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+// Hosts, además de localhost, desde los que el dev server acepta servir sus
+// propios chunks de `/_next/static`. SÓLO afecta a `next dev`.
+//
+// Hace falta para probar contra Mercado Pago: las `back_urls` de una preferencia
+// y el `back_url` de una suscripción tienen que ser públicas, así que el circuito
+// de pagos se prueba a través de un túnel de cloudflared (docs/11). Entrando por
+// ese host, Next bloquea sus chunks por defecto y la página llega SIN JavaScript:
+// el widget de Turnstile nunca se monta, el formulario manda el captcha vacío y
+// `/ingresar` responde "credenciales inválidas". El síntoma no dice nada del
+// origen — parece una contraseña mal puesta.
+//
+// El dominio del túnel cambia en cada corrida de cloudflared: si el login vuelve
+// a fallar por esto, la línea a actualizar es ésta.
+const DEV_TUNNEL_ORIGINS = ["geological-expectations-winner-canal.trycloudflare.com"];
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: DEV_TUNNEL_ORIGINS,
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

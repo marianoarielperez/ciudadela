@@ -21,11 +21,12 @@ const prismaMock = vi.hoisted(() => ({
   $transaction: vi.fn(),
 }));
 const gatewayMock = vi.hoisted(() => ({
-  getPlan: vi.fn(),
   updatePreapprovalAmount: vi.fn(),
   cancelPreapproval: vi.fn(),
 }));
-const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn(), planIdForCategory: vi.fn() }));
+const feeValuesMock = vi.hoisted(() => ({
+  feeValueReader: { current: vi.fn(), history: vi.fn() },
+}));
 const mailerMock = vi.hoisted(() => ({ sendToApplication: vi.fn(), sendToMember: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
@@ -36,7 +37,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/tokens", () => ({ tokens: { issue: vi.fn(), revokeForMember: vi.fn() } }));
 vi.mock("@/lib/email", () => ({ mailer: mailerMock }));
 vi.mock("@/lib/mp/gateway", () => ({ mpGateway: gatewayMock }));
-vi.mock("@/lib/mp/plans", () => feesMock);
+vi.mock("@/lib/treasury/fee-values", () => feeValuesMock);
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers([["x-real-ip", "1.2.3.4"]]) }));
 vi.mock("next/navigation", () => ({
@@ -94,8 +95,6 @@ beforeEach(() => {
   prismaMock.movement.count.mockResolvedValue(0);
   prismaMock.book.count.mockResolvedValue(0);
   prismaMock.mpSubscription.updateMany.mockResolvedValue({ count: 1 });
-  // La fila local nace apuntando al plan que se usó al firmar la suscripción.
-  prismaMock.mpSubscription.findUnique.mockResolvedValue({ planId: "PLAN-SHARED" });
   prismaMock.$transaction.mockImplementation(
     async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock),
   );
@@ -105,18 +104,12 @@ beforeEach(() => {
   txMock.mpSubscription.updateMany.mockResolvedValue({ count: 1 });
   gatewayMock.updatePreapprovalAmount.mockResolvedValue(undefined);
   gatewayMock.cancelPreapproval.mockResolvedValue(undefined);
-  // Lectura FRESCA del plan nuevo: es de acá de donde tiene que salir el monto
-  // que se le escribe a una suscripción viva, no de la caché de 24 h.
-  gatewayMock.getPlan.mockImplementation(async (id: string) => ({
-    id, reason: id === "PLAN-ACTIVE" ? "SOCIO ACTIVO" : "SOCIO ADHERENTE/COLABORADOR",
-    amount: id === "PLAN-ACTIVE" ? 5000 : 2500,
-  }));
-  // Sigue mockeado aunque la action ya no lo use: si alguien lo vuelve a
-  // enchufar, el test de abajo lo caza en vez de pasar por casualidad.
-  feesMock.getFeeAmounts.mockResolvedValue({ active: 9999, shared: 9999 });
-  feesMock.planIdForCategory.mockImplementation(
-    async (c: string) => (c === "active" ? "PLAN-ACTIVE" : "PLAN-SHARED"),
-  );
+  // `fee_values` es la única fuente del monto: es de acá de donde sale el
+  // importe que se le escribe a una suscripción viva (REG-34).
+  feeValuesMock.feeValueReader.current.mockResolvedValue({
+    id: 1, activeAmount: 5000, sharedAmount: 2500,
+    validFrom: new Date("2026-08-01T12:00:00Z"), minuteId: null,
+  });
   mailerMock.sendToApplication.mockResolvedValue({ messageId: "mid" });
 });
 
@@ -129,7 +122,7 @@ describe("recategorizar una solicitud", () => {
 
     expect(url).toBe("/admin/solicitudes/5");
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
-    expect(gatewayMock.getPlan).not.toHaveBeenCalled();
+    expect(feeValuesMock.feeValueReader.current).not.toHaveBeenCalled();
     expect(txMock.application.update).toHaveBeenCalledWith({
       where: { id: 5 }, data: { requestedCategory: "collaborator" },
     });
@@ -138,7 +131,7 @@ describe("recategorizar una solicitud", () => {
     });
   });
 
-  it("adherente → activo actualiza el monto de la suscripción con el del plan activo", async () => {
+  it("adherente → activo actualiza el monto de la suscripción con el valor del activo", async () => {
     await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
 
     expect(gatewayMock.updatePreapprovalAmount).toHaveBeenCalledWith("PRE-1", 5000);
@@ -146,74 +139,73 @@ describe("recategorizar una solicitud", () => {
     expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({ subscriptionUpdated: true });
   });
 
-  // ── El monto que se escribe sale de una lectura FRESCA ──────────────────────
+  // ── El monto que se escribe sale de `fee_values`, no de Mercado Pago ────────
   // `updatePreapprovalAmount` fija lo que MP le debita al socio TODOS los meses.
-  // La caché de `plans.ts` es de 24 h y stale-on-error: si MP se cae, no tira,
-  // devuelve el último valor bueno. Servirse de ahí sería escribirle a una
-  // suscripción viva un importe que la Comisión ya cambió, con éxito en pantalla
-  // y sin nada que lo detecte (la conciliación compara plan vs. ValorCuota, no
-  // suscripción vs. plan).
-  it("el monto sale del plan leído fresco, no de la caché de montos", async () => {
-    gatewayMock.getPlan.mockResolvedValue({ id: "PLAN-ACTIVE", reason: "SOCIO ACTIVO", amount: 7400 });
+  // Desde el M4 la tabla `fee_values` es la única fuente de montos (REG-34):
+  // preguntarle el importe al plan de MP era una segunda fuente de verdad, que
+  // se atrasaba en cuanto la Comisión registraba el valor nuevo en el sistema y
+  // nadie lo tocaba en el panel de MP.
+  it("el monto sale del valor vigente de `fee_values`", async () => {
+    feeValuesMock.feeValueReader.current.mockResolvedValue({
+      id: 2, activeAmount: 7400, sharedAmount: 3700,
+      validFrom: new Date("2026-08-20T12:00:00Z"), minuteId: null,
+    });
     await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
 
-    expect(gatewayMock.getPlan).toHaveBeenCalledWith("PLAN-ACTIVE");
-    // 7400, no el 9999 de la caché: si la action volviera a `getFeeAmounts`, acá se ve.
+    expect(feeValuesMock.feeValueReader.current).toHaveBeenCalled();
     expect(gatewayMock.updatePreapprovalAmount).toHaveBeenCalledWith("PRE-1", 7400);
-    expect(feesMock.getFeeAmounts).not.toHaveBeenCalled();
   });
 
-  it("si el plan no se puede leer, no se toca MP ni se guarda nada", async () => {
-    gatewayMock.getPlan.mockRejectedValue(Object.assign(new Error("MP 500"), { code: "500" }));
+  // `current()` devuelve `null` cuando todavía no rige ningún valor. Inventar un
+  // monto acá sería debitarle al socio una cifra que nadie decidió.
+  it("sin valor de cuota vigente, no se toca MP ni se guarda nada", async () => {
+    feeValuesMock.feeValueReader.current.mockResolvedValue(null);
+    const result = await recategorizeApplicationAction({}, recategorize("active"));
+
+    expect(result.error).toMatch(/El valor de la cuota no está configurado/);
+    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
+    expect(txMock.application.update).not.toHaveBeenCalled();
+    expect(txMock.mpSubscription.updateMany).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("si MP rechaza el monto nuevo, no se guarda nada", async () => {
+    gatewayMock.updatePreapprovalAmount.mockRejectedValue(
+      Object.assign(new Error("MP 500"), { code: "500" }),
+    );
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await recategorizeApplicationAction({}, recategorize("active"));
 
-    expect(result.error).toMatch(/No pudimos confirmar el valor de la cuota/);
+    expect(result.error).toMatch(/MP no aceptó el cambio de monto/);
     // Ni el cuerpo del SDK ni el error crudo llegan a la pantalla.
     expect(result.error).not.toMatch(/MP 500/);
-    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
     expect(txMock.application.update).not.toHaveBeenCalled();
     expect(txMock.mpSubscription.updateMany).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
     spy.mockRestore();
   });
 
-  // Antes se llamaba igual a MP con el monto cacheado y después se salteaba el
-  // update local del `planId`: la divergencia volvía en silencio (deuda #7 de
-  // `docs/07`).
-  it("con el plan de la categoría nueva sin configurar, corta antes de llamar a MP", async () => {
-    feesMock.planIdForCategory.mockResolvedValue(null);
-    const result = await recategorizeApplicationAction({}, recategorize("active"));
-
-    expect(result.error).toMatch(/no está configurado/);
-    expect(gatewayMock.getPlan).not.toHaveBeenCalled();
-    expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
-    expect(txMock.application.update).not.toHaveBeenCalled();
-    expect(audit).not.toHaveBeenCalled();
-  });
-
-  // `MpSubscription.planId` se escribía UNA sola vez, al crear la suscripción.
-  // Sin esto, después de recategorizar la fila local dice el plan viejo mientras
-  // el preapproval cobra el monto nuevo, y la conciliación del M4 (REG-34) lee
-  // una divergencia que no existe —o la "arregla" al revés—.
-  it("mueve la fila local al plan nuevo en la MISMA transacción que la solicitud", async () => {
+  // La fila local guarda el ÚLTIMO monto empujado: es contra eso que la
+  // conciliación compara la suscripción viva. Sin esto seguiría diciendo el
+  // importe de la categoría vieja mientras el preapproval cobra el nuevo.
+  it("escribe el monto nuevo en la fila local, en la MISMA transacción que la solicitud", async () => {
     await runExpectingRedirect(recategorizeApplicationAction, recategorize("active"));
 
     expect(txMock.mpSubscription.updateMany).toHaveBeenCalledWith({
       where: { preapprovalId: "PRE-1" },
-      data: expect.objectContaining({ planId: "PLAN-ACTIVE", lastSyncAt: expect.any(Date) }),
+      data: expect.objectContaining({ amount: "5000.00", lastSyncAt: expect.any(Date) }),
     });
-    // El corte queda documentado en el rastro: qué preapproval y de qué plan venía.
+    // El corte queda documentado en el rastro: qué preapproval y con qué monto.
     expect(vi.mocked(audit).mock.calls[0][0].detail).toMatchObject({
-      preapprovalId: "PRE-1", oldPlanId: "PLAN-SHARED",
+      preapprovalId: "PRE-1", amount: 5000,
     });
   });
 
-  it("adherente → colaborador no toca la fila local: es el mismo plan", async () => {
+  it("adherente → colaborador no toca la fila local: comparten monto", async () => {
     await runExpectingRedirect(recategorizeApplicationAction, recategorize("collaborator"));
 
     expect(txMock.mpSubscription.updateMany).not.toHaveBeenCalled();
-    expect(feesMock.planIdForCategory).not.toHaveBeenCalled();
+    expect(feeValuesMock.feeValueReader.current).not.toHaveBeenCalled();
     expect(vi.mocked(audit).mock.calls[0][0].detail).not.toHaveProperty("preapprovalId");
   });
 

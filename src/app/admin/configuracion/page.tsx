@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { PageHeader } from "@/components/admin/page-header";
@@ -7,6 +9,7 @@ import { feeValueReader } from "@/lib/treasury/fee-values";
 import { addMonths, currentPeriod } from "@/lib/treasury/periods";
 import { formatARS, formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
+import { listDivergent } from "@/lib/mp/fee-value-batch";
 import { ConfigForm } from "./config-form";
 import { FeeValueForm } from "./fee-value-form";
 
@@ -76,6 +79,15 @@ export default async function ConfigPage(props: {
   // adelantaría un mes entero.
   const suggestedValidFrom = `${addMonths(currentPeriod(), 1)}-01`;
 
+  // Recién registrado un valor: cuántas suscripciones de Mercado Pago quedaron
+  // cobrando otra cosa. Es el momento en que el superadmin tiene que enterarse
+  // de que registrar el valor NO le cambió el débito a nadie todavía — las
+  // suscripciones llevan el monto copiado y hay que empujárselo una por una.
+  // Se calcula sólo en ese momento: es una consulta al padrón que no le
+  // interesa a nadie que entró a cambiar el teléfono de contacto.
+  const divergentCount =
+    sp.cuota === "1" && current ? (await listDivergent(prisma, current)).length : 0;
+
   return (
     <div className="space-y-4">
       <PageHeader title="Configuración" />
@@ -100,7 +112,24 @@ export default async function ConfigPage(props: {
         <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           Tesorería — valor de cuota
         </h2>
-        {sp.cuota === "1" && <FormMessage kind="success" box>Valor de cuota registrado.</FormMessage>}
+        {sp.cuota === "1" && (
+          <FormMessage kind="success" box as="div">
+            {divergentCount === 0 ? (
+              <p>Valor de cuota registrado, y ninguna suscripción de Mercado Pago para actualizar.</p>
+            ) : (
+              <p>
+                {`Valor de cuota registrado. Hay ${divergentCount} ${divergentCount === 1 ? "suscripción" : "suscripciones"} de Mercado Pago para actualizar: `}
+                <Link
+                  className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  href="/admin/tesoreria/valores"
+                >
+                  Ir a Valores de cuota
+                </Link>
+                .
+              </p>
+            )}
+          </FormMessage>
+        )}
         <p className="text-sm text-muted-foreground">
           {current ? (
             <>

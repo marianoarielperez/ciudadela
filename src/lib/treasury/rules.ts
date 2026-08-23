@@ -18,6 +18,17 @@ export function feeAmountFor(category: MemberCategory, v: FeeValueAmounts): numb
   }
 }
 
+/** Si la categoría paga cuota, con independencia de que haya un valor vigente.
+ *
+ *  `feeAmountFor` devuelve `null` por DOS motivos que tienen salidas opuestas
+ *  —la categoría no paga cuota, o todavía no hay valor registrado—, y una
+ *  pantalla que no los distingue le dice a un socio activo "tu categoría no
+ *  paga cuota". Este predicado responde el primero de los dos, y se deriva de
+ *  `feeAmountFor` con montos centinela para que no puedan divergir. */
+export function categoryPaysFee(category: MemberCategory): boolean {
+  return feeAmountFor(category, { activeAmount: 1, sharedAmount: 1 }) !== null;
+}
+
 /** Quién devenga cuota obligatoria (docs/02 tabla Art. 5). Adherente es voluntaria. */
 export const ACCRUING_CATEGORIES: readonly MemberCategory[] = ["active", "collaborator"];
 

@@ -1,111 +1,331 @@
-// Procesamiento de webhooks de MP (docs/06 §4), inline y idempotente. El
-// registro crudo y la respuesta HTTP viven en la ruta; acá solo la reacción a
-// cada tópico. Todo camino "raro" devuelve un result y NO lanza: lo que lanza
-// es un fallo real (DB caída, MP caído) y la ruta lo convierte en 500 para que
-// MP reintente.
-import type { PrismaClient } from "@/generated/prisma/client";
+// Procesamiento de webhooks de MP (docs/06 §4, spec 4B §6), inline e
+// idempotente. El registro crudo y la respuesta HTTP viven en la ruta; acá
+// sólo la reacción a cada tópico.
+//
+// PRINCIPIO: el procesador NUNCA falla por una regla de negocio. Un cesante sin
+// cuotas, una referencia rota, un monto raro: todo termina en un `result`
+// (aplicado / bandeja / ignorado). Lo único que lanza es un fallo TÉCNICO (MP o
+// la base caídas), y la ruta lo convierte en 500 para que MP reintente. Si una
+// regla de negocio lanzara, MP reintentaría con backoff PARA SIEMPRE un cobro
+// que ya hizo, y el vecino quedaría con la plata debitada y sin recibo.
+import type { MemberCategory, PrismaClient } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { APPROVED_AFTER_EXPIRY_ACTION } from "@/lib/applications/query";
 import { audit, auditStrict } from "@/lib/audit";
 import { mailer } from "@/lib/email";
 import { applicationAcceptedEmail } from "@/lib/email/templates";
+import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { safeMessage } from "@/lib/log-safe";
 import { prisma } from "@/lib/prisma";
-import { mpGateway, type MpGateway } from "./gateway";
+import { feeValueReader, type makeFeeValueReader } from "@/lib/treasury/fee-values";
+import { sendReceiptEmail as sendReceiptEmailDefault, type ReceiptEmailResult } from "@/lib/treasury/receipt-email";
+import { feeAmountFor } from "@/lib/treasury/rules";
+import { treasuryService, type TreasuryService } from "@/lib/treasury/service";
+import { mpGateway, type MpGateway, type MpPaymentDetails } from "./gateway";
+import { parseApplicationReference, parsePaymentLinkReference } from "./references";
+import { resolveMpPayment, type Decision, type ResolveContext } from "./resolve";
+import { makeUnmatchedInbox, type UnmatchedReason } from "./unmatched";
 
 export type WebhookInput = { topic: string; dataId: string };
 
-const APPLICATION_REF = /^solicitud:(\d+)$/;
+export const REFUND_REASON = "Reembolso en Mercado Pago";
+
+/** Acción de auditoría del cobro que tesorería rechazó por una regla de
+ *  negocio. NO es un error: si lo fuera, MP reintentaría para siempre un cobro
+ *  que ya hizo. El caso además va a la bandeja (`treasury_rejected`), que es la
+ *  única de las dos anotaciones que alguna vez va a tener pantalla. */
+export const PAYMENT_NOT_APPLIED = "payment_not_applied";
+
+/** Lo que puede terminar en `WebhookEvent.result` (VarChar(64)). Tipar los
+ *  retornos con esta unión es lo que hace que un result nuevo no pueda entrar
+ *  sin declararse; `WEBHOOK_RESULTS`, abajo, la vuelve enumerable en runtime. */
+export type WebhookResult =
+  | "unknown_topic"
+  | "subscription_synced"
+  | "no_match"
+  | "authorized_payment_traced"
+  | "payment_ignored"
+  | "payment_rejected_traced"
+  | "payment_refunded"
+  | "refund_ignored"
+  | "already_processed"
+  | "debit_applied"
+  | "link_applied"
+  | "application_approved"
+  | "application_approved_after_expiry"
+  | "entry_payment_recovered"
+  | `unmatched_${UnmatchedReason}`;
+
+/** La lista completa, para poder recorrerla (el test de la longitud de la
+ *  columna). Es un `Record` y no un array a propósito: el compilador exige una
+ *  entrada por cada miembro de `WebhookResult`, así que un result nuevo —o un
+ *  motivo nuevo de la bandeja— no puede quedarse afuera. */
+export const WEBHOOK_RESULTS: Record<WebhookResult, true> = {
+  unknown_topic: true,
+  subscription_synced: true,
+  no_match: true,
+  authorized_payment_traced: true,
+  payment_ignored: true,
+  payment_rejected_traced: true,
+  payment_refunded: true,
+  refund_ignored: true,
+  already_processed: true,
+  debit_applied: true,
+  link_applied: true,
+  application_approved: true,
+  application_approved_after_expiry: true,
+  entry_payment_recovered: true,
+  unmatched_no_reference: true,
+  unmatched_no_subscription: true,
+  unmatched_application_missing: true,
+  unmatched_duplicate_entry: true,
+  unmatched_withdrawn_no_pending: true,
+  unmatched_treasury_rejected: true,
+};
 
 type Deps = {
-  db: Pick<PrismaClient, "application" | "mpSubscription" | "$transaction">;
+  db: Pick<PrismaClient, "application" | "mpSubscription" | "payment" | "member" | "mpUnmatchedPayment">;
   gateway: Pick<MpGateway, "getPayment" | "getPreapproval" | "getAuthorizedPayment">;
+  treasury: Pick<TreasuryService, "registerPayment" | "refundPayment">;
+  unmatched: Pick<ReturnType<typeof makeUnmatchedInbox>, "record">;
+  feeValues: Pick<ReturnType<typeof makeFeeValueReader>, "current">;
   mailer: Pick<typeof mailer, "sendToApplication">;
+  sendReceiptEmail: (receiptId: number) => Promise<ReceiptEmailResult>;
   audit: typeof audit;
-  /** Sólo para el asiento del pago tardío: ver el porqué en `onPayment`. */
   auditStrict: typeof auditStrict;
+  now?: () => Date;
 };
 
 // Los errores de nodemailer traen `envelope`, `rejected` y el `response` del
 // SMTP —o sea la dirección del vecino en claro— y el log de PM2 no está cubierto
-// por los cuidados de docs/08 (Ley 25.326). Mismo criterio que
-// `asociate/actions.ts`: al log va el código. El mensaje se conserva porque un
-// Error pelado NO tiene `.code` y sin él el operador leía literalmente
-// "unknown", pero se enmascara cualquier dirección antes de salir.
+// por los cuidados de docs/08 (Ley 25.326). Al log va el código; el mensaje,
+// cuando se usa, pasa antes por `safeMessage`.
 function codeOf(e: unknown): string {
   return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
 }
 
+// `TreasuryError` es la negativa de NEGOCIO del servicio de tesorería. Se
+// reconoce por forma y no con `instanceof` —mismo criterio que el P2002 de
+// `service.ts`— para que un fake de test pueda producirla sin importar la
+// clase, y para que mockear `@/lib/treasury/service` no deje el `instanceof`
+// contra un `undefined`.
+function isTreasuryError(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { name?: unknown }).name === "TreasuryError";
+}
+
+// Los dos eventos del mismo cobro (`payment` y `subscription_authorized_payment`)
+// llegan casi juntos: se serializan por id de pago para que no resuelvan y
+// apliquen a la vez. El servicio tiene su propia barrera (unique + P2002), así
+// que esto es para que el segundo vea `already_processed` y no una carrera.
+const paymentMutex = createKeyedMutex();
+
+// El contexto que resuelve el pago, más la categoría del socio del link: la
+// necesita el control de divergencia de monto y ya viene en la misma consulta,
+// así que no se vuelve a preguntar. `resolveMpPayment` la ignora.
+type LoadedContext = Omit<ResolveContext, "linkMember"> & {
+  linkMember: { id: number; category: MemberCategory } | null;
+};
+
+/** Centavos redondeados: los montos de MP son floats y compararlos crudos
+ *  (`6000.000000000001`) inventa divergencias que no existen. Exportada para
+ *  que la conciliación compare con el MISMO criterio y no invente divergencias
+ *  que el webhook no ve. */
+export function cents(amount: number): number {
+  return Math.round(amount * 100);
+}
+
 export function makeWebhookProcessor(deps: Deps) {
-  async function onPayment(dataId: string): Promise<string> {
-    const payment = await deps.gateway.getPayment(dataId);
-    const match = payment.externalReference?.match(APPLICATION_REF);
-    if (!match) return "no_match";
-    const applicationId = Number(match[1]);
+  const now = deps.now ?? (() => new Date());
 
-    if (payment.status === "rejected") return "payment_rejected";
-    if (payment.status !== "approved") return "payment_ignored";
+  async function loadContext(p: MpPaymentDetails, preapprovalId: string | null): Promise<LoadedContext> {
+    const applicationId = parseApplicationReference(p.externalReference);
+    const link = parsePaymentLinkReference(p.externalReference);
+    const [existingPayment, subscription, subscriptionByReference, application, linkMember] = await Promise.all([
+      deps.db.payment.findUnique({ where: { mpPaymentId: p.id }, select: { id: true } }),
+      preapprovalId
+        ? deps.db.mpSubscription.findUnique({ where: { preapprovalId }, select: { memberId: true, applicationId: true } })
+        : Promise.resolve(null),
+      applicationId !== null && p.externalReference
+        ? deps.db.mpSubscription.findFirst({ where: { externalReference: p.externalReference }, select: { memberId: true } })
+        : Promise.resolve(null),
+      applicationId !== null
+        ? deps.db.application.findUnique({ where: { id: applicationId }, select: { id: true, mpPaymentIdEntry: true, memberId: true } })
+        : Promise.resolve(null),
+      link ? deps.db.member.findUnique({ where: { id: link.memberId }, select: { id: true, category: true } }) : Promise.resolve(null),
+    ]);
+    return {
+      existingPayment: existingPayment ?? null, subscription: subscription ?? null,
+      subscriptionByReference: subscriptionByReference ?? null, application: application ?? null, linkMember: linkMember ?? null,
+    };
+  }
 
-    // UPDATE condicional por estado = idempotencia de la transición: el
-    // reintento del mismo evento (o un segundo pago del ciclo) ve count 0.
-    //
-    // Son DOS updates y no uno con `status: { in: [...] }` a propósito: el
-    // segundo dice, sin leer nada antes y sin carrera posible, que la solicitud
-    // estaba VENCIDA. Ese dato no se puede perder (ver abajo), y un `updateMany`
-    // no devuelve el estado anterior.
+  async function toInbox(p: MpPaymentDetails, preapprovalId: string | null, reason: UnmatchedReason): Promise<WebhookResult> {
+    await deps.unmatched.record({
+      mpPaymentId: p.id, amount: p.transactionAmount, paidAt: p.dateApproved ?? now(),
+      payerEmail: p.payerEmail, externalReference: p.externalReference, description: p.description,
+      preapprovalId, reason,
+    });
+    // Sin email ni descripción: ids, motivo y monto.
+    await deps.audit({ action: "payment_unmatched", entity: "mp_payment", entityId: p.id, detail: { mpPaymentId: p.id, reason, amount: p.transactionAmount } });
+    return `unmatched_${reason}`;
+  }
+
+  // El cobro ya estaba asentado: si además había quedado una fila ABIERTA en la
+  // bandeja para ese mismo `mpPaymentId`, se cierra al pasar. El servicio cierra
+  // la fila dentro de la transacción que asienta, pero ninguno de los dos
+  // caminos de `already_processed` (la consulta previa del servicio y la de este
+  // procesador) llega a esa transacción, así que sin esto la fila quedaba
+  // abierta para siempre y el operador veía en la bandeja un cobro ya aplicado.
+  // Best-effort a propósito: el cobro YA está bien asentado, y convertir un
+  // fallo de esta limpieza en 500 haría que MP reintentara un pago que no tiene
+  // nada de malo.
+  async function closeInboxRow(mpPaymentId: string, paymentId: number): Promise<void> {
+    try {
+      await deps.db.mpUnmatchedPayment.updateMany({
+        where: { mpPaymentId, status: "open" },
+        data: { status: "matched", paymentId, resolvedAt: now() },
+      });
+    } catch (e) {
+      console.error("[mp-webhook] no se pudo cerrar la fila de la bandeja del cobro", mpPaymentId, "code:", codeOf(e));
+    }
+  }
+
+  // `registerPayment` puede rechazar por REGLA DE NEGOCIO (`TreasuryError`): un
+  // monto que no entra en la columna, una ficha que ya no está, una cuota que se
+  // reimputó mientras tanto. MP ya le cobró al vecino: si eso saliera como 500,
+  // MP reintentaría ESE MISMO cobro con backoff para siempre. Así que se asienta
+  // y se devuelve `null`; el llamador manda el cobro a la BANDEJA
+  // (`treasury_rejected`), que es donde un operador lo va a ver — el asiento
+  // solo no alcanza: `audit()` es best-effort y `audit_log` no tiene pantalla.
+  // Un fallo TÉCNICO sí se propaga.
+  async function registerOrTrace(
+    input: Parameters<TreasuryService["registerPayment"]>[0],
+    context: Record<string, unknown>,
+  ): Promise<Awaited<ReturnType<TreasuryService["registerPayment"]>> | null> {
+    try {
+      return await deps.treasury.registerPayment(input);
+    } catch (e) {
+      if (!isTreasuryError(e)) throw e;
+      console.error("[mp-webhook] tesorería rechazó el cobro", input.mpPaymentId, "motivo:", safeMessage(e));
+      // Sin datos personales: ids, monto y el mensaje de la regla (que es un
+      // texto fijo del servicio, y aun así pasa por `safeMessage`).
+      await deps.audit({
+        action: PAYMENT_NOT_APPLIED, entity: "mp_payment", entityId: input.mpPaymentId ?? undefined,
+        detail: { ...context, mpPaymentId: input.mpPaymentId, amount: input.amount, message: safeMessage(e) },
+      });
+      return null;
+    }
+  }
+
+  async function emailReceipt(receiptId: number): Promise<string> {
+    try {
+      const r = await deps.sendReceiptEmail(receiptId);
+      return r.sent ? "sent" : r.reason;
+    } catch (e) {
+      // `sendReceiptEmail` es best-effort por contrato, pero si algún día tira,
+      // el cobro ya está asentado: no puede volverse un 500.
+      console.error("[mp-webhook] sendReceiptEmail lanzó", receiptId, codeOf(e));
+      return "error";
+    }
+  }
+
+  async function applyToMember(
+    p: MpPaymentDetails,
+    d: Extract<Decision, { kind: "debit" | "link" }>,
+    ctx: LoadedContext,
+  ): Promise<WebhookResult> {
+    const n = d.kind === "debit" ? 1 : d.n;
+    const preapprovalId = d.kind === "debit" ? d.preapprovalId : null;
+    const r = await registerOrTrace({
+      memberId: d.memberId, type: d.kind, n, amount: p.transactionAmount, paidAt: p.dateApproved ?? now(),
+      mpPaymentId: p.id, preapprovalId, actorId: null,
+    }, { memberId: d.memberId, type: d.kind, n });
+    // Tesorería lo rechazó: MP ya cobró y acá no se asentó nada. A la bandeja,
+    // que es lo único que alguien mira.
+    if (r === null) return toInbox(p, preapprovalId, "treasury_rejected");
+    if (r.kind === "already_processed") {
+      await closeInboxRow(p.id, r.paymentId);
+      return "already_processed";
+    }
+    // Un cesante sin cuotas pendientes no devenga: el cobro existe y no hay a
+    // qué imputarlo. A la bandeja, nunca a un error (MP ya cobró).
+    if (r.kind === "no_pending_withdrawn") return toInbox(p, preapprovalId, "withdrawn_no_pending");
+    const emailed = await emailReceipt(r.receiptId);
+    await deps.audit({
+      action: "payment_applied", entity: "payment", entityId: r.paymentId,
+      detail: { paymentId: r.paymentId, memberId: d.memberId, type: d.kind, amount: r.amount, mpPaymentId: p.id, receiptId: r.receiptId, emailed },
+    });
+    if (d.kind === "link") {
+      // El link se emitió por `n × valor vigente`; si MP cobró otra cosa, se
+      // aplica igual (spec 4B §6) y queda asentado para que alguien lo mire.
+      // La categoría del socio ya vino en `loadContext` (el link sólo resuelve
+      // si el socio existe), así que no se vuelve a consultar.
+      const value = await deps.feeValues.current(p.dateApproved ?? now());
+      const unit = ctx.linkMember && value ? feeAmountFor(ctx.linkMember.category, value) : null;
+      // En centavos redondeados, como el resto del módulo: comparar los floats
+      // crudos con un umbral de 0,01 puede dar de un lado o del otro por error
+      // de representación.
+      const expected = unit === null ? null : cents(unit * n);
+      const paid = cents(p.transactionAmount);
+      if (expected !== null && expected !== paid) {
+        await deps.audit({ action: "link_amount_mismatch", entity: "payment", entityId: r.paymentId,
+          detail: { paymentId: r.paymentId, memberId: d.memberId, n, expected: expected / 100, amount: paid / 100 } });
+      }
+      return "link_applied";
+    }
+    return "debit_applied";
+  }
+
+  // El ingreso tiene DOS escrituras que no comparten transacción: la transición
+  // de la solicitud (que además le pone la marca `mpPaymentIdEntry`) y el
+  // `Payment` con su recibo. Si el proceso muere entre las dos, MP reintenta y
+  // este mismo camino tiene que poder reponer la que falte — por eso no corta
+  // cuando la transición no encuentra nada. Lo que SÍ es de una sola vez es lo
+  // que depende de la transición: el asiento del pago tardío y el email de
+  // bienvenida, que un reintento no puede volver a mandarle al vecino.
+  //
+  // `memberId` es el de la solicitud: `null` mientras no haya acta, y el del
+  // socio cuando el acta ya pasó. Va al `Payment` para que el cobro se vea en
+  // la cuenta corriente (ver la nota de `registerOrTrace`, abajo).
+  async function applyEntry(
+    p: MpPaymentDetails, applicationId: number, preapprovalId: string | null, memberId: number | null,
+  ): Promise<WebhookResult> {
+    // UPDATE condicional por estado = idempotencia de la transición (M3). Dos
+    // updates y no uno con `in`: el segundo afirma, sin leer antes y sin carrera
+    // posible, que la solicitud estaba VENCIDA — dato que no se puede perder
+    // (ver abajo) y que un `updateMany` no devuelve.
     const data = {
       status: "approved_pending_minute" as const,
-      mpPaymentIdEntry: payment.id,
-      entryAmount: new Prisma.Decimal(payment.transactionAmount.toFixed(2)),
+      mpPaymentIdEntry: p.id,
+      entryAmount: new Prisma.Decimal(p.transactionAmount.toFixed(2)),
     };
-    const onTime = await deps.db.application.updateMany({
-      where: { id: applicationId, status: "pending_payment" },
-      data,
-    });
+    const onTime = await deps.db.application.updateMany({ where: { id: applicationId, status: "pending_payment" }, data });
     // El pago manda sobre el vencimiento (decisión del cliente, 21/08/2026). El
-    // cron expira a los 7 días; si MP demora o reintenta el aviso del primer
-    // pago, ese aviso llegaba cuando la solicitud ya estaba `expired` y se
-    // descartaba como `already_processed`: el vecino autorizó el débito, MP le
-    // cobró, la suscripción quedó cancelada por el cron (y MP no devuelve la
-    // plata) y nadie se enteraba. Ahora la solicitud revive.
-    //
+    // cron expira a los 7 días; si MP demora el aviso, el vecino autorizó el
+    // débito, MP le cobró y la solicitud ya estaba `expired`. Ahora revive.
     // El segundo update sólo se intenta si el primero no encontró nada, así que
-    // un reintento del MISMO evento —la solicitud ya está en
-    // `approved_pending_minute`— sigue cayendo en `already_processed`.
+    // un reintento del MISMO evento no vuelve a "revivir" nada: los dos dan 0 y
+    // el camino sigue abajo sin bienvenida ni asiento de pago tardío.
     const late = onTime.count === 0
-      ? await deps.db.application.updateMany({
-          where: { id: applicationId, status: "expired" },
-          data,
-        })
+      ? await deps.db.application.updateMany({ where: { id: applicationId, status: "expired" }, data })
       : { count: 0 };
     const revived = late.count > 0;
-    if (onTime.count === 0 && !revived) return "already_processed";
+    // ¿La transición la hizo ESTA llamada? Si no, es un reintento: la solicitud
+    // ya está aceptada y acá sólo puede faltar el `Payment`.
+    const transitioned = onTime.count > 0 || revived;
 
     if (revived) {
-      // Asiento propio y result distinguible: la solicitud revivió, pero al
-      // expirar el cron intentó cancelar el preapproval, así que el alta puede
-      // haber quedado sin débito automático y alguien tiene que revisarlo. Sin
-      // esto el caso es invisible en pantalla: el estado final es
-      // `approved_pending_minute`, idéntico al de una aceptación normal.
+      // `auditStrict` porque el asiento ES la señal: al expirar, el cron mandó a
+      // cancelar el preapproval y el alta puede haber quedado sin débito
+      // automático. Sin esto el caso es invisible en pantalla: el estado final
+      // es `approved_pending_minute`, idéntico al de una aceptación normal.
+      // No se propaga: un throw → 500 → reintento → los dos updateMany dan 0,
+      // `revived` es false y el asiento no se reescribiría igual; encima el
+      // `WebhookEvent` quedaría sin `result`. Se grita con el id: ese log es lo
+      // único que le queda al operador.
       // Sin datos personales (docs/08): id de solicitud y de pago.
-      //
-      // `auditStrict` y no `audit()`: éste es el único llamador del procesador
-      // que necesita SABER si el asiento se escribió, porque el asiento ES la
-      // señal del caso. Lo que NO se puede hacer con el fallo es propagarlo: un
-      // throw devolvería 500, MP reintentaría, y el reintento encuentra la
-      // solicitud ya en `approved_pending_minute` → los dos updateMany dan 0 →
-      // `already_processed`. O sea que reintentar no reescribiría el asiento y
-      // encima dejaría el `WebhookEvent` sin `result` ni `processedAt`. Así que
-      // se atrapa y se grita con el id: ese log es lo único que le queda al
-      // operador, junto con el `result` del WebhookEvent —que sí se persiste,
-      // porque devolvemos normalmente— para reconstruir el caso a mano.
       try {
-        await deps.auditStrict({
-          action: APPROVED_AFTER_EXPIRY_ACTION,
-          entity: "application",
-          entityId: applicationId,
-          detail: { paymentId: payment.id },
-        });
+        await deps.auditStrict({ action: APPROVED_AFTER_EXPIRY_ACTION, entity: "application", entityId: applicationId, detail: { paymentId: p.id } });
       } catch (e) {
         console.error(
           "[mp-webhook] CRÍTICO: la solicitud", applicationId,
@@ -116,60 +336,160 @@ export function makeWebhookProcessor(deps: Deps) {
       }
     }
 
+    // 4B: el ingreso es un Payment con recibo (REG-33), y tiene que quedar con
+    // su `mpPaymentId` — es lo único que frena el reenvío de este mismo aviso
+    // una vez que el socio está asentado (`resolve.ts` devolvería `debit` y se
+    // cobraría como cuota).
+    // Va SIEMPRE, haya transicionado esta llamada o no: si no transicionó es
+    // porque la marca ya estaba escrita y lo que falta es justamente esto.
+    // `registerPaymentCore` es idempotente por `mpPaymentId`, así que reponerlo
+    // no puede cobrar dos veces.
+    //
+    // El `memberId` va cuando la solicitud ya lo tiene. Sin acta todavía es
+    // `null` y el cobro cuelga de la solicitud: `record.ts` le pone el socio al
+    // asentar el acta, con un `updateMany` que corre UNA sola vez. Si este
+    // `Payment` se repone DESPUÉS del acta, ese updateMany ya pasó y no vuelve:
+    // dejarlo en `null` lo hacía invisible para siempre en la cuenta corriente
+    // (`fetchMemberAccount` filtra por `memberId`) — plata cobrada, recibo
+    // emitido, y ni el vecino ni el operador lo ven. No imputa cuotas igual:
+    // `n: 0` y REG-14 (el ingreso cubre el mes del alta).
+    const r = await registerOrTrace({
+      memberId, applicationId, type: "entry", n: 0, amount: p.transactionAmount, paidAt: p.dateApproved ?? now(),
+      mpPaymentId: p.id, preapprovalId, actorId: null,
+    }, { applicationId, type: "entry" });
+
+    // Qué pasó con el `Payment`. Sólo se devuelve cuando esta llamada NO hizo la
+    // transición: si la hizo, el result tiene que describirla (es el único que
+    // distingue el pago tardío).
+    let recorded: WebhookResult;
+    if (r === null) {
+      // Tesorería lo rechazó: la solicitud queda aceptada igual —ya cambió de
+      // estado y la bienvenida sale— pero el cobro va a la bandeja, o si no
+      // esa plata no aparece en ninguna pantalla y un re-apply posterior
+      // (conciliación, reenvío de MP) la aplicaría como CUOTA.
+      recorded = await toInbox(p, preapprovalId, "treasury_rejected");
+    } else if (r.kind === "registered") {
+      const emailed = await emailReceipt(r.receiptId);
+      await deps.audit({ action: "payment_applied", entity: "payment", entityId: r.paymentId,
+        detail: { paymentId: r.paymentId, applicationId, memberId, type: "entry", amount: r.amount, mpPaymentId: p.id, receiptId: r.receiptId, emailed } });
+      recorded = "entry_payment_recovered";
+    } else if (r.kind === "already_processed") {
+      // La carrera de los dos eventos del mismo cobro: el otro ya lo asentó.
+      await closeInboxRow(p.id, r.paymentId);
+      recorded = "already_processed";
+    } else {
+      // `no_pending_withdrawn`: hoy es inalcanzable para `entry` (el servicio lo
+      // devuelve sólo con `n > 0`, y el ingreso va con `n: 0`). Rama propia
+      // igual: colapsarla en `already_processed` sería decir que el cobro está
+      // asentado cuando no lo está, y desde que el ingreso lleva `memberId` esa
+      // rama dejó de ser imposible por construcción. Nada se asentó → bandeja.
+      recorded = await toInbox(p, preapprovalId, "withdrawn_no_pending");
+    }
+
+    // Reintento: la solicitud ya estaba aceptada de antes. Ni bienvenida (el
+    // vecino ya la recibió) ni result de transición.
+    if (!transitioned) return recorded;
+
     const app = await deps.db.application.findUnique({ where: { id: applicationId } });
     if (app) {
       // Best-effort: el estado ya cambió; un SMTP caído no puede des-aceptar.
       try {
         await deps.mailer.sendToApplication({
-          applicationId: app.id,
-          to: app.email,
-          type: "application_result",
-          message: applicationAcceptedEmail({ name: app.fullName }),
-          summary: "solicitud aceptada (débito autorizado)",
+          applicationId: app.id, to: app.email, type: "application_result",
+          message: applicationAcceptedEmail({ name: app.fullName }), summary: "solicitud aceptada (débito autorizado)",
         });
       } catch (e) {
-        console.error(
-          "[mp-webhook] falló el email de solicitud aceptada",
-          app.id,
-          "code:", codeOf(e), "message:", safeMessage(e),
-        );
+        console.error("[mp-webhook] falló el email de solicitud aceptada", app.id, "code:", codeOf(e), "message:", safeMessage(e));
         // El hueco tiene que quedar consultable: el vecino está aceptado y la
-        // bienvenida no salió, y hasta acá eso sólo vivía en el log de PM2.
-        // Al detalle va el código, nunca el email ni datos personales (docs/08).
-        // El asiento es best-effort igual que el envío: si la auditoría también
-        // falla, la transición ya está firme y no se deshace.
-        await deps
-          .audit({
-            action: "application_accepted_email_failed",
-            entity: "application",
-            entityId: app.id,
-            detail: { code: codeOf(e) },
-          })
-          .catch(() => {});
+        // bienvenida no salió. Al detalle va el código, nunca el email (docs/08).
+        await deps.audit({ action: "application_accepted_email_failed", entity: "application", entityId: app.id, detail: { code: codeOf(e) } }).catch(() => {});
       }
     }
-    // Result distinguible en el WebhookEvent: `application_approved` a secas
-    // haría creer que fue una aceptación normal, con su débito en pie.
+    // Result distinguible: `application_approved` a secas haría creer que fue
+    // una aceptación normal, con su débito en pie.
     return revived ? "application_approved_after_expiry" : "application_approved";
   }
 
-  async function onPreapproval(dataId: string): Promise<string> {
+  async function applyPayment(p: MpPaymentDetails, preapprovalId: string | null): Promise<WebhookResult> {
+    if (p.status === "refunded" || p.status === "charged_back") {
+      let r: Awaited<ReturnType<TreasuryService["refundPayment"]>>;
+      try {
+        r = await deps.treasury.refundPayment({ mpPaymentId: p.id, reason: REFUND_REASON });
+      } catch (e) {
+        // Con dos reversiones verdaderamente simultáneas, el chequeo de estado
+        // de `refundPayment` queda afuera de su mutex y la segunda LANZA
+        // `TreasuryError` en vez de devolver `already_reverted`. Eso es una
+        // negativa de negocio —el recibo ya está anulado— y no puede volverse un
+        // 500: MP reintentaría un reembolso que ya está hecho. Un fallo técnico
+        // (base caída) sí se propaga.
+        if (!isTreasuryError(e)) throw e;
+        console.error("[mp-webhook] tesorería rechazó la reversión del cobro", p.id, "motivo:", safeMessage(e));
+        return "refund_ignored";
+      }
+      if (r.kind !== "refunded") return "refund_ignored";
+      await deps.audit({ action: "payment_refunded", entity: "payment", entityId: r.paymentId, detail: { paymentId: r.paymentId, mpPaymentId: p.id, status: p.status, periodsReverted: r.periodsReverted } });
+      return "payment_refunded";
+    }
+    // Un rechazo se traza y se distingue del resto: no hay nada que aplicar,
+    // pero el operador quiere poder ver que MP intentó cobrar y no pudo.
+    if (p.status === "rejected") return "payment_rejected_traced";
+    if (p.status !== "approved") return "payment_ignored";
+
+    return paymentMutex.run(`mp:${p.id}`, async () => {
+      const ctx = await loadContext(p, preapprovalId);
+      const decision = resolveMpPayment({ mpPaymentId: p.id, preapprovalId, externalReference: p.externalReference }, ctx);
+      switch (decision.kind) {
+        case "already_processed":
+          await closeInboxRow(p.id, decision.paymentId);
+          return "already_processed";
+        case "debit":
+        case "link": return applyToMember(p, decision, ctx);
+        // `ctx.application` nunca es null cuando la decisión es `entry` (las dos
+        // ramas que la devuelven lo exigen), pero el tipo no lo sabe.
+        case "entry": return applyEntry(p, decision.applicationId, preapprovalId, ctx.application?.memberId ?? null);
+        case "unmatched": return toInbox(p, preapprovalId, decision.reason);
+      }
+    });
+  }
+
+  async function onPayment(dataId: string): Promise<WebhookResult> {
+    const payment = await deps.gateway.getPayment(dataId);
+    // El preapproval sale del PROPIO pago cuando viene de una suscripción (ver
+    // `MpPaymentDetails.subscriptionId`). Pasarlo acá es lo que hace que la
+    // notificación `payment` de un débito se baste sola: sin esto dependía de
+    // que llegara además la `subscription_authorized_payment`, y mientras tanto
+    // el cobro —plata que ya salió de la cuenta del vecino— esperaba en la
+    // bandeja con el motivo equivocado ("sin referencia", cuando la suscripción
+    // estaba ahí). Verificado contra la API real en la batería de la T14.
+    return applyPayment(payment, payment.subscriptionId);
+  }
+
+  async function onPreapproval(dataId: string): Promise<WebhookResult> {
     const pre = await deps.gateway.getPreapproval(dataId);
     const { count } = await deps.db.mpSubscription.updateMany({
       where: { preapprovalId: pre.id },
-      data: { status: pre.status, lastSyncAt: new Date() },
+      data: {
+        status: pre.status,
+        amount: pre.amount === null ? null : pre.amount.toFixed(2),
+        payerEmail: pre.payerEmail,
+        externalReference: pre.externalReference,
+        lastSyncAt: now(),
+      },
     });
     return count > 0 ? "subscription_synced" : "no_match";
   }
 
-  async function onAuthorizedPayment(dataId: string): Promise<string> {
-    // M3 solo lo traza (queda en el WebhookEvent); la aplicación a cuotas es M4.
-    await deps.gateway.getAuthorizedPayment(dataId);
-    return "authorized_payment_traced";
+  async function onAuthorizedPayment(dataId: string): Promise<WebhookResult> {
+    const a = await deps.gateway.getAuthorizedPayment(dataId);
+    // Sin `payment.id` el cobro todavía no existe (scheduled) o falló: no hay
+    // nada que aplicar y el evento queda trazado.
+    if (!a.paymentId || a.status !== "processed") return "authorized_payment_traced";
+    const payment = await deps.gateway.getPayment(a.paymentId);
+    return applyPayment(payment, a.preapprovalId);
   }
 
   return {
-    async process(input: WebhookInput): Promise<string> {
+    async process(input: WebhookInput): Promise<WebhookResult> {
       switch (input.topic) {
         case "payment":
         case "payments":
@@ -182,9 +502,12 @@ export function makeWebhookProcessor(deps: Deps) {
           return "unknown_topic";
       }
     },
+    /** Aplica un pago ya leído de MP. Lo usa también el cron de conciliación. */
+    applyPayment,
   };
 }
 
 export const webhookProcessor = makeWebhookProcessor({
-  db: prisma, gateway: mpGateway, mailer, audit, auditStrict,
+  db: prisma, gateway: mpGateway, treasury: treasuryService, unmatched: makeUnmatchedInbox(prisma),
+  feeValues: feeValueReader, mailer, sendReceiptEmail: sendReceiptEmailDefault, audit, auditStrict,
 });

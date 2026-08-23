@@ -206,6 +206,13 @@ export function makeApplicationRecorder(db: PrismaClient) {
             where: { applicationId: app.id },
             data: { memberId },
           });
+          // 4B: el pago de la cuota de ingreso se registró contra la solicitud
+          // cuando todavía no había ficha. Ahora pasa a la cuenta del socio, que
+          // es donde el vecino y el operador van a buscar su primer recibo.
+          await tx.payment.updateMany({
+            where: { applicationId: app.id, memberId: null },
+            data: { memberId },
+          });
 
           return { ok: true as const, applicationId, memberId, memberNumber, reentry, accountEmailMove };
         });

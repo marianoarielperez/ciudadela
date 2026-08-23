@@ -14,7 +14,12 @@ export type AccountPayment = {
   paidAt: Date;
   status: PaymentStatus;
   periods: Period[];
-  receipt: { id: number; number: string; voidedAt: Date | null } | null;
+  /** `concept` es el texto CONGELADO al emitir el recibo, y es el único lugar
+   *  donde sobrevive qué cubría un pago que después se revirtió: al anular, las
+   *  cuotas se sueltan del pago y `periods` queda vacío. Sin esto, la fila
+   *  tachada de la cuenta corriente dice "Cuota social" a secas y ni el vecino
+   *  ni el operador pueden saber qué se había cobrado. */
+  receipt: { id: number; number: string; voidedAt: Date | null; concept: string } | null;
   note: string | null;
 };
 
@@ -48,7 +53,7 @@ export async function fetchMemberAccount(
       select: {
         id: true, type: true, amount: true, paidAt: true, status: true, note: true,
         fees: { select: { period: true } },
-        receipt: { select: { id: true, number: true, voidedAt: true } },
+        receipt: { select: { id: true, number: true, voidedAt: true, concept: true } },
       },
       orderBy: [{ paidAt: "desc" }, { id: "desc" }],
     }),

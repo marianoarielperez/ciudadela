@@ -19,13 +19,18 @@ type SendCall = {
 // El pago NO trae `fees`: el concepto tiene que salir de la fila del recibo, que
 // lo congela al emitir. Si la implementación lo recalculara desde `payment.fees`
 // —como al anular, donde las cuotas se despegan— acá reventaría.
-function setup(member: { email: string | null; emailStatus: string } | null) {
+function setup(
+  member: { email: string | null; emailStatus: string } | null,
+  application?: { id: number; fullName: string; email: string },
+) {
   const receipt = {
     id: 7, number: "2026-00007", pdfPath: "2026/2026-00007.pdf" as string | null, emailedAt: null, voidedAt: null as Date | null,
     concept: "Cuota social · septiembre 2026",
     payment: {
       id: 3, type: "cash", amount: "6000.00", memberId: 1,
       member: member ? { id: 1, fullName: "Ana", ...member } : null,
+      // Un pago de cuota de ingreso todavía no tiene socio: cuelga de la solicitud.
+      application: application ?? null,
     },
   };
   // La fake honra el id que le piden: si no coincide, se comporta como Prisma
@@ -38,6 +43,9 @@ function setup(member: { email: string | null; emailStatus: string } | null) {
   };
   const mailer = {
     sendToMember: vi.fn<(call: SendCall) => Promise<{ messageId: string }>>(async () => ({ messageId: "m1" })),
+    sendToApplication: vi.fn<(call: SendCall & { applicationId: number }) => Promise<{ messageId: string }>>(
+      async () => ({ messageId: "m2" }),
+    ),
   };
   const readPdf = vi.fn(async () => Buffer.from("%PDF-1.4"));
   const regenerate = vi.fn(async () => new Uint8Array([9, 9, 9]));
@@ -135,6 +143,26 @@ describe("sendReceiptEmail", () => {
     s.receipt.voidedAt = new Date();
     expect(await s.emailer.sendReceiptEmail(7)).toEqual({ sent: false, reason: "voided" });
     expect(s.mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  // REG-33: el recibo del ingreso le corresponde al vecino aunque todavía no
+  // sea socio. Va por `sendToApplication` para que la Notification quede
+  // acreditada contra la solicitud.
+  it("pago de ingreso sin socio → va por sendToApplication con el PDF", async () => {
+    const s = setup(null, { id: 55, fullName: "Ana", email: "a@b.com" });
+    expect(await s.emailer.sendReceiptEmail(7)).toEqual({ sent: true });
+    expect(s.mailer.sendToMember).not.toHaveBeenCalled();
+    const call = s.mailer.sendToApplication.mock.calls[0][0];
+    expect(call).toMatchObject({ applicationId: 55, to: "a@b.com", type: "receipt" });
+    expect(call.message.attachments[0].filename).toBe("recibo-2026-00007.pdf");
+  });
+
+  // El socio manda sobre la solicitud: si la ficha existe pero no tiene casilla,
+  // el recibo NO se desvía a la dirección declarada en la solicitud.
+  it("con socio sin email no cae de vuelta en la solicitud", async () => {
+    const s = setup({ email: null, emailStatus: "none" }, { id: 55, fullName: "Ana", email: "a@b.com" });
+    expect(await s.emailer.sendReceiptEmail(7)).toEqual({ sent: false, reason: "no_email" });
+    expect(s.mailer.sendToApplication).not.toHaveBeenCalled();
   });
 
   it("con un id inexistente no tira", async () => {

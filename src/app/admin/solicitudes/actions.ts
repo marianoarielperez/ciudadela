@@ -38,7 +38,8 @@ import { changesFeeAmount, DECIDABLE_STATUSES, isDecidable } from "@/lib/applica
 import { categoryAllowedForResidence, WEB_CATEGORIES } from "@/lib/applications/wizard";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway } from "@/lib/mp/gateway";
-import { planIdForCategory } from "@/lib/mp/plans";
+import { feeValueReader } from "@/lib/treasury/fee-values";
+import { feeAmountFor } from "@/lib/treasury/rules";
 
 // Sin `export`: en un módulo "use server" todo lo exportado es un endpoint.
 //
@@ -298,59 +299,27 @@ export async function recategorizeApplicationAction(
   // débito sigue saliendo por el monto de adherente, y nadie lo compensaría.
   const changesAmount = changesFeeAmount(app.requestedCategory, newCategory);
   const subscriptionUpdated = Boolean(app.preapprovalId && changesAmount);
-  // El plan nuevo y el viejo, para que la fila local no siga apuntando al plan
-  // del que ya no salió el monto: `MpSubscription.planId` es el plan de
-  // REFERENCIA (la suscripción no está asociada a ningún plan en MP, docs/06
-  // §2), se escribe UNA vez al crearla, y sin esto la conciliación del M4
-  // (REG-34) leería una divergencia inventada —o la "arreglaría" al revés,
-  // devolviendo el monto viejo—. `changesFeeAmount` es true exactamente cuando
-  // el plan cambia: los planes son dos y adherente ↔ colaborador comparten el
-  // mismo.
+  // El monto nuevo sale de `fee_values` (única fuente, REG-34), no del plan de
+  // MP: la suscripción no está asociada a ningún plan (docs/06 §2) y lo que
+  // `updatePreapprovalAmount` escribe es el importe que MP le va a debitar al
+  // socio TODOS los meses. Antes se leía el plan FRESCO para no servirse de una
+  // caché de 24 h con stale-on-error; ese razonamiento sigue valiendo, sólo que
+  // ahora la lectura fresca es la de la tabla local. Si no hay valor vigente no
+  // se toca nada: mejor no mover el monto que moverlo mal.
   //
-  // El monto se lee FRESCO del plan nuevo, igual que en `startPaymentAction` y
-  // por el mismo motivo. `getFeeAmounts` (src/lib/mp/plans.ts) NO sirve acá: es
-  // una caché de 24 h con stale-on-error, o sea que una lectura fallida no
-  // falla —devuelve en silencio el último valor bueno—. Y lo que se escribe con
-  // `updatePreapprovalAmount` no es una pantalla: es el importe que MP le va a
-  // debitar al socio TODOS los meses. Si la Comisión sube la cuota en el panel
-  // de MP y alguien recategoriza dentro de las 24 h, la caché escribiría el
-  // valor viejo sobre una suscripción viva, con éxito en pantalla y sin que
-  // nada lo detecte (la conciliación de docs/06 compara plan contra
-  // `ValorCuota`, nunca suscripción contra plan, y el lote del M4 que lo
-  // corregiría todavía no existe). Mejor no tocar el monto que tocarlo mal.
-  let newPlanId: string | null = null;
-  let oldPlanId: string | null = null;
+  // `changesFeeAmount` es true exactamente cuando el monto cambia: activo por
+  // un lado, adherente y colaborador por el otro (comparten valor).
   let newAmount: number | null = null;
   if (app.preapprovalId && changesAmount) {
-    // Primero el plan: sin id configurado no hay monto que leer NI plan al que
-    // mover la fila local. Antes se llamaba igual a MP con el monto cacheado y
-    // después se salteaba el update local del `planId`, o sea que la
-    // divergencia que este bloque existe para evitar volvía en silencio.
-    newPlanId = await planIdForCategory(newCategory);
-    if (!newPlanId) {
+    const value = await feeValueReader.current();
+    if (!value) {
       return {
-        error: "El plan de Mercado Pago de esa categoría no está configurado. Pedile al superadmin que lo cargue en Configuración antes de recategorizar.",
+        error: "El valor de la cuota no está configurado: no se puede ajustar el débito.",
       };
     }
-    let amount: number;
-    try {
-      ({ amount } = await mpGateway.getPlan(newPlanId));
-      newAmount = amount;
-    } catch (e) {
-      // El error del SDK ES el cuerpo de la respuesta de MP (un objeto plano,
-      // no un `Error`): lo desarma `mpErrorLog`. Al log, nunca a la pantalla.
-      console.error(
-        "[solicitudes] no se pudo leer el monto del plan —",
-        mpErrorLog("getPlan", { applicationId, planId: newPlanId }, e),
-      );
-      return {
-        error: "No pudimos confirmar el valor de la cuota en Mercado Pago. Para no dejar el débito por un monto equivocado, no cambiamos nada: probá de nuevo en unos minutos.",
-      };
-    }
-    oldPlanId = (await prisma.mpSubscription.findUnique({
-      where: { preapprovalId: app.preapprovalId },
-      select: { planId: true },
-    }))?.planId ?? null;
+    const amount = feeAmountFor(newCategory, value);
+    if (amount === null) return { error: "Esa categoría no paga cuota por débito." };
+    newAmount = amount;
     try {
       await mpGateway.updatePreapprovalAmount(app.preapprovalId, amount);
     } catch (e) {
@@ -370,7 +339,7 @@ export async function recategorizeApplicationAction(
   }
 
   // Los dos writes locales van juntos o no va ninguno: una solicitud "activa"
-  // con la fila de suscripción apuntando al plan de adherente es exactamente la
+  // con la fila de suscripción diciendo el monto de adherente es exactamente la
   // divergencia que este bloque existe para evitar.
   //
   // Envuelto porque MP YA aceptó el monto nuevo: si el guardado local falla, el
@@ -383,10 +352,13 @@ export async function recategorizeApplicationAction(
         where: { id: applicationId },
         data: { requestedCategory: newCategory },
       });
-      if (app.preapprovalId && newPlanId) {
+      if (app.preapprovalId && newAmount !== null) {
+        // La fila local guarda el ÚLTIMO monto empujado: es contra eso que la
+        // conciliación compara la suscripción viva. Sin esto seguiría diciendo
+        // el importe de la categoría vieja mientras MP cobra el nuevo.
         await tx.mpSubscription.updateMany({
           where: { preapprovalId: app.preapprovalId },
-          data: { planId: newPlanId, lastSyncAt: new Date() },
+          data: { amount: newAmount.toFixed(2), lastSyncAt: new Date() },
         });
       }
     });
@@ -409,7 +381,7 @@ export async function recategorizeApplicationAction(
       subscriptionUpdated,
       residenceMismatch,
       ...(subscriptionUpdated
-        ? { preapprovalId: app.preapprovalId, oldPlanId, amount: newAmount }
+        ? { preapprovalId: app.preapprovalId, amount: newAmount }
         : {}),
     },
     ip: await clientIp(),

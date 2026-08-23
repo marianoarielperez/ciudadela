@@ -1,5 +1,5 @@
 // Etiquetas es-AR de tesorería. Un solo lugar: pantalla, PDF y email dicen lo mismo.
-import type { FeeStatus, PaymentType } from "@/generated/prisma/client";
+import type { FeeStatus, IncomeMethod, PaymentType } from "@/generated/prisma/client";
 import { addMonths, comparePeriods, monthName, periodLabel, periodMonth, periodYear, type Period } from "./periods";
 import type { CashConcept } from "./rules";
 
@@ -18,6 +18,30 @@ export const FEE_STATUS_LABELS: Record<FeeStatus, string> = {
   exempt: "Exenta",
   voided: "Anulada",
 };
+
+// Por dónde entró un ingreso NO societario. "Efectivo" dice lo mismo que en
+// `PAYMENT_TYPE_LABELS` a propósito: para el operador es el mismo mostrador,
+// aunque acá no haya socio ni recibo.
+export const INCOME_METHOD_LABELS: Record<IncomeMethod, string> = {
+  cash: "Efectivo",
+  mp: "Mercado Pago",
+};
+
+// Sugerencias del campo "Concepto" de un ingreso no societario. NO son
+// categorías: el cliente descartó una lista fija y el campo es texto libre. Lo
+// que resuelven es la ortografía —que dos alquileres cargados con seis meses de
+// diferencia se escriban igual—, no la clasificación.
+//
+// Viven acá, en un solo lugar, y no en cada pantalla: el formulario de Otros
+// ingresos y el de la bandeja sin conciliar ofrecen exactamente lo mismo. Si el
+// cliente decide que no las quiere, sacarlas es borrar el `options`/`<datalist>`
+// de los dos lados y esta constante.
+export const INCOME_CONCEPT_SUGGESTIONS = ["Alquiler del salón", "Evento", "Rifa", "Donación"];
+
+/** La aclaración que acompaña a esas sugerencias. Va en los dos formularios: un
+ *  desplegable sin explicación es lo más fácil de leer como lista cerrada. */
+export const INCOME_CONCEPT_HINT =
+  "Texto libre: escribí a qué corresponde. Las sugerencias son sólo eso.";
 
 export const CASH_CONCEPT_LABELS: Record<CashConcept, string> = {
   fees: "Cuotas sociales",

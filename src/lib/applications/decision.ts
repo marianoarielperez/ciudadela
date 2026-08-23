@@ -22,10 +22,10 @@ export function isDecidable(status: ApplicationStatus): boolean {
 
 /** ¿La recategorización mueve el monto de la cuota?
  *
- *  Los planes de MP son DOS (decisión 20/08/2026, ver `mp/plans.ts`): "SOCIO
- *  ACTIVO" por un lado y "SOCIO ADHERENTE/COLABORADOR" —que comparten monto—
- *  por el otro. O sea que adherente ↔ colaborador NO toca a Mercado Pago, y
- *  cualquier cruce contra `active` sí. */
+ *  Los montos son DOS (`fee_values`, REG-34): el del socio activo por un lado y
+ *  el compartido por adherente y colaborador por el otro. O sea que
+ *  adherente ↔ colaborador NO toca a Mercado Pago, y cualquier cruce contra
+ *  `active` sí. */
 export function changesFeeAmount(from: MemberCategory, to: MemberCategory): boolean {
   return (from === "active") !== (to === "active");
 }

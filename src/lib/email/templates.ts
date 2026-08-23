@@ -1,6 +1,7 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
-import { formatARS } from "@/lib/format";
+import { formatARS, formatDateTimeAR } from "@/lib/format";
+import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 
 type Rendered = { subject: string; text: string; html: string };
@@ -332,5 +333,38 @@ El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé
 <p>Registramos tu pago y te enviamos el recibo <strong>N° ${esc(opts.number)}</strong>.</p>
 <p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>
 <p>El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.</p>`),
+  };
+}
+
+/** El link de Checkout Pro que el operador le manda al socio desde la ficha.
+ *
+ *  Dice CUÁNTO y POR QUÉ antes del botón: el vecino recibe un enlace de cobro
+ *  sin haberlo pedido, así que el correo tiene que dejarlo verificar el importe
+ *  sin abrirlo. Y cierra con la salida —"si ya pagaste"—, porque el operador
+ *  puede mandarlo el mismo día en que el socio saldó en la sede. */
+export function paymentLinkEmail(opts: { name: string; count: number; amount: number; url: string; expiresAt: Date }): Rendered {
+  const amount = formatARS(opts.amount);
+  const what = opts.count === 1 ? "1 cuota social" : `${opts.count} cuotas sociales`;
+  // La fecha absoluta y no sólo "en 72 horas": el operador puede generar el
+  // link hoy y mandar el mail mañana, y ahí "72 horas" son 48. El plazo se
+  // sigue nombrando —explica por qué es corto— pero el que manda es el instante.
+  const when = formatDateTimeAR(opts.expiresAt);
+  return {
+    subject: `Tu link para pagar la cuota — Vecinal Ciudadela`,
+    text: `Hola ${opts.name}:
+
+Te mandamos un link para pagar ${what} por ${amount} con Mercado Pago (tarjeta, débito o dinero en cuenta):
+
+${opts.url}
+
+El enlace vence el ${when} —${PAYMENT_LINK_TTL_HOURS} horas desde que se generó—: pasado ese plazo pedinos uno nuevo, porque el importe cambia cuando cambia el valor de la cuota.
+
+Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagaste o tenés dudas, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
+    html: layout("Tu link para pagar la cuota", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>Te mandamos un link para pagar <strong>${esc(what)}</strong> por <strong>${esc(amount)}</strong> con Mercado Pago (tarjeta, débito o dinero en cuenta).</p>
+<p><a href="${esc(opts.url)}" style="display:inline-block;padding:12px 20px;background:#0079BC;color:#fff;border-radius:6px;text-decoration:none">Pagar con Mercado Pago</a></p>
+<p style="font-size:12px;color:#555">Si el botón no funciona, copiá este enlace: ${esc(opts.url)}</p>
+<p>El enlace <strong>vence el ${esc(when)}</strong> (${PAYMENT_LINK_TTL_HOURS} horas desde que se generó): pasado ese plazo pedinos uno nuevo, porque el importe cambia cuando cambia el valor de la cuota.</p>
+<p>Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagaste o tenés dudas, respondé este mensaje o acercate a la sede.</p>`),
   };
 }

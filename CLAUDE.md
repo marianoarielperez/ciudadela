@@ -96,11 +96,12 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 ## Patrones que estrenó el Módulo 3 (reutilizables)
 
 - **Servicios externos detrás de una factory propia.** `makeMpGateway()`
-  (`src/lib/mp/gateway.ts`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno)
-  expone siete métodos: `getPlan`, `createPreapproval`, `cancelPreapproval`,
-  `updatePreapprovalAmount`, `getPreapproval`, `getPayment` y
-  `getAuthorizedPayment`. El dominio **nunca** ve el SDK de Mercado Pago, y los
-  tests mockean esa interfaz: ni SDK ni red.
+  (`src/lib/mp/gateway.ts`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno). El
+  M3 la estrenó con siete métodos; hoy expone **once** —la fase 4B le sumó
+  `searchPreapprovals`, `searchAuthorizedPayments`, `searchPayments` y
+  `createPreference`—. La lista viva, con qué hace cada uno y sus dos trampas de
+  paginación, está en `docs/06` §2: no se duplica acá. El dominio **nunca** ve el
+  SDK de Mercado Pago, y los tests mockean esa interfaz: ni SDK ni red.
   Mismo criterio para cualquier proveedor que venga después.
 - **Las guardas globales van en el transporte, no en los llamadores.**
   `EMAIL_ALLOWLIST` envuelve el transporte de Nodemailer, así que cubre wizard,
@@ -159,6 +160,53 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   **más viejas** primero. Las cuotas no llevan monto: la deuda se valúa siempre
   a valor vigente al momento del pago (REG-16 generalizado).
 
+## Patrones que estrenó el Módulo 4 (fase 4B)
+
+- **`registerPayment` es el ÚNICO camino que escribe pago + cuotas + recibo.**
+  Efectivo, webhook de MP, bandeja sin conciliar y vinculación de suscripciones lo
+  llaman todos. No hay una segunda escritura, y por eso las cuatro invariantes de
+  REG-33 se verifican en un solo lugar.
+- **`Payment.mpPaymentId` es la barrera de idempotencia del dinero de MP**, y son
+  DOS capas: la ruta del webhook por `WebhookEvent` (`body.id`, que MP **sí** manda
+  y es un id de evento distinto del id del pago) y el procesador por `mpPaymentId`
+  (consulta previa + catch del P2002). **Anular un recibo NO borra `mpPaymentId`**:
+  si se borrara, un reenvío de MP volvería a cobrar.
+- **El procesador del webhook nunca falla por una regla de negocio.** Todo lo que no
+  se puede aplicar termina en la bandeja con su motivo; el 500 queda sólo para
+  fallos técnicos, que es cuando conviene que MP reintente. `resolve.ts` es una
+  tabla **pura** y su regla de oro es **la suscripción manda sobre la referencia**
+  —con una excepción anterior a todo: si ESE cobro ya está marcado como pago de
+  ingreso, no se re-imputa como cuota social (REG-14).
+- **La bandeja se cierra sola al aplicar y se reabre al anular.** El `updateMany`
+  vive DENTRO de la transacción del cobro, y la reapertura se acota por `paymentId`
+  (no por `mpPaymentId`) para cubrir también un efectivo de mostrador.
+- **Las notificaciones que no atendemos responden 200, no 4xx.** La IPN legacy y
+  `merchant_order` son legítimas en un formato que no implementamos: "recibido, no
+  procesado". Un 4xx sostenido es algo que MP puede terminar deshabilitando, y ahí
+  se perdería también la buena. Un POST sin `topic=` sigue dando 400 y sin auditar.
+- **`reconcile` (03:00) es la red, y tiene DOS fuentes**: `payments/search` por
+  fecha para los pagos de Checkout Pro, y `authorized_payments/search` **por cada
+  suscripción viva**, que es lo único que encuentra los débitos recurrentes.
+  Reutiliza `processor.applyPayment`: el resultado es idéntico al del aviso perdido.
+  Estrena `cron_runs` y devuelve **207** —no 200— cuando corrió entera con errores.
+- **Un preapproval IGNORA `notification_url`** (medido contra la API): MP acepta el
+  campo y lo descarta en silencio. Los avisos de suscripción dependen ENTERAMENTE de
+  la config de webhooks del panel de MP; si se rompe, los débitos dejan de avisar
+  **sin ninguna señal** y la única red es el paso 2 del cron.
+- **Links de pago `pago:{memberId}:{n}`: `n` es una CANTIDAD, no una lista de
+  períodos.** Qué cuotas se imputan lo decide `allocate` al llegar el pago (las más
+  viejas). **La preferencia NO se persiste** y **vence a las 72 h** (`expires` +
+  `expiration_date_to`, uno sin el otro no hace nada): sin vencimiento, el link
+  congela el precio del día en que se generó.
+- **Ingresos no societarios: registro aparte, sin recibo.** `other_incomes` no tiene
+  ninguna FK al núcleo de plata a propósito. La serie numerada es de las cuotas
+  sociales, armada alrededor del socio (REG-33).
+- **Contra Mercado Pago, medir antes de suponer.** Tres pasadas contra la API real
+  dispararon **cinco arreglos de código** que ningún test podía ver —uno por commit;
+  la lista con su commit está en `docs/07`, fase 4B—: un `limit` que un endpoint
+  rechaza y devolvía 400 en silencio, un preapproval que viaja dentro del pago, y
+  documentación propia que era falsa. Lo verificado está en `docs/11` Parte J.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -173,9 +221,10 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   funcionó) y con `EMAIL_ALLOWLIST` todavía definida — el sitio está publicado
   pero nadie lo conoce.
   **Nunca probar cobros en producción**: ahí la plata es de un vecino. El circuito
-  de pagos se prueba en **sandbox local** (`docs/11` Parte I §7, notificaciones
-  firmadas a mano) y lo único productivo es el piloto controlado: el débito
-  mensual del 306 y un efectivo de Mariano.
+  de pagos se prueba en **sandbox local** (`docs/11` Parte J: cuenta de prueba
+  propia + túnel; MP entrega las notificaciones solo, no hace falta simularlas) y
+  lo único productivo es el piloto controlado: el débito mensual del 306 y un
+  efectivo de Mariano.
   Borrar `EMAIL_ALLOWLIST` sigue siendo un paso del checklist de lanzamiento de
   `docs/07`, no algo que ocurra solo.
 
@@ -227,15 +276,27 @@ Los ids de los dos planes de Mercado Pago **no son variables de entorno**: viven
 en `Configuration` (`mp_plan_active_id`, `mp_plan_shared_id`) y se cargan desde
 `/admin/configuracion`. Ver `docs/06` y el instructivo `docs/11`.
 Desde el Módulo 4 el **monto** ya no sale de ahí: la tabla `fee_values` es la
-única fuente (ver más abajo). Los ids **siguen siendo obligatorios** igual porque
-`startPaymentAction` del wizard lee el monto del plan con `getPlan()` — eso se
-migra en la fase 4B; hasta entonces, sin ids el paso 2 de ASOCIATE no avanza.
+única fuente (ver más abajo). Desde la fase 4B los ids son **opcionales**: el
+alta web, la recategorización y el lote REG-34 leen el monto de `fee_values`, y
+el único uso que les queda es el aviso de divergencia plan-vs-valor de la
+conciliación diaria, que simplemente no corre si no están cargados.
 
 ## Prioridad actual
 
-Módulos 0, 1, 2 y 3 cerrados y desplegados. Del **Módulo 4** está cerrada la
-**fase 4A** (cuenta corriente, efectivo, recibos, deudores). Sigue la **4B**
-(Mercado Pago: webhook que aplica, Checkout Pro, bandeja sin conciliar,
-conciliación, lote REG-34) y después la **4C** (crons de notificación,
-`/admin/salud`, padrón electoral). Ver `docs/07-plan-de-etapas.md`.
+Módulos 0, 1, 2 y 3 cerrados y desplegados. Del **Módulo 4** están cerradas la
+**fase 4A** (cuenta corriente, efectivo, recibos, deudores) y la **fase 4B**
+(Mercado Pago: webhook que aplica, Checkout Pro, bandeja sin conciliar, ingresos no
+societarios, vinculación de suscripciones, conciliación diaria, lote REG-34).
+
+Sigue la **4C**: crons de devengo / mora / resumen, `payment_rejected` que le avisa
+al socio, `Notification.failed` + reintento, `/admin/salud` (que tiene que mostrar
+`cron_runs`, ya escrito por la conciliación), padrón electoral, y **cancelar la
+suscripción de MP al dar de baja a un socio** —reasignado desde el M5 el 23/08/2026:
+las bajas del panel ya corren, así que hoy se puede dejar de ser socio y seguir
+siendo debitado—. Ver `docs/07-plan-de-etapas.md`.
+
+Verificación real pendiente de la 4B: el **débito del socio 14 del 10/09/2026** tiene
+que entrar solo. Y en el primer `reconcile` de producción hay que confirmar que
+`GET /v1/payments/search` indexa (en sandbox no lo hace).
+
 No arrancar una fase sin cerrar los criterios de aceptación de la anterior.

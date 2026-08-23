@@ -35,13 +35,16 @@ export function StepCategory({
   }
 
   // Sin montos no hay categoría que elegir: inventar uno sería mentirle al
-  // vecino sobre a qué se compromete (los montos son la fuente de verdad de los
-  // planes de MP, ver src/lib/mp/plans.ts).
+  // vecino sobre a qué se compromete. `fees` es `null` cuando todavía no hay un
+  // valor de cuota vigente en `fee_values` (la única fuente, REG-34), así que el
+  // mensaje no promete que sea una falla pasajera: puede que la Comisión no lo
+  // haya registrado todavía.
   if (!fees) {
     return (
       <div>
         <FormMessage kind="error" box>
-          No pudimos obtener el valor de la cuota en este momento. Probá de nuevo más tarde.
+          Todavía no podemos mostrarte el valor de la cuota. Probá más tarde o consultá en la
+          sede.
         </FormMessage>
         <NavButtons onBack={onBack} onNext={next} nextDisabled />
       </div>

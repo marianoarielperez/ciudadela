@@ -323,18 +323,47 @@ URL, el botón atrás funciona y `aria-current` sale solo. El encabezado
   `/admin/configuracion`, que es de superadmin, con la fecha de vigencia y un acta
   opcional. No se edita nunca: se asienta otro encima.
 
-**Pendientes de la fase 4B**
+**Agregadas en la fase 4B**
 
-- **Sin conciliar**: bandeja de pagos de MP que no se pudieron atribuir a un socio,
-  con buscador para asignarlos a mano.
-- **Suscripciones**: vinculación de las preexistentes y la acción "aplicar el valor
-  vigente a las suscripciones" (REG-34) — recorre las activas de la categoría,
-  empuja el monto por API a cada una, con progreso, reintento de las que fallen,
-  auditoría y pantalla de "quedaron N sin actualizar". Hace falta porque las
-  suscripciones se crean **sin plan asociado** y copian el monto (`docs/06` §2):
-  cambiar el valor no mueve ni un débito vivo.
-- **Generar link de pago** (Checkout Pro con `external_reference`), y la aplicación
-  automática de los pagos que llegan por webhook.
+- **Sin conciliar** (`/admin/tesoreria/sin-conciliar`) — la plata de Mercado Pago que
+  no se pudo atribuir a nadie. El encabezado de Pendientes muestra la **suma en
+  pesos** sin atribuir, no el recuento: es el único lugar donde ese dinero existe.
+  Filtro pendientes/resueltos y paginación; cada fila lleva a un detalle con **tres
+  salidas**:
+  1. **Vincular a un socio**, con buscador, indicando cuántas cuotas cubre o
+     registrándolo como aporte voluntario. Emite recibo como cualquier cobro.
+  2. **Registrarlo como ingreso no societario**, con concepto en texto libre. **No
+     emite recibo.**
+  3. **Descartar**, con motivo.
+  Un cesante sin cuotas pendientes ve la explicación, no un formulario con máximo
+  cero. Y una fila **reabierta por una anulación** no se puede volver a aplicar (el
+  pago anulado conserva su `mpPaymentId`, que es la barrera contra reenvíos de MP):
+  la pantalla lo dice y linkea al recibo, en vez de dejar que alguien descarte plata
+  real.
+- **Suscripciones** (`/admin/tesoreria/suscripciones`) — dos bloques: **Sin
+  vincular** (las que MP tiene y SIGeV no, con sugerencia de socio por email o
+  apellido) y **Vinculadas** (desde la base, con monto y última sincronización). La
+  vinculación va en **dos pasos**, con la evidencia resuelta en el servidor: tres
+  renglones **Antes / Ahora / De acá en más** que dicen qué cobros previos quedan
+  afuera, qué pagos están esperando en la bandeja (con fecha, monto e id) y qué va a
+  pasar el mes que viene. Es acción de **superadmin**: crea un vínculo que después
+  cobra solo.
+- **Otros ingresos** (`/admin/tesoreria/otros-ingresos`) — lo que entró y no es de
+  ningún socio. Se navega por **ejercicio anual** (1 de enero a 31 de diciembre, el
+  de la asociación) con chips de año, tarjeta con el total, cinta de 12 meses que
+  linkea a cada mes y desglose efectivo/MP. Los anulados se listan tachados y **no
+  suman**. Se puede cargar también desde Efectivo.
+- **Valores de cuota** suma el **lote REG-34** (superadmin): lista las suscripciones
+  cuyo monto en MP difiere del valor vigente y les empuja el nuevo, de a 25, con
+  estado por fila, reintento de las que fallan y un resumen honesto ("Actualizadas
+  1. Quedaron 2 sin actualizar."). Escribe **MP primero y el espejo local después**:
+  nada queda cambiado en Mercado Pago sin que alguien se entere. Si la suscripción
+  es de alguien dado de baja, la confirmación lo advierte.
+- **Generar link de pago** (`/admin/socios/[id]/link`) — Checkout Pro desde la cuenta
+  corriente del socio: cantidad de cuotas, monto a valor vigente, enlace para copiar
+  y envío por email opcional. **Vence a las 72 horas** y la pantalla lo dice con la
+  fecha absoluta. Y **los pagos que llegan por webhook se aplican solos**: cuota,
+  recibo y email, sin que nadie toque nada.
 
 ### 5.1 Cuenta corriente en la ficha del socio
 
@@ -359,7 +388,15 @@ La pestaña de cuenta corriente muestra:
   cuota** —no en el año de ingreso, o un socio con un solo pago rendía ocho filas
   vacías— y llega hasta el año corriente.
 - El **libro de pagos**: fecha, concepto, medio, importe y recibo. Los pagos
-  anulados quedan tachados, no desaparecen.
+  anulados quedan tachados, no desaparecen — y el concepto que muestran es el
+  **congelado del recibo**, no uno derivado de las cuotas: al revertir, las cuotas se
+  sueltan del pago y la fila tachada decía "Cuota social" a secas, justo donde saber
+  qué se había cobrado importa más.
+- Desde la fase 4B, el **débito automático**: si el socio tiene una suscripción de
+  Mercado Pago, la pestaña muestra su estado y su monto. Distingue cuatro
+  situaciones, y cuando la única señal es el flag del padrón —que tiene tres
+  escrituras y **ninguna lo baja**— la caja **pregunta** en vez de afirmar y manda a
+  verificar en el panel de MP.
 - Los accesos directos a "Registrar efectivo" (con el socio ya elegido) y "Ver
   recibos".
 

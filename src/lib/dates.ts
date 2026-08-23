@@ -33,3 +33,27 @@ export function parseCivilDate(
   }
   return { ok: true, value };
 }
+
+// El año civil ARGENTINO de un instante, no el del reloj UTC del server: entre
+// las 21 y las 24 del 31 de diciembre el server ya está en enero, y una
+// pantalla que se para en "el año en curso" mostraría el año que viene mientras
+// el vecino —y el ejercicio de la asociación— todavía están en el anterior.
+//
+// Vive acá, y no en /actividades donde nació, porque el mismo hecho lo necesitan
+// dos cosas sin relación entre sí: el calendario público y el ejercicio anual de
+// Tesorería. Es un helper de fecha civil, que es lo que este módulo junta.
+export function currentYearAR(now: Date = new Date()): number {
+  return Number(
+    new Intl.DateTimeFormat("es-AR", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      year: "numeric",
+    }).format(now),
+  );
+}
+
+// El año por defecto de una barra de años: el año en curso manda por sobre el
+// más reciente cargado. Si ya hay algo cargado del año que viene, el que entra
+// hoy tiene que ver el de hoy, no el que todavía no empezó.
+export function fallbackYear(years: number[], current: number): number {
+  return years.includes(current) ? current : (years[0] ?? current);
+}

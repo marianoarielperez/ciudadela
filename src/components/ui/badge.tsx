@@ -16,6 +16,11 @@ const badgeVariants = cva(
           "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
+        // Mismo patrón de tinte suave que `destructive`, con el token --success:
+        // una pastilla que se lee como pastilla y no se confunde ni con el
+        // relleno lleno de `default` ni con el gris de `secondary`.
+        success:
+          "bg-success/10 text-success focus-visible:ring-success/20 [a]:hover:bg-success/20",
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",

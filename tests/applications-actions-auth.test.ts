@@ -23,9 +23,9 @@ const recorderMock = vi.hoisted(() => ({ recordOne: vi.fn() }));
 const tokensMock = vi.hoisted(() => ({ issue: vi.fn(), revokeForMember: vi.fn() }));
 const mailerMock = vi.hoisted(() => ({ sendToMember: vi.fn(), sendToApplication: vi.fn() }));
 const gatewayMock = vi.hoisted(() => ({
-  updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn(), getPlan: vi.fn(),
+  updatePreapprovalAmount: vi.fn(), cancelPreapproval: vi.fn(),
 }));
-const feesMock = vi.hoisted(() => ({ getFeeAmounts: vi.fn(), planIdForCategory: vi.fn() }));
+const feeValuesMock = vi.hoisted(() => ({ feeValueReader: { current: vi.fn(), history: vi.fn() } }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/require-admin", () => ({
@@ -39,7 +39,7 @@ vi.mock("@/lib/applications/record", async (importOriginal) => ({
   applicationRecorder: recorderMock,
 }));
 vi.mock("@/lib/mp/gateway", () => ({ mpGateway: gatewayMock }));
-vi.mock("@/lib/mp/plans", () => feesMock);
+vi.mock("@/lib/treasury/fee-values", () => feeValuesMock);
 vi.mock("@/lib/members/account-email-notice", () => ({ accountEmailNotice: { announce: vi.fn() } }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
@@ -114,7 +114,8 @@ describe("autorización de las actions de solicitudes", () => {
     expect(result.error).toBe("Sesión inválida.");
     expect(prismaMock.application.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.application.update).not.toHaveBeenCalled();
-    expect(gatewayMock.getPlan).not.toHaveBeenCalled();
+    // Ni siquiera se lee el valor de cuota: la guarda corta antes de todo.
+    expect(feeValuesMock.feeValueReader.current).not.toHaveBeenCalled();
     expect(gatewayMock.updatePreapprovalAmount).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });

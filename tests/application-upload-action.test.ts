@@ -14,8 +14,9 @@ const mocks = vi.hoisted(() => ({
   },
   service: { findByResumeToken: vi.fn() },
   documentStore: { saveApplicationDocument: vi.fn() },
-  mpGateway: { createPreapproval: vi.fn(), getPlan: vi.fn() },
+  mpGateway: { createPreapproval: vi.fn() },
   configReader: { getString: vi.fn() },
+  feeValueReader: { current: vi.fn(), history: vi.fn() },
   mailer: { sendToApplication: vi.fn() },
   audit: vi.fn(),
   tokenLimiter: { check: vi.fn() },
@@ -33,6 +34,9 @@ vi.mock("@/lib/documents/storage", () => ({
   MAX_DOCUMENT_BYTES: 10 * 1024 * 1024,
 }));
 vi.mock("@/lib/mp/gateway", () => ({ mpGateway: mocks.mpGateway }));
+// El monto del débito sale de `fee_values`, la única fuente de montos del
+// sistema (REG-34): NO de los planes de Mercado Pago.
+vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: mocks.feeValueReader }));
 vi.mock("@/lib/config", () => ({
   configReader: mocks.configReader,
   CONFIG_KEYS: { mpPlanActiveId: "mp_plan_active_id", mpPlanSharedId: "mp_plan_shared_id" },
@@ -110,8 +114,11 @@ beforeEach(() => {
   mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(mocks.prisma));
   mocks.documentStore.saveApplicationDocument.mockResolvedValue({ id: 1 });
   mocks.mailer.sendToApplication.mockResolvedValue({ messageId: "mid" });
-  mocks.configReader.getString.mockResolvedValue("PLAN-123");
-  mocks.mpGateway.getPlan.mockResolvedValue({ id: "PLAN-123", reason: "SOCIO ACTIVO", amount: 6000 });
+  mocks.configReader.getString.mockResolvedValue("TEXTO");
+  mocks.feeValueReader.current.mockResolvedValue({
+    id: 1, activeAmount: 6000, sharedAmount: 3000,
+    validFrom: new Date("2026-08-01T12:00:00Z"), minuteId: null,
+  });
   mocks.mpGateway.createPreapproval.mockResolvedValue({
     id: "PRE-1", initPoint: "https://mp/checkout/PRE-1", status: "pending",
   });
@@ -286,62 +293,43 @@ describe("startPaymentAction", () => {
     expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
   });
 
-  it("sin plan configurado: mensaje en castellano y ninguna llamada a MP", async () => {
+  // El monto que se manda acá es el que MP le va a debitar al vecino todos los
+  // meses: la suscripción se crea SIN plan asociado y copia el importe. Desde el
+  // M4 sale de `fee_values` —la única fuente (REG-34)—, y si todavía no rige
+  // ningún valor NO se crea nada: cobrar mal es peor que no cobrar.
+  it("sin valor de cuota vigente: mensaje en castellano y ninguna llamada a MP", async () => {
+    withDebit();
+    mocks.feeValueReader.current.mockResolvedValue(null);
+    const result = await startPaymentAction({}, tokenForm());
+
+    expect(result.error).toMatch(/valor de la cuota todavía no está configurado/i);
+    expect(result.error).toMatch(/consultá en la sede/i);
+    expect(result.redirectUrl).toBeUndefined();
+    expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("el monto sale del valor vigente de `fee_values`, no de Mercado Pago", async () => {
+    withDebit();
+    mocks.feeValueReader.current.mockResolvedValue({
+      id: 2, activeAmount: 9500, sharedAmount: 4750,
+      validFrom: new Date("2026-08-20T12:00:00Z"), minuteId: null,
+    });
+    await startPaymentAction({}, tokenForm());
+
+    expect(mocks.mpGateway.createPreapproval.mock.calls[0][0].amount).toBe(9500);
+  });
+
+  // El plan de MP ya no hace falta para asociarse: los ids de Configuración
+  // quedaron como referencia de la conciliación, no como fuente del monto.
+  it("sin ids de plan configurados, el alta con débito sigue andando", async () => {
     withDebit();
     mocks.configReader.getString.mockResolvedValue(null);
     const result = await startPaymentAction({}, tokenForm());
 
-    expect(result.error).toMatch(/sistema de pagos no está configurado/i);
-    expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
-  });
-
-  // Desde que la suscripción se crea SIN plan asociado, el monto que mandamos
-  // es el que MP le debita al vecino todos los meses. Leerlo de la caché de 24 h
-  // de `plans.ts` sería adherirlo a un importe que la Comisión ya cambió, así
-  // que se lee fresco y, si no se puede leer, NO se crea nada.
-  it("el monto sale de una lectura fresca del plan, no de la caché de montos", async () => {
-    withDebit();
-    mocks.mpGateway.getPlan.mockResolvedValue({ id: "PLAN-123", reason: "SOCIO ACTIVO", amount: 9500 });
-    await startPaymentAction({}, tokenForm());
-
-    expect(mocks.mpGateway.getPlan).toHaveBeenCalledWith("PLAN-123");
-    expect(mocks.mpGateway.createPreapproval.mock.calls[0][0].amount).toBe(9500);
-  });
-
-  it("no se puede leer el monto: no se crea la suscripción y el mensaje es en castellano", async () => {
-    withDebit();
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      mocks.mpGateway.getPlan.mockRejectedValue(new Error("503 upstream"));
-      const result = await startPaymentAction({}, tokenForm());
-
-      expect(result.error).toMatch(/no pudimos confirmar el valor de la cuota/i);
-      expect(result.error).toMatch(/probá de nuevo en unos minutos/i);
-      expect(result.error).not.toMatch(/503|upstream/i);
-      expect(result.redirectUrl).toBeUndefined();
-      // Lo importante: mejor no cobrar que cobrar mal.
-      expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
-      expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
-      expect(mocks.audit).not.toHaveBeenCalled();
-    } finally {
-      errorLog.mockRestore();
-    }
-  });
-
-  it("el plan existe pero no tiene monto en MP: tampoco se crea la suscripción", async () => {
-    // `getPlan` tira cuando `auto_recurring.transaction_amount` no es un número:
-    // un plan a medio cargar en el panel de MP no puede terminar en un débito.
-    withDebit();
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      mocks.mpGateway.getPlan.mockRejectedValue(new Error("El plan PLAN-123 no tiene monto en MP."));
-      const result = await startPaymentAction({}, tokenForm());
-
-      expect(result.error).toMatch(/no pudimos confirmar el valor de la cuota/i);
-      expect(mocks.mpGateway.createPreapproval).not.toHaveBeenCalled();
-    } finally {
-      errorLog.mockRestore();
-    }
+    expect(result.redirectUrl).toBe("https://mp/checkout/PRE-1");
+    expect(mocks.mpGateway.createPreapproval.mock.calls[0][0].amount).toBe(6000);
   });
 
   it("MP caído: no se persiste nada y el mensaje no filtra el error del SDK", async () => {
@@ -398,7 +386,9 @@ describe("startPaymentAction", () => {
     // (medido contra la API real, docs/06 §2).
     expect(sent.planId).toBeUndefined();
     expect(sent.amount).toBe(6000);
-    expect(sent.reason).toMatch(/SOCIO ACTIVO/);
+    // Sin plan del que sacar el sufijo, el `reason` es la base de
+    // `subscriptionReason`: lo que el vecino lee en el resumen de su tarjeta.
+    expect(sent.reason).toBe("Cuota Vecinal Ciudadela");
     expect(sent.payerEmail).toBe("vecina@x.com");
     expect(sent.externalReference).toBe("solicitud:7");
     expect(sent.backUrl).toContain(`/asociate/retomar/${TOKEN}`);
@@ -406,24 +396,28 @@ describe("startPaymentAction", () => {
       where: { id: 7 },
       data: { status: "pending_payment", preapprovalId: "PRE-1" },
     });
+    // `planId: null` —no hay plan de referencia— y el monto queda registrado en
+    // la fila local: es contra eso que la conciliación compara la suscripción
+    // viva. `externalReference` es la única llave para reencontrar una huérfana.
     expect(mocks.prisma.mpSubscription.create.mock.calls[0][0].data).toMatchObject({
-      preapprovalId: "PRE-1", planId: "PLAN-123", applicationId: 7,
+      preapprovalId: "PRE-1", planId: null, applicationId: 7,
+      amount: "6000.00", externalReference: "solicitud:7",
     });
   });
 
-  it("el activo y el colaborador usan planes distintos", async () => {
+  it("el activo paga su monto y el colaborador el compartido", async () => {
     withDebit();
     await startPaymentAction({}, tokenForm());
-    expect(mocks.configReader.getString).toHaveBeenCalledWith("mp_plan_active_id");
+    expect(mocks.mpGateway.createPreapproval.mock.calls[0][0].amount).toBe(6000);
 
-    mocks.configReader.getString.mockClear();
+    mocks.mpGateway.createPreapproval.mockClear();
     mocks.service.findByResumeToken.mockResolvedValue(
       application({ requestedCategory: "collaborator", wantsDebit: true }),
     );
-    // El colaborador no llega al plan sin su anexo de vinculación (REG-03).
+    // El colaborador no llega al pago sin su anexo de vinculación (REG-03).
     mocks.prisma.document.findMany.mockResolvedValue([...BOTH_DNI, { type: "annex" }]);
     await startPaymentAction({}, tokenForm());
-    expect(mocks.configReader.getString).toHaveBeenCalledWith("mp_plan_shared_id");
+    expect(mocks.mpGateway.createPreapproval.mock.calls[0][0].amount).toBe(3000);
   });
 
   it("reintento con la suscripción ya creada: vuelve al MISMO checkout sin llamar a MP", async () => {

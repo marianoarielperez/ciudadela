@@ -5,9 +5,12 @@ import type {
   ApplicationStatus, DocumentType, MemberCategory,
 } from "@/generated/prisma/client";
 import type { LegalTexts } from "@/lib/config";
-import type { FeeAmounts } from "@/lib/mp/plans";
 
-export type { FeeAmounts, LegalTexts };
+export type { LegalTexts };
+
+/** Los dos montos que muestra el paso 2. Salen de `fee_values` —la única fuente
+ *  de montos del sistema (REG-34)—, no de los planes de Mercado Pago. */
+export type FeeAmounts = { active: number; shared: number };
 
 export type StreetOption = { id: number; name: string; loadOrder: number };
 

@@ -74,6 +74,7 @@ function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeC
     movementCreates: [] as Row[],
     applicationUpdates: [] as Row[],
     subscriptionUpdates: [] as Row[],
+    paymentUpdates: [] as Row[],
     userUpdates: [] as Row[],
     tokenDeletes: [] as Row[],
   };
@@ -171,6 +172,12 @@ function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeC
         return { count: 1 };
       },
     },
+    payment: {
+      updateMany: async ({ where, data }: { where: Row; data: Row }) => {
+        state.paymentUpdates.push({ where, data });
+        return { count: 1 };
+      },
+    },
   };
   return { db, state };
 }
@@ -224,6 +231,17 @@ describe("el asiento de un ALTA COMÚN", () => {
     await record(db);
     expect(state.subscriptionUpdates[0]).toEqual({
       where: { applicationId: 42 }, data: { memberId: 99 },
+    });
+  });
+
+  // 4B: la cuota de ingreso se cobró contra la solicitud, cuando todavía no
+  // había ficha. Si el pago no pasa a colgar del socio, su cuenta corriente
+  // arranca sin el primer recibo y el pago queda huérfano para siempre.
+  it("pasa el pago de la cuota de ingreso a la cuenta del socio", async () => {
+    const { db, state } = makeFakeDb({}, { member: null });
+    await record(db);
+    expect(state.paymentUpdates[0]).toEqual({
+      where: { applicationId: 42, memberId: null }, data: { memberId: 99 },
     });
   });
 

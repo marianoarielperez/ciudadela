@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   activityBadgeVariant, applicationStatusBadgeVariant, arrearsBadgeVariant, feeStatusBadgeVariant,
-  memberStatusBadgeVariant, newsStatusBadgeVariant, receiptBadgeVariant,
+  memberStatusBadgeVariant, newsStatusBadgeVariant, receiptBadgeVariant, unmatchedStatusBadgeVariant,
 } from "@/lib/admin/status-badges";
+import { UNMATCHED_STATUS_LABELS } from "@/lib/admin/unmatched-labels";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import { NEWS_STATUS_LABELS } from "@/lib/news/labels";
 
@@ -79,5 +80,29 @@ describe("treasury badges", () => {
     expect(feeStatusBadgeVariant("paid")).toBe("default");
     expect(feeStatusBadgeVariant("pending")).toBe("secondary");
     expect(feeStatusBadgeVariant("voided")).toBe("outline");
+  });
+});
+
+describe("unmatchedStatusBadgeVariant", () => {
+  // Las cuatro vidas de una fila de la bandeja se ven distintas: la que espera
+  // decisión (celeste), la aplicada a un socio, la descartada y el ingreso no
+  // societario. Que dos compartan variante volvería la columna ilegible —
+  // "descartado" y "es plata nuestra pero de nadie" son afirmaciones opuestas.
+  it("le da una variante propia a cada estado", () => {
+    const variants = (["open", "matched", "dismissed", "other_income"] as const).map(unmatchedStatusBadgeVariant);
+    expect(variants).toEqual(["default", "outline", "secondary", "success"]);
+    expect(new Set(variants).size).toBe(4);
+  });
+  it("ninguna de las cuatro es 'ghost': esa variante no se ve como pastilla", () => {
+    // `ghost` no tiene fondo y su borde es transparente: en la columna Estado
+    // se leía como texto suelto de 12 px al lado de una pastilla de verdad.
+    const variants = (["open", "matched", "dismissed", "other_income"] as const).map(unmatchedStatusBadgeVariant);
+    expect(variants).not.toContain("ghost");
+  });
+  it("cada estado tiene su etiqueta en es-AR y ninguna se repite", () => {
+    const labels = Object.values(UNMATCHED_STATUS_LABELS);
+    expect(labels).toHaveLength(4);
+    expect(new Set(labels).size).toBe(4);
+    expect(UNMATCHED_STATUS_LABELS.other_income).toBe("Ingreso no societario");
   });
 });
