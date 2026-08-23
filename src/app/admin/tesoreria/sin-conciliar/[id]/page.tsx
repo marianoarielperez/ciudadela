@@ -28,8 +28,9 @@ import type { UnmatchedReason } from "@/lib/mp/unmatched";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
 import { feeValueReader } from "@/lib/treasury/fee-values";
+import { INCOME_METHOD_LABELS } from "@/lib/treasury/labels";
 import { searchMembers } from "@/lib/treasury/member-search";
-import { DismissForm, ResolveForm } from "./resolve-form";
+import { DismissForm, OtherIncomeForm, ResolveForm } from "./resolve-form";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Pago sin conciliar — SIGeV" };
@@ -90,6 +91,16 @@ export default async function UnmatchedDetailPage(props: {
   // mostrarlo en la tarjeta de evidencia sería atribuirle a MP una frase que
   // escribió un operador. Se muestra del otro lado, dicho por su nombre.
   const dismissed = row.status === "dismissed";
+  // El ingreso no societario no es una FK de la fila: la unión es el
+  // `mpPaymentId`, que es único en las dos tablas. El módulo de ingresos es
+  // independiente del núcleo de plata a propósito (no hay `payments` de por
+  // medio), y esa independencia se paga con esta consulta.
+  const income = row.status === "other_income"
+    ? await prisma.otherIncome.findUnique({
+        where: { mpPaymentId: row.mpPaymentId },
+        select: { concept: true, note: true, voidedAt: true },
+      })
+    : null;
 
   const [hits, member] = await Promise.all([
     open && memberId === null ? searchMembers(prisma, q) : Promise.resolve([]),
@@ -176,13 +187,49 @@ export default async function UnmatchedDetailPage(props: {
 
         {!open ? (
           <Card>
-            <CardHeader><CardTitle>{row.status === "matched" ? "Aplicado" : "Descartado"}</CardTitle></CardHeader>
+            {/* El título es el nombre del estado: "Aplicado", "Descartado" o
+                "Ingreso no societario". Tres desenlaces distintos, tres títulos. */}
+            <CardHeader><CardTitle>{UNMATCHED_STATUS_LABELS[row.status]}</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               <p>
                 {row.resolvedAt ? formatDateAR(row.resolvedAt) : "—"}
                 {row.resolvedBy ? ` · ${row.resolvedBy.name ?? "un operador"}` : " · automático"}
               </p>
               {dismissed && row.description && <p>Motivo: {row.description}</p>}
+              {row.status === "other_income" && (
+                income ? (
+                  <>
+                    {/* El concepto y la nota son texto libre del operador y pueden
+                        nombrar a un tercero: se leen acá, que es panel de admin, y
+                        no viajan a la auditoría ni al log (Ley 25.326). */}
+                    <p className="font-medium">{income.concept}</p>
+                    {income.note && <p className="text-muted-foreground">{income.note}</p>}
+                    <p className="text-muted-foreground">
+                      Registrado como {INCOME_METHOD_LABELS.mp.toLowerCase()} en Otros ingresos.
+                      No emite recibo: la serie numerada es de las cuotas sociales.
+                    </p>
+                    {income.voidedAt && (
+                      <FormMessage kind="warning" box>
+                        Ese ingreso figura anulado y la fila todavía dice lo contrario. Avisá antes de
+                        tocarla.
+                      </FormMessage>
+                    )}
+                    <p>
+                      <Link
+                        className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                        href="/admin/tesoreria/otros-ingresos"
+                      >
+                        Ver en Otros ingresos
+                      </Link>
+                    </p>
+                  </>
+                ) : (
+                  <FormMessage kind="warning" box>
+                    La fila dice que se registró como ingreso no societario, pero ese registro ya no
+                    está.
+                  </FormMessage>
+                )
+              )}
               {row.payment?.member && (
                 <p>
                   Socio:{" "}
@@ -316,11 +363,24 @@ export default async function UnmatchedDetailPage(props: {
         )}
       </div>
 
-      {/* El descarte es la última salida y va último en el orden de lectura,
-          cerrado. Pero está SIEMPRE que la fila esté abierta, aunque todavía no
-          se haya elegido socio: un cobro duplicado se descarta sin buscar a
-          nadie, y esa salida no puede quedar detrás de una búsqueda. */}
-      {open && <DismissForm rowId={row.id} />}
+      {/* Las dos salidas que NO son un socio, juntas y al pie. El agrupamiento
+          dice algo cierto: las dos contestan "esto no es de ningún socio", y sólo
+          se diferencian en si la plata es de la vecinal o no. Antes el descarte
+          era la única y por eso mentía.
+          Están SIEMPRE que la fila esté abierta, aunque todavía no se haya
+          elegido socio: un alquiler no se busca en el padrón, y un cobro
+          duplicado se descarta sin buscar a nadie. */}
+      {open && (
+        <section aria-labelledby="otras-salidas" className="space-y-2">
+          <h2 id="otras-salidas" className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            Si no es de un socio
+          </h2>
+          <div className="divide-y rounded-md border">
+            <OtherIncomeForm rowId={row.id} amount={Number(row.amount)} paidAt={formatDateAR(row.paidAt)} />
+            <DismissForm rowId={row.id} />
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -8,6 +8,10 @@ export const TREASURY_TABS: TreasuryTab[] = [
   { href: "/admin/tesoreria/recibos", label: "Recibos" },
   { href: "/admin/tesoreria/sin-conciliar", label: "Sin conciliar" },
   { href: "/admin/tesoreria/suscripciones", label: "Suscripciones" },
+  // No toda la plata que entra es de cuotas: el alquiler del salón, las rifas y
+  // los eventos se registran acá. Va antes de "Valores de cuota" porque es
+  // trabajo diario y aquélla es de consulta.
+  { href: "/admin/tesoreria/otros-ingresos", label: "Otros ingresos" },
   { href: "/admin/tesoreria/valores", label: "Valores de cuota" },
 ];
 

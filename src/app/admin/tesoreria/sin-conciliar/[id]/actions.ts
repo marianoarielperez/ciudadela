@@ -14,6 +14,7 @@ import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
 import { prisma } from "@/lib/prisma";
+import { OtherIncomeError, recordOtherIncome } from "@/lib/treasury/other-income";
 import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { treasuryService, TreasuryError } from "@/lib/treasury/service";
@@ -242,4 +243,100 @@ export async function dismissUnmatchedAction(_prev: State, formData: FormData): 
     ip,
   });
   redirect(`${BASE}?estado=resueltos`);
+}
+
+// ── Tercera salida: la plata entró y es de la asociación, pero no es de ningún
+// socio (alquiler del salón, rifa, evento). No emite recibo: la serie numerada
+// y su PDF están armados alrededor del socio (REG-33) y meterles un tercero era
+// tocar el núcleo de plata, que ya está cerrado y probado.
+//
+// El monto y la fecha NO se tipean: salen de la fila, que es la evidencia de lo
+// que Mercado Pago cobró y cuándo.
+const otherIncomeSchema = z.object({
+  rowId: z.coerce.number("Fila inválida.").int("Fila inválida.").positive("Fila inválida."),
+  concept: z
+    .string("Ingresá a qué corresponde el ingreso.")
+    .min(3, "Ingresá a qué corresponde el ingreso.")
+    .max(200, "El concepto no puede superar los 200 caracteres."),
+  note: z.string().max(200, "La nota no puede superar los 200 caracteres.").optional(),
+});
+
+export async function registerAsOtherIncomeAction(_prev: State, formData: FormData): Promise<State> {
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
+  const parsed = parseForm(otherIncomeSchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const d = parsed.data;
+
+  let result: { kind: "gone" } | { kind: "resolved" } | { kind: "ok"; incomeId: number; amount: number };
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const row = await tx.mpUnmatchedPayment.findUnique({
+        where: { id: d.rowId },
+        select: { id: true, status: true, amount: true, paidAt: true, mpPaymentId: true },
+      });
+      if (!row) return { kind: "gone" as const };
+      if (row.status !== "open") return { kind: "resolved" as const };
+      const income = await recordOtherIncome(tx, {
+        amount: Number(row.amount),
+        // La fecha del ingreso es la del COBRO, no la del reloj de esta corrida:
+        // el alquiler entró el día que Mercado Pago lo acreditó.
+        receivedAt: row.paidAt,
+        concept: d.concept,
+        method: "mp",
+        mpPaymentId: row.mpPaymentId,
+        note: d.note ?? null,
+        actorId: actor.actorId,
+      });
+      // Ese cobro ya tiene un ingreso y ese ingreso está ANULADO: marcar la fila
+      // ahora la dejaría apuntando a un registro anulado, que es exactamente lo
+      // que la anulación deshizo cuando devolvió la fila a Pendientes. La unique
+      // de `mpPaymentId` no se puede liberar (MariaDB no tiene índices únicos
+      // parciales), así que la salida es decirlo: esta plata se aplica a un
+      // socio o se descarta.
+      if (income.kind === "already_recorded") {
+        const previous = await tx.otherIncome.findUnique({
+          where: { id: income.id },
+          select: { voidedAt: true },
+        });
+        if (previous?.voidedAt) {
+          throw new OtherIncomeError(
+            "Este cobro ya se había registrado como ingreso no societario y ese registro se anuló. "
+              + "Aplicalo a un socio o descartá la fila.",
+          );
+        }
+      }
+      // El `status: "open"` del where es lo que serializa a dos operadores sobre
+      // la misma fila: si el otro la resolvió entre el findUnique y esto, el
+      // count es 0 y la excepción hace rollback del ingreso recién escrito.
+      const { count } = await tx.mpUnmatchedPayment.updateMany({
+        where: { id: row.id, status: "open" },
+        data: { status: "other_income", resolvedById: actor.actorId, resolvedAt: new Date() },
+      });
+      if (count === 0) throw new OtherIncomeError("Esta fila ya fue resuelta.");
+      return { kind: "ok" as const, incomeId: income.id, amount: Number(row.amount) };
+    });
+  } catch (e) {
+    if (e instanceof OtherIncomeError) return { error: e.message };
+    console.error("[unmatched] registro como ingreso no societario falló", errCode(e));
+    return { error: "No se pudo registrar el ingreso. Reintentá en un momento." };
+  }
+  if (result.kind === "gone") return { error: "La fila ya no existe." };
+  if (result.kind === "resolved") return { error: "Esta fila ya fue resuelta." };
+
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
+  // Ni el concepto ni la nota entran al asiento: son texto libre del operador y
+  // pueden nombrar al inquilino del salón (Ley 25.326). Quedan en el registro,
+  // que se lee desde el panel.
+  await audit({
+    userId: actor.actorId,
+    action: "unmatched_resolve",
+    entity: "mp_unmatched_payment",
+    entityId: d.rowId,
+    detail: { action: "other_income", incomeId: result.incomeId, amount: result.amount },
+    ip,
+  });
+  // Al destino y no de vuelta a la bandeja: el operador tiene que ver dónde
+  // quedó esa plata, que es justamente lo que esta pantalla no sabía decir.
+  redirect("/admin/tesoreria/otros-ingresos?registrado=1");
 }

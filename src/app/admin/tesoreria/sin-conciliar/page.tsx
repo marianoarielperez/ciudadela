@@ -40,8 +40,12 @@ export default async function SinConciliarPage(props: {
   // así que el filtro son dos links y no un <select>: el estado actual se lee
   // sin desplegar nada y cada vista tiene su propia URL para compartir.
   const resolved = one(sp.estado) === "resueltos";
+  // "Resueltos" es todo lo que ya tuvo una decisión, y desde la tarea 8B son
+  // TRES: aplicado a un socio, registrado como ingreso no societario, o
+  // descartado. Sin el tercero en la lista, esas filas desaparecían de las dos
+  // vistas y la bandeja perdía el rastro de plata que sí entró.
   const where: Prisma.MpUnmatchedPaymentWhereInput = resolved
-    ? { status: { in: ["matched", "dismissed"] } }
+    ? { status: { in: ["matched", "dismissed", "other_income"] } }
     : { status: "open" };
 
   const total = await prisma.mpUnmatchedPayment.count({ where });
@@ -73,6 +77,19 @@ export default async function SinConciliarPage(props: {
       },
     },
   });
+  // Qué se registró como ingreso no societario, para la columna "Aplicado a".
+  // La unión con `other_incomes` es el `mpPaymentId` (único en las dos tablas) y
+  // no una FK: el módulo de ingresos es independiente del núcleo de plata. Sólo
+  // para las filas de ESTA página, y sólo en Resueltos.
+  const incomeIds = resolved ? rows.filter((r) => r.status === "other_income").map((r) => r.mpPaymentId) : [];
+  const incomes = incomeIds.length
+    ? new Map(
+        (await prisma.otherIncome.findMany({
+          where: { mpPaymentId: { in: incomeIds } },
+          select: { mpPaymentId: true, concept: true },
+        })).map((i) => [i.mpPaymentId, i.concept]),
+      )
+    : new Map<string | null, string>();
   const params = { estado: resolved ? "resueltos" : undefined };
 
   const tabs = [
@@ -180,6 +197,13 @@ export default async function SinConciliarPage(props: {
                         >
                           {r.payment.member?.fullName ?? `Socio ${r.payment.memberId}`}
                         </Link>
+                      ) : r.status === "other_income" ? (
+                        // No hay socio, pero tampoco es un guión: la plata entró
+                        // y es de la vecinal. Lo que va acá es a qué corresponde,
+                        // que es lo único que la explica.
+                        <span className="text-muted-foreground">
+                          {incomes.get(r.mpPaymentId) ?? "Ingreso no societario"}
+                        </span>
                       ) : (
                         // Una fila descartada no se le aplicó a nadie, y eso es
                         // exactamente lo que declara el descarte.

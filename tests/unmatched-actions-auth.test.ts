@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   // asentado" de "se había asentado y ese recibo se anuló".
   paymentFindUnique: vi.fn(),
   updateMany: vi.fn(async () => ({ count: 1 })),
+  // La tercera salida escribe en `other_incomes` con el `tx` de la transacción.
+  incomeCreate: vi.fn(async () => ({ id: 77 })),
+  incomeFindUnique: vi.fn(),
   sendEmail: vi.fn(async () => ({ sent: true })),
   audit: vi.fn(async () => {}),
   // Tipado explícito: sin él TS infiere la forma del rechazo y el
@@ -20,12 +23,21 @@ const mocks = vi.hoisted(() => ({
     { ok: false, reason: "not_admin", error: "No tenés permiso para editar el padrón." }
   )),
 }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const tx = {
     mpUnmatchedPayment: { findUnique: mocks.findUnique, updateMany: mocks.updateMany },
-    payment: { findUnique: mocks.paymentFindUnique },
-  },
-}));
+    otherIncome: { create: mocks.incomeCreate, findUnique: mocks.incomeFindUnique },
+  };
+  return {
+    prisma: {
+      ...tx,
+      payment: { findUnique: mocks.paymentFindUnique },
+      // El registro como ingreso no societario y el cierre de la fila van en la
+      // MISMA transacción: el mock la ejecuta en el acto con el mismo cliente.
+      $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    },
+  };
+});
 vi.mock("@/lib/treasury/service", () => ({
   treasuryService: { registerPayment: mocks.register },
   TreasuryError: class extends Error {},
@@ -40,6 +52,7 @@ import { redirect } from "next/navigation";
 import { TreasuryError } from "@/lib/treasury/service";
 import {
   dismissUnmatchedAction,
+  registerAsOtherIncomeAction,
   resolveUnmatchedAction,
 } from "@/app/admin/tesoreria/sin-conciliar/[id]/actions";
 
@@ -359,6 +372,105 @@ describe("dismissUnmatchedAction", () => {
     form.append("reason", "Cobro duplicado de MP");
     const r = await dismissUnmatchedAction({}, form);
     expect(r.error).toBe("Esta fila ya fue resuelta.");
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+});
+
+// La tercera salida de la bandeja: la plata entró y es de la asociación, pero no
+// es de ningún socio. No emite recibo y no toca el núcleo de plata — lo único
+// que tiene que quedar blindado es que sin admin no escribe nada, y que el
+// concepto (texto libre, puede nombrar al inquilino del salón) no llega jamás al
+// asiento de auditoría.
+describe("registerAsOtherIncomeAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.incomeCreate.mockResolvedValue({ id: 77 });
+  });
+
+  function incomeForm(concept = "Alquiler del salón para el cumpleaños de Ramírez"): FormData {
+    const form = new FormData();
+    form.append("rowId", "5");
+    form.append("concept", concept);
+    form.append("note", "Lo trajo en mano");
+    return form;
+  }
+
+  it("sin admin no lee la fila, no escribe el ingreso, no audita y no redirige", async () => {
+    const r = await registerAsOtherIncomeAction({}, incomeForm());
+    expect(r.error).toBe("No tenés permiso para editar el padrón.");
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.incomeCreate).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("un concepto de dos letras se rechaza en castellano y no escribe nada", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const r = await registerAsOtherIncomeAction({}, incomeForm("ok"));
+    expect(r.error).toBe("Ingresá a qué corresponde el ingreso.");
+    expect(mocks.incomeCreate).not.toHaveBeenCalled();
+  });
+
+  it("con admin: registra con el monto y la fecha de la fila, la cierra y audita SIN el texto libre", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    await registerAsOtherIncomeAction({}, incomeForm());
+    // El monto y la fecha salen de la fila, no del formulario: es lo que Mercado
+    // Pago cobró y cuándo.
+    expect(mocks.incomeCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        amount: "12000.00",
+        receivedAt: PAID_AT,
+        method: "mp",
+        mpPaymentId: "mp-123",
+        registeredById: 9,
+      }),
+      select: { id: true },
+    });
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: 5, status: "open" },
+      data: expect.objectContaining({ status: "other_income", resolvedById: 9 }),
+    });
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 9, ip: "unknown",
+      action: "unmatched_resolve", entity: "mp_unmatched_payment", entityId: 5,
+      detail: { action: "other_income", incomeId: 77, amount: 12000 },
+    }));
+    const asiento = JSON.stringify(auditedEntry());
+    // Ni el concepto, ni la nota, ni el email del pagador (Ley 25.326).
+    expect(asiento).not.toContain("Ramírez");
+    expect(asiento).not.toContain("mano");
+    expect(asiento).not.toContain("vecino@example.com");
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?registrado=1");
+  });
+
+  it("una fila ya resuelta no se vuelve a registrar", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce({ ...openRow(), status: "dismissed" });
+    const r = await registerAsOtherIncomeAction({}, incomeForm());
+    expect(r.error).toBe("Esta fila ya fue resuelta.");
+    expect(mocks.incomeCreate).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("si ese cobro ya tuvo un ingreso y se anuló, no deja la fila apuntando al registro anulado", async () => {
+    // La unique de `mpPaymentId` no se libera al anular (MariaDB no tiene
+    // índices únicos parciales), así que el segundo registro chocaría con el
+    // anulado. Cerrar la fila ahí la dejaría apuntando a un registro que ya no
+    // vale — justo lo que la anulación había deshecho al devolverla a Pendientes.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.incomeCreate.mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "P2002" }));
+    mocks.incomeFindUnique
+      .mockResolvedValueOnce({ id: 42 })                                   // el ingreso que ganó la unique
+      .mockResolvedValueOnce({ voidedAt: new Date("2026-08-20T12:00:00Z") }); // y está anulado
+    const r = await registerAsOtherIncomeAction({}, incomeForm());
+    expect(r.error).toContain("ese registro se anuló");
+    expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
   });

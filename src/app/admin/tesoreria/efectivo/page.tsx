@@ -158,6 +158,19 @@ export default async function EfectivoPage(props: {
           ))}
         </ul>
       )}
+      {/* Un alquiler del salón no se busca en el padrón: sin esta línea, el
+          operador que cobró algo que no es una cuota se queda sin salida en la
+          pantalla que sí cobra. Discreta a propósito — el trabajo de acá es
+          cobrarle al socio. */}
+      <p className="text-sm text-muted-foreground">
+        ¿Cobraste algo que no es de un socio —el alquiler del salón, una rifa, un evento—?{" "}
+        <Link
+          className="text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          href="/admin/tesoreria/otros-ingresos"
+        >
+          Registralo en Otros ingresos
+        </Link>.
+      </p>
     </div>
   );
 }

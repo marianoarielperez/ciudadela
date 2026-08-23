@@ -1,10 +1,16 @@
 "use client";
-// Los dos caminos que tiene una fila abierta: imputarla a un socio o descartarla.
+// Los tres caminos que tiene una fila abierta: imputarla a un socio, registrarla
+// como ingreso no societario, o descartarla.
 //
-// Son dos formularios y no uno con un switch, porque son dos decisiones
-// distintas y de peso distinto: una emite un recibo a nombre de un vecino, la
-// otra declara que esa plata no se le atribuye a nadie. Cada una con su action,
-// su estado y su botón.
+// Son tres formularios y no uno con un switch, porque son tres decisiones
+// distintas y de peso distinto: una emite un recibo a nombre de un vecino, otra
+// declara que la plata es de la asociación pero de ningún socio, y la última que
+// no se le atribuye a nadie. Cada una con su action, su estado y su botón.
+//
+// Las dos últimas viven juntas al pie, en un mismo bloque cerrado: las dos son
+// la respuesta a "esto no es de un socio", y ponerlas una al lado de la otra es
+// lo que deja ver que descartar YA NO es la única salida cuando no aparece el
+// dueño de la plata.
 //
 // `useSyncedForm` en el de imputar: React 19 resetea el <form action> cuando la
 // action termina, y con un <select> controlado el concepto volvería al primero
@@ -17,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatARS } from "@/lib/format";
-import { dismissUnmatchedAction, resolveUnmatchedAction } from "./actions";
+import { dismissUnmatchedAction, registerAsOtherIncomeAction, resolveUnmatchedAction } from "./actions";
 
 const digits = (v: string) => v.replace(/\D/g, "");
 
@@ -108,7 +114,9 @@ export function ResolveForm({ rowId, memberId, amount, paidAt, pendingCount, wit
 export function DismissForm({ rowId }: { rowId: number }) {
   const [state, formAction, pending] = useActionState(dismissUnmatchedAction, {});
   return (
-    <details className="rounded-md border px-3">
+    // Sin borde propio: el marco lo pone el bloque que la agrupa con el registro
+    // de ingreso no societario.
+    <details className="px-3">
       <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
         Descartar este pago
       </summary>
@@ -128,13 +136,77 @@ export function DismissForm({ rowId }: { rowId: number }) {
             placeholder="Por qué esta plata no se le imputa a nadie"
           />
           <p className="text-xs text-muted-foreground">
-            Queda escrito en la fila. Descartar no devuelve la plata: sólo declara que la vecinal
-            la cobró y no corresponde imputarla.
+            Queda escrito en la fila. Descartar es para lo que <strong>no</strong> es plata de la
+            vecinal: un cobro de prueba, un error de Mercado Pago. Si la plata entró y es de la
+            asociación —un alquiler, una rifa—, registrala arriba como ingreso no societario.
           </p>
         </div>
         {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
         <Button type="submit" variant="destructive" disabled={pending}>
           {pending ? "Descartando…" : "Descartar"}
+        </Button>
+      </form>
+    </details>
+  );
+}
+
+// La tercera salida. Cerrada como el descarte y arriba de él: es la más
+// probable de las dos —una vecinal alquila su salón todos los meses— y la que
+// conserva la plata en los registros.
+export function OtherIncomeForm({ rowId, amount, paidAt }: {
+  rowId: number;
+  amount: number;
+  /** Ya formateada en es-AR: el ingreso lleva el día en que MP cobró. */
+  paidAt: string;
+}) {
+  const [state, formAction, pending] = useActionState(registerAsOtherIncomeAction, {});
+  return (
+    <details className="px-3">
+      <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+        Registrar como ingreso no societario
+      </summary>
+      {/* Campos NO controlados, igual que el descarte: el <details> se cierra al
+          terminar la action (redirige a Otros ingresos), así que no hay valor
+          que preservar del reset de React 19. */}
+      <form action={formAction} className="space-y-3 pb-3">
+        <input type="hidden" name="rowId" value={rowId} />
+        <div className="space-y-1">
+          <Label htmlFor="income-concept">Concepto</Label>
+          <Input
+            id="income-concept"
+            name="concept"
+            maxLength={200}
+            autoComplete="off"
+            className="max-w-md"
+            placeholder="Alquiler del salón, rifa, evento…"
+            list="income-concept-opciones"
+          />
+          {/* Sugerencias, no categorías: el campo sigue siendo texto libre (el
+              cliente descartó una lista fija). Sirven para que dos alquileres
+              cargados con seis meses de diferencia se escriban igual y el filtro
+              de la lista los encuentre juntos. */}
+          <datalist id="income-concept-opciones">
+            <option value="Alquiler del salón" />
+            <option value="Evento" />
+            <option value="Rifa" />
+            <option value="Donación" />
+          </datalist>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="income-note">Nota (opcional)</Label>
+          <Input id="income-note" name="note" maxLength={200} autoComplete="off" className="max-w-md" />
+        </div>
+        <p className="text-sm">
+          Se registra un ingreso de{" "}
+          <span className="font-mono font-semibold tabular-nums">{formatARS(amount)}</span>, fechado
+          el {paidAt}, que es el día en que Mercado Pago lo cobró.{" "}
+          <span className="text-muted-foreground">
+            No emite recibo: la serie numerada es de las cuotas sociales.
+          </span>
+        </p>
+        {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
+        <Button type="submit" variant="secondary" disabled={pending}>
+          {pending ? "Registrando…" : "Registrar el ingreso"}
         </Button>
       </form>
     </details>
