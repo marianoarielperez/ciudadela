@@ -147,7 +147,11 @@ concurrentes numeran `00002..00021` sin huecos contra MariaDB real; en Deudores
 sólo los de ≥ 4 cuotas son tildables; cambiar de categoría a un socio con deuda
 está bloqueado.
 
-Despliegue: `docs/10` §4, bloque "Específico de la fase 4A".
+Despliegue: hecho, y no se repite. El diario de aquella carga fundacional —las
+~1.200 líneas que corrieron una sola vez el 21/08/2026— quedó en
+`git show 61d1b11:docs/10-runbook-dominio-produccion.md`. El `docs/10` §4 de hoy es
+el **procedimiento** de despliegue, no el diario, y su §4.2 es el rearmado desde
+cero, que sobre datos reales **no se vuelve a correr**.
 
 ### Fase 4B — Mercado Pago — **CERRADA** (23/08/2026)
 
@@ -162,8 +166,10 @@ lote REG-34 en `/admin/tesoreria/valores`; suscripción viva en la ficha del soc
 y la **eliminación de la caché de planes**: el wizard dejó de leer el monto de
 Mercado Pago y los ids de plan pasaron a ser **opcionales**.
 
-Suite al cerrar: **130 archivos / 1786 tests**, más 3 de integración contra MariaDB
-real que se saltean sin `DATABASE_URL_TEST`.
+Suite al cerrar: **130 archivos / 1786 tests**, más **5 tests de integración en 2
+archivos** (`tests/integration/receipt-sequence.test.ts` y
+`tests/integration/mp-apply-concurrency.test.ts`) que corren contra MariaDB real y
+se saltean sin `DATABASE_URL_TEST`.
 
 **Estado de los CA** (spec 4B §18). Se verificaron en **tres pasadas contra Mercado Pago real** —cuenta de prueba aislada más túnel—, no con notificaciones simuladas:
 a partir de la segunda pasada MP entregó todo por su cuenta (ver `docs/11` Parte J).
@@ -173,7 +179,7 @@ a partir de la segunda pasada MP entregó todo por su cuenta (ver `docs/11` Part
 | 1 | Débito de suscripción vinculada → pago + cuota del período + recibo por email; el mismo cobro llegando como `payment` no duplica | ✅ verificado contra MP real (recibo `2026-00004`, concepto congelado, PDF y email; las **dos** capas de idempotencia probadas) |
 | 2 | Débito de suscripción **no** vinculada → bandeja `no_subscription`; vincular aplica esa fila sola | ✅ verificado |
 | 3 | `solicitud:{id}` inexistente + suscripción vinculada → se aplica como débito (el caso del 306) | ⚠️ cubierto por tests y verificado en la revisión de código; no se reprodujo a mano |
-| 4 | `pago:{id}:2` aplica las dos cuotas más viejas; con monto distinto, `link_amount_mismatch` | ✅ el pago aplicó abril y mayo (recibo `2026-00005`); el mismatch, por tests |
+| 4 | `pago:{id}:2` aplica las dos cuotas más viejas; con monto distinto, `link_amount_mismatch` | ⚠️ parcial: la imputación sí, contra MP real (el pago aplicó abril y mayo, recibo `2026-00005`); el `link_amount_mismatch` está sólo por tests |
 | 5 | Pago sin referencia → bandeja → se resuelve desde ahí; anular el recibo reabre la fila | ⚠️ el pago sin referencia cayó en la bandeja y se resolvió como **ingreso no societario**; resolverlo **hacia un socio** se ejercitó con una fila `no_subscription`, y la **reapertura al anular** está fijada por tests (el `updateMany` dentro de la transacción, probado por orden) |
 | 6 | `refunded` → anula el recibo y devuelve las cuotas a pendientes | ✅ reembolso real desde el panel del vendedor: anuló solo, la serie no se reutilizó, y el segundo aviso dio `refund_ignored` |
 | 7 | Débito de un cesante se imputa a su deuda congelada; sin pendientes, a la bandeja | ⚠️ cubierto por tests. No se reprodujo a mano a propósito: exigía autorizar otra suscripción entera para un solo mensaje de pantalla |
@@ -191,25 +197,33 @@ filtros, con el pago existiendo y aprobado; sólo lo encuentra `?id=`). Por eso 
 en los tests unitarios y en que la consulta responde 200 bien formada. El paso 2,
 que es el que cubre los **débitos**, sí quedó verificado.
 
-**Seis bugs que sólo aparecieron probando contra MP real** (todos arreglados; el
-detalle técnico está en `docs/11` Parte J y en el ledger):
+**Cinco arreglos de código que sólo aparecieron probando contra MP real** — uno por
+commit, y así se cuentan en los tres documentos que los mencionan: éste, `docs/11`
+Parte J y `CLAUDE.md`. El detalle técnico está en `docs/11` Parte J y en el ledger:
 
-1. `searchAuthorizedPayments` mandaba `limit=100` a un endpoint que lo rechaza:
+1. **`9935c1a`** — `searchAuthorizedPayments` mandaba `limit=100` a un endpoint que lo rechaza:
    devolvía **400 siempre, en silencio**, así que el paso 2 de la conciliación
    **nunca había funcionado** y la vinculación decía "Cobros previos: no
    disponible". Era justo la red que tiene que atajar el débito del 10/09.
-2. El gateway no leía el preapproval que **viene en el propio pago**
+2. **`03a1e2d`** — el gateway no leía el preapproval que **viene en el propio pago**
    (`point_of_interaction.transaction_data.subscription_id`), así que la
    notificación `payment` de un débito nunca resolvía sola.
-3. Las notificaciones que no atendemos (IPN legacy y `merchant_order`) respondían
+3. **`49d06e1`** — las notificaciones que no atendemos (IPN legacy y `merchant_order`) respondían
    4xx y MP las reintentaba; ahora responden 200 "recibido, no procesado".
-4. Un id sembrado que MP no puede parsear hacía que el cron devolviera 207 en toda
+4. **`82918fb`** — un id sembrado que MP no puede parsear hacía que el cron devolviera 207 en toda
    corrida local: un cron que siempre falla un poco es un cron cuyos errores nadie
    mira.
-5. El concepto congelado del recibo no llegaba a la cuenta corriente: la fila
-   tachada de un pago revertido decía "Cuota social" a secas, que es justo donde
-   saber qué se había cobrado importa más.
-6. La fila tachada de un pago anulado escondía qué había cubierto.
+5. **`903d69d`** — el concepto congelado del recibo no llegaba a la cuenta
+   corriente: la fila tachada de un pago revertido o anulado decía "Cuota social" a
+   secas y escondía qué había cubierto, que es justo donde saber qué se cobró
+   importa más. Afecta a `/mi/cuenta` y a la ficha del socio.
+
+Y **una trampa de entorno**, que no se cuenta entre los cinco porque no es un
+defecto del sistema: entrando por el túnel, `next dev` bloquea sus propios chunks de
+`/_next/static` y la página llega sin JavaScript, así que Turnstile no se monta y
+`/ingresar` responde "credenciales inválidas" — el síntoma no dice nada de la causa.
+Se resuelve con `allowedDevOrigins` en `next.config.ts`, y hay que actualizarlo cada
+vez que cambia el dominio del túnel (`docs/11` J.1).
 
 Y un **hallazgo de producto** que no es un bug: cuando la tarjeta rechaza, MP
 **retiene al vecino en su checkout** ofreciéndole otro medio; no lo devuelve con

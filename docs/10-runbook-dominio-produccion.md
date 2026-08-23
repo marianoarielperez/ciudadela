@@ -308,7 +308,8 @@ La última línea tiene que decir `-- Dump completed on …`. Si no, **no sigas*
 cd /root/dev/ciudadela && git pull --ff-only && npm ci && npx prisma migrate deploy && NODE_ENV=production npx prisma db seed && npm run build && pm2 restart sigev --update-env && pm2 save && pm2 logs sigev --lines 20 --nostream
 ```
 
-Es lo mismo que hace `bash deploy.sh`. Paso por paso:
+Es lo que hace `bash deploy.sh`, más el `pm2 logs … --nostream` del final, que el
+script no incluye. Paso por paso:
 
 | Paso | Por qué |
 |---|---|
@@ -319,15 +320,54 @@ Es lo mismo que hace `bash deploy.sh`. Paso por paso:
 | `npm run build` | acá se **hornean** `AUTH_URL` y `NEXT_PUBLIC_TURNSTILE_SITE_KEY` |
 | `pm2 restart --update-env` | sin `--update-env` no toma los cambios del `.env` |
 
-**Restaurar** si algo sale mal:
+**Restaurar** si algo sale mal. Ojo con cuál: la falla peligrosa **no** es tipear
+mal el nombre —un archivo que no existe falla cerrado y no pasa nada— sino **elegir
+el backup equivocado**. Uno viejo que sí existe se restaura sin chistar sobre la
+base viva y se lleva puesto todo lo posterior. Por eso primero se **listan** los
+candidatos, después se fija el elegido **en su propia variable**, y recién al final
+se toca la base.
 
 ```bash
-gpg --batch --quiet --decrypt --passphrase-file /root/.sigev_backup_pass \
-    /root/backup-pre-deploy-AAAA-MM-DD.sql.gz.gpg \
-  | gunzip \
-  | mysql sigev
-pm2 restart sigev --update-env
+# 1. Qué backups hay, con su fecha. Elegí mirando, no de memoria.
+ls -lh --time-style=long-iso /root/backup-pre-deploy-*.sql.gz.gpg
 ```
+
+```bash
+# 2. Fijá el elegido. El caso normal es el de hoy: el deploy salió mal recién.
+export RESTORE_FILE=/root/backup-pre-deploy-$(date +%F).sql.gz.gpg
+echo "$RESTORE_FILE"
+```
+
+Si el que querés es **otro**, esta es la única línea que se edita a mano, y el
+nombre se copia **tal cual lo mostró el paso 1**:
+
+```bash
+export RESTORE_FILE=/root/backup-pre-deploy-2026-08-19.sql.gz.gpg
+echo "$RESTORE_FILE"
+```
+
+```bash
+# 3. Verificá que ES el que creés: tiene que descifrar y decir cuándo se tomó.
+test -s "$RESTORE_FILE" && gpg --batch --quiet --decrypt \
+    --passphrase-file /root/.sigev_backup_pass "$RESTORE_FILE" \
+  | gunzip | tail -1
+```
+
+La salida tiene que decir `-- Dump completed on …` **con la fecha y la hora del
+backup que querés restaurar**. Si no descifra, si no dice eso, o si la fecha no es
+la que esperabas, **frená acá**: todavía no se tocó nada.
+
+```bash
+# 4. Recién ahora, y sólo ahora, sobre la base viva.
+test -s "$RESTORE_FILE" && gpg --batch --quiet --decrypt \
+    --passphrase-file /root/.sigev_backup_pass "$RESTORE_FILE" \
+  | gunzip | mysql sigev && pm2 restart sigev --update-env
+```
+
+El `test -s "$RESTORE_FILE" &&` de los pasos 3 y 4 es a propósito: si pegás el
+bloque en una terminal nueva —donde el `export` del paso 2 no existe— o el archivo
+no está, la condición es falsa y **nada de lo que sigue corre**. Es la regla de 4.3
+aplicada al único bloque destructivo del documento.
 
 Y volvé el código al commit anterior (`git log --oneline -5` antes de tirar del
 pull te da a cuál).
@@ -371,8 +411,10 @@ tar tzf /root/backup-archivos-$STAMP.tar.gz | wc -l
 El `tail -1` tiene que decir `-- Dump completed on …` y el `wc -l`, un número mayor
 que 0. **Si alguna de las dos falla, frená acá.**
 
-**Paso 2 — Copiar las cuatro tablas a una base de rescate.** Una sesión interactiva
-(`mysql`), porque las variables de usuario viven en la conexión:
+**Paso 2 — Copiar las cuatro tablas a una base de rescate.** Abrí una sesión
+interactiva (`mysql`) y dejala abierta hasta el paso 10: los pasos 2, 3, 5 y 10 son
+SQL de la misma secuencia, y conviene correrlos de a uno con los conteos a la vista
+para poder **frenar** en cuanto un número no dé.
 
 ```sql
 CREATE DATABASE IF NOT EXISTS sigev_rescate
@@ -411,22 +453,19 @@ cd /root/dev/ciudadela && npx prisma migrate deploy
 ```
 
 **Paso 5 — Restaurar las cuatro tablas.** El orden respeta las claves foráneas
-(`user_roles` cuelga de las otras dos):
+(`user_roles` cuelga de las otras dos). **No hay `TRUNCATE` ni
+`SET FOREIGN_KEY_CHECKS = 0`**: el paso 3 dejó la base vacía y ninguna migración
+inserta filas, así que vaciarlas sería redundante — y un bloque copiable que borra
+`users` y `configuration` es exactamente lo que no queremos que ande dando vueltas
+en el documento por si alguien lo corre fuera de orden. Si acá algún `INSERT` se
+queja de una clave duplicada, **frená**: significa que no estás sobre la base que
+creaste en el paso 3.
 
 ```sql
-SET FOREIGN_KEY_CHECKS = 0;
-
-TRUNCATE TABLE sigev.user_roles;
-TRUNCATE TABLE sigev.users;
-TRUNCATE TABLE sigev.roles;
-TRUNCATE TABLE sigev.configuration;
-
 INSERT INTO sigev.roles         SELECT * FROM sigev_rescate.roles;
 INSERT INTO sigev.users         SELECT * FROM sigev_rescate.users;
 INSERT INTO sigev.user_roles    SELECT * FROM sigev_rescate.user_roles;
 INSERT INTO sigev.configuration SELECT * FROM sigev_rescate.configuration;
-
-SET FOREIGN_KEY_CHECKS = 1;
 
 SELECT (SELECT COUNT(*) FROM sigev.configuration) AS config,
        (SELECT COUNT(*) FROM sigev.users)         AS usuarios,
@@ -478,7 +517,8 @@ SELECT COUNT(*) AS solicitudes FROM applications;"
 ```
 
 Esperado: **278 socios**, **40 calles**, **3076 cuotas**, **118 deudores**,
-**4 usuarios**, 0 recibos y 0 solicitudes.
+0 recibos y 0 solicitudes. `usuarios` no tiene un número fijo: tiene que dar **el
+que anotaste en el paso 2**.
 
 En el panel: `/admin/tesoreria/deudores` lista a los socios con deuda ordenados por
 monto, y `/admin/tesoreria/valores` muestra los dos montos vigentes. Si dice
@@ -537,8 +577,25 @@ Mercado Pago, porque de ellas depende que los débitos avisen (`docs/11` Parte D
 aviso de MP se pierde:
 
 ```bash
-crontab -l > /root/crontab.bak && (crontab -l; echo '0 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1') | crontab - && crontab -l
+# La línea del secreto tiene que existir ANTES: sin ella el cron manda un Bearer vacío.
+test -s /root/.sigev-cron-secret || echo 'FALTA /root/.sigev-cron-secret — pará acá'
+
+crontab -l > /root/crontab.bak
+
+if crontab -l | grep -q 'cron/reconcile'; then
+  echo 'La línea de reconcile YA está: no se agrega nada.'
+else
+  (crontab -l; echo '0 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1') | crontab -
+fi
+
+crontab -l
 ```
+
+El `if` es lo que lo hace **idempotente**: corrido dos veces no deja dos líneas de
+reconcile. La versión sin `if` —`(crontab -l; echo …) | crontab -` a secas— duplica
+la línea en el segundo intento, y dos conciliaciones simultáneas a las 03:00 no
+rompen nada (la idempotencia por `mpPaymentId` aguanta) pero ensucian `cron_runs` y
+duplican las llamadas a MP.
 
 Tienen que quedar **dos** líneas: solicitudes 08:05 y conciliación 03:00. El archivo
 `/root/.sigev-cron-secret` tiene que existir, con permisos `600` y el mismo valor que
@@ -563,6 +620,11 @@ curl -sS --max-time 900 -X POST \
 
 - **HTTP 200** = sin errores. **HTTP 207** = corrió entera pero algo falló, y el
   motivo está en `errors[]`. 207 no es "casi bien".
+- **Un `524` no es un fallo de la corrida.** El `--max-time 900` es del `curl`, pero
+  el dominio está detrás de Cloudflare, que corta el origen a los ~100 s. Con dos
+  suscripciones vivas la corrida termina en segundos y no se llega ni cerca; el día
+  que sean cientos, el `curl` puede volver con 524 **mientras la corrida sigue del
+  lado del servidor**. No la relances: el resultado real queda en `cron_runs`.
 - **Esto además cierra el único punto que no se pudo verificar en sandbox**: que
   `GET /v1/payments/search` **indexe** (en sandbox devuelve `total=0` aun sin
   filtros). Si el paso 1 responde sin error y con totales coherentes, el paso 1 de

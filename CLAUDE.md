@@ -96,11 +96,12 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 ## Patrones que estrenó el Módulo 3 (reutilizables)
 
 - **Servicios externos detrás de una factory propia.** `makeMpGateway()`
-  (`src/lib/mp/gateway.ts`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno)
-  expone siete métodos: `getPlan`, `createPreapproval`, `cancelPreapproval`,
-  `updatePreapprovalAmount`, `getPreapproval`, `getPayment` y
-  `getAuthorizedPayment`. El dominio **nunca** ve el SDK de Mercado Pago, y los
-  tests mockean esa interfaz: ni SDK ni red.
+  (`src/lib/mp/gateway.ts`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno). El
+  M3 la estrenó con siete métodos; hoy expone **once** —la fase 4B le sumó
+  `searchPreapprovals`, `searchAuthorizedPayments`, `searchPayments` y
+  `createPreference`—. La lista viva, con qué hace cada uno y sus dos trampas de
+  paginación, está en `docs/06` §2: no se duplica acá. El dominio **nunca** ve el
+  SDK de Mercado Pago, y los tests mockean esa interfaz: ni SDK ni red.
   Mismo criterio para cualquier proveedor que venga después.
 - **Las guardas globales van en el transporte, no en los llamadores.**
   `EMAIL_ALLOWLIST` envuelve el transporte de Nodemailer, así que cubre wizard,
@@ -201,7 +202,8 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   ninguna FK al núcleo de plata a propósito. La serie numerada es de las cuotas
   sociales, armada alrededor del socio (REG-33).
 - **Contra Mercado Pago, medir antes de suponer.** Tres pasadas contra la API real
-  encontraron seis bugs que ningún test podía ver: un `limit` que un endpoint
+  dispararon **cinco arreglos de código** que ningún test podía ver —uno por commit;
+  la lista con su commit está en `docs/07`, fase 4B—: un `limit` que un endpoint
   rechaza y devolvía 400 en silencio, un preapproval que viaja dentro del pago, y
   documentación propia que era falsa. Lo verificado está en `docs/11` Parte J.
 

@@ -169,7 +169,10 @@ Antes esta parte era una previsión; ahora es lo que hay que tildar.
 > otro lado o queda en la solapa equivocada, **los débitos dejan de avisar sin
 > ninguna señal**. La única red es el paso 2 de la conciliación diaria
 > (`/api/cron/reconcile`, Parte H). Las preferencias de Checkout Pro sí mandan el
-> suyo, y por eso los pagos por link llegan aunque el panel esté mal configurado.
+> suyo, así que un pago por link sigue llegando aunque en el panel estén mal la
+> **URL, la solapa o los eventos**. Lo que **no** salva es la clave: si
+> `MP_WEBHOOK_SECRET` no coincide con la de la solapa, también los pagos por link
+> mueren en 401 (Parte I §8). Una cosa es el ruteo del aviso y otra su firma.
 
 ## Parte E — Cloudflare Turnstile
 
@@ -216,8 +219,16 @@ EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
 
 ## Parte G — Cómo probar un débito aprobado (para los CA del módulo)
 
-1. Recorré el wizard en `vecinalciudadela.ar` eligiendo ACTIVO. Al llegar al checkout de MP,
-   **iniciá sesión con la cuenta COMPRADOR de prueba** (`TESTUSER...`).
+> **Esto se hace en el sandbox local, NUNCA contra `vecinalciudadela.ar`.** Ahí la
+> plata es de un vecino y las credenciales son productivas: una tarjeta de prueba en
+> el checkout productivo no es "una prueba", es un cobro real fallado. El armado del
+> sandbox —cuenta TESTUSER propia, su aplicación, túnel y `AUTH_URL`— está en la
+> **Parte J**.
+
+1. Con el sandbox armado (Parte J), recorré el wizard en **`http://localhost:3000`**
+   —o en la URL del túnel, que es lo que hace falta para que MP entregue los
+   webhooks— eligiendo ACTIVO. Al llegar al checkout de MP, **iniciá sesión con la
+   cuenta COMPRADOR de prueba** (`TESTUSER...`).
 2. Pagá con tarjeta de prueba:
    - Mastercard `5031 7557 3453 0604` — CVV `123` — vencimiento `11/30`
    - Visa `4509 9535 6623 3704` — CVV `123` — vencimiento `11/30`
@@ -227,11 +238,20 @@ EMAIL_ALLOWLIST=marianoaperez@yahoo.com.ar,perezmarianoariel@gmail.com
    pasar sola a "Aceptada — pendiente de acta" y el email de bienvenida debe
    llegar a la casilla de la allowlist que hayas declarado en el wizard.
 
-**Verificado el 23/08/2026** (batería de la fase 4B): las dos rutas del titular
-funcionan tal cual. Con `APRO` el alta web completa terminó en `Payment.entry`,
-recibo emitido y solicitud en `approved_pending_minute`; con `OTHE` el webhook
-dejó `payment_rejected_traced` y **no** creó pago, ni recibo, ni cuota, ni
-consumió número de recibo.
+**Verificado el 23/08/2026** (batería de la fase 4B, en sandbox), aunque **cada
+titular se midió sobre un flujo distinto** — no son las dos rutas del mismo wizard:
+
+- **`APRO`** — el **alta web** completa terminó en `Payment.entry`, recibo
+  `2026-00007` y solicitud en `approved_pending_minute`. El ledger no anota con cuál
+  de las dos tarjetas.
+- **`OTHE`** — el rechazo se midió sobre un **link de Checkout Pro**, con la
+  Mastercard `5031 7557 3453 0604`: el webhook dejó `payment_rejected_traced` y
+  **no** creó pago, ni recibo, ni cuota, ni consumió número de recibo (la serie pasó
+  de 5 a 6, no a 7). El reintento con `APRO` sobre el mismo link aplicó 5 cuotas y
+  emitió el `2026-00006`.
+
+Que el titular decida el resultado está verificado. Que se comporte igual en el
+**otro** flujo es razonable esperarlo, pero no está medido.
 
 > **Cuando la tarjeta rechaza, MP no devuelve al vecino.** Lo **retiene en su
 > propio checkout** ofreciéndole otro medio de pago (la URL termina en
@@ -297,9 +317,22 @@ débito mensual del socio 14.
 0 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1
 ```
 
+Con `crontab -e` esa línea se pega y listo. Si preferís agregarla desde la shell,
+usá el bloque **idempotente** de `docs/10` §4.4: `(crontab -l; echo …) | crontab -`
+a secas **duplica la línea** si lo corrés dos veces. Y antes de cualquiera de las
+dos, comprobá que el archivo del secreto exista —`test -s /root/.sigev-cron-secret`—:
+si no está, el cron manda un `Bearer` vacío y todas las corridas mueren en 401.
+
 Mismo esquema que la línea de solicitudes: `CRON_SECRET` del `.env` del VPS, y
 `--max-time 900` porque el paso 2 recorre **una búsqueda por cada suscripción
 viva** contra la API de MP, en serie.
+
+> **`--max-time 900` no manda solo.** El dominio está **proxied por Cloudflare**,
+> que corta la conexión al origen a los ~100 s y devuelve **524**. Hoy da igual —con
+> dos suscripciones vivas la corrida termina en segundos—, pero el día que sean
+> cientos el `curl` va a volver con 524 **mientras la corrida sigue del lado del
+> servidor**. Un 524 en el log no significa que no haya corrido: lo que pasó de
+> verdad está en `cron_runs`, y ahí hay que mirarlo antes de relanzar nada.
 
 A las **03:00** y no a las 08:05 por dos razones: es el hueco más tranquilo (el
 backup nocturno ya terminó) y deja cinco horas de margen antes de que corra el
@@ -462,13 +495,29 @@ la Parte J.
 > reprocesamiento, cambiá el `action` del cuerpo. La segunda barrera —la del
 > procesador, por `mpPaymentId`— sigue en pie igual: nunca se cobra dos veces.
 
-### 8. MP entrega notificaciones SIEMPRE, también en sandbox
+### 8. En sandbox MP sí entrega: los `payment`, siempre; los de suscripción, sólo si el panel los rutea
 
 **Corregido el 23/08/2026.** Este punto decía, con el título "RESUELTO", que en
 sandbox Mercado Pago no entrega notificaciones y que *"el circuito automático no se
 puede validar en sandbox"*. **Es falso**, y salió caro: por esa frase se dispararon
 a mano **dos baterías enteras** de pruebas, dando por perdida la entrega
 automática que en realidad estaba pasando.
+
+Pero el reemplazo tampoco es "MP entrega siempre" a secas: eso sería cambiar un
+absoluto por otro. Lo medido, que es lo único que se afirma acá:
+
+- Las de **`payment`** llegaron en las tres pasadas, todas las veces: las
+  preferencias de Checkout Pro mandan su propio `notification_url`.
+- Las de **suscripción** (`subscription_preapproval`,
+  `subscription_authorized_payment`) llegan **sólo si la configuración de webhooks
+  de la aplicación las rutea**, porque un preapproval no puede llevar
+  `notification_url` propio y MP lo descarta en silencio (Parte D). En la tercera
+  pasada **no llegaron**, con el preapproval `authorized` y el pago `approved` del
+  lado de MP, mientras los `payment` entraban normalmente (Parte J.3).
+
+O sea que la diferencia no es sandbox contra producción: es de dónde sale el ruteo.
+**Vale igual en producción**, y por eso la conciliación diaria (Parte H) no es
+opcional.
 
 Lo que fallaba era otra cosa: **`MP_WEBHOOK_SECRET` no coincidía con la clave de la
 aplicación**. Había un valor inventado en el `.env`, así que MP entregaba, la
@@ -561,8 +610,10 @@ deja a un vecino que pagó sin ninguna noticia.
 ## Parte J — Sandbox local de la fase 4B (23/08/2026)
 
 Tres pasadas contra Mercado Pago **real** (cuenta de prueba aislada + túnel), de
-las que salieron seis arreglos de código y los hechos de acá abajo. Todo lo que
-dice esta parte está **medido**, no supuesto.
+las que salieron **cinco arreglos de código** —uno por commit: `9935c1a`,
+`03a1e2d`, `49d06e1`, `82918fb` y `903d69d`; la lista está en `docs/07`—, una
+**trampa de entorno** que no es un defecto del sistema (`allowedDevOrigins`, J.1) y
+los hechos de acá abajo. Todo lo que dice esta parte está **medido**, no supuesto.
 
 ### J.1 Cómo se arma
 
@@ -654,6 +705,16 @@ dice esta parte está **medido**, no supuesto.
 - **Un preapproval ignora `notification_url`**: MP acepta la request con ese campo
   y lo descarta en silencio (ver el recuadro de la Parte D). Queda comentado en
   `createPreapproval` para que nadie vuelva a intentar el mismo "arreglo".
+- **Y por eso se vio faltar un aviso de suscripción con los pagos llegando bien.**
+  En la tercera pasada el preapproval quedó `authorized` y el pago `approved` del
+  lado de MP sin que llegara ni `subscription_preapproval` ni
+  `subscription_authorized_payment`, mientras los `payment` de Checkout Pro entraban
+  todos. **No es un límite del sandbox**: la causa es el punto de arriba —la
+  preferencia manda su propio `notification_url` y el preapproval no puede—, así que
+  los avisos de suscripción dependen **enteramente** de la configuración de webhooks
+  del panel. **Es un riesgo de producción**: si esa configuración se borra, apunta a
+  otro lado o queda en la solapa equivocada, los débitos dejan de avisar **sin
+  ninguna señal**, y la única red es el paso 2 de la conciliación diaria (Parte H).
 - **Tarjetas de prueba**: titular `APRO` aprueba, `OTHE` rechaza. Verificadas las
   dos (Parte G).
 
@@ -669,10 +730,8 @@ dice esta parte está **medido**, no supuesto.
   Se probó por la rama real: devolver la plata **desde el panel del vendedor**, que
   dispara el webhook y anula el recibo solo.
 - **El primer cobro de un preapproval tarda ~20 s** en aparecer tras autorizar.
-- **Las notificaciones de suscripción pueden no llegar al túnel aunque las de pago
-  sí lleguen.** Pasó en la tercera pasada: el preapproval quedó `authorized` y el
-  pago `approved` del lado de MP sin que llegara ni `subscription_preapproval` ni
-  `subscription_authorized_payment`, mientras los `payment` de Checkout Pro
-  llegaban todos. La diferencia está en el código: la preferencia manda su propio
-  `notification_url` y el preapproval no puede (J.3). Es la razón por la que la
-  conciliación diaria de la Parte H **no es opcional**.
+
+> Lo que **no** está en esta lista, a propósito: que en la tercera pasada no
+> llegaran los avisos de suscripción. Eso **no es un límite del sandbox** —es la
+> consecuencia de que un preapproval no pueda llevar `notification_url`, y pasa
+> igual en producción—, así que vive en **J.3**, junto a su causa.

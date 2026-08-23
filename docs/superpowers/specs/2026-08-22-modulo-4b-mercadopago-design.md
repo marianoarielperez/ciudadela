@@ -56,10 +56,12 @@ quedan registrados por el sistema como pago + cuota + recibo, sin intervención 
 12. Emails `receipt` (débito, link, ingreso) y `paymentLinkEmail` (§13).
 13. Migración nº 8 (§2), auditoría (§14), tests (§15), docs y despliegue (§16, §17).
 
-**No entra** (queda en 4C o M5): email `payment_rejected`, cron de devengo, aviso de mora
-del día 30, digest, `/admin/salud`, reintento de `Notification.failed`, padrón electoral,
-cancelar el débito al dar de baja, desvincular una suscripción desde el panel, importar
-cobros históricos de una suscripción al vincularla.
+**No entra** (queda para 4C o M5 — ver la enmienda 2 de acá abajo): email
+`payment_rejected`, cron de devengo, aviso de mora del día 30, digest,
+`/admin/salud`, reintento de `Notification.failed`, padrón electoral, **cancelar el
+débito al dar de baja (→ asignado a la fase 4C al cerrar 4B)**, desvincular una
+suscripción desde el panel, importar cobros históricos de una suscripción al
+vincularla.
 
 > **Enmiendas al cerrar la fase (23/08/2026).**
 > 1. **Entró de más**: los **ingresos no societarios** (alquiler del salón, eventos,
@@ -481,7 +483,12 @@ Objetivo: producción **antes del 10/09/2026**.
 
 ## 18. Criterios de aceptación de 4B
 
-Sandbox local con notificaciones firmadas a mano salvo donde se indica:
+> **Cómo se verificaron, en los hechos (23/08/2026).** Este preámbulo decía "sandbox
+> local con notificaciones firmadas a mano", que era la premisa equivocada: se
+> verificaron en **tres pasadas contra Mercado Pago real** —cuenta de prueba aislada
+> más túnel—, y a partir de la segunda MP entregó las notificaciones por su cuenta,
+> sin disparar nada a mano (`docs/11` Parte I §8 y Parte J). El estado final de cada
+> criterio, con lo que quedó cubierto sólo por tests, está en `docs/07`.
 
 1. Un `subscription_authorized_payment` de una suscripción vinculada genera
    `Payment.debit` + cuota del período + recibo por email; el mismo cobro llegando también
