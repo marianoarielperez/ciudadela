@@ -124,7 +124,7 @@ export async function emailPaymentLinkAction(_prev: LinkState, formData: FormDat
       memberId: member.id,
       to: member.email,
       type: "fee_reminder",
-      message: paymentLinkEmail({ name: member.fullName, count: d.n, amount: d.amount, url: d.url }),
+      message: paymentLinkEmail({ name: member.fullName, count: d.n, amount: d.amount, url: d.url, expiresAt: d.expiresAt }),
       summary: `link de pago × ${d.n}`,
     });
   } catch (e) {

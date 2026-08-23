@@ -7,7 +7,7 @@ vi.mock("@/lib/mp/gateway", () => ({ mpGateway: {} }));
 vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 import { makePaymentLinks, PAYMENT_LINK_ERRORS, paymentLinkTitle } from "@/lib/mp/payment-link";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
-import { hasRecentLinkPayment, readReturnOutcome } from "@/lib/mp/return-status";
+import { hasRecentLinkPayment, readReturnOutcome, returnView } from "@/lib/mp/return-status";
 
 /** Instante fijo: el vencimiento del link se cuenta desde acá. */
 const NOW = new Date("2026-08-23T15:00:00.000Z");
@@ -140,6 +140,20 @@ describe("readReturnOutcome", () => {
     expect(readReturnOutcome({ collection_status: ["rejected", "approved"] })).toBe("rejected");
     expect(readReturnOutcome({ collection_status: [] })).toBe("unknown");
   });
+
+  // Con un objeto literal, `BY_VALUE["constructor"]` devolvía la función
+  // `Object` y `BY_VALUE["__proto__"]`, `Object.prototype`. La firma dice
+  // `ReturnOutcome`, así que `tsc` no lo veía, y el valor cruzaba el borde
+  // servidor→cliente como prop: una función no es serializable y la pantalla
+  // del socio se caía en vez de renderizar. Los dos valores mágicos quedan
+  // fijados acá.
+  it("las claves heredadas de Object no son desenlaces: no puede volver una función", () => {
+    for (const magic of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+      const out = readReturnOutcome({ status: magic });
+      expect(out).toBe("unknown");
+      expect(typeof out).toBe("string");
+    }
+  });
 });
 
 // La otra mitad de la vuelta: reconocer el pago que YA llegó. El webhook suele
@@ -170,5 +184,62 @@ describe("hasRecentLinkPayment", () => {
 
   it("encuentra el reciente aunque no sea el primero de la lista", () => {
     expect(hasRecentLinkPayment([link(300), link(2)], now)).toBe(true);
+  });
+});
+
+// La matriz completa de la vuelta: 4 desenlaces × ¿había un pago reciente al
+// montar? × ¿entró uno nuevo mientras mirábamos?. Está acá y no en un test de
+// componente porque la decisión es pura; el componente sólo pone los textos.
+describe("returnView", () => {
+  const v = (outcome: "approved" | "pending" | "rejected" | "unknown", paidBefore: boolean, settled: boolean) =>
+    returnView({ outcome, paidBefore, settled });
+
+  it("un pago que entra MIENTRAS la pantalla mira confirma, diga lo que diga la query", () => {
+    // Es el único hecho que es indudablemente de esta vuelta.
+    for (const o of ["approved", "pending", "rejected", "unknown"] as const) {
+      expect(v(o, false, true)).toBe("confirmed");
+      expect(v(o, true, true)).toBe("confirmed");
+    }
+  });
+
+  it("el webhook que ganó la carrera se ve como confirmación en el primer render", () => {
+    // El caso probable y el que arregló la ola 1: MP notifica al aprobar, el
+    // redirect todavía tiene que dar la vuelta por el navegador.
+    expect(v("approved", true, false)).toBe("confirmed");
+    expect(v("unknown", true, false)).toBe("confirmed");
+  });
+
+  it("un cupón pendiente NO se confirma con el pago de hace cuatro minutos", () => {
+    // Pagó 1 cuota con tarjeta a las 10:00; a las 10:04 sacó un cupón de
+    // Rapipago por las otras dos. Si acá dijera "confirmed", nunca lo paga.
+    expect(v("pending", true, false)).toBe("pending");
+    expect(v("pending", false, false)).toBe("pending");
+  });
+
+  it("un rechazo contra un socio que sí pagó no puede mandarlo a pagar de nuevo", () => {
+    // `?volvio=1&status=rejected` armado a mano, o el reintento legítimo que
+    // salió mal: las dos cosas son ciertas y el texto las nombra juntas.
+    expect(v("rejected", true, false)).toBe("rejected-after-payment");
+  });
+
+  it("el rechazo limpio sigue siendo un rechazo", () => {
+    expect(v("rejected", false, false)).toBe("rejected");
+  });
+
+  it("sin pago a la vista, `approved` en la query no alcanza para afirmar el éxito", () => {
+    // Es un query param: lo escribe cualquiera. Se espera y se sondea.
+    expect(v("approved", false, false)).toBe("waiting");
+    expect(v("unknown", false, false)).toBe("waiting");
+  });
+
+  it("nunca devuelve nada fuera de las cinco vistas", () => {
+    const allowed = ["confirmed", "pending", "rejected", "rejected-after-payment", "waiting"];
+    for (const o of ["approved", "pending", "rejected", "unknown"] as const) {
+      for (const paidBefore of [false, true]) {
+        for (const settled of [false, true]) {
+          expect(allowed).toContain(v(o, paidBefore, settled));
+        }
+      }
+    }
   });
 });

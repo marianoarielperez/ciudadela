@@ -23,19 +23,25 @@ export type ReturnOutcome = "approved" | "rejected" | "pending" | "unknown";
  *  defensivo. */
 const KEYS = ["collection_status", "status", "payment_status"] as const;
 
-const BY_VALUE: Record<string, Exclude<ReturnOutcome, "unknown">> = {
-  approved: "approved",
-  accredited: "approved",
-  rejected: "rejected",
-  cancelled: "rejected",
-  canceled: "rejected",
-  failure: "rejected",
-  charged_back: "rejected",
-  pending: "pending",
-  in_process: "pending",
-  in_mediation: "pending",
-  authorized: "pending",
-};
+/** `Map` y no un objeto literal a propósito: con un objeto, `BY_VALUE[v]` para
+ *  `v = "constructor"` o `v = "__proto__"` devuelve algo heredado de
+ *  `Object.prototype` —una función, un objeto— que TypeScript tipa igual como
+ *  `ReturnOutcome`. Eso cruzaba el borde servidor→cliente como prop y rompía la
+ *  pantalla del socio: una función no es serializable. Un `Map` no tiene
+ *  prototipo que consultar. */
+const BY_VALUE = new Map<string, Exclude<ReturnOutcome, "unknown">>([
+  ["approved", "approved"],
+  ["accredited", "approved"],
+  ["rejected", "rejected"],
+  ["cancelled", "rejected"],
+  ["canceled", "rejected"],
+  ["failure", "rejected"],
+  ["charged_back", "rejected"],
+  ["pending", "pending"],
+  ["in_process", "pending"],
+  ["in_mediation", "pending"],
+  ["authorized", "pending"],
+]);
 
 function first(v: string | string[] | undefined): string {
   return (Array.isArray(v) ? v[0] : v)?.trim().toLowerCase() ?? "";
@@ -47,7 +53,7 @@ export function readReturnOutcome(
   for (const key of KEYS) {
     // "null" con todas las letras es lo que MP manda cuando el vecino abandona
     // el checkout: es la ausencia de resultado, no un resultado.
-    const outcome = BY_VALUE[first(searchParams[key])];
+    const outcome = BY_VALUE.get(first(searchParams[key]));
     if (outcome) return outcome;
   }
   return "unknown";
@@ -77,4 +83,53 @@ export function hasRecentLinkPayment(
   return payments.some(
     (p) => p.type === "link" && p.status === "applied" && t - p.paidAt.getTime() < RECENT_PAYMENT_MS,
   );
+}
+
+/** Qué tarjeta le toca al vecino que vuelve de Checkout Pro.
+ *
+ *  Está acá y no adentro del componente para poder probar la matriz entera sin
+ *  un DOM: son 16 combinaciones y una sola de ellas era la cara.
+ *
+ *  LAS DOS SEÑALES NO VALEN LO MISMO, y ahí estaba el bug:
+ *
+ *  - `settled` —entró un pago NUEVO mientras la pantalla miraba— es un hecho de
+ *    ESTA vuelta. Manda sobre cualquier cosa que diga la query.
+ *  - `paidBefore` —ya había un pago por link reciente al MONTAR— es ambiguo: si
+ *    MP no dijo nada (`unknown`) es la carrera que ganó el webhook y ES la
+ *    confirmación; pero si MP dijo `pending` o `rejected`, el desenlace de esta
+ *    vuelta es ése y el pago que estaba es el de recién, otro. El caso caro:
+ *    pagó una cuota con tarjeta a las 10:00 y a las 10:04 sacó un cupón de
+ *    Rapipago por las otras dos. Decirle "listo" ahí es que nunca pague el cupón.
+ *
+ *  `approved` sin ningún pago a la vista NO alcanza para afirmar el éxito: es un
+ *  query param y lo puede escribir cualquiera. Al revés tampoco: un `rejected`
+ *  armado a mano contra un socio que sí pagó no puede mandarlo a pagar de nuevo,
+ *  y por eso el rechazo con un pago reciente encima tiene tarjeta propia. */
+export type ReturnView =
+  /** El pago llegó: recibo abajo. */
+  | "confirmed"
+  /** MP lo dejó pendiente (cupón, transferencia) y no llegó nada nuevo. */
+  | "pending"
+  /** MP lo rechazó y no hay ningún pago reciente que lo contradiga. */
+  | "rejected"
+  /** MP lo rechazó, pero el servidor ya tenía un pago reciente de este socio.
+   *  Las dos cosas pueden ser ciertas a la vez —pagó, reintentó, le rechazaron
+   *  la segunda— y el texto tiene que nombrarlas sin empujar a pagar de nuevo. */
+  | "rejected-after-payment"
+  /** Sin desenlace utilizable todavía: hay que seguir esperando. */
+  | "waiting";
+
+export function returnView(input: {
+  outcome: ReturnOutcome;
+  /** ¿Había un pago por link reciente ya al montar la pantalla? (foto fija) */
+  paidBefore: boolean;
+  /** ¿Entró un pago nuevo mientras la pantalla sondeaba? */
+  settled: boolean;
+}): ReturnView {
+  const { outcome, paidBefore, settled } = input;
+  if (settled) return "confirmed";
+  if (paidBefore && (outcome === "approved" || outcome === "unknown")) return "confirmed";
+  if (outcome === "rejected") return paidBefore ? "rejected-after-payment" : "rejected";
+  if (outcome === "pending") return "pending";
+  return "waiting";
 }

@@ -8,33 +8,31 @@
 // cuotas" y concluye, razonablemente, que el pago no salió. Después llama a la
 // sede.
 //
-// DOS COSAS DECIDEN QUÉ SE MUESTRA, y ninguna es un contador:
+// QUÉ SE MUESTRA lo decide `returnView` (`@/lib/mp/return-status`), que es puro
+// y está testeado con la matriz completa. Acá quedan sólo los textos y el
+// sondeo. La regla, en una línea: un hecho que el servidor vio le gana a la
+// query, pero sólo si es un hecho de ESTA vuelta.
 //
-//  1. `outcome` — el desenlace que MP agrega a la query de la vuelta
-//     (`readReturnOutcome`). Un RECHAZO tiene que nombrarse como rechazo y
-//     ofrecer reintentar: decirle "si pagaste, la cuota se va a imputar sola" a
-//     alguien cuya tarjeta fue rechazada es garantizar que no reintente.
-//  2. `justPaidByLink` — si el servidor ya ve un pago por link recién
-//     acreditado de este socio. Lo más probable es que el webhook GANE la
-//     carrera (MP notifica al aprobar; el redirect todavía tiene que dar la
-//     vuelta por el navegador del vecino), así que el pago suele estar ahí ya
-//     en el primer render. Comparar contra la foto del primer render lo daba
-//     por "no llegó" para siempre — y a los dos minutos le decía que no había
-//     confirmación con el recibo visible tres centímetros más abajo.
+//  - `outcome` — lo que MP agrega a la query (`readReturnOutcome`). Es dato del
+//    navegador: alcanza para NO afirmar un éxito, no para afirmarlo.
+//  - `justPaidByLink` — el servidor ya ve un pago por link recién acreditado.
+//    Se congela al montar (`paidBefore`): si ya estaba ahí al llegar y MP dijo
+//    "pendiente" o "rechazado", ese pago es el de recién y no el desenlace de
+//    esta vuelta. Con MP callado (`unknown`) sí es la confirmación —el webhook
+//    le ganó la carrera al redirect, que es lo habitual—.
+//  - `latestPaymentId` — comparado contra la foto del montaje, detecta el pago
+//    que entra MIENTRAS la pantalla sondea. Ése sí es de esta vuelta.
 //
-// `latestPaymentId` cubre el caso inverso —el webhook llega DESPUÉS, mientras
-// la pantalla sondea— comparando el id del pago más nuevo contra el del momento
-// de volver. El sondeo es un `router.refresh()`: no hay endpoint de estado, la
-// página ya lee la cuenta corriente. Dos minutos (24 × 5 s) y después se ofrece
-// consultar a mano, en vez de girar para siempre.
-//
-// Con la pestaña en segundo plano no se sondea: el vecino que se fue a otra
-// cosa vuelve, la pestaña se hace visible y el intervalo sigue donde estaba.
+// El sondeo es un `router.refresh()`: no hay endpoint de estado, la página ya
+// lee la cuenta corriente. Dos minutos (24 × 5 s) y después se ofrece consultar
+// a mano, en vez de girar para siempre. Con la pestaña en segundo plano no se
+// sondea: el vecino que se fue a otra cosa vuelve, la pestaña se hace visible y
+// el intervalo sigue donde estaba.
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
-import type { ReturnOutcome } from "@/lib/mp/return-status";
+import { returnView, type ReturnOutcome } from "@/lib/mp/return-status";
 
 const EVERY_MS = 5_000;
 const MAX_TRIES = 24;
@@ -43,19 +41,20 @@ export function ReturnNotice({ outcome, latestPaymentId, justPaidByLink }: {
   outcome: ReturnOutcome;
   /** Id del pago más nuevo del socio, o 0 si no tiene ninguno. */
   latestPaymentId: number;
-  /** Ya hay un pago por link acreditado en los últimos minutos: el webhook ganó
-   *  la carrera y esto ES la confirmación que el vecino vino a buscar. */
+  /** Ya hay un pago por link acreditado en los últimos minutos. */
   justPaidByLink: boolean;
 }) {
   const router = useRouter();
-  // La foto del momento de volver, para detectar el pago que entra MIENTRAS la
-  // pantalla sondea. `useState` con valor inicial y no una constante derivada:
-  // en cada `refresh()` la prop cambia.
+  // Las dos fotos del momento de volver. `useState` con valor inicial y no una
+  // constante derivada: en cada `refresh()` las props cambian.
   const [baseline] = useState(latestPaymentId);
+  const [paidBefore] = useState(justPaidByLink);
   const [tries, setTries] = useState(0);
-  const rejected = outcome === "rejected";
-  const arrived = !rejected && (justPaidByLink || latestPaymentId > baseline);
-  const done = rejected || arrived;
+  const view = returnView({ outcome, paidBefore, settled: latestPaymentId > baseline });
+  // Con el pago pendiente se sigue sondeando —un `in_process` se acredita en
+  // segundos— pero el texto ya dice la verdad desde el primer render, sin
+  // spinner: un cupón de Rapipago no se va a acreditar mientras el vecino mira.
+  const done = view === "confirmed" || view === "rejected" || view === "rejected-after-payment";
   const exhausted = tries >= MAX_TRIES;
 
   useEffect(() => {
@@ -71,7 +70,15 @@ export function ReturnNotice({ outcome, latestPaymentId, justPaidByLink }: {
     return () => clearInterval(id);
   }, [done, exhausted, router]);
 
-  if (rejected) {
+  if (view === "confirmed") {
+    return (
+      <FormMessage kind="success" box>
+        ¡Listo! Tu pago quedó registrado. Abajo tenés el recibo.
+      </FormMessage>
+    );
+  }
+
+  if (view === "rejected") {
     return (
       <FormMessage kind="error" box as="div">
         <p>
@@ -85,10 +92,45 @@ export function ReturnNotice({ outcome, latestPaymentId, justPaidByLink }: {
     );
   }
 
-  if (arrived) {
+  if (view === "rejected-after-payment") {
     return (
-      <FormMessage kind="success" box>
-        ¡Listo! Tu pago quedó registrado. Abajo tenés el recibo.
+      // Ámbar y no rojo: no es un fallo limpio. Las dos cosas son ciertas —hay
+      // un pago registrado y este intento no entró— y el texto tiene que
+      // nombrarlas juntas. Sin esto, un socio que sí pagó leía "la cuota sigue
+      // impaga" con su recibo tres centímetros más abajo, y el empujón era
+      // pagar dos veces.
+      <FormMessage kind="warning" box as="div">
+        <p>
+          Este intento de pago no se completó y no se te cobró nada. Tenés otro pago registrado
+          hace unos minutos, con su recibo acá abajo: fijate qué cuotas te quedan impagas antes de
+          volver a pagar.
+        </p>
+        <div className="mt-3">
+          <RetryButton />
+        </div>
+      </FormMessage>
+    );
+  }
+
+  if (view === "pending") {
+    return (
+      <FormMessage kind="warning" box as="div">
+        <p>
+          Mercado Pago dejó el pago pendiente de acreditación. Cuando se acredite, la cuota se
+          imputa sola y el recibo aparece acá abajo: si elegiste efectivo o transferencia, puede
+          tardar hasta dos días hábiles.
+        </p>
+        {paidBefore && (
+          // El recibo de abajo es de otro pago. Sin esta línea, el vecino que
+          // acaba de sacar un cupón por las cuotas que le faltaban lo lee como
+          // la confirmación del cupón y no lo paga nunca.
+          <p className="mt-2">
+            Ojo: el recibo que ya ves más abajo es de un pago anterior, no de éste.
+          </p>
+        )}
+        <div className="mt-3">
+          <RecheckButton onClick={() => { setTries(0); router.refresh(); }} />
+        </div>
       </FormMessage>
     );
   }
@@ -97,27 +139,19 @@ export function ReturnNotice({ outcome, latestPaymentId, justPaidByLink }: {
     return (
       <FormMessage kind="warning" box as="div">
         {/* Este texto no puede prometer nada: acá no sabemos si el pago se
-            aprobó. Nombra las dos salidas posibles y deja la puerta abierta a
-            reintentar, porque el caso "se rechazó y nadie se lo dijo" es el que
-            termina en una cuota impaga. */}
+            aprobó (MP dijo "aprobado" en la query, que es dato del navegador, o
+            no dijo nada). Nombra las dos salidas posibles y deja la puerta
+            abierta a reintentar, porque el caso "se rechazó y nadie se lo dijo"
+            es el que termina en una cuota impaga. El pendiente no llega acá:
+            tiene tarjeta propia desde el primer render. */}
         <p>
-          {outcome === "pending"
-            ? "Mercado Pago dejó el pago pendiente de acreditación. Cuando se acredite, la cuota se imputa sola y el recibo aparece acá abajo: si elegiste efectivo o transferencia, puede tardar hasta dos días hábiles."
-            : "Todavía no nos llegó la confirmación de Mercado Pago. Si el pago se aprobó, la cuota se imputa sola y el recibo aparece acá abajo. Si se rechazó, no se te cobró nada y la cuota sigue impaga."}
+          Todavía no nos llegó la confirmación de Mercado Pago. Si el pago se aprobó, la cuota se
+          imputa sola y el recibo aparece acá abajo. Si se rechazó, no se te cobró nada y la cuota
+          sigue impaga.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11 px-4"
-            onClick={() => {
-              setTries(0);
-              router.refresh();
-            }}
-          >
-            Volver a consultar
-          </Button>
-          {outcome !== "pending" && <RetryButton />}
+          <RecheckButton onClick={() => { setTries(0); router.refresh(); }} />
+          <RetryButton />
         </div>
       </FormMessage>
     );
@@ -146,6 +180,14 @@ function RetryButton() {
   return (
     <Button asChild variant="outline" className="min-h-11 px-4">
       <a href="#pagar">Probar de nuevo</a>
+    </Button>
+  );
+}
+
+function RecheckButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button type="button" variant="outline" className="min-h-11 px-4" onClick={onClick}>
+      Volver a consultar
     </Button>
   );
 }

@@ -12,6 +12,10 @@ import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import { getTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
+  // 26/08/2026 15:40 hora argentina (UTC-3). Los tests corren con TZ=UTC, así
+  // que este instante ejercita de verdad la conversión.
+  const EXPIRES = new Date("2026-08-26T18:40:00.000Z");
+
   // El correo de verificación es el de más volumen de la campaña de carga (uno
   // por ficha tipeada desde papel) y el único que un dedazo del operador entrega
   // SOLO, sin que nadie haga clic y sin reparación posible. Por eso no nombra al
@@ -151,7 +155,7 @@ describe("templates", () => {
   // dejarlo verificar cuánto y por qué sin abrirlo, y decirle hasta cuándo vale
   // —el importe queda congelado al valor de cuota del día en que se generó—.
   it("paymentLinkEmail dice cuánto, por cuántas cuotas, hasta cuándo vale y cómo salir", () => {
-    const r = paymentLinkEmail({ name: "Ana", count: 3, amount: 18000, url: "https://mpago.la/abc" });
+    const r = paymentLinkEmail({ name: "Ana", count: 3, amount: 18000, url: "https://mpago.la/abc", expiresAt: EXPIRES });
     expect(r.subject).toContain("link para pagar");
     for (const body of [r.text, r.html]) {
       expect(body).toContain("Ana");
@@ -159,8 +163,12 @@ describe("templates", () => {
       expect(body).toContain("$ 18.000,00");
       expect(body).toContain("https://mpago.la/abc");
       // El vencimiento es real (`expiration_date_to` en la preferencia): el
-      // texto sale de la misma constante que el cuerpo que se le manda a MP.
+      // plazo sale de la misma constante que el cuerpo que se le manda a MP.
       expect(body).toContain(`${PAYMENT_LINK_TTL_HOURS} horas`);
+      // Y el INSTANTE, no sólo el plazo: el operador puede generar el link hoy
+      // y mandar el mail mañana, y ahí "72 horas" ya son 48. La pantalla del
+      // panel muestra el mismo dato.
+      expect(body).toContain("26/08/2026 a las 15:40");
       // La salida, porque el operador puede mandarlo el mismo día en que el
       // socio saldó en la sede.
       expect(body).toContain("Si ya pagaste");
@@ -168,9 +176,9 @@ describe("templates", () => {
   });
 
   it("paymentLinkEmail usa el singular con una sola cuota y escapa el nombre", () => {
-    expect(paymentLinkEmail({ name: "A", count: 1, amount: 6000, url: "https://mpago.la/x" }).text)
+    expect(paymentLinkEmail({ name: "A", count: 1, amount: 6000, url: "https://mpago.la/x", expiresAt: EXPIRES }).text)
       .toContain("1 cuota social por $ 6.000,00");
-    expect(paymentLinkEmail({ name: 'Ana & "Co"', count: 1, amount: 1, url: "https://mpago.la/x" }).html)
+    expect(paymentLinkEmail({ name: 'Ana & "Co"', count: 1, amount: 1, url: "https://mpago.la/x", expiresAt: EXPIRES }).html)
       .toContain("Ana &amp; &quot;Co&quot;");
   });
 });
