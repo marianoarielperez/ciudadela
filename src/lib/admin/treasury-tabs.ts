@@ -1,12 +1,13 @@
 // Pestañas de Tesorería: cada una es una RUTA (deep-link, botón atrás y
 // aria-current salen solos). Radix `Tabs` queda para paneles que NO navegan.
-// 4B suma "sin-conciliar" y "suscripciones".
 export type TreasuryTab = { href: string; label: string };
 
 export const TREASURY_TABS: TreasuryTab[] = [
   { href: "/admin/tesoreria/deudores", label: "Deudores" },
   { href: "/admin/tesoreria/efectivo", label: "Efectivo" },
   { href: "/admin/tesoreria/recibos", label: "Recibos" },
+  { href: "/admin/tesoreria/sin-conciliar", label: "Sin conciliar" },
+  { href: "/admin/tesoreria/suscripciones", label: "Suscripciones" },
   { href: "/admin/tesoreria/valores", label: "Valores de cuota" },
 ];
 

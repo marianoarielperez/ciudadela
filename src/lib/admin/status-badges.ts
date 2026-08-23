@@ -1,7 +1,7 @@
 // Mapa único estado→variante de Badge. Antes cada pantalla tenía su ternario y
 // divergieron: un suspendido se veía "secondary" en el padrón y "outline" en su
 // propia ficha. El del padrón era el más expresivo: queda como canónico.
-import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus } from "@/generated/prisma/client";
+import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, UnmatchedStatus } from "@/generated/prisma/client";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "link";
@@ -49,4 +49,21 @@ export function feeStatusBadgeVariant(status: FeeStatus): BadgeVariant {
   if (status === "paid") return "default";
   if (status === "pending") return "secondary";
   return "outline"; // exempt, voided
+}
+
+// La bandeja resalta lo que espera una decisión; lo resuelto va apagado. Mismo
+// criterio que las solicitudes: "default" (celeste) es "acá hay trabajo".
+export function unmatchedStatusBadgeVariant(status: UnmatchedStatus): BadgeVariant {
+  if (status === "open") return "default";
+  if (status === "dismissed") return "secondary";
+  return "outline"; // matched
+}
+
+// El catálogo de estados es de Mercado Pago (string, no enum). Sólo tres se
+// afirman; cualquier otro es "no sé" y va neutro, nunca en verde.
+export function subscriptionStatusBadgeVariant(status: string): BadgeVariant {
+  if (status === "authorized") return "default";
+  if (status === "paused") return "secondary";
+  if (status === "cancelled") return "destructive";
+  return "outline";
 }
