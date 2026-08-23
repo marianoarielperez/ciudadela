@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
   // única forma de que la auditoría sea alcanzable para un IPN legacy real. No
   // implementamos el formato legacy: sólo que quede diagnosticable.
   const legacyIpn = url.searchParams.has("topic") && !url.searchParams.has("data.id");
+  const legacyTopic = url.searchParams.get("topic") ?? "";
 
   let body: {
     id?: unknown; type?: unknown; topic?: unknown; action?: unknown; data?: { id?: unknown };
@@ -61,9 +62,23 @@ export async function POST(req: NextRequest) {
       await audit({
         action: "webhook_rejected_signature",
         entity: "webhook",
-        detail: { reason: "legacy_ipn_shape" },
+        // El `topic` va al asiento porque distingue los dos casos que caen acá
+        // y que se diagnostican distinto: `payment` es la IPN vieja del mismo
+        // cobro que ya entró por la moderna (redundante, ignorable), y
+        // `merchant_order` es un evento que no atendemos y nunca vamos a
+        // atender. Se recorta por las dudas: viene de la query string.
+        detail: { reason: "legacy_ipn_shape", topic: legacyTopic.slice(0, 32) },
         ip,
       });
+      // 200 y no 400: es una notificación LEGÍTIMA de MP en un formato que no
+      // implementamos, no un error. Verificado en la batería de la T14 contra
+      // el sandbox: por cada pago de Checkout Pro, MP manda CUATRO requests a
+      // `notification_url` —la moderna firmada (la que sirve), la IPN legacy y
+      // dos de `merchant_order`—, y las tres últimas caían en 4xx. MP las
+      // reintenta con backoff, y un endpoint que devuelve 4xx sostenido es algo
+      // que MP puede terminar deshabilitando: perderíamos también la buena.
+      // El asiento de auditoría se conserva, así que sigue siendo diagnosticable.
+      return Response.json({ ignored: "legacy_ipn" }, { status: 200 });
     }
     return Response.json({ error: "bad_json" }, { status: 400 });
   }
