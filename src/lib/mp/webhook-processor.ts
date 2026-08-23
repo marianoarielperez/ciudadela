@@ -281,7 +281,13 @@ export function makeWebhookProcessor(deps: Deps) {
   // cuando la transición no encuentra nada. Lo que SÍ es de una sola vez es lo
   // que depende de la transición: el asiento del pago tardío y el email de
   // bienvenida, que un reintento no puede volver a mandarle al vecino.
-  async function applyEntry(p: MpPaymentDetails, applicationId: number, preapprovalId: string | null): Promise<WebhookResult> {
+  //
+  // `memberId` es el de la solicitud: `null` mientras no haya acta, y el del
+  // socio cuando el acta ya pasó. Va al `Payment` para que el cobro se vea en
+  // la cuenta corriente (ver la nota de `registerOrTrace`, abajo).
+  async function applyEntry(
+    p: MpPaymentDetails, applicationId: number, preapprovalId: string | null, memberId: number | null,
+  ): Promise<WebhookResult> {
     // UPDATE condicional por estado = idempotencia de la transición (M3). Dos
     // updates y no uno con `in`: el segundo afirma, sin leer antes y sin carrera
     // posible, que la solicitud estaba VENCIDA — dato que no se puede perder
@@ -331,14 +337,22 @@ export function makeWebhookProcessor(deps: Deps) {
     // 4B: el ingreso es un Payment con recibo (REG-33), y tiene que quedar con
     // su `mpPaymentId` — es lo único que frena el reenvío de este mismo aviso
     // una vez que el socio está asentado (`resolve.ts` devolvería `debit` y se
-    // cobraría como cuota). Sin socio todavía: cuelga de la solicitud, y
-    // `record.ts` le pone el memberId al asentar el acta.
+    // cobraría como cuota).
     // Va SIEMPRE, haya transicionado esta llamada o no: si no transicionó es
     // porque la marca ya estaba escrita y lo que falta es justamente esto.
     // `registerPaymentCore` es idempotente por `mpPaymentId`, así que reponerlo
     // no puede cobrar dos veces.
+    //
+    // El `memberId` va cuando la solicitud ya lo tiene. Sin acta todavía es
+    // `null` y el cobro cuelga de la solicitud: `record.ts` le pone el socio al
+    // asentar el acta, con un `updateMany` que corre UNA sola vez. Si este
+    // `Payment` se repone DESPUÉS del acta, ese updateMany ya pasó y no vuelve:
+    // dejarlo en `null` lo hacía invisible para siempre en la cuenta corriente
+    // (`fetchMemberAccount` filtra por `memberId`) — plata cobrada, recibo
+    // emitido, y ni el vecino ni el operador lo ven. No imputa cuotas igual:
+    // `n: 0` y REG-14 (el ingreso cubre el mes del alta).
     const r = await registerOrTrace({
-      memberId: null, applicationId, type: "entry", n: 0, amount: p.transactionAmount, paidAt: p.dateApproved ?? now(),
+      memberId, applicationId, type: "entry", n: 0, amount: p.transactionAmount, paidAt: p.dateApproved ?? now(),
       mpPaymentId: p.id, preapprovalId, actorId: null,
     }, { applicationId, type: "entry" });
 
@@ -355,13 +369,19 @@ export function makeWebhookProcessor(deps: Deps) {
     } else if (r.kind === "registered") {
       const emailed = await emailReceipt(r.receiptId);
       await deps.audit({ action: "payment_applied", entity: "payment", entityId: r.paymentId,
-        detail: { paymentId: r.paymentId, applicationId, type: "entry", amount: r.amount, mpPaymentId: p.id, receiptId: r.receiptId, emailed } });
+        detail: { paymentId: r.paymentId, applicationId, memberId, type: "entry", amount: r.amount, mpPaymentId: p.id, receiptId: r.receiptId, emailed } });
       recorded = "entry_payment_recovered";
-    } else {
-      // `no_pending_withdrawn` no existe para `entry` (no imputa cuotas): lo que
-      // llega acá es la carrera de los dos eventos del mismo cobro.
-      if (r.kind === "already_processed") await closeInboxRow(p.id, r.paymentId);
+    } else if (r.kind === "already_processed") {
+      // La carrera de los dos eventos del mismo cobro: el otro ya lo asentó.
+      await closeInboxRow(p.id, r.paymentId);
       recorded = "already_processed";
+    } else {
+      // `no_pending_withdrawn`: hoy es inalcanzable para `entry` (el servicio lo
+      // devuelve sólo con `n > 0`, y el ingreso va con `n: 0`). Rama propia
+      // igual: colapsarla en `already_processed` sería decir que el cobro está
+      // asentado cuando no lo está, y desde que el ingreso lleva `memberId` esa
+      // rama dejó de ser imposible por construcción. Nada se asentó → bandeja.
+      recorded = await toInbox(p, preapprovalId, "withdrawn_no_pending");
     }
 
     // Reintento: la solicitud ya estaba aceptada de antes. Ni bienvenida (el
@@ -422,7 +442,9 @@ export function makeWebhookProcessor(deps: Deps) {
           return "already_processed";
         case "debit":
         case "link": return applyToMember(p, decision, ctx);
-        case "entry": return applyEntry(p, decision.applicationId, preapprovalId);
+        // `ctx.application` nunca es null cuando la decisión es `entry` (las dos
+        // ramas que la devuelven lo exigen), pero el tipo no lo sabe.
+        case "entry": return applyEntry(p, decision.applicationId, preapprovalId, ctx.application?.memberId ?? null);
         case "unmatched": return toInbox(p, preapprovalId, decision.reason);
       }
     });

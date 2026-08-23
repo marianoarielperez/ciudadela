@@ -203,6 +203,46 @@ describe("payment", () => {
     expect(d.mailerMock.sendToApplication).not.toHaveBeenCalled();
     expect(d.db.application.updateMany).not.toHaveBeenCalled();
   });
+  // El `Payment` del ingreso repuesto DESPUÉS del acta: `record.ts` ya corrió su
+  // `updateMany` (`applicationId: 55, memberId: null`) y no vuelve a correr, así
+  // que si el pago naciera con `memberId: null` quedaría invisible para siempre
+  // en la cuenta corriente (`fetchMemberAccount` filtra por `memberId`).
+  it("ingreso repuesto con el acta ya asentada → el Payment nace con el memberId del socio", async () => {
+    const d = deps({
+      payment: { externalReference: "solicitud:55" },
+      subscription: { memberId: 306, applicationId: 55 },
+      application: { id: 55, status: "completed", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: "777", memberId: 306 },
+    });
+    d.db.application.updateMany.mockResolvedValue({ count: 0 });
+    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("entry_payment_recovered");
+    // `n: 0` sigue firme: el ingreso cubre el mes del alta y NO imputa cuota (REG-14).
+    expect(d.treasury.registerPayment).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: 306, applicationId: 55, type: "entry", n: 0, amount: 6000, mpPaymentId: "777",
+    }));
+    expect(d.auditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payment_applied", detail: expect.objectContaining({ memberId: 306, applicationId: 55, type: "entry" }),
+    }));
+  });
+
+  it("sin acta todavía, el ingreso sigue naciendo sin socio (lo cuelga record.ts)", async () => {
+    const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "pending_payment", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: null, memberId: null } });
+    await d.p.process({ topic: "payment", dataId: "777" });
+    expect(d.treasury.registerPayment).toHaveBeenCalledWith(expect.objectContaining({ memberId: null, applicationId: 55 }));
+  });
+
+  // Rama propia y no `already_processed`: colapsarlas decía que el cobro estaba
+  // asentado cuando no lo estaba. Hoy el servicio no puede devolver esto para un
+  // ingreso (`n: 0`), pero desde que el pago lleva `memberId` dejó de ser
+  // imposible por construcción, y una rama que miente en silencio sobre plata
+  // cobrada es justo lo que no queremos.
+  it("ingreso con no_pending_withdrawn del servicio → bandeja, no already_processed", async () => {
+    const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "pending_payment", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: null, memberId: null } });
+    d.treasury.registerPayment.mockResolvedValue({ kind: "no_pending_withdrawn" });
+    await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("application_approved");
+    expect(d.unmatched.record).toHaveBeenCalledWith(expect.objectContaining({ mpPaymentId: "777", reason: "withdrawn_no_pending" }));
+    expect(d.db.mpUnmatchedPayment.updateMany).not.toHaveBeenCalled();
+  });
+
   it("segundo cobro de una solicitud sin acta → bandeja duplicate_entry", async () => {
     const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "approved_pending_minute", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: "111", memberId: null } });
     await expect(d.p.process({ topic: "payment", dataId: "777" })).resolves.toBe("unmatched_duplicate_entry");
