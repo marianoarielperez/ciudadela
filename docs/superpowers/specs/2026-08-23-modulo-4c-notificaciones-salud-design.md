@@ -89,6 +89,15 @@ esta decisión. No hay que enseñarles a distinguir períodos.
   `fee-values.ts:44-46`).
 - Summary: `{membersScanned, membersAccrued, feesCreated, backfilled, upTo,
   errors[], errorsOmitted}`. Escala hoy: 35 socios, ~35 filas la primera corrida.
+- **Escotilla de re-disparo (enmienda del operador, 24/08/2026).** La guarda del
+  día 1 deja el devengo sin forma de re-correrse: si la corrida del 01/10 falla
+  —VPS caído a las 00:30, un hipo de la base—, recién vuelve a actuar el 01/11, y
+  durante todo octubre los socios al día se muestran "al día" debiendo septiembre.
+  Es el fallo exacto por el que esta fase tiene fecha dura. Por eso el endpoint
+  acepta **`?force=1`** (y opcionalmente `?upTo=YYYY-MM`) detrás del mismo
+  `CRON_SECRET` que ya lo protege: el operador re-dispara por SSH y la corrida deja
+  su `CronRun` como cualquier otra. `run({ upTo })` ya existe y está testeado — es
+  exponerlo en la ruta, no lógica nueva. Sin `force`, el comportamiento no cambia.
 
 ## §5. Recordatorio de vencimiento — `POST /api/cron/reminder`
 
