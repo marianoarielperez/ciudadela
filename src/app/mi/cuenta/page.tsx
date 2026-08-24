@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requireMember } from "@/lib/auth/require-member";
 import { hasRecentLinkPayment, readReturnOutcome } from "@/lib/mp/return-status";
 import { prisma } from "@/lib/prisma";
@@ -7,7 +6,6 @@ import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod } from "@/lib/treasury/periods";
 import { categoryPaysFee } from "@/lib/treasury/rules";
 import { upcomingPeriods } from "@/lib/treasury/upcoming";
-import { cn } from "@/lib/utils";
 import { AccountSection } from "@/components/admin/account-section";
 import { EmptyState } from "@/components/admin/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,25 +14,6 @@ import { ReturnNotice } from "./return-notice";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Mi cuenta — Vecinal Ciudadela" };
-
-function YearChip(props: { href: string; active: boolean; children: React.ReactNode }) {
-  return (
-    <Link
-      href={props.href}
-      scroll={false}
-      aria-current={props.active ? "true" : undefined}
-      className={cn(
-        "inline-flex min-h-11 items-center rounded-full border px-4 text-sm outline-hidden transition-colors",
-        "focus-visible:ring-2 focus-visible:ring-ring",
-        props.active
-          ? "border-primary bg-primary/10 font-semibold text-primary"
-          : "border-border text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {props.children}
-    </Link>
-  );
-}
 
 export default async function MiCuentaPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -81,19 +60,6 @@ export default async function MiCuentaPage(props: {
   // mandarlo a esperar algo que no lo incumbe.
   const paysFee = categoryPaysFee(member.category);
 
-  // Chips de filtro por año del libro de pagos (spec M5 §3.3). El filtro es por
-  // URL (?anio=): server-rendered, sin estado de cliente. Sólo filtra la TABLA
-  // de pagos: el resumen y la cinta siempre muestran la cuenta entera.
-  const years = [...new Set(account.payments.map((p) => p.paidAt.getFullYear()))].sort(
-    (a, b) => b - a,
-  );
-  const anioRaw = Array.isArray(sp.anio) ? sp.anio[0] : sp.anio;
-  const anio = anioRaw && /^\d{4}$/.test(anioRaw) ? Number(anioRaw) : null;
-  const visibleAccount =
-    anio === null
-      ? account
-      : { ...account, payments: account.payments.filter((p) => p.paidAt.getFullYear() === anio) };
-
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -115,23 +81,10 @@ export default async function MiCuentaPage(props: {
         />
       )}
 
-      {years.length > 1 && (
-        <nav aria-label="Filtrar pagos por año" className="flex flex-wrap gap-2">
-          <YearChip href="/mi/cuenta" active={anio === null}>
-            Todos
-          </YearChip>
-          {years.map((y) => (
-            <YearChip key={y} href={`/mi/cuenta?anio=${y}`} active={anio === y}>
-              {y}
-            </YearChip>
-          ))}
-        </nav>
-      )}
-
       <div className="rounded-xl bg-card p-4 ring-1 ring-foreground/10">
         <AccountSection
           member={member}
-          account={visibleAccount}
+          account={account}
           rows={grid}
           admin={false}
           receiptHref={(id) => `/api/mi/recibos/${id}`}
