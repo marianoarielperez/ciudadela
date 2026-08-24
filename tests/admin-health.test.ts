@@ -372,6 +372,24 @@ describe("fetchHealth — Mercado Pago y dinero", () => {
     // Y el total de mismatches NO se contamina con los otros asientos.
     expect(h.money.mismatchesEver).toBe(1);
   });
+  // El hallazgo del primer día en producción: 51 "firmas inválidas" en 24 h, de
+  // las que 49 eran IPN legacy sanas. Son dos cosas distintas y ahora se
+  // cuentan por separado: la de firma es señal, la legacy es dato.
+  it("las IPN legacy tienen contador propio y NO inflan el de firma inválida", async () => {
+    const audit = (h: number, action: string, id: number): AuditRow =>
+      ({ id: BigInt(id), action, createdAt: hoursAgo(h), detail: null });
+    const h = await fetchHealth(fakeDb({
+      audit: [
+        audit(1, "webhook_rejected_signature", 1),
+        audit(2, "webhook_legacy_ipn", 2),
+        audit(3, "webhook_legacy_ipn", 3),
+        audit(SIGNATURE_WINDOW_HOURS + 1, "webhook_legacy_ipn", 4),
+      ],
+    }), NOW);
+    expect(h.mp.signatureRejections).toBe(1);
+    // Misma ventana de 24 h: la de afuera no cuenta.
+    expect(h.mp.legacyIpns).toBe(2);
+  });
   it("la bandeja distingue lo abierto del total histórico que pasó por ahí", async () => {
     const h = await fetchHealth(fakeDb({
       unmatched: [{ status: "open" }, { status: "open" }, { status: "matched" }, { status: "dismissed" }],

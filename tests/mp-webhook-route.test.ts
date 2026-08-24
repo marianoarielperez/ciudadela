@@ -206,7 +206,7 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
   // fallan. Un 4xx sostenido es algo que MP puede terminar deshabilitando, y
   // ahí se perdería también la buena. No es un error: es una notificación
   // legítima en un formato que no implementamos.
-  it("un IPN legacy real (sin body, sin cabeceras de firma) se reconoce con 200 y se audita como legacy_ipn_shape", async () => {
+  it("un IPN legacy real (sin body, sin cabeceras de firma) se reconoce con 200 y se audita como webhook_legacy_ipn", async () => {
     const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
       method: "POST",
       headers: new Headers({ "x-real-ip": "10.0.0.9" }),
@@ -219,8 +219,12 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
     // 200 es "recibido", NO "procesado": nada se persiste ni se aplica.
     expect(create).not.toHaveBeenCalled();
     expect(audit).toHaveBeenCalledTimes(1);
+    // El action es PROPIO, no `webhook_rejected_signature`: acá no se rechazó
+    // ninguna firma. El primer día de /admin/salud en producción contó 51
+    // "firmas inválidas" en 24 h de las que 49 eran estas — un cartel rojo por
+    // el funcionamiento normal de MP enseña a ignorar el tablero entero.
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
-      action: "webhook_rejected_signature",
+      action: "webhook_legacy_ipn",
       detail: { reason: "legacy_ipn_shape", topic: "payment" },
     });
   });
@@ -239,6 +243,7 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
     expect(res.status).toBe(200);
     expect(create).not.toHaveBeenCalled();
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_legacy_ipn",
       detail: { reason: "legacy_ipn_shape", topic: "merchant_order" },
     });
   });
@@ -259,11 +264,38 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
     expect(audit).not.toHaveBeenCalled();
   });
 
+  // Un data.id malformado SÍ sigue siendo señal de firma: la forma del id es lo
+  // que entra al manifiesto HMAC, y quien manda uno raro con cabeceras de firma
+  // está probando algo.
   it("un data.id malformado que NO es un IPN legacy se audita como malformed_data_id", async () => {
     await POST(webhookRequest({ dataId: "777;request-id:otro" }));
 
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_rejected_signature",
       detail: { reason: "malformed_data_id" },
+    });
+  });
+
+  // La otra mitad de la misma rama: si además viene con forma de IPN legacy
+  // (`?topic=` sin `data.id=`), el asiento va al action nuevo. Es la variante
+  // que llega CON cabeceras de firma, así que no muere en el `bad_json`.
+  it("un IPN legacy que llega con cabeceras de firma también asienta webhook_legacy_ipn", async () => {
+    const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
+      method: "POST",
+      headers: new Headers({
+        "x-signature": "ts=1,v1=deadbeef",
+        "x-request-id": "req-1",
+        "x-real-ip": "10.0.0.9",
+      }),
+      body: JSON.stringify({ topic: "payment", id: 123 }),
+    }) as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_legacy_ipn",
+      detail: { reason: "legacy_ipn_shape" },
     });
   });
 

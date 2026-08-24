@@ -653,12 +653,17 @@ grep 'api/webhooks/mp' /var/log/nginx/access.log | tail -20
 
 # 2. Del lado de la app: el asiento del rechazo de firma.
 mysql sigev -e "SELECT created_at, action, detail FROM audit_log
-                WHERE action='webhook_rejected_signature' ORDER BY id DESC LIMIT 10;"
+                WHERE action IN ('webhook_rejected_signature','webhook_legacy_ipn')
+                ORDER BY id DESC LIMIT 10;"
 ```
 
 - Filas de `webhook_rejected_signature` **sin `detail`** (o con un `detail` que no
-  dice `legacy_ipn_shape` ni `malformed_data_id`) = **la clave no coincide**. No es
-  un ataque: es el `.env` contra el panel. Comparalos.
+  dice `malformed_data_id`) = **la clave no coincide**. No es un ataque: es el
+  `.env` contra el panel. Comparalos.
+- Filas de `webhook_legacy_ipn` = MP notificando en formato viejo. Es lo NORMAL y
+  son muchas (cuatro requests por cada pago de Checkout Pro, tres de ellas
+  descartables): no hay nada que hacer. Hasta el 24/08/2026 caían bajo el mismo
+  action que la firma inválida y `/admin/salud` las contaba como rechazos.
 - **Ninguna fila y ningún request en el access log** = MP no está entregando, y ahí
   sí el problema es la configuración de la Parte D (URL, solapa o eventos).
 - Requests que llegan y quedan en `webhook_events` con `processed_at` puesto =

@@ -333,7 +333,22 @@ export function MpPanel({ mp, now }: { mp: MpHealth; now: Date }) {
               {mp.signatureRejections === 1 ? "aviso se rechazó" : "avisos se rechazaron"} por firma
               inválida en las últimas {SIGNATURE_WINDOW_HOURS} horas
             </li>
+            <li>
+              <span className={NUM}>{mp.legacyIpns}</span>{" "}
+              {mp.legacyIpns === 1 ? "aviso llegó" : "avisos llegaron"} en formato viejo (IPN) en las
+              últimas {SIGNATURE_WINDOW_HOURS} horas
+            </li>
           </ul>
+          {/* Dato, no alarma: por cada pago de Checkout Pro, Mercado Pago manda
+              cuatro notificaciones y sólo una está en el formato que atendemos.
+              El número puede ser grande y estar todo bien; se escribe para que
+              el operador no lo confunda con el renglón de arriba, que es el que
+              sí importa. */}
+          <p className="text-xs text-muted-foreground">
+            Los avisos en formato viejo son notificaciones legítimas de Mercado Pago que el sistema
+            descarta a propósito: no hay nada que hacer con ellos. Se cuentan aparte de las firmas
+            inválidas justamente para no confundirlos con un problema.
+          </p>
         </CardContent>
       </Card>
     </section>

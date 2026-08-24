@@ -90,8 +90,27 @@ export type MpHealth = {
    *  (`RECONCILE_WINDOW_MS`, 72 h): dentro de ella el cron todavía es la red;
    *  fuera, el diagnóstico vive en el log y en la tabla, no acá. */
   unprocessedWithError: number;
-  /** Firmas rechazadas en las últimas `SIGNATURE_WINDOW_HOURS`. */
+  /** Firmas rechazadas en las últimas `SIGNATURE_WINDOW_HOURS`.
+   *
+   *  Cuenta SÓLO `webhook_rejected_signature`, que desde este arreglo es señal
+   *  limpia: una firma que no valida o un `data.id` con forma peligrosa. Antes
+   *  el mismo action cargaba además las IPN legacy —el formato viejo con el que
+   *  MP notifica de más, cuatro requests por cada pago de Checkout Pro— y el
+   *  primer día del panel en producción el renglón dijo "51 avisos se rechazaron
+   *  por firma inválida en las últimas 24 h" siendo que 49 eran eso.
+   *
+   *  Las filas viejas con el action mezclado NO se migran ni hace falta: la
+   *  ventana es de 24 h, así que salen solas en un día. */
   signatureRejections: number;
+  /** IPN legacy recibidas en las últimas `SIGNATURE_WINDOW_HOURS`.
+   *
+   *  Es DATO, no trabajo: notificaciones legítimas de Mercado Pago en un
+   *  formato que no implementamos y que se descartan a propósito (la ruta
+   *  responde 200 justamente para que MP no deshabilite el endpoint). No emite
+   *  alerta —ni `act` ni `review`—: no hay ninguna acción que la baje, y una
+   *  alarma así enseña a ignorar el tablero. Se muestra para que el operador
+   *  entienda el volumen que ve en `audit_log`. */
+  legacyIpns: number;
 };
 
 export type AmountMismatch = {
@@ -328,7 +347,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
   const since = new Date(now.getTime() - SIGNATURE_WINDOW_HOURS * 3_600_000);
   const sinceWebhookError = new Date(now.getTime() - WEBHOOK_ERROR_WINDOW_HOURS * 3_600_000);
   const [
-    runs, lastEvent, unprocessedWithError, signatureRejections, inboxOpen, inboxTotal,
+    runs, lastEvent, unprocessedWithError, signatureRejections, legacyIpns, inboxOpen, inboxTotal,
     subscriptionRows, mismatchRows, mismatchesEver, failedRows, failedEver, receiptRows, receiptsTotal,
   ] = await Promise.all([
     // Una consulta por job y no un groupBy: son cinco, el índice
@@ -348,6 +367,8 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
       where: { origin: "mp", processedAt: null, error: { not: null }, receivedAt: { gte: sinceWebhookError } },
     }),
     db.auditLog.count({ where: { action: "webhook_rejected_signature", createdAt: { gte: since } } }),
+    // Misma ventana, action propio: las dos cosas se veían juntas y no lo son.
+    db.auditLog.count({ where: { action: "webhook_legacy_ipn", createdAt: { gte: since } } }),
     db.mpUnmatchedPayment.count({ where: { status: "open" } }),
     db.mpUnmatchedPayment.count(),
     // Las filas y no un `count`: la pregunta cruza estado de suscripción con
@@ -444,7 +465,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
         ? { ...r, id: String(r.id), error: safeError(r.error), summary: safeSummary(r.summary) }
         : null,
     })),
-    mp: { lastEventAt: lastEvent?.receivedAt ?? null, unprocessedWithError, signatureRejections },
+    mp: { lastEventAt: lastEvent?.receivedAt ?? null, unprocessedWithError, signatureRejections, legacyIpns },
     money: {
       inboxOpen, inboxTotal, debits: classifyDebits(subscriptionRows), mismatchesEver,
       mismatches: mismatchRows.map((r) => {

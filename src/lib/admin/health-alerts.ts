@@ -94,6 +94,12 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
   if (health.mp.lastEventAt === null) {
     review.push({ key: "mp-silence", label: "Mercado Pago nunca envió un aviso a este sistema.", href: "#mercado-pago" });
   }
+  // `mp.legacyIpns` NO alerta y es deliberado: son notificaciones legítimas de
+  // MP en un formato que no implementamos, no hay ninguna acción que las baje y
+  // el volumen normal es de decenas por día. Hasta este arreglo se sumaban al
+  // contador de firma y el panel amanecía en producción anunciando 51 "firmas
+  // inválidas" de las que 49 eran esto. Se muestran en el panel de MP como
+  // contexto, y ahí se quedan.
   if (health.mp.signatureRejections > 0) {
     review.push({
       key: "mp-signature",

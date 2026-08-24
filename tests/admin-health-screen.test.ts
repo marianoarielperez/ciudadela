@@ -48,7 +48,7 @@ function snapshot(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
   return {
     now: NOW,
     crons: healthyCrons(),
-    mp: { lastEventAt: new Date("2026-08-24T12:00:00Z"), unprocessedWithError: 0, signatureRejections: 0 },
+    mp: { lastEventAt: new Date("2026-08-24T12:00:00Z"), unprocessedWithError: 0, signatureRejections: 0, legacyIpns: 0 },
     money: {
       inboxOpen: 0, inboxTotal: 31,
       debits: { stoppedForActive: 0, aliveForWithdrawn: 0 },
@@ -176,6 +176,28 @@ describe("healthAlerts: los dos contadores de débito no son lo mismo", () => {
   });
 });
 
+// Hallazgo del primer día en producción: el panel decía "51 avisos se
+// rechazaron por firma inválida" y 49 eran IPN legacy, o sea MP funcionando
+// normal. Se cuentan aparte y las legacy NO alertan: no hay nada que hacer con
+// ellas, y una alarma que ninguna acción apaga enseña a ignorar el tablero.
+describe("healthAlerts: las IPN legacy son dato, no alarma", () => {
+  it("cientos de IPN legacy no emiten ni act ni review", () => {
+    const alerts = healthAlerts(snapshot({
+      mp: { lastEventAt: NOW, unprocessedWithError: 0, signatureRejections: 0, legacyIpns: 490 },
+    }), FRESH);
+    expect(alerts.act).toEqual([]);
+    expect(alerts.review).toEqual([]);
+  });
+
+  it("pero una firma inválida real sigue apareciendo en review", () => {
+    const alerts = healthAlerts(snapshot({
+      mp: { lastEventAt: NOW, unprocessedWithError: 0, signatureRejections: 1, legacyIpns: 490 },
+    }), FRESH);
+    expect(alerts.act).toEqual([]);
+    expect(alerts.review.map((a) => a.key)).toEqual(["mp-signature"]);
+  });
+});
+
 describe("healthAlerts: los mismatches son historia, no una alarma", () => {
   it("no generan ninguna alerta por más que haya cientos", () => {
     const alerts = healthAlerts(snapshot({
@@ -270,7 +292,7 @@ describe("las anclas del veredicto existen en los paneles", () => {
     }));
     const broken = snapshot({
       crons: healthyCrons().map((c) => ({ ...c, state: "errors" as CronState, lastRun: run({ ok: false, error: "EAUTH" }) })),
-      mp: { lastEventAt: null, unprocessedWithError: 2, signatureRejections: 3 },
+      mp: { lastEventAt: null, unprocessedWithError: 2, signatureRejections: 3, legacyIpns: 49 },
       money: {
         inboxOpen: 4, inboxTotal: 40,
         debits: { stoppedForActive: 2, aliveForWithdrawn: 1 },
@@ -425,11 +447,22 @@ describe("BackupPanel", () => {
 describe("MpPanel", () => {
   it("el silencio total se destaca; las dos ventanas se escriben, no se esconden", () => {
     const html = render(createElement(MpPanel, {
-      mp: { lastEventAt: null, unprocessedWithError: 2, signatureRejections: 1 }, now: NOW,
+      mp: { lastEventAt: null, unprocessedWithError: 2, signatureRejections: 1, legacyIpns: 49 }, now: NOW,
     }));
     expect(html).toContain("Nunca llegó ningún aviso");
     expect(html).toContain("últimas 72 horas");
     expect(html).toContain("últimas 24 horas");
+  });
+
+  it("las IPN legacy se muestran como lo que son: formato viejo que se descarta a propósito", () => {
+    const html = render(createElement(MpPanel, {
+      mp: { lastEventAt: NOW, unprocessedWithError: 0, signatureRejections: 0, legacyIpns: 49 }, now: NOW,
+    }));
+    expect(html).toContain("49");
+    expect(html).toContain("legítim");
+    expect(html).toContain("formato viejo");
+    // Y no se redacta como un rechazo: el renglón de firma es otro.
+    expect(html).not.toContain("49</span> aviso se rechazó");
   });
 });
 

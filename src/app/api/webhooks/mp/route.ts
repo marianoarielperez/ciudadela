@@ -60,7 +60,16 @@ export async function POST(req: NextRequest) {
     // reabre el canal de escritura anónimo que se cerró para el resto.
     if (legacyIpn) {
       await audit({
-        action: "webhook_rejected_signature",
+        // Action PROPIO, y no `webhook_rejected_signature`: acá no se rechazó
+        // ninguna firma. Los dos primeros días de `/admin/salud` en producción
+        // el panel dijo "51 avisos se rechazaron por firma inválida en las
+        // últimas 24 h" y 49 de esas 51 eran ESTO — el funcionamiento normal de
+        // MP, que manda cuatro requests por cada pago de Checkout Pro. Un
+        // cartel que se enciende solo, todos los días, sin que exista nada que
+        // hacer, es el defecto que la fase 4C ya corrigió tres veces: enseña al
+        // operador a ignorar el tablero entero, incluido el renglón que sí
+        // importa. El asiento se conserva igual: sigue siendo diagnosticable.
+        action: "webhook_legacy_ipn",
         entity: "webhook",
         // El `topic` va al asiento porque distingue los dos casos que caen acá
         // y que se diagnostican distinto: `payment` es la IPN vieja del mismo
@@ -101,8 +110,12 @@ export async function POST(req: NextRequest) {
   const dataId = (url.searchParams.get("data.id") ?? String(body?.data?.id ?? "")).toLowerCase();
   if (!SAFE_DATA_ID.test(dataId)) {
     if (claimsSignature) {
+      // Misma distinción que arriba, en la rama que llega CON cabeceras (y por
+      // eso no muere en el `bad_json`): un IPN legacy es formato viejo, no
+      // firma inválida. Un `data.id` malformado sí queda en el contador de
+      // firma —la forma del id es lo que entra al manifiesto HMAC—.
       await audit({
-        action: "webhook_rejected_signature",
+        action: legacyIpn ? "webhook_legacy_ipn" : "webhook_rejected_signature",
         entity: "webhook",
         detail: { reason: legacyIpn ? "legacy_ipn_shape" : "malformed_data_id" },
         ip,

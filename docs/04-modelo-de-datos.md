@@ -435,7 +435,12 @@ Actividad sistemática semanal de un salón de la sede ("Gimnasia mujeres",
   `application_record`, `application_recategorize` (lleva `residenceMismatch`),
   `application_reject`, `application_resume_link_sent`,
   `application_approved_after_expiry`, `application_accepted_email_failed`,
-  `applications_cron`, `webhook_rejected_signature`.
+  `applications_cron`, `webhook_rejected_signature`, `webhook_legacy_ipn`.
+  Las dos últimas se separaron el 24/08/2026: `webhook_rejected_signature` es
+  señal (firma que no valida, `data.id` con forma peligrosa) y `webhook_legacy_ipn`
+  es el formato viejo con el que MP notifica de más — legítimo, se descarta a
+  propósito y no alerta. Juntas, `/admin/salud` anunciaba 51 "firmas inválidas"
+  por día de las que 49 eran lo segundo.
 - Regla vigente y no negociable: en `detail` van **ids, códigos y flags**; nunca
   DNI, email ni domicilios (Ley 25.326, `docs/08`).
 
