@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  classifyDebits, CRON_EXPECTATION, cronState, fetchHealth, receiptNumberOf, safeSummary,
+  classifyDebits, CRON_EXPECTATION, cronState, fetchHealth, safeSummary,
   SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS, type HealthDb,
 } from "@/lib/admin/health";
 import { readBackupHealth } from "@/lib/admin/health-backup";
 import { formatRelativeAgo } from "@/lib/format";
+import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
 
 const NOW = new Date("2026-09-15T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -109,6 +110,11 @@ describe("receiptNumberOf", () => {
     expect(receiptNumberOf("link de pago × 3")).toBeNull();
     expect(receiptNumberOf(null)).toBeNull();
   });
+  it("lee lo que escribe el builder: son las dos mitades del MISMO formato", () => {
+    // El literal vivía repetido en cuatro archivos y este par es todo el nexo
+    // entre un aviso fallido y su recibo: una deriva rompe la dedupe en silencio.
+    expect(receiptNumberOf(receiptSummaryOf("2026-00042"))).toBe("2026-00042");
+  });
 });
 
 describe("safeSummary", () => {
@@ -125,6 +131,14 @@ describe("safeSummary", () => {
     let deep: unknown = "vecino@example.com";
     for (let i = 0; i < 30; i++) deep = { deep };
     expect(() => safeSummary(deep)).not.toThrow();
+  });
+  it("recorta el preapproval_id que viaja DENTRO del texto de un error", () => {
+    // El enmascarado es de la capa de DATOS y no de la pantalla: el próximo
+    // consumidor —el resumen diario, un export— hereda el recorte sin acordarse.
+    const id = "5eed0000000000000000000000000001";
+    const out = safeSummary({ errors: [`sync: status=404 The preapproval with id ${id} does not exist`] });
+    expect(out).toEqual({ errors: ["sync: status=404 The preapproval with id 5eed0000… does not exist"] });
+    expect(JSON.stringify(out)).not.toContain(id);
   });
 });
 
@@ -300,6 +314,17 @@ describe("fetchHealth — tareas automáticas", () => {
       NOW,
     );
     expect(h.crons[0].lastRun!.error).toBe("SMTP rechazó [email]");
+  });
+  it("el error de la corrida tampoco publica un preapproval_id entero", async () => {
+    // `safeMessage` (la ruta del cron) tapa correos pero deja los ids largos: es
+    // higiene de LOG, donde el id entero hace falta. El recorte de lo que se
+    // publica es de acá.
+    const id = "5eed0000000000000000000000000001";
+    const h = await fetchHealth(
+      fakeDb({ runs: { reconcile: run({ ok: false, error: `preapproval ${id} roto` }) } }),
+      NOW,
+    );
+    expect(h.crons[0].lastRun!.error).toBe("preapproval 5eed0000… roto");
   });
   it("el SUMMARY también sale enmascarado: es la superficie de texto libre del tablero", async () => {
     const h = await fetchHealth(

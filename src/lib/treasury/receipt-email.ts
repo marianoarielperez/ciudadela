@@ -4,6 +4,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { mailer } from "@/lib/email";
 import { receiptEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/prisma";
+import { receiptSummaryOf } from "./receipt-summary";
 import { readReceiptPdf, receiptRelativePath } from "./receipts-dir";
 import { treasuryService } from "./service";
 
@@ -88,7 +89,9 @@ export function makeReceiptEmailer(deps: {
             ...message,
             attachments: [{ filename: `recibo-${r.number}.pdf`, content: pdf, contentType: "application/pdf" }],
           },
-          summary: `recibo ${r.number}`,
+          // El formato NO se escribe acá: es el nexo con /admin/salud, que lo
+          // parsea para saber a qué recibo pertenece un aviso fallido.
+          summary: receiptSummaryOf(r.number),
         };
         if (target.kind === "member") await deps.mailer.sendToMember({ memberId: target.id, ...payload });
         else await deps.mailer.sendToApplication({ applicationId: target.id, ...payload });

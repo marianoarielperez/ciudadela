@@ -14,6 +14,9 @@ import type { NotificationType, PrismaClient } from "@/generated/prisma/client";
 import { CRON_JOB_LIST, type CronJob } from "@/lib/cron/auth";
 import { maskEmails } from "@/lib/log-safe";
 import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
+// Módulo sin dependencias: no rompe la premisa de que este archivo se prueba
+// sin `.env` (el mailer del recibo, en cambio, evalúa Prisma al importarse).
+import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
 
 /** Cada cuánto se espera una corrida EFECTIVA de cada job. No es el intervalo
  *  del crontab: `accrual` y `reminder` corren a diario y actúan una vez por mes,
@@ -185,21 +188,6 @@ export type HealthSnapshot = {
   receipts: ReceiptsHealth;
 };
 
-/** El ÚNICO camino de reenvío que existe (spec §7.5): el recibo, por el modelo
- *  del botón "Reenviar por email".
- *
- *  Sale de `payloadSummary` porque no hay de dónde más: la fila no guarda el id
- *  de la entidad y `payloadSummary` es texto libre de 300 caracteres, no un
- *  payload re-armable. Esa es la limitación, y por eso NO hay cola genérica de
- *  reintentos: los demás avisos se muestran con su error y de qué entidad
- *  vienen, y se rehacen desde la pantalla que los origina. El formato lo fija
- *  `treasury/receipt-email.ts` (`recibo ${número}`). */
-export function receiptNumberOf(payloadSummary: string | null): string | null {
-  if (!payloadSummary?.startsWith("recibo ")) return null;
-  const n = payloadSummary.slice("recibo ".length).trim();
-  return n === "" ? null : n;
-}
-
 /** Ventana del contador de firmas rechazadas. */
 export const SIGNATURE_WINDOW_HOURS = 24;
 /** Ventana del contador de avisos con error sin procesar. Es la misma que la de
@@ -286,6 +274,32 @@ function hasUsableTarget(
  *  JSON absurdo no pueden colgar la pantalla. */
 const SUMMARY_MAX_DEPTH = 6;
 
+/** Un identificador largo —un `preapproval_id`, un id de MP— NUNCA sale entero
+ *  de este módulo, ni siquiera dentro del texto de un error: el mensaje de la
+ *  API de Mercado Pago lo trae en claro ("The preapproval with id 5eed…0001 does
+ *  not exist") y cualquier consumidor lo imprimiría tal cual.
+ *
+ *  Se recorta a los primeros 8 caracteres, que es exactamente la forma en que lo
+ *  muestra Tesorería → Suscripciones: alcanza para reconocer de qué débito habla
+ *  el error y para buscarlo ahí, sin publicar el identificador completo.
+ *
+ *  No vive en `@/lib/log-safe` a propósito, aunque sea de la misma familia que
+ *  `maskEmails`: el LOG necesita el id entero —es donde el reconcile manda a
+ *  propósito los ids de lo que falló, para que la causa sobreviva al recorte del
+ *  summary (cabecera de este archivo)—. Esto es el recorte de lo que se PUBLICA
+ *  en una pantalla, no higiene de log. */
+export function maskLongIds(text: string): string {
+  return text.replace(/\b[0-9a-f]{24,}\b/gi, (id) => `${id.slice(0, 8)}…`);
+}
+
+/** El saneado de TODO texto libre que sale del tablero: direcciones tapadas
+ *  (Ley 25.326, docs/08) e identificadores largos recortados. Las dos cosas
+ *  juntas y en la capa de DATOS, no en la pantalla: el próximo consumidor —el
+ *  resumen diario, un export— no tiene por qué acordarse de repetirlas. */
+function safeText(raw: string): string {
+  return maskLongIds(maskEmails(raw));
+}
+
 /** Enmascarado EN PROFUNDIDAD del `summary` de una corrida.
  *
  *  `CronRun.error` ya venía limpio de las cinco rutas (`safeMessage`) y aun así
@@ -297,7 +311,7 @@ const SUMMARY_MAX_DEPTH = 6;
  *  `{ ...r }` dejaba crudo el único campo donde una dirección puede aparecer
  *  sin que nadie lo note. */
 export function safeSummary(value: unknown, depth = 0): unknown {
-  if (typeof value === "string") return maskEmails(value);
+  if (typeof value === "string") return safeText(value);
   if (Array.isArray(value)) {
     return depth >= SUMMARY_MAX_DEPTH ? [] : value.map((v) => safeSummary(v, depth + 1));
   }
@@ -395,7 +409,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
   // `Notification` no guarda el id del recibo: el mailer escribe ahí
   // `recibo ${número}` y el número es único. La consulta va acotada al lote que
   // se muestra, no a la tabla entera.
-  const summaries = receiptRows.map((r) => `recibo ${r.number}`);
+  const summaries = receiptRows.map((r) => receiptSummaryOf(r.number));
   const [members, receiptNotes] = await Promise.all([
     memberIds.length === 0 ? [] : db.member.findMany({ where: { id: { in: memberIds } }, select: { id: true, fullName: true } }),
     summaries.length === 0 ? [] : db.notification.findMany({
@@ -414,8 +428,10 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
   // El `error` de la corrida ya sale enmascarado de la ruta del cron
   // (`safeMessage`), pero acá se vuelve a pasar: es lo único de todo el tablero
   // que arrastra el texto de una excepción, y un escritor nuevo que se olvide no
-  // puede terminar publicando la casilla de un vecino en pantalla (docs/08).
-  const safeError = (raw: string | null) => (raw === null ? null : maskEmails(raw));
+  // puede terminar publicando la casilla de un vecino en pantalla (docs/08). El
+  // `safeMessage` del cron, además, deja los ids largos enteros a propósito
+  // —está pensado para el log—: `safeText` es el que los recorta.
+  const safeError = (raw: string | null) => (raw === null ? null : safeText(raw));
 
   return {
     now,
@@ -453,7 +469,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
       rows: receiptRows.map((r) => {
         const member = r.payment.member;
         const application = r.payment.application;
-        const notes = notesOf.get(`recibo ${r.number}`) ?? [];
+        const notes = notesOf.get(receiptSummaryOf(r.number)) ?? [];
         const failedNote = notes.find((n) => n.status === "failed");
         // El orden importa: una fila `sent` gana sobre todo (el recibo salió), y
         // "no tiene casilla" sólo se afirma cuando NO hubo ningún intento —si

@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { CronHealth, CronState, FailedNotification, MoneyHealth, MpHealth, PendingReceiptState, ReceiptsHealth } from "@/lib/admin/health";
-import { SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS } from "@/lib/admin/health";
+import { maskLongIds, SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS } from "@/lib/admin/health";
 import type { HealthAlerts } from "@/lib/admin/health-alerts";
 import { BACKUP_FRESH_HOURS, type BackupHealth, type BackupState } from "@/lib/admin/health-backup";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
@@ -38,18 +38,15 @@ export type ResendRenderer = (args: {
 
 const NUM = "font-mono tabular-nums";
 
-/** Un `preapproval_id` NUNCA se publica entero, ni siquiera dentro del texto de
- *  un error. La capa de datos ya enmascara las direcciones de correo
- *  (`safeSummary`), pero el mensaje de la API de Mercado Pago trae el id del
- *  débito en claro —"The preapproval with id 5eed…0001 does not exist"— y la
- *  pantalla lo terminaría imprimiendo tal cual.
- *
- *  Se recorta a los primeros 8 caracteres, que es exactamente la forma en que lo
- *  muestra Tesorería → Suscripciones: alcanza para reconocer de qué débito habla
- *  el error y para buscarlo ahí, sin publicar el identificador completo. */
-function maskLongIds(text: string): string {
-  return text.replace(/\b[0-9a-f]{24,}\b/gi, (id) => `${id.slice(0, 8)}…`);
-}
+// El recorte del `preapproval_id` vive en la capa de datos (`maskLongIds`, que
+// `safeSummary` y `safeError` ya aplican): así lo hereda cualquier consumidor
+// nuevo —el resumen diario, un export— y no sólo esta pantalla.
+//
+// Los llamados que quedan acá abajo son defensa en profundidad, y se justifican:
+// estos paneles son puros y reciben sus props de quien sea —el test los
+// construye a mano— así que la última línea antes del HTML no puede ser la que
+// confíe. Es la MISMA función importada, no una copia: no hay dos expresiones
+// que puedan derivar.
 
 /** Encabezado común de las secciones de la pantalla. El `id` es el ancla a la
  *  que apunta el veredicto. */

@@ -21,12 +21,12 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
-import { receiptNumberOf } from "@/lib/admin/health";
 import { describeResendResult, type ResendOutcome } from "@/lib/admin/receipt-resend";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
 import { prisma } from "@/lib/prisma";
 import { sendReceiptEmail, type ReceiptEmailResult } from "@/lib/treasury/receipt-email";
+import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
 
 type State = ResendOutcome;
 
@@ -66,10 +66,15 @@ async function send(receiptId: number): Promise<ReceiptEmailResult> {
 /** Un envío que SALIÓ deja su propia fila `sent`, que es la que acredita
  *  (Art. 5° quater). La fila `failed` era el registro de un intento anterior y
  *  dejarla sería una alarma permanente sobre algo ya resuelto: el criterio de
- *  aceptación §14.7 pide, textualmente, que «Reenviar» la saque de la lista. */
+ *  aceptación §14.7 pide, textualmente, que «Reenviar» la saque de la lista.
+ *
+ *  Se limpia por NÚMERO y no por id de fila —también cuando la acción parte de
+ *  una fila concreta— porque un mismo recibo puede tener VARIAS filas fallidas:
+ *  dos intentos con el SMTP caído dejan dos. Borrar sólo la propia dejaba viva a
+ *  la gemela, y su botón «Reenviar» le mandaba el recibo al socio de nuevo. */
 async function clearFailedNotices(number: string): Promise<void> {
   await prisma.notification.deleteMany({
-    where: { type: "receipt", status: "failed", payloadSummary: `recibo ${number}` },
+    where: { type: "receipt", status: "failed", payloadSummary: receiptSummaryOf(number) },
   });
 }
 
@@ -112,7 +117,9 @@ export async function resendNotificationAction(_prev: State, formData: FormData)
     // el hueco sin rastro justo cuando el problema persiste.
     return describeResendResult(result, number);
   }
-  await prisma.notification.deleteMany({ where: { id, status: "failed" } });
+  // Todas las fallidas de ESTE recibo, no sólo la fila del botón: ver
+  // `clearFailedNotices`.
+  await clearFailedNotices(number);
   revalidatePath("/admin/salud");
   return describeResendResult(result, number);
 }

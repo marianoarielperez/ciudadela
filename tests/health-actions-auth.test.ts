@@ -67,10 +67,21 @@ describe("resendNotificationAction (panel 5)", () => {
   it("reenvía el recibo y saca la fila fallida de la lista", async () => {
     const r = await resendNotificationAction({}, notice("3"));
     expect(mocks.sendReceiptEmail).toHaveBeenCalledWith(42);
-    expect(mocks.deleteMany).toHaveBeenCalledWith({ where: { id: BigInt(3), status: "failed" } });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/salud");
     expect(r.ok).toContain("2026-00042");
     expect(r.error).toBeUndefined();
+  });
+
+  it("saca TODAS las fallidas de ese recibo, no sólo la fila del botón", async () => {
+    // Dos intentos con el SMTP caído dejan DOS filas fallidas del mismo recibo.
+    // Borrando sólo la propia, la gemela seguía listada y su botón «Reenviar» le
+    // mandaba el recibo al socio de nuevo: correo duplicado.
+    await resendNotificationAction({}, notice("3"));
+    // El filtro va por NÚMERO y no lleva `id`: si lo llevara —la comparación es
+    // exacta— la gemela sobreviviría.
+    expect(mocks.deleteMany).toHaveBeenCalledWith({
+      where: { type: "receipt", status: "failed", payloadSummary: "recibo 2026-00042" },
+    });
   });
 
   it("si el reenvío tampoco sale, la fila NO se borra y el motivo se muestra", async () => {
