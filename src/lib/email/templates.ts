@@ -397,7 +397,7 @@ export function boardDigestEmail(d: {
   payments: Array<{ type: string; count: number; total: number }>;
   paymentsCount: number; paymentsTotal: number;
   applications: number; inboxNew: number; notificationsFailed: number;
-  cronFailures: Array<{ job: string }>; webhookErrors: number;
+  cronFailures: Array<{ job: string; runs: number }>; webhookErrors: number;
 }): Rendered {
   const lines: string[] = [];
   const html: string[] = [];
@@ -410,10 +410,20 @@ export function boardDigestEmail(d: {
     add(`Pagos registrados: ${d.paymentsCount} por ${formatARS(d.paymentsTotal)} — ${detail}`);
   }
   if (d.applications > 0) add(`Solicitudes de alta iniciadas en el sitio: ${d.applications}`);
-  if (d.inboxNew > 0) add(`Cobros que quedaron sin conciliar: ${d.inboxNew}`);
+  // "entraron", no "quedaron": el renglón cuenta los que ENTRARON ayer sin
+  // conciliar, resueltos o no. Si el operador resolvió a la tarde el que entró a
+  // la mañana, "quedaron" mandaría a la Comisión a una bandeja vacía.
+  if (d.inboxNew > 0) add(`Cobros que entraron sin conciliar: ${d.inboxNew}`);
   if (d.notificationsFailed > 0) add(`Avisos por email que no salieron: ${d.notificationsFailed}`);
   if (d.webhookErrors > 0) add(`Notificaciones de Mercado Pago con error: ${d.webhookErrors}`);
-  if (d.cronFailures.length > 0) add(`Tareas automáticas con problemas: ${d.cronFailures.map((c) => c.job).join(", ")}`);
+  // Un job por entrada, con cuántas veces falló. Viene agrupado de `collect()`:
+  // acá no se deduplica nada, sólo se redacta.
+  if (d.cronFailures.length > 0) {
+    const jobs = d.cronFailures
+      .map((c) => `${c.job} (${c.runs} ${c.runs === 1 ? "corrida" : "corridas"})`)
+      .join(", ");
+    add(`Tareas automáticas con problemas: ${jobs}`);
+  }
 
   return {
     subject: `Resumen del ${d.label} — Vecinal Ciudadela`,

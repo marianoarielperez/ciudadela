@@ -267,14 +267,54 @@ describe("templates", () => {
     const m = boardDigestEmail({
       label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
       applications: 0, inboxNew: 0, notificationsFailed: 2,
-      cronFailures: [{ job: "reconcile" }, { job: "reminder" }], webhookErrors: 3,
+      cronFailures: [{ job: "reconcile", runs: 4 }, { job: "reminder", runs: 1 }], webhookErrors: 3,
     });
     expect(m.text).toContain("Avisos por email que no salieron: 2");
     expect(m.text).toContain("Notificaciones de Mercado Pago con error: 3");
-    expect(m.text).toContain("Tareas automáticas con problemas: reconcile, reminder");
+    // Dos jobs distintos: uno por entrada, cada uno con su cuenta y su plural.
+    expect(m.text).toContain("Tareas automáticas con problemas: reconcile (4 corridas), reminder (1 corrida)");
     expect(m.text).not.toContain("Pagos registrados");
     // El HTML dice lo mismo que el texto: un cliente sin HTML no se pierde nada.
-    for (const needle of ["Avisos por email", "reconcile, reminder"]) expect(m.html).toContain(needle);
+    for (const needle of ["Avisos por email", "reconcile (4 corridas), reminder (1 corrida)"]) {
+      expect(m.html).toContain(needle);
+    }
+  });
+
+  // El operador recibió un resumen real que decía "reconcile, reconcile,
+  // reconcile, reconcile, reconcile, reconcile". `collect()` agrupa; la plantilla
+  // redacta la cuenta y no vuelve a listar la corrida.
+  it("seis corridas fallidas del mismo job son UN renglón con la cuenta", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
+      applications: 0, inboxNew: 0, notificationsFailed: 0,
+      cronFailures: [{ job: "reconcile", runs: 6 }], webhookErrors: 0,
+    });
+    expect(m.text).toContain("Tareas automáticas con problemas: reconcile (6 corridas)");
+    // Una sola vez el nombre del job: el renglón no repite.
+    expect(m.text.match(/reconcile/g)).toHaveLength(1);
+  });
+
+  it("una sola corrida fallida se dice en singular", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
+      applications: 0, inboxNew: 0, notificationsFailed: 0,
+      cronFailures: [{ job: "accrual", runs: 1 }], webhookErrors: 0,
+    });
+    expect(m.text).toContain("Tareas automáticas con problemas: accrual (1 corrida)");
+    expect(m.text).not.toContain("1 corridas");
+  });
+
+  // El renglón cuenta lo que ENTRÓ sin conciliar, resuelto o no: la consulta no
+  // filtra por estado. "Quedaron" mandaba a la Comisión a una bandeja que el
+  // operador ya podía haber vaciado a la tarde.
+  it("el renglón de la bandeja dice que los cobros ENTRARON sin conciliar", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
+      applications: 0, inboxNew: 2, notificationsFailed: 0,
+      cronFailures: [], webhookErrors: 0,
+    });
+    expect(m.text).toContain("Cobros que entraron sin conciliar: 2");
+    expect(m.text).not.toContain("quedaron");
   });
 });
 

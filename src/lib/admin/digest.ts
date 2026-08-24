@@ -30,6 +30,13 @@ import { civilDayOf } from "@/lib/treasury/periods";
 
 const MAX_ERRORS = 20;
 
+/** Tope del renglón de crons. Los jobs distintos son cinco (`CRON_JOBS`), así que
+ *  agrupar por `job` ya acota el renglón a cinco entradas y este `take` no
+ *  debería atar nunca. Está igual porque el renglón se arma con lo que devuelve
+ *  la consulta y va a varias casillas: un job nuevo, o uno que empiece a escribir
+ *  corridas con otro nombre, no puede estirarlo sin límite. */
+const MAX_CRON_JOBS = 10;
+
 function codeOf(e: unknown): string {
   const c = (e as { code?: unknown } | null)?.code;
   return typeof c === "string" && c !== "" ? c : "unknown";
@@ -59,7 +66,7 @@ export type DigestData = {
   applications: number;
   inboxNew: number;
   notificationsFailed: number;
-  cronFailures: Array<{ job: string; startedAt: Date; error: string | null }>;
+  cronFailures: Array<{ job: string; runs: number }>;
   webhookErrors: number;
 };
 
@@ -104,10 +111,18 @@ export function makeDigestCron(deps: Deps) {
         deps.db.application.count({ where: { createdAt: range } }),
         deps.db.mpUnmatchedPayment.count({ where: { createdAt: range } }),
         deps.db.notification.count({ where: { sentAt: range, status: "failed" } }),
-        deps.db.cronRun.findMany({
+        // AGRUPADO por job, no una fila por corrida. `reconcile` escribe un
+        // `CronRun` en CADA invocación (el 500 y el 207 incluidos), así que un
+        // job en loop de reintentos —un curl en un wrapper, o el botón de
+        // re-disparo de /admin/salud— daba un renglón que decía
+        // "reconcile, reconcile, reconcile, …". Lo que la Comisión necesita
+        // saber es QUÉ se rompió y CUÁNTAS veces.
+        deps.db.cronRun.groupBy({
+          by: ["job"],
           where: { startedAt: range, ok: false },
-          select: { job: true, startedAt: true, error: true },
-          orderBy: { startedAt: "asc" },
+          _count: { job: true },
+          orderBy: { _count: { job: "desc" } },
+          take: MAX_CRON_JOBS,
         }),
         deps.db.webhookEvent.count({ where: { receivedAt: range, error: { not: null } } }),
       ]);
@@ -123,7 +138,7 @@ export function makeDigestCron(deps: Deps) {
         paymentsCount: groups.reduce((a, g) => a + g.count, 0),
         paymentsTotal: groups.reduce((a, g) => a + g.total, 0),
         applications, inboxNew, notificationsFailed,
-        cronFailures: cronFailures.map((c) => ({ job: c.job, startedAt: c.startedAt, error: c.error })),
+        cronFailures: cronFailures.map((c) => ({ job: c.job, runs: c._count.job })),
         webhookErrors,
       };
     },

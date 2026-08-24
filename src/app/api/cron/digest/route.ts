@@ -8,12 +8,18 @@
 // mostrar — el 500 queda en /var/log/sigev-cron.log y /admin/salud lo ve como
 // antigüedad (el job pasa a "stale").
 //
+// Para ESTA asociación el día tranquilo va a ser la REGLA, no la excepción: con
+// 160 vigentes y el débito concentrado alrededor del 10, va a haber semanas
+// enteras sin una sola novedad. O sea que `digest` puede pasar días sin escribir
+// una fila estando perfectamente sano. /admin/salud (Task 13) no puede medirlo
+// por antigüedad como a los otros cuatro jobs, o arranca en rojo por diseño.
+//
 // Sin escotilla `?force=`, a diferencia del devengo y del recordatorio: los dos
 // ACTÚAN un día puntual del mes y una corrida perdida no se recuperaba nunca.
 // Este corre todos los días y su ventana es el día civil anterior, así que
 // "forzarlo" sería volver a mandar el mismo resumen de ayer.
 import { audit } from "@/lib/audit";
-import { digestCron, hasNews } from "@/lib/admin/digest";
+import { digestCron, hasNews, type DigestData } from "@/lib/admin/digest";
 import { checkCronAuth, CRON_JOBS } from "@/lib/cron/auth";
 import { safeMessage } from "@/lib/log-safe";
 import { prisma } from "@/lib/prisma";
@@ -24,7 +30,7 @@ export async function POST(req: Request) {
   const auth = checkCronAuth(req);
   if (!auth.ok) return auth.response;
 
-  let data;
+  let data: DigestData;
   try {
     data = await digestCron.collect();
   } catch (e) {

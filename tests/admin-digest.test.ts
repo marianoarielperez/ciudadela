@@ -17,7 +17,7 @@ const empty: DigestData = {
 function build(over?: Partial<{
   payments: Array<{ type: string; _count: { _all: number }; _sum: { amount: unknown } }>;
   applications: number; inboxNew: number; failed: number;
-  cronFailures: Array<{ job: string; startedAt: Date; error: string | null }>;
+  cronFailures: Array<{ job: string; _count: { job: number } }>;
   webhookErrors: number; recipients: string | null;
   send: ReturnType<typeof vi.fn>;
 }>) {
@@ -31,7 +31,7 @@ function build(over?: Partial<{
     application: { count: vi.fn(async () => over?.applications ?? 0) },
     mpUnmatchedPayment: { count: vi.fn(async () => over?.inboxNew ?? 0) },
     notification: { count: vi.fn(async () => over?.failed ?? 0) },
-    cronRun: { findMany: vi.fn(async () => over?.cronFailures ?? []) },
+    cronRun: { groupBy: vi.fn(async () => over?.cronFailures ?? []) },
     webhookEvent: { count: vi.fn(async () => over?.webhookErrors ?? 0) },
   };
   const cron = makeDigestCron({
@@ -68,7 +68,7 @@ describe("hasNews", () => {
     expect(hasNews({ ...empty, inboxNew: 1 })).toBe(true);
     expect(hasNews({ ...empty, notificationsFailed: 1 })).toBe(true);
     expect(hasNews({ ...empty, webhookErrors: 1 })).toBe(true);
-    expect(hasNews({ ...empty, cronFailures: [{ job: "reconcile", startedAt: NOW, error: "x" }] })).toBe(true);
+    expect(hasNews({ ...empty, cronFailures: [{ job: "reconcile", runs: 1 }] })).toBe(true);
   });
 });
 
@@ -90,6 +90,21 @@ describe("digest cron", () => {
     // Todas las consultas acotadas al MISMO rango del día civil anterior.
     expect(db.payment.groupBy).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ createdAt: { gte: expect.any(Date), lt: expect.any(Date) } }),
+    }));
+  });
+
+  // El operador recibió un resumen real que decía "reconcile, reconcile,
+  // reconcile, reconcile, reconcile, reconcile": la consulta traía UNA FILA POR
+  // CORRIDA. `reconcile` escribe un `CronRun` en cada invocación, así que un job
+  // en loop de reintentos estiraba el renglón sin techo.
+  it("las corridas fallidas vienen AGRUPADAS por job y con tope", async () => {
+    const { cron, db } = build({ cronFailures: [{ job: "reconcile", _count: { job: 6 } }] });
+    const d = await cron.collect();
+    expect(d.cronFailures).toEqual([{ job: "reconcile", runs: 6 }]);
+    expect(db.cronRun.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      by: ["job"],
+      where: expect.objectContaining({ ok: false }),
+      take: expect.any(Number),
     }));
   });
 
