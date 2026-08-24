@@ -32,7 +32,7 @@ import {
   resolveMinuteId,
 } from "@/lib/members/minute-form";
 import { arrearsConfirmToken, type ArrearsConfirmTarget } from "@/lib/treasury/arrears-confirm";
-import { ACCRUING_CATEGORIES, ARREARS_THRESHOLD } from "@/lib/treasury/rules";
+import { ACCRUING_CATEGORIES, ARREARS_BATCH_MAX, ARREARS_THRESHOLD } from "@/lib/treasury/rules";
 
 const BASE = "/admin/tesoreria/deudores";
 
@@ -81,6 +81,16 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
     ),
   ].sort((a, b) => a - b);
   if (ids.length === 0) return { error: "Seleccioná al menos un socio." };
+  // Tope de lote (ver `ARREARS_BATCH_MAX`): cada baja suma ~1,2 s de llamada a
+  // Mercado Pago para cancelar el débito, y un lote que se pasa del
+  // `proxy_read_timeout` de Nginx deja las bajas asentadas y pierde el aviso de
+  // los débitos que quedaron vivos. Se corta ACÁ, antes de crear ningún acta.
+  if (ids.length > ARREARS_BATCH_MAX) {
+    return {
+      error: `Seleccionaste ${ids.length} socios y el lote acepta hasta ${ARREARS_BATCH_MAX} por vez. ` +
+        `Declaralos en tandas: cada baja cancela además el débito automático en Mercado Pago y eso lleva su tiempo.`,
+    };
+  }
 
   // El acta se parsea aparte y nunca combinada con otro schema:
   // `minuteSelectionSchema` es un `z.union` y `parseForm` sólo sabe recorrer un

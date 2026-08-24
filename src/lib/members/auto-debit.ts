@@ -102,7 +102,13 @@ export function autoDebitSignal(input: {
  *     toda suscripción del socio que no se pueda afirmar muerta. Sigue siendo
  *     best-effort: si MP no contesta, la baja queda igual y el fallo se
  *     REPORTA —la ficha con `?debito=pendiente`, el lote con su tercer balde—,
- *     y por eso el texto promete la cancelación pero nombra la salida.
+ *     y por eso el texto promete la cancelación pero nombra la salida. La
+ *     salida es un BOTÓN y por eso el texto lo nombra por su rótulo: desde la
+ *     enmienda del 24/08/2026, la tabla "Vinculadas" de
+ *     /admin/tesoreria/suscripciones ofrece "Cancelar el débito" en toda
+ *     suscripción viva de un socio dado de baja
+ *     (suscripciones/[preapprovalId]/cancelar). Antes de eso la pantalla era de
+ *     sólo lectura y este texto mandaba a un lugar donde no había nada que hacer.
  *   - Lo que la baja NO alcanza es una suscripción sin fila local: el módulo
  *     recorre `mp_subscriptions` por `memberId`. De ahí que `flag_only` diga
  *     que no va a cancelar nada.
@@ -138,8 +144,9 @@ export const AUTO_DEBIT_WARNINGS = {
     subscription:
       "Este socio tiene una suscripción de débito automático viva en Mercado Pago. Al registrar la " +
       "baja el sistema la va a cancelar. Si Mercado Pago no acepta la cancelación, la ficha te lo " +
-      "avisa al volver y la suscripción queda para cancelar desde Tesorería → Suscripciones: " +
-      "mientras siga viva le va a seguir cobrando la cuota todos los meses. Un cobro que llegue " +
+      "avisa al volver y la suscripción te queda en Tesorería → Suscripciones con el botón " +
+      "«Cancelar el débito» para reintentarlo: mientras siga viva le va a seguir cobrando la cuota " +
+      "todos los meses. Un cobro que llegue " +
       "antes de que se corte se imputa a la cuota pendiente más vieja y emite recibo; si no le " +
       "quedan pendientes, cae en Tesorería → Sin conciliar y esa plata, que ya salió de la cuenta " +
       "del vecino, queda esperando una decisión.",

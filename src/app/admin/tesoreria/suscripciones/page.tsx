@@ -19,9 +19,14 @@
 //                  aparece en la bandeja. La lista es un SUPERconjunto del
 //                  contador (las que cuelgan de una solicitud viva las recrea el
 //                  cron), y de ese lado el error es inofensivo.
-//   Vinculadas   — el REGISTRO, abajo y en tabla: se barre con la vista, no se
-//                  decide nada. Sale de la base, así que se sigue viendo aunque
-//                  Mercado Pago no conteste.
+//   Vinculadas   — el REGISTRO, abajo y en tabla: se barre con la vista. Sale de
+//                  la base, así que se sigue viendo aunque Mercado Pago no
+//                  conteste. Tiene UNA acción, y sólo sobre las filas donde hay
+//                  algo que decidir: "Cancelar el débito" de un socio DADO DE
+//                  BAJA (enmienda del operador, 24/08/2026). Los tres avisos de
+//                  "Mercado Pago no aceptó cancelar el débito" —la ficha, el
+//                  lote de cesantía y el aviso previo a la baja— mandan acá, y
+//                  hasta esa enmienda acá no había nada que hacer.
 //
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería. La guarda
 // tampoco se hereda del layout (Next lo renderiza en paralelo con la página).
@@ -70,6 +75,7 @@ export default async function SuscripcionesPage(props: {
   const sp = await props.searchParams;
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   const justLinked = one(sp.vinculada) !== undefined;
+  const justCancelled = one(sp.cancelada) !== undefined;
   const appliedCount = Number(one(sp.aplicados) ?? 0);
   const stillPending = Number(one(sp.pendientes) ?? 0);
   // Recibos que la vinculación no mandó por el tope de correos por lote. No se
@@ -79,7 +85,7 @@ export default async function SuscripcionesPage(props: {
   const [linked, feeValue, members] = await Promise.all([
     prisma.mpSubscription.findMany({
       where: { memberId: { not: null } },
-      include: { member: { select: { id: true, fullName: true, category: true } } },
+      include: { member: { select: { id: true, fullName: true, category: true, status: true } } },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     }),
     feeValueReader.current(),
@@ -134,6 +140,12 @@ export default async function SuscripcionesPage(props: {
               </Link>
             </>
           )}
+        </FormMessage>
+      )}
+
+      {justCancelled && (
+        <FormMessage kind="success" box>
+          Débito cancelado. Mercado Pago no le va a volver a cobrar la cuota.
         </FormMessage>
       )}
 
@@ -232,9 +244,19 @@ export default async function SuscripcionesPage(props: {
       </section>
 
       <section aria-labelledby="vinculadas" className="space-y-3">
-        <h2 id="vinculadas" className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">
-          Vinculadas
-        </h2>
+        <div className="space-y-1">
+          <h2 id="vinculadas" className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">
+            Vinculadas
+          </h2>
+          {/* La regla del botón se dice UNA vez, acá, y no en cada fila sin
+              botón: repetirla por fila ensanchaba la tabla hasta el scroll
+              horizontal, y es una propiedad de la tabla, no de la fila. */}
+          <p className="max-w-prose text-sm text-muted-foreground">
+            El débito de un socio dado de baja se cancela desde acá: es el caso en que la asociación
+            no tiene derecho a seguir cobrando. Al socio vigente se le corta registrando la baja, que
+            es lo que queda asentado en un acta.
+          </p>
+        </div>
         {linked.length === 0 ? (
           <EmptyState description="Ninguna suscripción vinculada todavía." />
         ) : (
@@ -246,6 +268,7 @@ export default async function SuscripcionesPage(props: {
                 <TableHead className="text-right">Monto</TableHead>
                 <TableHead>Último sync</TableHead>
                 <TableHead>Origen</TableHead>
+                <TableHead><span className="sr-only">Acción</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -255,6 +278,10 @@ export default async function SuscripcionesPage(props: {
                 // verse: es plata de menos —o de más— todos los meses.
                 const expected = s.member && feeValue ? feeAmountFor(s.member.category, feeValue) : null;
                 const divergent = expected !== null && s.amount !== null && Math.abs(Number(s.amount) - expected) >= 0.01;
+                // Las dos preguntas del botón, en el orden en que importan:
+                // ¿queda algo que cortar?, ¿tenemos derecho a seguir cobrando?
+                const live = isNotCancelled(s.status);
+                const withdrawn = s.member?.status === "withdrawn";
                 return (
                   <TableRow key={s.id}>
                     <TableCell>
@@ -266,6 +293,10 @@ export default async function SuscripcionesPage(props: {
                           {s.member.fullName}
                         </Link>
                       )}
+                      {/* La baja del SOCIO, no el estado de la suscripción: es
+                          lo que explica por qué esta fila tiene botón y las
+                          otras no. */}
+                      {withdrawn && <span className="ml-1 text-xs text-muted-foreground">(dado de baja)</span>}
                       <span className="ml-2 font-mono text-xs text-muted-foreground">{s.preapprovalId.slice(0, 8)}…</span>
                     </TableCell>
                     <TableCell>
@@ -279,6 +310,18 @@ export default async function SuscripcionesPage(props: {
                     </TableCell>
                     <TableCell>{s.lastSyncAt ? formatDateAR(s.lastSyncAt) : "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{s.linkedManually ? "Vinculada a mano" : "Alta web"}</TableCell>
+                    {/* Botón sólo donde hay algo que decidir. Las otras filas van
+                        VACÍAS y no con un botón deshabilitado, que dejaría al
+                        operador buscando un permiso que no le falta: el porqué
+                        lo dice el párrafo de la sección, y el badge de Estado ya
+                        distingue una cancelada de una viva. */}
+                    <TableCell className="text-right">
+                      {live && withdrawn && (
+                        <Button asChild variant="destructive" className="min-h-11">
+                          <Link href={`${BASE}/${s.preapprovalId}/cancelar`}>Cancelar el débito</Link>
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 );
               })}

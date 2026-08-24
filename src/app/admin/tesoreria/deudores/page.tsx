@@ -46,11 +46,16 @@ const LEVEL_LABEL: Record<ArrearsLevel, string> = {
  *  4 o más llegaba al badge como "Cesantía posible" — la fila que la misma
  *  pantalla se niega a ofrecer para tildar (REG-15). Su deuda es real y sigue
  *  siendo mora; lo que no corresponde es prometer una cesantía que el estatuto no
- *  habilita. Se corrige acá y no en `arrearsLevel` porque el nivel también manda
- *  el color y lo leen otras pantallas: lo que cambia es lo que ESTA tabla dice. */
-function levelLabel(level: ArrearsLevel, category: MemberCategory): string {
-  if (level === 4 && !ACCRUING_CATEGORIES.includes(category)) return LEVEL_LABEL[2];
-  return LEVEL_LABEL[level];
+ *  habilita. Se corrige acá y no en `arrearsLevel` porque el nivel también lo
+ *  leen otras pantallas: lo que cambia es lo que ESTA tabla dice.
+ *
+ *  Devuelve el NIVEL y no la etiqueta: del nivel salen las dos cosas, el texto y
+ *  el color. Con una función que degradaba sólo la etiqueta, el adherente con 20
+ *  cuotas decía "En mora" en ROJO (variante del nivel 4) y el activo con 2 decía
+ *  lo mismo en ámbar — mismo texto, dos colores, y el rojo gritando "cesantía
+ *  posible" justo sobre la fila que la pantalla se niega a ofrecer. */
+function displayLevel(level: ArrearsLevel, category: MemberCategory): ArrearsLevel {
+  return level === 4 && !ACCRUING_CATEGORIES.includes(category) ? 2 : level;
 }
 
 export default async function DeudoresPage(props: {
@@ -104,7 +109,11 @@ export default async function DeudoresPage(props: {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((r) => (
+        {rows.map((r) => {
+          // El nivel QUE SE MUESTRA: de él salen el texto y el color, que no
+          // pueden salir de dos cuentas distintas (ver `displayLevel`).
+          const shown = displayLevel(r.level, r.category);
+          return (
           <TableRow key={r.memberId}>
             {/* La columna existe sólo si hay algo que tildar, y la casilla sólo
                 en las filas que el estatuto habilita: ni el que debe 3 cuotas ni
@@ -136,9 +145,10 @@ export default async function DeudoresPage(props: {
               {r.debt !== null ? formatARS(r.debt) : "—"}
             </TableCell>
             <TableCell>{r.lastPaidAt ? formatDateAR(r.lastPaidAt) : "—"}</TableCell>
-            <TableCell><Badge variant={arrearsBadgeVariant(r.level)}>{levelLabel(r.level, r.category)}</Badge></TableCell>
+            <TableCell><Badge variant={arrearsBadgeVariant(shown)}>{LEVEL_LABEL[shown]}</Badge></TableCell>
           </TableRow>
-        ))}
+          );
+        })}
       </TableBody>
     </Table>
   );

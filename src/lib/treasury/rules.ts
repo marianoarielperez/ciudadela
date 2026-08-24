@@ -123,6 +123,24 @@ export function periodsToAccrue(
 export const ARREARS_WARNING = 2; // alerta desde la 2ª (REG-15)
 export const ARREARS_THRESHOLD = 4; // habilita la cesantía (REG-15)
 
+/** Tope de socios por lote de cesantía. No sale del estatuto: sale del reloj.
+ *
+ *  Desde la 4C cada baja del lote, además de su transacción, cancela el débito
+ *  automático en Mercado Pago, y esa llamada se midió en ~1,2 s. El lote corre
+ *  en serie dentro de una server action, detrás de un Nginx cuyo
+ *  `proxy_read_timeout` es de 60 s por defecto: con 50 socios con suscripción se
+ *  llega al timeout con las bajas YA asentadas, y la respuesta que se pierde es
+ *  la que lleva `debitFailures` — el único aviso de que a esos ex socios se les
+ *  sigue cobrando. 25 × 1,2 s ≈ 30 s deja la mitad del presupuesto para la base
+ *  y para una MP lenta.
+ *
+ *  El tope es de SELECCIÓN y no de tiempo a propósito: es verificable de un
+ *  vistazo, se puede decir en pantalla antes de apretar el botón, y el operador
+ *  no tiene que entender por qué el lote se cortó a la mitad. Y no aprieta a
+ *  nadie: la cesantía se lee nombre por nombre en el panel de confirmación
+ *  —25 nombres ya es una lista larga— y el padrón real tiene 7 candidatos. */
+export const ARREARS_BATCH_MAX = 25;
+
 export type ArrearsLevel = 0 | 1 | 2 | 4;
 
 /** Devuelve el umbral de exhibición (0, 1, 2 o 4), no la cantidad real de cuotas

@@ -333,6 +333,16 @@ gana quien lo escriba):
   reintentar (criterio de `docs/07`). La llamada vive junto a
   `memberService.withdraw` y NO en `withdrawAction` — el lote usa el mismo
   servicio.
+- **Botón de cancelar en Suscripciones (enmienda del operador, 24/08/2026).**
+  "Listado para reintentar" exige un lugar donde reintentar, y `/admin/tesoreria/
+  suscripciones` es hoy de **sólo lectura**: sus únicos controles vinculan, no
+  cancelan. Sin esto, los avisos de fallo mandan al operador a una pantalla donde
+  no hay nada que hacer, y el reintento real es entrar al panel de Mercado Pago y
+  buscar la suscripción por el email del vecino.
+  La tabla "Vinculadas" gana **"Cancelar el débito"** con confirmación y asiento,
+  habilitado para toda suscripción viva **de un socio dado de baja** — que es el
+  caso en que la asociación no tiene derecho a seguir cobrando. Los tres avisos de
+  fallo (baja individual, lote de cesantía, ficha del socio) apuntan ahí.
 - **Lote de cesantía**: cancela también (decisión ronda 1), con **tercer balde**
   de resultados: "cesanteado", "no se pudo cesantear", y "cesanteado pero el
   débito sigue vivo" — meter el tercero en `failures[]` diría que la cesantía

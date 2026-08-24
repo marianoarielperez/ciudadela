@@ -23,7 +23,7 @@ import { FormMessage } from "@/components/admin/form-message";
 import { MinutePicker, type MinuteOption } from "@/components/admin/minute-picker";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Button } from "@/components/ui/button";
-import { ARREARS_THRESHOLD } from "@/lib/treasury/rules";
+import { ARREARS_BATCH_MAX, ARREARS_THRESHOLD } from "@/lib/treasury/rules";
 import { declareArrearsAction } from "./actions";
 
 type ArrearsState = Awaited<ReturnType<typeof declareArrearsAction>>;
@@ -51,6 +51,13 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
   const all = selectableIds.map(String);
   const effective = selected.filter((id) => all.includes(id));
   useFormResetSync(formRef, { ids: effective.join(",") });
+  // Tope de lote (`ARREARS_BATCH_MAX`): cada baja cancela además el débito en
+  // Mercado Pago (~1,2 s), y un lote que se pasa del `proxy_read_timeout` de
+  // Nginx deja las bajas hechas y pierde el aviso de los débitos que quedaron
+  // vivos. "Seleccionar todos" tilda hasta el tope; tildar de a una puede
+  // pasarse, y ahí el botón se bloquea y lo dice. La acción lo revalida.
+  const batch = all.slice(0, ARREARS_BATCH_MAX);
+  const overCap = effective.length > ARREARS_BATCH_MAX;
 
   // Delegado: cubre los checkboxes de las filas, que los renderiza el servidor.
   const onChange = (e: React.ChangeEvent<HTMLFormElement>) => {
@@ -65,7 +72,7 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
     setDismissed(state.confirm);
   };
 
-  const allSelected = all.length > 0 && all.every((id) => effective.includes(id));
+  const allSelected = batch.length > 0 && batch.every((id) => effective.includes(id));
   const failures = state.failures ?? [];
   const confirm = state.confirm && state.confirm !== dismissed ? state.confirm : null;
   // Cuenta sólo a quienes de verdad se va a intentar dar de baja: los que la
@@ -117,16 +124,18 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
               className="size-4"
               checked={allSelected}
               onChange={() => {
-                setSelected(allSelected ? [] : all);
+                setSelected(allSelected ? [] : batch);
                 setDismissed(state.confirm);
               }}
             />
-            Seleccionar todos los candidatos
+            {all.length > ARREARS_BATCH_MAX
+              ? `Seleccionar los primeros ${ARREARS_BATCH_MAX} candidatos`
+              : "Seleccionar todos los candidatos"}
           </label>
           {/* Con la confirmación en pantalla desaparece: hay un solo botón que
               da de baja, y es el que está debajo de la lista de nombres. */}
           {!confirm && (
-            <Button type="submit" variant="destructive" disabled={pending || effective.length === 0}>
+            <Button type="submit" variant="destructive" disabled={pending || effective.length === 0 || overCap}>
               {pending
                 ? "Revisando…"
                 : `Declarar cesantía${effective.length > 0 ? ` (${effective.length})` : ""}`}
@@ -134,6 +143,16 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
           )}
         </div>
       </div>
+
+      {/* Por qué el botón está bloqueado. `role="none"`: se lee al lado del
+          control que se acaba de tocar, no es la respuesta a un envío. */}
+      {overCap && (
+        <FormMessage kind="warning" role="none">
+          {`Tenés ${effective.length} socios tildados y el lote acepta hasta ${ARREARS_BATCH_MAX} por vez. ` +
+            "Destildá los que sobren y declaralos en una segunda tanda: cada baja cancela además el " +
+            "débito automático en Mercado Pago y eso lleva su tiempo."}
+        </FormMessage>
+      )}
 
       {/* El paso que pidió el cliente: antes de expulsar a nadie, quiénes son.
           Los nombres, los números y las cuotas los resolvió el servidor contra
@@ -202,24 +221,36 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
       )}
 
       {/* Ayuda estática, no respuesta a una acción: `role="none"` para que el
-          lector de pantalla no la anuncie como alerta en cada render. */}
-      <FormMessage kind="warning" role="none">
-        Sólo se pueden tildar socios con 4 cuotas adeudadas o más (Art. 9 inc. c), y la cantidad se
-        vuelve a verificar al declarar. La deuda queda congelada en la ficha: el reingreso exige
-        saldarla a valor vigente.
+          lector de pantalla no la anuncie como alerta en cada render.
+          Es el ÚNICO párrafo que explica la regla, así que dice las dos mitades:
+          el umbral y la CATEGORÍA. Sin la segunda, el operador que ve un
+          adherente con 20 cuotas y sin casilla no encuentra acá el porqué. */}
+      <FormMessage kind="warning" role="none" as="div">
+        <p>
+          {`Sólo se pueden tildar socios activos y colaboradores con ${ARREARS_THRESHOLD} cuotas adeudadas o más ` +
+            "(Art. 9 inc. c). El adherente aporta voluntariamente: su deuda es real y por eso sigue " +
+            "listado, pero no lo hace cesante, así que su fila no lleva casilla. La cantidad se vuelve " +
+            "a verificar al declarar."}
+        </p>
+        <p className="mt-1">
+          {`El lote acepta hasta ${ARREARS_BATCH_MAX} socios por vez, porque cada baja cancela además el débito ` +
+            "automático en Mercado Pago. La deuda queda congelada en la ficha: el reingreso exige " +
+            "saldarla a valor vigente."}
+        </p>
       </FormMessage>
 
       {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
 
-      {/* El titular del lote. La segunda frase sólo aparece si hubo alguien sin
-          declarar: desde que el débito vivo también corta el redirect, este
-          bloque se muestra con `failures` vacío y decía "0 quedaron sin
-          declarar". */}
+      {/* El titular del lote, en VERDE: es la buena noticia, y este bloque sólo
+          aparece cuando abajo hay una caja o dos con las malas. Los tres
+          desenlaces se distinguen por color antes de leerlos —verde lo que
+          salió, ámbar lo que quedó pendiente, rojo la plata que sigue saliendo
+          de la cuenta de un vecino— y por eso la segunda frase ("N quedaron sin
+          declarar") se fue a su propia caja: un cartel verde no puede llevar
+          adentro la mala noticia. */}
       {state.declared !== undefined && state.declared > 0 && (
-        <FormMessage kind="warning" box>
+        <FormMessage kind="success" box>
           {`${state.declared} ${state.declared === 1 ? "cesantía declarada" : "cesantías declaradas"}.`}
-          {failures.length > 0 &&
-            ` ${failures.length} ${failures.length === 1 ? "quedó" : "quedaron"} sin declarar.`}
         </FormMessage>
       )}
 
@@ -227,7 +258,9 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
           abrir la ficha del que quedó afuera y ver por qué. */}
       {failures.length > 0 && (
         <FormMessage kind="warning" box as="div">
-          <p className="font-medium">Sin declarar:</p>
+          <p className="font-medium">
+            {`${failures.length} ${failures.length === 1 ? "quedó" : "quedaron"} sin declarar:`}
+          </p>
           <ul className="mt-1 space-y-1">
             {failures.map((f) => (
               <li key={f.memberId}>
@@ -242,9 +275,12 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
       {/* El TERCER desenlace: la cesantía salió y el débito no. No va en
           `failures` —ahí diría que la cesantía falló sobre alguien que sí quedó
           cesante— y no puede perderse en un redirect: es el único aviso que dice
-          que a un ex socio se le sigue cobrando. */}
+          que a un ex socio se le sigue cobrando.
+          En ROJO y no en ámbar: de los tres, es el único donde ahora mismo está
+          saliendo plata de la cuenta de alguien. Mismo color que el aviso de la
+          ficha, que dice exactamente lo mismo. */}
       {state.debitFailures && state.debitFailures.length > 0 && (
-        <FormMessage kind="warning" box as="div">
+        <FormMessage kind="error" box as="div">
           <p className="font-medium">
             Se declaró la cesantía, pero Mercado Pago no aceptó cancelar el débito automático:
           </p>
@@ -263,7 +299,7 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
             >
               cancelalos desde Suscripciones
             </Link>
-            .
+            , donde sus filas llevan el botón «Cancelar el débito».
           </p>
         </FormMessage>
       )}

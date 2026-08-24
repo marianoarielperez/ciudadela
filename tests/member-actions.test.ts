@@ -28,9 +28,14 @@ vi.mock("@/lib/auth/require-admin", () => ({
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
+// `withdraw` está en el doble A PROPÓSITO, aunque la acción ya no deba
+// llamarlo: si no estuviera, la aserción de abajo se cumpliría por la forma del
+// doble y no por lo que hace producción (un `memberService.withdraw(...)` que
+// volviera tiraría `is not a function` y el test caería por otra razón, sin
+// decir cuál). Con el doble presente, `not.toHaveBeenCalled()` prueba el camino.
 vi.mock("@/lib/members/service", () => ({
   electionsOngoing: vi.fn(async () => false),
-  memberService: { readmit: vi.fn(async () => ({})) },
+  memberService: { readmit: vi.fn(async () => ({})), withdraw: vi.fn(async () => ({})) },
 }));
 
 // La baja pasa por `withdrawWithDebits` y no por `memberService.withdraw`: es
@@ -139,7 +144,9 @@ describe("withdrawAction", () => {
     expect(withdrawWithDebits.withdraw).toHaveBeenCalledWith({
       memberId: 12, minuteId: 5, actorId: 7, reason: "resignation", detail: "Se mudó",
     });
-    expect(memberService).not.toHaveProperty("withdraw");
+    // Y NO por el camino viejo, que dejaba el débito vivo. El doble define
+    // `withdraw`, así que esto falla si producción vuelve a llamarlo.
+    expect(vi.mocked(memberService.withdraw)).not.toHaveBeenCalled();
     // El asiento dice QUÉ se canceló: es donde el operador busca el id para
     // reintentar en el panel de Mercado Pago.
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({

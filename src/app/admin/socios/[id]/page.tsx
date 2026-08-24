@@ -115,8 +115,12 @@ export default async function SocioPage(props: {
 
   return (
     <div className="space-y-4">
+      {/* `error` y no `warning`: de los avisos que puede abrir esta ficha, éste
+          es el único donde ahora mismo está saliendo plata de la cuenta de un
+          vecino que ya no es socio. Va en el mismo color en las dos pantallas
+          que lo dan (acá y el lote de cesantía). */}
       {debitPending > 0 && (
-        <FormMessage kind="warning" box>
+        <FormMessage kind="error" box>
           {`La baja quedó asentada, pero Mercado Pago no aceptó cancelar ${
             debitPending === 1 ? "el débito automático" : `${debitPending} débitos automáticos`
           }. `}
@@ -124,7 +128,7 @@ export default async function SocioPage(props: {
             className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             href="/admin/tesoreria/suscripciones"
           >
-            Revisalo en Suscripciones
+            {debitPending === 1 ? "Cancelalo desde Suscripciones" : "Cancelalos desde Suscripciones"}
           </Link>
           {debitPending === 1
             ? " — mientras siga vivo, se le va a seguir cobrando."

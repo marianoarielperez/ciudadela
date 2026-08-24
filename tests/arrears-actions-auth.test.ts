@@ -58,6 +58,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 import { redirect } from "next/navigation";
 import type { MinuteSelection } from "@/lib/members/minute-form";
 import { arrearsConfirmToken } from "@/lib/treasury/arrears-confirm";
+import { ARREARS_BATCH_MAX } from "@/lib/treasury/rules";
 import { declareArrearsAction } from "@/app/admin/tesoreria/deudores/actions";
 
 function form(ids: string, minuteId = "3") {
@@ -87,6 +88,37 @@ describe("declareArrearsAction", () => {
   it("sin selección avisa", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     expect((await declareArrearsAction({}, form(""))).error).toBe("Seleccioná al menos un socio.");
+  });
+
+  // Tope de lote (`ARREARS_BATCH_MAX`). Desde la 4C cada baja suma ~1,2 s de
+  // llamada a Mercado Pago: un lote de 50 se pasa del `proxy_read_timeout` de
+  // Nginx (60 s por defecto) y ahí las bajas quedan HECHAS pero la respuesta se
+  // pierde — y con ella `debitFailures`, el único aviso de que a esos ex socios
+  // se les sigue cobrando. Se corta antes de tocar el padrón y el libro de actas.
+  it("un lote más grande que el tope no da de baja a nadie ni crea acta", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const many = Array.from({ length: ARREARS_BATCH_MAX + 1 }, (_, i) => i + 1).join(",");
+    const r = await declareArrearsAction({}, form(many));
+    expect(r.error).toContain(`hasta ${ARREARS_BATCH_MAX} por vez`);
+    expect(mocks.prisma.member.findMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.minute.create).not.toHaveBeenCalled();
+    expect(mocks.withdraw).not.toHaveBeenCalled();
+  });
+
+  it("un lote exactamente en el tope sí se procesa", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const ids = Array.from({ length: ARREARS_BATCH_MAX }, (_, i) => i + 1);
+    mocks.prisma.member.findMany.mockResolvedValueOnce(
+      ids.map((id) => ({
+        id, fullName: `S${id}`, status: "active", category: "active",
+        memberships: [{ memberNumber: id, book: { status: "open" } }],
+      })),
+    );
+    const r = await declareArrearsAction({}, form(ids.join(",")));
+    // Llega al primer paso (la confirmación), que es lo que prueba que el tope
+    // no mordió: la lista para leer antes de expulsar a nadie.
+    expect(r.error).toBeUndefined();
+    expect(r.confirm?.targets).toHaveLength(ARREARS_BATCH_MAX);
   });
 
   it("da de baja por mora a cada seleccionado con ≥4 pendientes, audita y redirige", async () => {
