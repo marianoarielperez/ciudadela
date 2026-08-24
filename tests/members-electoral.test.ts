@@ -49,6 +49,11 @@ const m = (
   ...over,
 });
 
+/** Atajo para los tests de ORDEN, que es lo único que miran: id, nombre y número
+ *  de socio en el libro abierto. */
+const mn = (id: number, fullName: string, memberNumber: number) =>
+  m({ id, fullName, memberships: [{ memberNumber, book: { status: "open" } }] });
+
 function fakeDb(
   rows: ReturnType<typeof m>[],
   pending: Array<{ memberId: number; _count: { _all: number } }> = [],
@@ -179,14 +184,61 @@ describe("buildElectoralRoll", () => {
     expect(roll.considered).toBe(2);
   });
 
-  it("ordena por número de socio y pone PRIMERO al que no tiene: una anomalía se ve", async () => {
+  it("ordena ALFABÉTICO por apellido y pone PRIMERO al que no tiene número", async () => {
+    // Decisión del operador del 24/08/2026 (spec §13, decisión 11): así se usa
+    // en la mesa —llega un vecino y se lo busca por apellido—. El sin número
+    // queda fuera del orden, adelante: es una anomalía de datos que tiene que
+    // saltar en la primera hoja.
     const db = fakeDb([
-      m({ id: 1, memberships: [{ memberNumber: 306, book: { status: "open" } }] }),
-      m({ id: 2, memberships: [] }),
-      m({ id: 3, memberships: [{ memberNumber: 14, book: { status: "open" } }] }),
+      mn(1, "Zurita, Carlos", 306),
+      mn(2, "Ñandú, Rosa", 41),
+      m({ id: 3, fullName: "Villalba, Ema", memberships: [] }),
+      mn(4, "Ávila, Bruno", 14),
+      mn(5, "Aguirre, Dora", 200),
     ]);
     const roll = await buildElectoralRoll(db as never, AT, VALUE);
-    expect(roll.enabled.map((r) => r.memberNumber)).toEqual([null, 14, 306]);
+    expect(roll.enabled.map((r) => r.fullName)).toEqual([
+      // Sin número: adelante y fuera del orden.
+      "Villalba, Ema",
+      "Aguirre, Dora",
+      // Con `<` la Á caería DESPUÉS de la Z: es el caso que justifica el locale.
+      "Ávila, Bruno",
+      // Y la Ñ, también después de la Z.
+      "Ñandú, Rosa",
+      "Zurita, Carlos",
+    ]);
+  });
+
+  it("los homónimos desempatan por número: dos impresiones dan la misma hoja", async () => {
+    const db = fakeDb([mn(1, "Pérez, Juan", 88), mn(2, "Pérez, Juan", 12)]);
+    const roll = await buildElectoralRoll(db as never, AT, VALUE);
+    expect(roll.enabled.map((r) => r.memberNumber)).toEqual([12, 88]);
+  });
+
+  it("el bloque a purgar y el CSV salen en el MISMO orden alfabético", async () => {
+    // El orden vale para los DOS bloques, y el CSV no es otro documento: es la
+    // hoja en otro formato, y quien lo abre al lado de la impresión tiene que
+    // ver las mismas filas en el mismo lugar.
+    const db = fakeDb(
+      [mn(1, "Zurita, Carlos", 306), mn(2, "Ñandú, Rosa", 41), mn(3, "Aguirre, Dora", 200)],
+      [
+        { memberId: 1, _count: { _all: 2 } },
+        { memberId: 2, _count: { _all: 3 } },
+        { memberId: 3, _count: { _all: 1 } },
+      ],
+    );
+    const roll = await buildElectoralRoll(db as never, AT, VALUE);
+    expect(roll.enabled).toHaveLength(0);
+    expect(roll.toPurge.map((r) => r.fullName)).toEqual([
+      "Aguirre, Dora",
+      "Ñandú, Rosa",
+      "Zurita, Carlos",
+    ]);
+    // El nombre lleva coma, así que el CSV no se parte por comas: lo que se
+    // verifica es la posición de cada fila en el archivo.
+    const csv = electoralCsv(roll);
+    expect(csv.indexOf("Aguirre")).toBeLessThan(csv.indexOf("Ñandú"));
+    expect(csv.indexOf("Ñandú")).toBeLessThan(csv.indexOf("Zurita"));
   });
 
   it("la cuenta cierra: considerados = sin antigüedad + habilitados + a purgar", async () => {

@@ -407,6 +407,8 @@ está duplicada en `applications/route.ts:17-23` y `reconcile/route.ts:13-17`),
 | 8 | Entran todas las deudas heredadas recomendadas |
 | 9 | Un socio suspendido NO vota: el padrón electoral lo excluye (decisión del 23/08/2026, cierra la pregunta abierta del plan) |
 | 10 | Honorarios y vitalicios votan SIN el piso de 90 días (24/08/2026): REG-30 los exime y prevalece sobre la redacción de REG-31; la distinción de esas categorías existe para honrarlas |
+| 11 | El padrón electoral sale **alfabético por apellido** (24/08/2026): es como se usa en la mesa — llega un vecino y se lo busca por apellido. Con 160 filas, ordenarlo por número obliga a recorrer la hoja entera. El socio sin número del libro abierto sigue saliendo primero: es una anomalía de datos que tiene que saltar |
+| 12 | El padrón NO lleva columna de "antigüedad en días" (24/08/2026): la fecha de ingreso ya está impresa y es el dato verificable; los días son una cuenta derivada |
 
 ## §14. Criterios de aceptación
 

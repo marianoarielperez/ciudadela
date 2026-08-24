@@ -85,6 +85,30 @@ export type ElectoralRoll = {
   purgeAmount: number;
 };
 
+/** El orden del padrón: el socio sin número del libro abierto primero, y el
+ *  resto alfabético por `fullName` con criterio es-AR.
+ *
+ *  `localeCompare` con locale y no `<`: comparados por code unit, "Ñandú" cae
+ *  después de "Zurita" y "Ávila" después de "Zurita" también — el apellido con
+ *  eñe o con acento terminaría fuera de su letra, que en una mesa de votación se
+ *  lee como "no está en el padrón". `es-AR` es el locale que ya usa el resto del
+ *  panel (`activities/rules.ts`).
+ *
+ *  Desempate por número de socio: dos vecinos homónimos existen, y sin desempate
+ *  su orden relativo cambiaría entre dos impresiones del mismo padrón. */
+export function compareForRoll(
+  a: { memberNumber: number | null; fullName: string },
+  b: { memberNumber: number | null; fullName: string },
+): number {
+  if ((a.memberNumber === null) !== (b.memberNumber === null)) {
+    return a.memberNumber === null ? -1 : 1;
+  }
+  return (
+    a.fullName.localeCompare(b.fullName, "es-AR") ||
+    (a.memberNumber ?? 0) - (b.memberNumber ?? 0)
+  );
+}
+
 export async function buildElectoralRoll(
   db: Pick<PrismaClient, "member" | "fee">,
   at: Date,
@@ -114,15 +138,23 @@ export async function buildElectoralRoll(
     },
     orderBy: { fullName: "asc" },
   });
-  // Por número de socio, que es el orden en el que la Junta toma lista. El que no
-  // tiene número va PRIMERO —no último—: es una anomalía de datos y tiene que
-  // saltar a la vista en la primera hoja, no esconderse al final de la tercera.
+  // ALFABÉTICO POR APELLIDO, que es como se usa en la mesa: llega un vecino y se
+  // lo busca por apellido (decisión del operador del 24/08/2026, spec §13
+  // decisión 11). Con 160 filas, el orden por número obligaba a recorrer la hoja
+  // entera al que no se trae su número de memoria — y nadie se lo trae.
+  //
+  // `fullName` viene en formato "Apellido Nombre" (así lo asentó el import del
+  // Libro N° 1), así que ordenar por el campo entero ES ordenar por apellido.
+  //
+  // El que NO tiene número de libro abierto queda PRIMERO igual, fuera del orden
+  // alfabético: es una anomalía de datos y tiene que saltar a la vista en la
+  // primera hoja, no esconderse a mitad de la segunda.
   const rows = members
     .map((m) => ({
       ...m,
       memberNumber: m.memberships.find((ms) => ms.book.status === "open")?.memberNumber ?? null,
     }))
-    .sort((a, b) => (a.memberNumber ?? -1) - (b.memberNumber ?? -1));
+    .sort(compareForRoll);
 
   const eligible = rows.filter((r) => meetsSeniority(r.category, r.joinedAt, at));
   const period = periodOf(at);
@@ -198,7 +230,12 @@ function cell(value: string | number | null): string {
  *  es cosmético: para un activo o un colaborador habilitado valen cero por
  *  definición, y para un adherente moroso —que vota igual— son un dato
  *  financiero personal que la Junta Electoral no necesita para nada y que en
- *  papel ya no vuelve (Ley 25.326, principio de pertinencia). */
+ *  papel ya no vuelve (Ley 25.326, principio de pertinencia).
+ *
+ *  El orden es el mismo de la hoja —alfabético por apellido, con el socio sin
+ *  número adelante—: el CSV no es otro documento, es el mismo en otro formato, y
+ *  quien lo abre al lado de la impresión tiene que ver las mismas filas en el
+ *  mismo lugar. */
 export function electoralCsv(roll: ElectoralRoll): string {
   const line = (block: string, r: ElectoralRow, withDebt: boolean) =>
     [

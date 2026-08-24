@@ -146,6 +146,14 @@ export function ElectoralRollSheet({ roll, valued, pastDate, generatedAt }: {
           {roll.enabled.length} habilitados · {roll.toPurge.length} con deuda a purgar ·
           generado el {formatDateTimeAR(generatedAt)}
         </p>
+        {/* El orden se dice EN PAPEL: el que toma lista busca por apellido y
+            tiene que saber que la hoja lo acompaña. El socio sin número va
+            primero, fuera del orden, y eso también hay que avisarlo o se lee
+            como un error de la hoja. */}
+        <p className="text-[9pt]">
+          Ambos bloques en orden alfabético por apellido. El socio sin número de socio asentado
+          figura primero, antes del orden.
+        </p>
       </div>
 
       {/* Se imprime a propósito (no lleva `print:hidden`): el que lee el papel
