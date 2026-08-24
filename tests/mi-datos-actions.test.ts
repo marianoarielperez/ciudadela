@@ -11,6 +11,7 @@ vi.mock("@/lib/auth/require-member", () => ({
 // tipo del mock desde la implementación, y sin `..._args` acá TypeScript ve un
 // mock de ARIDAD CERO — `npx vitest run` no lo nota (no tipa), pero
 // `npm run build` sí, y `updateMember(...a)` de más abajo rompe con TS2556.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- la firma existe para tipar, no para leerse
 const updateMember = vi.fn(async (..._args: unknown[]) => ({
   member: {}, revokedTokens: 0,
   // Tipado explícito: sin esto TS infiere `accountEmailMove: null` como tipo
