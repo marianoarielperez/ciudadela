@@ -8,6 +8,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     application: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     mpSubscription: { updateMany: vi.fn() },
+    // Desde la 4C la ruta abre y cierra su fila en `cron_runs`. `BigInt(1)` y
+    // no `1n`: el target del proyecto es ES2017.
+    cronRun: { create: vi.fn(async () => ({ id: BigInt(1) })), update: vi.fn(async () => ({})) },
   },
 }));
 vi.mock("@/lib/email", () => ({ mailer: { sendToApplication: vi.fn() } }));

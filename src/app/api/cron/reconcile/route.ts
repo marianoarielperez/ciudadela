@@ -2,28 +2,19 @@
 // (docs/11 Parte H). Mismo esquema de autenticación que `/api/cron/applications`
 // y estrena el registro en `cron_runs` (spec M4 §8): la última corrida de cada
 // cron es lo que `/admin/salud` (4C) va a mostrar.
-import { timingSafeEqual } from "node:crypto";
 import { audit } from "@/lib/audit";
+import { CRON_JOBS, checkCronAuth } from "@/lib/cron/auth";
 import { safeMessage } from "@/lib/log-safe";
 import { reconcile } from "@/lib/mp/reconcile";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-function authorized(header: string | null, secret: string): boolean {
-  const expected = Buffer.from(`Bearer ${secret}`);
-  const got = Buffer.from(header ?? "");
-  return expected.length === got.length && timingSafeEqual(expected, got);
-}
-
 export async function POST(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return Response.json({ error: "not_configured" }, { status: 503 });
-  if (!authorized(req.headers.get("authorization"), secret)) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = checkCronAuth(req);
+  if (!auth.ok) return auth.response;
 
-  const run = await prisma.cronRun.create({ data: { job: "reconcile", startedAt: new Date() } });
+  const run = await prisma.cronRun.create({ data: { job: CRON_JOBS.reconcile, startedAt: new Date() } });
   try {
     const summary = await reconcile.run();
     const ok = summary.errors.length === 0;
