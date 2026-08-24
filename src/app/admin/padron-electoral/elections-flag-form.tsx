@@ -41,7 +41,10 @@ export function ElectionsFlagForm({ ongoing }: { ongoing: boolean }) {
       </p>
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       {state.success && <FormMessage kind="success">{state.success}</FormMessage>}
-      <Button type="submit" variant="secondary" disabled={pending}>
+      {/* `h-11` explícito: el `size` por defecto de `Button` es `h-8`, y este es
+          un control táctil del panel (target ≥44px), igual que el "Generar" de
+          al lado. */}
+      <Button type="submit" variant="secondary" disabled={pending} className="h-11">
         {pending ? "Guardando…" : "Guardar"}
       </Button>
     </form>

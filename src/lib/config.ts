@@ -5,25 +5,14 @@ import { unstable_cache } from "next/cache";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { CACHE_TAGS } from "@/lib/cache-tags";
+import { CONFIG_KEYS } from "@/lib/config-keys";
 
-export const CONFIG_KEYS = {
-  asociateActivo: "asociate_activo",
-  contactPhone: "contact_phone",
-  contactEmail: "contact_email",
-  termsText: "terms_text",
-  privacyConsentText: "privacy_consent_text",
-  mpPlanActiveId: "mp_plan_active_id",
-  mpPlanSharedId: "mp_plan_shared_id",
-  /** Destinatarios del resumen diario a la Comisión (4C §6). CSV. Editable
-   *  desde /admin/configuracion: cambiar quién lo recibe no puede exigir un
-   *  deploy ni un reinicio de PM2. */
-  digestRecipients: "digest_recipients",
-  /** Bloquea los cambios de categoría mientras hay elecciones (Art. 5° ter).
-   *  Lo leía `members/service.ts` con la clave escrita a mano; desde la 4C hay
-   *  una pantalla que lo escribe (`/admin/padron-electoral`) y la clave vive en
-   *  un solo lugar. */
-  electionsOngoing: "elecciones_en_curso",
-} as const;
+// Las claves viven en un módulo puro (`@/lib/config-keys`) y se re-exportan acá:
+// este archivo evalúa `unstable_cache` y el cliente de Prisma al cargarse, y un
+// módulo de dominio que sólo quiere el nombre de una clave no tiene por qué
+// arrastrar el runtime de Next. Las pantallas y las actions la siguen importando
+// de donde siempre.
+export { CONFIG_KEYS };
 
 type Db = Pick<PrismaClient, "configuration">;
 

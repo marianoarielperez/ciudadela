@@ -57,7 +57,6 @@ const row = (over: Partial<ElectoralRow> = {}): ElectoralRow => ({
   fullName: "Coñuecar, Marta",
   category: "active",
   joinedAt: new Date("2019-09-01T12:00:00Z"),
-  seniorityDays: 2632,
   arrears: 0,
   debt: 0,
   ...over,
@@ -66,6 +65,8 @@ const row = (over: Partial<ElectoralRow> = {}): ElectoralRow => ({
 const roll = (over: Partial<ElectoralRoll> = {}): ElectoralRoll => ({
   at: AT,
   period: "2026-11",
+  considered: 0,
+  withoutSeniority: 0,
   enabled: [],
   toPurge: [],
   purgeFees: 0,
@@ -73,9 +74,9 @@ const roll = (over: Partial<ElectoralRoll> = {}): ElectoralRoll => ({
   ...over,
 });
 
-const sheet = (r: ElectoralRoll, valued = true) =>
+const sheet = (r: ElectoralRoll, valued = true, pastDate = false) =>
   renderToStaticMarkup(
-    createElement(ElectoralRollSheet, { roll: r, valued, generatedAt: GENERATED_AT }),
+    createElement(ElectoralRollSheet, { roll: r, valued, pastDate, generatedAt: GENERATED_AT }),
   );
 
 const page = async (fecha?: string) =>
@@ -149,6 +150,45 @@ describe("ElectoralRollSheet — qué sale impreso", () => {
     expect(html).toContain("No hay un valor de cuota vigente");
   });
 
+  it("dice en el PAPEL que honorarios y vitalicios votan sin el piso de antigüedad", () => {
+    // Si la nota afirmara que todos reúnen 90 días, la hoja mentiría sobre el
+    // honorario recién distinguido (REG-30 sobre REG-31, decisión del 24/08/2026).
+    const html = sheet(roll({ enabled: [row({ category: "honorary" })] }));
+
+    expect(html).toContain("REG-30");
+    expect(html).toMatch(/honorarios y vitalicios/i);
+  });
+
+  it("con una fecha PASADA avisa —en el papel— que mezcla dos relojes", () => {
+    // La antigüedad es a la fecha pedida; la mora y la condición de socio son de
+    // hoy. Sin este aviso, la hoja se lee como el padrón de aquel día y no lo es.
+    const html = sheet(roll({ enabled: [row()] }), true, true);
+
+    expect(html).toContain("Esta fecha ya pasó");
+    expect(html).toContain("no sirve para resolver una impugnación");
+    // No lleva `print:hidden`: el que lee el papel meses después es quien más lo
+    // necesita.
+    expect(html).not.toMatch(/print:hidden[^"]*">[^<]*Esta fecha ya pasó/);
+  });
+
+  it("a una fecha que no pasó no le cuelga el aviso", () => {
+    expect(sheet(roll({ enabled: [row()] }))).not.toContain("Esta fecha ya pasó");
+  });
+
+  it("escribe el período en castellano y no el YYYY-MM crudo", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain("noviembre 2026");
+    expect(html).not.toContain("2026-11");
+  });
+
+  it("al socio sin número de libro abierto lo lista con un guión, no lo esconde", () => {
+    const html = sheet(roll({ enabled: [row({ memberNumber: null })] }));
+
+    expect(html).toContain("Coñuecar, Marta");
+    expect(html).toContain("—");
+  });
+
   it("un bloque vacío no renderiza un thead sin filas", () => {
     const html = sheet(roll());
 
@@ -219,6 +259,40 @@ describe("PadronElectoralPage", () => {
     const html = await page("2026-11-15");
 
     expect(html).toContain("/api/admin/padron-electoral?fecha=2026-11-15");
+  });
+
+  it("muestra la cuenta completa y no sólo el resultado", async () => {
+    // "148 habilitados" sólo se puede creer. La igualdad se puede verificar, y es
+    // lo que distingue "tres son demasiado nuevos" de "tres faltan por un
+    // problema de datos" (que es un derecho político negado en silencio).
+    mocks.buildRoll.mockResolvedValue(
+      roll({
+        considered: 4,
+        withoutSeniority: 1,
+        enabled: [row(), row({ memberId: 3 })],
+        toPurge: [row({ memberId: 2, arrears: 3, debt: 18000 })],
+        purgeFees: 3,
+        purgeAmount: 18000,
+      }),
+    );
+
+    const html = await page("2026-11-15");
+
+    expect(html).toContain("socios vigentes considerados");
+    expect(html).toContain("sin antigüedad");
+    expect(html).toContain("A purgar en la mesa");
+  });
+
+  it("le avisa a la hoja cuando la fecha pedida ya pasó, y sólo entonces", async () => {
+    // El padrón se regenera meses después para contestar una impugnación: ahí la
+    // hoja mezcla la antigüedad de aquel día con la mora de hoy y tiene que
+    // decirlo. La comparación es contra el día civil argentino.
+    mocks.buildRoll.mockImplementation(async (_db: unknown, at: Date) =>
+      roll({ at, enabled: [row()] }),
+    );
+
+    expect(await page("2020-06-15")).toContain("Esta fecha ya pasó");
+    expect(await page("2099-11-15")).not.toContain("Esta fecha ya pasó");
   });
 
   it("ofrece el interruptor de elecciones con el estado guardado", async () => {

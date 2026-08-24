@@ -10,7 +10,6 @@ import { headers } from "next/headers";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { PrintButton } from "@/components/admin/print-button";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,9 +89,9 @@ export default async function PadronElectoralPage(props: {
         }
       >
         <p className="max-w-prose text-sm text-muted-foreground">
-          Socios con derecho a voto a la fecha indicada: activos, honorarios, colaboradores,
-          vitalicios y adherentes con {ELECTORAL_MIN_DAYS} días o más de antigüedad (REG-31). El
-          sistema entrega el padrón; no gestiona la elección.
+          Socios con derecho a voto a la fecha indicada: activos, colaboradores y adherentes con{" "}
+          {ELECTORAL_MIN_DAYS} días o más de antigüedad (REG-31), más honorarios y vitalicios, que
+          votan sin ese piso (REG-30). El sistema entrega el padrón; no gestiona la elección.
         </p>
       </PageHeader>
 
@@ -114,27 +113,59 @@ export default async function PadronElectoralPage(props: {
 
       {generated && (
         <div className="space-y-6">
-          <p className="flex flex-wrap items-center gap-2 text-sm print:hidden">
-            <span>
+          {/* La cuenta, no el resultado. "157 habilitados" sólo se puede creer;
+              la igualdad se puede verificar, y es lo que distingue "tres son
+              demasiado nuevos" de "tres faltan por un problema de datos". */}
+          <div className="space-y-1.5 print:hidden">
+            <p className="text-sm">
               Padrón al <strong>{formatDateAR(generated.roll.at)}</strong>
-            </span>
-            <Badge variant="default">{generated.roll.enabled.length} habilitados</Badge>
+            </p>
+            <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
+              <Count n={generated.roll.considered} label="socios vigentes considerados" />
+              <span>=</span>
+              <Count n={generated.roll.withoutSeniority} label="sin antigüedad" />
+              <span>+</span>
+              <Count n={generated.roll.enabled.length} label="habilitados" />
+              <span>+</span>
+              <Count n={generated.roll.toPurge.length} label="con deuda a purgar" />
+            </p>
             {generated.roll.toPurge.length > 0 && (
-              <Badge variant="secondary">
-                {`${generated.roll.toPurge.length} con deuda a purgar · ${generated.roll.purgeFees} cuotas`}
-                {generated.valued ? ` · ${formatARS(generated.roll.purgeAmount)}` : ""}
-              </Badge>
+              <p className="text-sm text-muted-foreground">
+                A purgar en la mesa:{" "}
+                <span className="font-mono tabular-nums text-foreground">
+                  {generated.roll.purgeFees}
+                </span>{" "}
+                cuotas
+                {generated.valued ? (
+                  <>
+                    {" · "}
+                    <span className="font-mono tabular-nums text-foreground">
+                      {formatARS(generated.roll.purgeAmount)}
+                    </span>
+                  </>
+                ) : null}
+              </p>
             )}
-          </p>
+          </div>
 
           <ElectoralRollSheet
             roll={generated.roll}
             valued={generated.valued}
+            pastDate={generated.roll.at.getTime() < civilDayOf().getTime()}
             generatedAt={generated.generatedAt}
           />
         </div>
       )}
     </div>
+  );
+}
+
+/** Un sumando de la reconciliación: el número en tabular-nums y su etiqueta. */
+function Count({ n, label }: { n: number; label: string }) {
+  return (
+    <span>
+      <span className="font-mono tabular-nums text-foreground">{n}</span> {label}
+    </span>
   );
 }
 

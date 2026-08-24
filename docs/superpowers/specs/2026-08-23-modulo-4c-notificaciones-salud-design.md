@@ -406,6 +406,7 @@ está duplicada en `applications/route.ts:17-23` y `reconcile/route.ts:13-17`),
 | 7 | Padrón electoral completo, con morosos listados para purga (CCyC: hasta 1 h antes) |
 | 8 | Entran todas las deudas heredadas recomendadas |
 | 9 | Un socio suspendido NO vota: el padrón electoral lo excluye (decisión del 23/08/2026, cierra la pregunta abierta del plan) |
+| 10 | Honorarios y vitalicios votan SIN el piso de 90 días (24/08/2026): REG-30 los exime y prevalece sobre la redacción de REG-31; la distinción de esas categorías existe para honrarlas |
 
 ## §14. Criterios de aceptación
 

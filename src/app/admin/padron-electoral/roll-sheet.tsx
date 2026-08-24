@@ -21,6 +21,7 @@ import { formatARS, formatDateAR, formatDateTimeAR } from "@/lib/format";
 import type { ElectoralRoll, ElectoralRow } from "@/lib/members/electoral";
 import { ELECTORAL_MIN_DAYS } from "@/lib/members/electoral";
 import { CATEGORY_LABELS } from "@/lib/members/labels";
+import { periodLabel } from "@/lib/treasury/periods";
 
 // A4 vertical: son cuatro columnas de texto corto y el nombre entra holgado. La
 // regla vive acá y no en `globals.css` porque `@page` no se puede acotar por
@@ -121,11 +122,14 @@ function RollBlock({ title, note, rows, showDebt, empty, totals }: {
   );
 }
 
-export function ElectoralRollSheet({ roll, valued, generatedAt }: {
+export function ElectoralRollSheet({ roll, valued, pastDate, generatedAt }: {
   roll: ElectoralRoll;
   /** Si había un valor de cuota vigente al generar. Sin él la deuda en pesos no
    *  se puede calcular y la hoja lo dice, en vez de imprimir un cero. */
   valued: boolean;
+  /** Si la fecha pedida ya pasó. La hoja mezcla entonces dos relojes y tiene que
+   *  decirlo EN PAPEL: ver el aviso de abajo. */
+  pastDate: boolean;
   generatedAt: Date;
 }) {
   return (
@@ -144,6 +148,19 @@ export function ElectoralRollSheet({ roll, valued, generatedAt }: {
         </p>
       </div>
 
+      {/* Se imprime a propósito (no lleva `print:hidden`): el que lee el papel
+          meses después es quien más necesita saberlo. */}
+      {pastDate && (
+        <FormMessage kind="warning" box>
+          Esta fecha ya pasó y la hoja mezcla dos relojes: la <strong>antigüedad</strong> se mide al{" "}
+          {formatDateAR(roll.at)}, pero la <strong>mora</strong> y la{" "}
+          <strong>condición de socio</strong> se leen como están al generarla (
+          {formatDateTimeAR(generatedAt)}). El que pagó después de la elección figura acá como
+          habilitado, y el que se dio de baja después no figura en ningún bloque. No es el padrón de
+          aquel día: no sirve para resolver una impugnación.
+        </FormMessage>
+      )}
+
       {!valued && (
         <FormMessage kind="warning" box>
           No hay un valor de cuota vigente: la deuda en pesos no se puede calcular. Registralo en
@@ -159,7 +176,7 @@ export function ElectoralRollSheet({ roll, valued, generatedAt }: {
 
       <RollBlock
         title="Habilitados"
-        note={`Votan sin trámite previo: reúnen ${ELECTORAL_MIN_DAYS} días de antigüedad y no registran mora exigible.`}
+        note={`Votan sin trámite previo: no registran mora exigible y reúnen ${ELECTORAL_MIN_DAYS} días de antigüedad — salvo honorarios y vitalicios, a quienes el estatuto exime de ese piso (REG-30).`}
         rows={roll.enabled}
         showDebt={false}
         empty="Ningún socio queda habilitado a esta fecha."
@@ -176,8 +193,7 @@ export function ElectoralRollSheet({ roll, valued, generatedAt }: {
 
       <p className="text-xs text-muted-foreground">
         La deuda se valúa al valor de cuota vigente y se cuenta sobre los períodos anteriores a{" "}
-        <span className="font-mono tabular-nums">{roll.period}</span>: la cuota del mes en curso
-        todavía no es mora.
+        {periodLabel(roll.period)}: la cuota del mes en curso todavía no es mora.
       </p>
 
       {/* Último hijo a propósito: un `<style>` cuenta para el selector `* + *`

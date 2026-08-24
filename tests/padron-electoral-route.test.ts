@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth/require-admin", () => ({ requireSuperadmin: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { membership: { findMany: vi.fn() }, fee: { groupBy: vi.fn() } },
+  prisma: { member: { findMany: vi.fn() }, fee: { groupBy: vi.fn() } },
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/treasury/fee-values", () => ({
@@ -41,21 +41,19 @@ function requestWithQuery(query: Record<string, string> = {}) {
   >[0];
 }
 
-function membershipRow(over: { id?: number; fullName?: string; category?: string } = {}) {
+function memberRow(over: { id?: number; fullName?: string; category?: string } = {}) {
   return {
-    memberNumber: 42,
-    member: {
-      id: over.id ?? 1,
-      fullName: over.fullName ?? "Coñuecar, Marta",
-      category: over.category ?? "active",
-      joinedAt: new Date("2019-09-01T12:00:00Z"),
-    },
+    id: over.id ?? 1,
+    fullName: over.fullName ?? "Coñuecar, Marta",
+    category: over.category ?? "active",
+    joinedAt: new Date("2019-09-01T12:00:00Z"),
+    memberships: [{ memberNumber: 42, book: { status: "open" } }],
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (prisma.membership.findMany as MockedFn).mockResolvedValue([]);
+  (prisma.member.findMany as MockedFn).mockResolvedValue([]);
   (prisma.fee.groupBy as MockedFn).mockResolvedValue([]);
 });
 
@@ -67,7 +65,7 @@ describe("GET /api/admin/padron-electoral — autorización", () => {
 
     expect(res.status).toBe(403);
     expect(await res.text()).toBe(blocked.error);
-    expect(prisma.membership.findMany).not.toHaveBeenCalled();
+    expect(prisma.member.findMany).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });
 
@@ -89,7 +87,7 @@ describe("GET /api/admin/padron-electoral — la fecha es un parámetro", () => 
     const res = await GET(requestWithQuery());
 
     expect(res.status).toBe(400);
-    expect(prisma.membership.findMany).not.toHaveBeenCalled();
+    expect(prisma.member.findMany).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });
 
@@ -98,7 +96,7 @@ describe("GET /api/admin/padron-electoral — la fecha es un parámetro", () => 
       const res = await GET(requestWithQuery({ fecha }));
       expect(res.status, fecha).toBe(400);
     }
-    expect(prisma.membership.findMany).not.toHaveBeenCalled();
+    expect(prisma.member.findMany).not.toHaveBeenCalled();
   });
 
   it("rejects a day that does not exist and a mistyped year, which the shape regex lets through", async () => {
@@ -108,7 +106,7 @@ describe("GET /api/admin/padron-electoral — la fecha es un parámetro", () => 
       const res = await GET(requestWithQuery({ fecha }));
       expect(res.status, fecha).toBe(400);
     }
-    expect(prisma.membership.findMany).not.toHaveBeenCalled();
+    expect(prisma.member.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -118,7 +116,7 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
   });
 
   it("returns the CSV with the attachment headers and the date in the filename", async () => {
-    (prisma.membership.findMany as MockedFn).mockResolvedValue([membershipRow()]);
+    (prisma.member.findMany as MockedFn).mockResolvedValue([memberRow()]);
 
     const res = await GET(requestWithQuery({ fecha: "2026-11-15" }));
 
@@ -130,7 +128,7 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
   });
 
   it("starts the body with the BOM so Excel on Windows does not eat the accents", async () => {
-    (prisma.membership.findMany as MockedFn).mockResolvedValue([membershipRow()]);
+    (prisma.member.findMany as MockedFn).mockResolvedValue([memberRow()]);
 
     // Por BYTES y no por `text()`: la decodificación UTF-8 del estándar se come
     // el BOM, así que un cuerpo sin BOM pasaría igual leído como texto.
@@ -140,10 +138,13 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
 
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const body = bytes.toString("utf8").slice(1);
-    expect(body.split("\n")[0]).toBe(
+    expect(body.split("\r\n")[0]).toBe(
       "bloque,numero_socio,apellido_nombre,categoria,cuotas_adeudadas,monto_a_purgar",
     );
     expect(body).toContain("Coñuecar, Marta");
+    // RFC 4180: filas separadas por CRLF y salto final. Los importadores viejos
+    // de Excel se comen la última fila de un archivo que no termina en salto.
+    expect(body.endsWith("\r\n")).toBe(true);
   });
 
   it("attaches no-store, private cache headers so no intermediary can cache the roll", async () => {
@@ -154,9 +155,9 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
   });
 
   it("writes an audit entry with the date used and the block sizes — never a name", async () => {
-    (prisma.membership.findMany as MockedFn).mockResolvedValue([
-      membershipRow({ id: 1, fullName: "Pérez, Ana" }),
-      membershipRow({ id: 2, fullName: "Gómez, Luis" }),
+    (prisma.member.findMany as MockedFn).mockResolvedValue([
+      memberRow({ id: 1, fullName: "Pérez, Ana" }),
+      memberRow({ id: 2, fullName: "Gómez, Luis" }),
     ]);
     (prisma.fee.groupBy as MockedFn).mockResolvedValue([{ memberId: 2, _count: { _all: 3 } }]);
 

@@ -2,7 +2,9 @@
 // writes a Movement. Audit rows are written by the calling server action
 // (it knows actor IP); this service records actor ids on movements.
 import type { Book, MemberCategory, PrismaClient, WithdrawalReason } from "@/generated/prisma/client";
-import { CONFIG_KEYS } from "@/lib/config";
+// De `config-keys` y no de `config`: este módulo es dominio y no puede quedar
+// atado al runtime de Next por una constante de texto.
+import { CONFIG_KEYS } from "@/lib/config-keys";
 import { prisma } from "@/lib/prisma";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "./rules";
 import { revokeStaleMemberTokens } from "./write";
