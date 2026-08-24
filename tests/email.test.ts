@@ -338,6 +338,18 @@ describe("templates", () => {
     // Y el genérico tampoco filtra el código crudo.
     expect(m.text).not.toContain("_");
   });
+
+  // MP reintenta el débito recurrente una cantidad ACOTADA de veces y después
+  // suspende o cancela la suscripción. Un reintento sin techo le decía al socio
+  // que podía no hacer nada.
+  it("el aviso de rechazo acota el reintento en vez de prometerlo para siempre", () => {
+    const m = paymentRejectedEmail({ name: "Ana", amount: 6000, reason: rejectionReason(null) });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("unas pocas veces");
+      expect(body).toContain("volver a autorizarlo");
+      expect(body).not.toContain("cuando el medio de pago esté disponible");
+    }
+  });
 });
 
 describe("getTransport", () => {

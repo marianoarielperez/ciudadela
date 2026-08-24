@@ -85,8 +85,34 @@ export const WEBHOOK_RESULTS: Record<WebhookResult, true> = {
   unmatched_treasury_rejected: true,
 };
 
+/** Qué pasó con el aviso del rechazo. Va entero al asiento (`outcome`): el
+ *  operador necesita distinguir "le avisamos" de "no tiene casilla", "rebota",
+ *  "ya no es socio", "ya se lo habíamos avisado" y "el correo explotó" — son
+ *  cinco llamadas telefónicas distintas, o ninguna. */
+export type RejectionNotice =
+  | "sent"
+  | "no_member"
+  | "member_missing"
+  | "withdrawn"
+  | "no_email"
+  | "bounced"
+  | "duplicate"
+  | "error";
+
+/** Prefijo del `payloadSummary` del aviso de rechazo: lleva el id del pago de MP
+ *  para que la dedupe pueda preguntar "¿este pago ya se avisó?". El espacio
+ *  final importa — sin él, `#77` haría match con `#777`. */
+export function rejectionSummaryPrefix(mpPaymentId: string): string {
+  return `cobro rechazado #${mpPaymentId} `;
+}
+
+function rejectionSummary(p: { id: string; statusDetail: string | null }): string {
+  // El `status_detail` es un código de MP, no un dato personal (docs/08).
+  return `${rejectionSummaryPrefix(p.id)}(${p.statusDetail ?? "sin detalle"})`;
+}
+
 type Deps = {
-  db: Pick<PrismaClient, "application" | "mpSubscription" | "payment" | "member" | "mpUnmatchedPayment">;
+  db: Pick<PrismaClient, "application" | "mpSubscription" | "payment" | "member" | "mpUnmatchedPayment" | "notification">;
   gateway: Pick<MpGateway, "getPayment" | "getPreapproval" | "getAuthorizedPayment">;
   treasury: Pick<TreasuryService, "registerPayment" | "refundPayment">;
   unmatched: Pick<ReturnType<typeof makeUnmatchedInbox>, "record">;
@@ -249,8 +275,9 @@ export function makeWebhookProcessor(deps: Deps) {
   // `webhook_events.result`, una tabla que ninguna pantalla muestra, y el socio
   // se enteraba cuando alguien le reclamaba la cuota tres meses después.
   //
-  // Best-effort de punta a punta: TODO esto va adentro de un try. Si el aviso
-  // fallara y saliera como excepción, el webhook devolvería 500 y MP
+  // Best-effort de punta a punta: la resolución del socio y el envío van adentro
+  // de un try, y el asiento —que va SIEMPRE— lleva su propio `.catch`. Si el
+  // aviso fallara y saliera como excepción, el webhook devolvería 500 y MP
   // reintentaría un rechazo —o sea, un no-cobro— con backoff para siempre. El
   // `WebhookResult` que devuelve el procesador NO cambia por culpa del correo.
   //
@@ -258,13 +285,15 @@ export function makeWebhookProcessor(deps: Deps) {
   // del pagador, que puede ser de un tercero (el hijo que le puso la tarjeta al
   // padre). El domicilio electrónico es el de la ficha (Art. 5° quater).
   async function noticeRejection(p: MpPaymentDetails, preapprovalId: string | null): Promise<void> {
+    let memberId: number | null = null;
+    let outcome: RejectionNotice = "no_member";
     try {
       // El link de pago manda: si el cobro rechazado trae `pago:{id}:{n}`, el
       // socio es ese y no hace falta preguntar por ninguna suscripción. Una
       // referencia `solicitud:{id}` no entra acá a propósito: el que paga el
       // ingreso todavía no es socio y su aviso es otro (`sendToApplication`).
       const link = parsePaymentLinkReference(p.externalReference);
-      let memberId = link?.memberId ?? null;
+      memberId = link?.memberId ?? null;
       if (memberId === null && preapprovalId) {
         const sub = await deps.db.mpSubscription.findUnique({
           where: { preapprovalId }, select: { memberId: true },
@@ -272,40 +301,96 @@ export function makeWebhookProcessor(deps: Deps) {
         memberId = sub?.memberId ?? null;
       }
       // Un cobro rechazado que no se puede atribuir a nadie: no hay a quién
-      // avisarle, y tampoco hay plata que perseguir (MP no cobró).
-      if (memberId === null) return;
-      const member = await deps.db.member.findUnique({
-        where: { id: memberId },
-        select: { id: true, fullName: true, email: true, emailStatus: true },
-      });
-      let notified = false;
-      // Mismo filtro que `receipt-email.ts`: a una casilla que rebota no se le
-      // insiste, o Brevo termina castigando la reputación del dominio.
-      if (member?.email && member.emailStatus !== "bounced") {
-        await deps.mailer.sendToMember({
-          memberId: member.id,
-          to: member.email,
-          type: "payment_rejected",
-          message: paymentRejectedEmail({
-            name: member.fullName,
-            amount: p.transactionAmount,
-            reason: rejectionReason(p.statusDetail),
-          }),
-          summary: `cobro rechazado (${p.statusDetail ?? "sin detalle"})`,
-        });
-        notified = true;
-      }
-      // El `status_detail` sí va al asiento: es un código de MP, no un dato
-      // personal, y es lo único que explica el rechazo cuando el socio llama.
-      // El `payerEmail` no (mismo criterio que `toInbox`). `notified` distingue
-      // "le avisamos" de "no tiene casilla / rebota", que es lo que el operador
-      // necesita saber antes de levantar el teléfono.
-      await deps.audit({
-        action: "payment_rejected", entity: "mp_payment", entityId: p.id,
-        detail: { mpPaymentId: p.id, memberId, statusDetail: p.statusDetail ?? null, amount: p.transactionAmount, notified },
-      });
+      // avisarle, y tampoco hay plata que perseguir (MP no cobró). Pero el
+      // asiento se escribe igual, más abajo: "hubo un rechazo que no pudimos
+      // atribuir" es exactamente lo que el operador necesita ver.
+      if (memberId !== null) outcome = await deliverRejection(memberId, p);
     } catch (e) {
       console.error("[mp-webhook] no se pudo avisar el rechazo", p.id, "code:", codeOf(e));
+      outcome = "error";
+    }
+    // El asiento va SIEMPRE y FUERA del try: es la única pantalla que va a
+    // mostrar este hecho, y el caso en que más falta hace es justamente aquel en
+    // que el envío explotó. Hoy en producción explota SIEMPRE —`EMAIL_ALLOWLIST`
+    // sigue definida y el transporte lanza—, así que dejarlo adentro del try era
+    // dejar el rechazo del socio 306 o del 14 sin correo, sin `Notification` y
+    // sin asiento: sólo `webhook_events.result`, la tabla que ninguna pantalla
+    // muestra y de la que esta tarea existía para salir. Mismo patrón que
+    // `application_accepted_email_failed`, 200 líneas más abajo.
+    //
+    // El `status_detail` sí va al asiento: es un código de MP, no un dato
+    // personal, y es lo único que explica el rechazo cuando el socio llama. El
+    // `payerEmail` no (mismo criterio que `toInbox`). `notified` distingue "le
+    // avisamos" de "no salió", y `outcome` dice por qué: es lo que el operador
+    // necesita saber antes de levantar el teléfono.
+    await deps.audit({
+      action: "payment_rejected", entity: "mp_payment", entityId: p.id,
+      detail: { mpPaymentId: p.id, memberId, statusDetail: p.statusDetail ?? null, amount: p.transactionAmount, notified: outcome === "sent", outcome },
+    }).catch(() => {});
+  }
+
+  // Devuelve por qué salió (o no) el aviso. Puede LANZAR: su llamador atrapa y
+  // asienta igual.
+  async function deliverRejection(memberId: number, p: MpPaymentDetails): Promise<RejectionNotice> {
+    const member = await deps.db.member.findUnique({
+      where: { id: memberId },
+      select: { id: true, fullName: true, email: true, emailStatus: true, status: true },
+    });
+    if (!member) return "member_missing";
+    // Un cesante NO recibe el aviso, con el mismo criterio que el devengo, el
+    // recordatorio y la lista de deudores (`status: { in: ["active",
+    // "suspended"] }`). Para un ex socio el rechazo es el resultado DESEADO: el
+    // correo lo invitaría a "revisar tu medio de pago" y a restaurar un débito
+    // que la asociación debería haber cancelado al darlo de baja (Task 12).
+    // El asiento sí queda: una suscripción viva de alguien que ya no es socio es
+    // justo lo que el operador tiene que ver.
+    if (member.status === "withdrawn") return "withdrawn";
+    if (!member.email) return "no_email";
+    // Mismo filtro que `receipt-email.ts`: a una casilla que rebota no se le
+    // insiste, o Brevo termina castigando la reputación del dominio.
+    if (member.emailStatus === "bounced") return "bounced";
+    if (await alreadyNoticed(memberId, p.id)) return "duplicate";
+    await deps.mailer.sendToMember({
+      memberId: member.id,
+      to: member.email,
+      type: "payment_rejected",
+      message: paymentRejectedEmail({
+        name: member.fullName,
+        amount: p.transactionAmount,
+        reason: rejectionReason(p.statusDetail),
+      }),
+      summary: rejectionSummary(p),
+    });
+    return "sent";
+  }
+
+  // MP manda `payment.created` y `payment.updated` del MISMO pago (lo documenta
+  // la ruta del webhook, y `docs/11` Parte J midió cuatro requests por pago de
+  // Checkout Pro). La dedupe de la ruta es por `body.id`, o sea por NOTIFICACIÓN:
+  // los dos eventos llegan a `applyPayment`. Para un aprobado la segunda capa es
+  // `Payment.mpPaymentId`; para un rechazo no se escribe ningún `Payment`, así
+  // que no hay segunda capa y el socio recibía dos correos idénticos.
+  //
+  // La marca es la propia `Notification`, que es la única fila que este camino
+  // escribe: el id del pago viaja en `payloadSummary`. Se filtra por `memberId`
+  // (que sí tiene índice) y por `sent` — un intento `failed` NO bloquea: ahí el
+  // vecino no recibió nada y el segundo evento es su única chance.
+  //
+  // Deduplica por ID DE PAGO y no por socio: MP reintenta el débito recurrente
+  // con un id nuevo por intento, y ahí el segundo correo es legítimo.
+  async function alreadyNoticed(memberId: number, mpPaymentId: string): Promise<boolean> {
+    try {
+      const prev = await deps.db.notification.findFirst({
+        where: { memberId, type: "payment_rejected", status: "sent", payloadSummary: { startsWith: rejectionSummaryPrefix(mpPaymentId) } },
+        select: { id: true },
+      });
+      return prev !== null;
+    } catch (e) {
+      // La dedupe también es best-effort: si la consulta falla, el aviso SALE.
+      // Un correo repetido molesta; no avisar el rechazo es el problema que esta
+      // tarea vino a resolver.
+      console.error("[mp-webhook] no se pudo deduplicar el aviso de rechazo", mpPaymentId, "code:", codeOf(e));
+      return false;
     }
   }
 
@@ -528,9 +613,11 @@ export function makeWebhookProcessor(deps: Deps) {
     // pero el operador quiere poder ver que MP intentó cobrar y no pudo — y
     // desde la 4C el socio también se entera, con el motivo en castellano.
     // Fuera del mutex a propósito: acá no se escribe plata, así que no hay dos
-    // caminos que serializar. El aviso duplicado tampoco puede venir del cron:
-    // `searchPayments` pide `status=approved` y el paso 2 salta todo cobro que
-    // no esté `processed`, así que un rechazo nunca vuelve por la conciliación.
+    // caminos que serializar. El aviso duplicado no puede venir del cron
+    // —`searchPayments` pide `status=approved` y el paso 2 salta todo cobro que
+    // no esté `processed`, así que un rechazo nunca vuelve por la conciliación—
+    // pero SÍ de los dos eventos que MP manda del mismo pago: de eso se ocupa
+    // `alreadyNoticed`.
     if (p.status === "rejected") {
       await noticeRejection(p, preapprovalId);
       return "payment_rejected_traced";
