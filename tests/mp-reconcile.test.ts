@@ -77,7 +77,7 @@ describe("reconcile", () => {
     const s = await d.r.run();
     expect(d.gateway.searchPayments).toHaveBeenCalledWith({ since: new Date(NOW.getTime() - RECONCILE_WINDOW_MS) });
     expect(d.processor.applyPayment).toHaveBeenCalledTimes(1);
-    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), null, { mailBudget: expect.anything() });
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), null, { mailBudget: expect.objectContaining({ take: expect.any(Function) }) });
     expect(s.paymentsRecovered).toBe(1);
   });
   it("paso 2: cobros de cada suscripción viva sin Payment local → getPayment + applyPayment con el preapproval", async () => {
@@ -88,7 +88,7 @@ describe("reconcile", () => {
     const s = await d.r.run();
     expect(d.gateway.searchAuthorizedPayments).toHaveBeenCalledWith("pre-1");
     expect(d.gateway.getPayment).toHaveBeenCalledWith("777");
-    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1", { mailBudget: expect.anything() });
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1", { mailBudget: expect.objectContaining({ take: expect.any(Function) }) });
     expect(s.debitsRecovered).toBe(1);
   });
   it("paso 2 no repite un cobro que ya tiene Payment local", async () => {
@@ -176,7 +176,7 @@ describe("reconcile", () => {
     const d = deps({ inboxIds: ["777"], inboxStatus: { "777": "open" }, subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
     const s = await d.r.run();
     expect(d.gateway.getPayment).toHaveBeenCalledWith("777");
-    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1", { mailBudget: expect.anything() });
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1", { mailBudget: expect.objectContaining({ take: expect.any(Function) }) });
     expect(s.debitsRecovered).toBe(1);
   });
 

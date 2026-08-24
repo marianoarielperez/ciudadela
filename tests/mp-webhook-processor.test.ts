@@ -9,6 +9,7 @@ vi.mock("@/lib/treasury/service", () => ({ treasuryService: {} }));
 vi.mock("@/lib/treasury/receipt-email", () => ({ sendReceiptEmail: vi.fn() }));
 vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 
+import { makeMailBudget } from "@/lib/email/batch-cap";
 import { UNMATCHED_REASONS } from "@/lib/mp/unmatched";
 import { makeWebhookProcessor, WEBHOOK_RESULTS } from "@/lib/mp/webhook-processor";
 
@@ -467,7 +468,7 @@ describe("presupuesto de correos", () => {
 
   it("con el presupuesto agotado, el recibo se difiere y el cobro se asienta igual", async () => {
     const d = deps({ subscription: { memberId: 14, applicationId: null } });
-    const spent = { take: () => false, deferred: 1 };
+    const spent = { take: () => false, refund: () => {}, deferred: 1 };
     await expect(d.p.applyPayment(d.payment, "pre-1", { mailBudget: spent })).resolves.toBe("debit_applied");
     // Lo que el tope frena es el AVISO, nunca la imputación.
     expect(d.treasury.registerPayment).toHaveBeenCalled();
@@ -484,13 +485,37 @@ describe("presupuesto de correos", () => {
       payment: { externalReference: "solicitud:9" },
       application: { id: 9, status: "pending_payment", fullName: "Juan", email: "j@x.com", mpPaymentIdEntry: null, memberId: null },
     });
-    const spent = { take: () => false, deferred: 0 };
+    const spent = { take: () => false, refund: () => {}, deferred: 0 };
     await expect(d.p.applyPayment(d.payment, null, { mailBudget: spent })).resolves.toBe("application_approved");
     expect(d.treasury.registerPayment).toHaveBeenCalled();
     expect(d.sendReceiptEmail).not.toHaveBeenCalled();
     expect(d.auditMock).toHaveBeenCalledWith(expect.objectContaining({
       detail: expect.objectContaining({ emailed: "deferred" }),
     }));
+  });
+
+  // El tope es de correos ENVIADOS, no de intentos: con 37 emails cargados
+  // sobre 278 socios, un lote de socios sin casilla lo agotaría sin haber
+  // mandado uno solo y diferiría justo a los que sí tienen dirección.
+  it("un socio sin casilla no gasta cupo: el lugar vuelve al pote", async () => {
+    const d = deps({ subscription: { memberId: 14, applicationId: null } });
+    d.sendReceiptEmail.mockResolvedValue({ sent: false, reason: "no_email" });
+    const budget = makeMailBudget(1);
+    await expect(d.p.applyPayment(d.payment, "pre-1", { mailBudget: budget })).resolves.toBe("debit_applied");
+    await expect(d.p.applyPayment(d.payment, "pre-1", { mailBudget: budget })).resolves.toBe("debit_applied");
+    // Dos intentos con un tope de 1, y ninguno se difirió: no salió ningún correo.
+    expect(d.sendReceiptEmail).toHaveBeenCalledTimes(2);
+    expect(budget.deferred).toBe(0);
+  });
+
+  it("un envío que falla SÍ gasta cupo: hubo intento", async () => {
+    const d = deps({ subscription: { memberId: 14, applicationId: null } });
+    d.sendReceiptEmail.mockResolvedValue({ sent: false, reason: "error", code: "ECONN" });
+    const budget = makeMailBudget(1);
+    await d.p.applyPayment(d.payment, "pre-1", { mailBudget: budget });
+    await d.p.applyPayment(d.payment, "pre-1", { mailBudget: budget });
+    expect(d.sendReceiptEmail).toHaveBeenCalledTimes(1);
+    expect(budget.deferred).toBe(1);
   });
 });
 

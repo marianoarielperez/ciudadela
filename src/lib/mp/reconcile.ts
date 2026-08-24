@@ -133,10 +133,17 @@ export function makeReconcile(deps: Deps) {
         orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0,
         amountDivergent: 0, planDivergent: 0, deferred: 0, errors: [], errorsOmitted: 0,
       };
-      // Un presupuesto POR CORRIDA: lo que exceda el tope queda para la
-      // siguiente (o para el botón "Reenviar" del recibo). Vive acá y no en el
-      // procesador porque el procesador es un singleton de proceso. Topea el
-      // AVISO, nunca la imputación: el cobro se asienta igual.
+      // Un presupuesto POR CORRIDA. Vive acá y no en el procesador porque el
+      // procesador es un singleton de proceso. Topea el AVISO, nunca la
+      // imputación: el cobro se asienta igual.
+      //
+      // Lo diferido NO vuelve en la corrida siguiente: mañana `hasLocal` ve el
+      // pago ya asentado y hace `continue` antes de llegar al mail. Tampoco
+      // aparece entre los avisos fallidos —un diferido no llega a
+      // `sendReceiptEmail` y por eso no escribe fila de `Notification`—. Se
+      // resuelve a mano y no con un barrido: `/admin/salud` lista los recibos
+      // sin enviar y cada uno tiene su botón "Reenviar por email"; mientras
+      // tanto el socio lo tiene en `/mi/cuenta` desde que se emite.
       const mailBudget = makeMailBudget();
       // Al summary va el paso y LA CAUSA (status/code/message, ya enmascarados
       // por `describeMpError`). Los ids y el prefijo `mp:` van sólo al log

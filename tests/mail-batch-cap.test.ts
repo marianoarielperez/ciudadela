@@ -26,8 +26,27 @@ describe("makeMailBudget", () => {
   it("sin consumo, cero diferidos", () => {
     expect(makeMailBudget(2).deferred).toBe(0);
   });
+  // El tope es de correos ENVIADOS, no de intentos: con 37 emails cargados
+  // sobre 278 socios, un lote de socios sin casilla lo agotaría sin mandar uno.
+  it("un lugar devuelto vuelve al pote", () => {
+    const b = makeMailBudget(1);
+    expect(b.take()).toBe(true);
+    b.refund();
+    expect(b.take()).toBe(true);
+    expect(b.take()).toBe(false);
+    expect(b.deferred).toBe(1);
+  });
+  it("un refund de más no regala cupo", () => {
+    const b = makeMailBudget(1);
+    b.refund();
+    b.refund();
+    expect(b.take()).toBe(true);
+    expect(b.take()).toBe(false);
+  });
   it("el presupuesto ilimitado no cuenta nada", () => {
     for (let i = 0; i < 100; i++) expect(UNLIMITED_MAIL_BUDGET.take()).toBe(true);
+    UNLIMITED_MAIL_BUDGET.refund();
+    expect(UNLIMITED_MAIL_BUDGET.take()).toBe(true);
     expect(UNLIMITED_MAIL_BUDGET.deferred).toBe(0);
   });
 });

@@ -147,8 +147,23 @@ entorno de prueba funcionando. Se loguea como hoy y no ensucia la pantalla de sa
 
 **7.3 — Tope por corrida.** Los crons que envían (recordatorio, y la conciliación
 cuando emite recibos en lote) aceptan un techo de envíos por corrida
-(`MAIL_BATCH_CAP`, default 50): lo que excede queda para la corrida siguiente y el
-summary lo dice (`deferred: N`). Motivo documentado: el 23/08 un solo socio recibió
+(`MAIL_BATCH_CAP`, default 50): lo que excede se difiere y el summary lo dice
+(`deferred: N`).
+
+**Corrección del 24/08/2026 (enmienda del operador).** La redacción original decía
+que lo diferido "queda para la corrida siguiente", y **es falso** para los recibos:
+la conciliación saltea los pagos que ya tiene asentados **antes** de llegar al mail
+(`hasLocal`), así que un recibo diferido **no se reintenta nunca** por su cuenta.
+Tampoco lo levanta §7.5: un diferido no llega a `sendReceiptEmail` y por eso no
+escribe ninguna fila de `Notification`, ni `sent` ni `failed`.
+
+Decisión: **no** se agrega barrido automático —un reenvío masivo es exactamente lo
+que el tope vino a evitar, y el diferido es raro (ocurrió una vez, con los 24
+recibos del 23/08)—. En su lugar, **`/admin/salud` (§8) lista los recibos sin
+enviar con su botón de reenvío**, y el operador decide. El socio, mientras tanto,
+tiene el recibo disponible en `/mi/cuenta` desde el momento en que se emite. Para
+el recordatorio de vencimiento (§5) la frase original **sí** es cierta: su dedupe
+es por fila de `Notification`, así que lo diferido entra en la corrida siguiente. Motivo documentado: el 23/08 un solo socio recibió
 24 recibos de golpe; con 160 socios y sin allowlist, un backlog son cientos de
 correos en minutos contra la cuota de Brevo.
 
@@ -194,6 +209,11 @@ Sección nueva del grupo **Sistema** (`nav.ts` + icono en el Record exhaustivo d
    `detail` ya trae todo (`webhook-processor.ts:271-272`). Sin tabla nueva.
 5. **Avisos fallidos**: las `Notification.failed` (índice nuevo
    `notifications(status)`), con reenvío por entidad (§7.5).
+6. **Recibos sin enviar** (enmienda del 24/08/2026, ver §7.3): los `Receipt` con
+   `emailedAt` en null y socio con email, que es donde caen los diferidos por el
+   tope. `emailedAt = null` es ambiguo —también lo dejan así el socio sin casilla y
+   el envío que falló—, así que la pantalla distingue los tres casos y ofrece
+   reenviar sólo donde tiene sentido.
 
 **D3 resuelta**: tablero de una mirada. El diagnóstico fino sigue en PM2 y en las
 tablas; la pantalla dice QUÉ está mal y desde cuándo, con el dato mínimo para ir a

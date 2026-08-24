@@ -77,7 +77,12 @@ export async function linkSubscriptionAction(_prev: State, formData: FormData): 
   for (const a of result.applied) {
     if (!mailBudget.take()) continue;
     try {
-      if ((await sendReceiptEmail(a.receiptId)).sent) emailed++;
+      const r = await sendReceiptEmail(a.receiptId);
+      if (r.sent) emailed++;
+      // Sin correo no se gasta cupo: el tope es de correos enviados, no de
+      // intentos (ver `MailBudget.refund`). Con 37 emails cargados sobre 278
+      // socios, un lote de socios sin casilla lo agotaría sin mandar nada.
+      else if (r.reason === "no_email" || r.reason === "voided") mailBudget.refund();
     } catch (e) {
       // Best-effort, pero no invisible: sin esta línea el único rastro del
       // fallo es el `emailed` del asiento, que no dice cuál recibo ni por qué.

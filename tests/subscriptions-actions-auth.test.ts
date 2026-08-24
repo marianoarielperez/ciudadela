@@ -98,6 +98,27 @@ describe("linkSubscriptionAction", () => {
     }
   });
 
+  // Mismo lote, pero el socio no tiene casilla: sin correo no se gasta cupo, o
+  // el tope mordería por la razón equivocada (37 emails sobre 278 socios).
+  it("los recibos de un socio sin casilla no consumen el tope", async () => {
+    process.env.MAIL_BATCH_CAP = "1";
+    try {
+      vi.mocked(sendReceiptEmail).mockResolvedValue({ sent: false, reason: "no_email" });
+      link.mockResolvedValue({
+        ok: true, applied: [{ paymentId: 8, receiptId: 9 }, { paymentId: 10, receiptId: 11 }, { paymentId: 12, receiptId: 13 }],
+        unapplied: 0, amount: 6000, status: "authorized", autoDebit: true,
+      });
+      await linkSubscriptionAction({}, form());
+      expect(sendReceiptEmail).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(audit).mock.calls[0][0]).toMatchObject({
+        detail: expect.objectContaining({ emailed: 0, deferred: 0 }),
+      });
+    } finally {
+      delete process.env.MAIL_BATCH_CAP;
+      vi.mocked(sendReceiptEmail).mockResolvedValue({ sent: true });
+    }
+  });
+
   it("un rechazo del vinculador se muestra tal cual y no se asienta nada", async () => {
     link.mockResolvedValue({ ok: false, error: "Esa suscripción ya está vinculada." });
     expect(await linkSubscriptionAction({}, form())).toEqual({ error: "Esa suscripción ya está vinculada." });

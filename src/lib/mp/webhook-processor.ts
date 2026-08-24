@@ -221,10 +221,19 @@ export function makeWebhookProcessor(deps: Deps) {
   async function emailReceipt(receiptId: number, budget: MailBudget): Promise<string> {
     // El tope se consulta ANTES de leer el PDF: diferir tiene que ser barato.
     // Un recibo diferido no se pierde — se manda desde su propia pantalla con
-    // "Reenviar por email", que es el reintento por entidad del proyecto.
+    // "Reenviar por email", que es el reintento por entidad del proyecto, y
+    // `/admin/salud` lista los que quedaron sin enviar.
     if (!budget.take()) return "deferred";
     try {
       const r = await deps.sendReceiptEmail(receiptId);
+      // No hubo correo: el lugar vuelve al pote. El tope es de correos
+      // ENVIADOS, no de intentos — con 37 emails cargados sobre 278 socios, un
+      // lote de socios sin casilla lo agotaría sin mandar nada. `error` NO se
+      // devuelve: ahí sí hubo intento, y si el SMTP está caído conviene que el
+      // tope corte igual. (Una vez agotado el presupuesto ya no se distingue:
+      // los diferidos posteriores pueden incluir socios sin casilla, que de
+      // todos modos no iban a recibir nada.)
+      if (!r.sent && (r.reason === "no_email" || r.reason === "voided")) budget.refund();
       return r.sent ? "sent" : r.reason;
     } catch (e) {
       // `sendReceiptEmail` es best-effort por contrato, pero si algún día tira,
@@ -399,6 +408,12 @@ export function makeWebhookProcessor(deps: Deps) {
     const app = await deps.db.application.findUnique({ where: { id: applicationId } });
     if (app) {
       // Best-effort: el estado ya cambió; un SMTP caído no puede des-aceptar.
+      //
+      // Este email NO pasa por `budget` a propósito. El tope es para los lotes
+      // —decenas de recibos del mismo socio— y un recibo diferido se reenvía
+      // desde su pantalla. La bienvenida es de una sola vez y no tiene reenvío:
+      // diferirla sería perderla para siempre. Además es una por alta, así que
+      // no puede haber lote.
       try {
         await deps.mailer.sendToApplication({
           applicationId: app.id, to: app.email, type: "application_result",

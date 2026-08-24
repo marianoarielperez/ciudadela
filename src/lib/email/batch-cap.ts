@@ -19,7 +19,17 @@ export function mailBatchCap(raw: string | undefined = process.env.MAIL_BATCH_CA
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAIL_BATCH_CAP;
 }
 
-export type MailBudget = { take(): boolean; readonly deferred: number };
+export type MailBudget = {
+  /** Pide un lugar. Se consulta ANTES de leer el PDF: diferir tiene que ser barato. */
+  take(): boolean;
+  /** Devuelve al pote un lugar que no se usó, porque NO hubo correo (el socio no
+   *  tiene casilla, el recibo está anulado). El tope es de correos ENVIADOS, no
+   *  de intentos: con el padrón real —37 emails cargados sobre 278 socios— un
+   *  lote de socios sin casilla agotaría el presupuesto sin haber mandado nada y
+   *  diferiría justo a los que sí tienen dirección. */
+  refund(): void;
+  readonly deferred: number;
+};
 
 export function makeMailBudget(cap: number = mailBatchCap()): MailBudget {
   let used = 0;
@@ -33,6 +43,10 @@ export function makeMailBudget(cap: number = mailBatchCap()): MailBudget {
       used++;
       return true;
     },
+    refund() {
+      // Nunca por debajo de cero: un `refund()` de más no puede regalar cupo.
+      if (used > 0) used--;
+    },
     get deferred() {
       return deferred;
     },
@@ -42,4 +56,4 @@ export function makeMailBudget(cap: number = mailBatchCap()): MailBudget {
 /** El camino de UN solo email (webhook de un cobro, botón del panel) no cuenta:
  *  ahí el tope no protege de nada y convertiría un envío legítimo en un
  *  diferido invisible. */
-export const UNLIMITED_MAIL_BUDGET: MailBudget = { take: () => true, deferred: 0 };
+export const UNLIMITED_MAIL_BUDGET: MailBudget = { take: () => true, refund: () => {}, deferred: 0 };
