@@ -25,13 +25,14 @@ import { redirect } from "next/navigation";
 import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
-import { memberService } from "@/lib/members/service";
+import { CATEGORY_LABELS } from "@/lib/members/labels";
+import { withdrawWithDebits } from "@/lib/members/withdraw-with-debits";
 import {
   createsNewMinute, describeMinuteSelection, discardUnusedMinute, minuteSelectionSchema,
   resolveMinuteId,
 } from "@/lib/members/minute-form";
 import { arrearsConfirmToken, type ArrearsConfirmTarget } from "@/lib/treasury/arrears-confirm";
-import { ARREARS_THRESHOLD } from "@/lib/treasury/rules";
+import { ACCRUING_CATEGORIES, ARREARS_THRESHOLD } from "@/lib/treasury/rules";
 
 const BASE = "/admin/tesoreria/deudores";
 
@@ -49,6 +50,11 @@ type State = {
   error?: string;
   declared?: number;
   failures?: Array<{ memberId: number; name: string; error: string }>;
+  /** Cesanteados a los que NO se les pudo cortar el débito en Mercado Pago.
+   *  Balde propio y no `failures`: meterlos ahí diría que la cesantía falló
+   *  sobre alguien que SÍ quedó cesante, y el operador leería que tiene que
+   *  repetir una acción que ya se hizo. */
+  debitFailures?: Array<{ memberId: number; name: string; count: number }>;
   confirm?: {
     token: string;
     minuteLabel: string;
@@ -95,6 +101,8 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
     select: {
       id: true,
       fullName: true,
+      // REG-15: la categoría decide si la cesantía por mora lo alcanza.
+      category: true,
       memberships: { select: { memberNumber: true, book: { select: { status: true } } } },
     },
     orderBy: { id: "asc" },
@@ -151,10 +159,25 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
   // puede fijar el cliente si le pega directo al origen.
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   const failures: NonNullable<State["failures"]> = [];
+  const debitFailures: NonNullable<State["debitFailures"]> = [];
   let declared = 0;
   // En serie: cada baja es su propia transacción y el operador tiene que poder
   // leer los fallos en el mismo orden en que ve las filas.
   for (const m of members) {
+    // REG-15 (Art. 9 inc. c): la cesantía por mora alcanza a activos y
+    // colaboradores. El adherente aporta voluntariamente y su deuda no lo hace
+    // cesante — hasta la 4C la pantalla le ofrecía la casilla igual y esta
+    // acción lo habría dado de baja. Se revalida acá y no sólo en la pantalla:
+    // esto expulsa gente de la asociación y un POST armado a mano no puede
+    // saltearlo.
+    if (!ACCRUING_CATEGORIES.includes(m.category)) {
+      failures.push({
+        memberId: m.id,
+        name: m.fullName,
+        error: `${CATEGORY_LABELS[m.category]}: la cesantía por mora sólo alcanza a socios activos y colaboradores (Art. 9 inc. c).`,
+      });
+      continue;
+    }
     const pendingCount = await prisma.fee.count({ where: { memberId: m.id, status: "pending" } });
     if (pendingCount < ARREARS_THRESHOLD) {
       // El motivo dice cuántas debe DE VERDAD: "no cumple el umbral" dejaría al
@@ -167,16 +190,29 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
       continue;
     }
     try {
-      await memberService.withdraw({
+      // `withdrawWithDebits` y no `memberService.withdraw`: el lote es el que
+      // más socios da de baja de una vez, y hasta la 4C los dejaba a todos con
+      // el débito vivo. La cancelación corre DESPUÉS del commit de cada baja,
+      // nunca dentro de la transacción.
+      const { debits } = await withdrawWithDebits.withdraw({
         memberId: m.id, reason: "arrears", minuteId, actorId,
         detail: `Cesantía por mora: ${pendingCount} cuotas adeudadas (Art. 9 inc. c)`,
       });
       declared++;
+      if (debits.failed.length > 0) {
+        debitFailures.push({ memberId: m.id, name: m.fullName, count: debits.failed.length });
+      }
       // El servicio no audita: eso vive en esta capa, que es la única que ve la
-      // IP del operador. Ids y conteos, nunca nombres ni DNIs (Ley 25.326).
+      // IP del operador. Ids y conteos, nunca nombres ni DNIs (Ley 25.326) — el
+      // preapprovalId es un id de Mercado Pago y va entero: es lo único que
+      // permite reintentar la cancelación a mano.
       await audit({
         userId: actorId, action: "arrears_declared", entity: "member", entityId: m.id,
-        detail: { minuteId, pendingCount }, ip,
+        detail: {
+          minuteId, pendingCount,
+          debitsCancelled: debits.cancelled, debitsFailed: debits.failed,
+        },
+        ip,
       });
     } catch (e) {
       failures.push({
@@ -202,9 +238,17 @@ export async function declareArrearsAction(_prev: State, formData: FormData): Pr
   // motivos. El `revalidatePath` es lo que hace que la tabla ya no ofrezca a
   // los que sí salieron (dejaron de ser deudores vigentes) y que el contador
   // del botón deje de contarlos.
-  if (failures.length > 0) {
+  //
+  // Y tampoco se redirige cuando la cesantía salió pero el débito quedó vivo:
+  // si redirigiéramos, ese aviso —el único que dice que a un ex socio se le
+  // sigue cobrando— se perdería.
+  if (failures.length > 0 || debitFailures.length > 0) {
     revalidatePath(BASE);
-    return { declared, failures };
+    return {
+      declared,
+      failures: failures.length > 0 ? failures : undefined,
+      debitFailures: debitFailures.length > 0 ? debitFailures : undefined,
+    };
   }
 
   // Fuera del try: `redirect` señaliza con una excepción y un catch se la comería.

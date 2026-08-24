@@ -21,6 +21,8 @@ import { SendVerificationForm } from "@/components/admin/send-verification-form"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormMessage } from "@/components/admin/form-message";
+import { AutoDebitForm } from "./auto-debit-form";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +37,17 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   );
 }
 
-export default async function SocioPage(props: { params: Promise<{ id: string }> }) {
+export default async function SocioPage(props: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await props.params;
+  // La baja redirige acá con `?debito=pendiente&n=` cuando Mercado Pago no
+  // aceptó cancelar el débito: la baja salió igual y el cobro sigue vivo, así
+  // que la ficha —la pantalla a la que el operador vuelve— tiene que decirlo.
+  const sp = await props.searchParams;
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const debitPending = one(sp.debito) === "pendiente" ? Number(one(sp.n) ?? 0) : 0;
   // El id llega de la URL: con "abc" o "1e9" Number() da NaN/no entero y Prisma
   // tiraría un error técnico en inglés en vez de un 404.
   const memberId = Number(id);
@@ -104,6 +115,23 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
 
   return (
     <div className="space-y-4">
+      {debitPending > 0 && (
+        <FormMessage kind="warning" box>
+          {`La baja quedó asentada, pero Mercado Pago no aceptó cancelar ${
+            debitPending === 1 ? "el débito automático" : `${debitPending} débitos automáticos`
+          }. `}
+          <Link
+            className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            href="/admin/tesoreria/suscripciones"
+          >
+            Revisalo en Suscripciones
+          </Link>
+          {debitPending === 1
+            ? " — mientras siga vivo, se le va a seguir cobrando."
+            : " — mientras sigan vivos, se le va a seguir cobrando."}
+        </FormMessage>
+      )}
+
       <PageHeader
         title={member.fullName}
         breadcrumb={[
@@ -176,7 +204,15 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
                     <Field label="Domicilio" value={address || null} />
                     <Field label="Barrio" value={member.neighborhood} />
                     <Field label="Email" value={member.email ? `${member.email} (${EMAIL_STATUS_LABELS[member.emailStatus]})` : null} />
-                    <Field label="Débito automático" value={member.autoDebit ? "Sí" : "No"} />
+                    {/* El único flag de la ficha que se corrige desde acá: tres
+                        caminos lo suben y ninguno lo bajaba. Ocupa dos celdas
+                        porque lleva la explicación de qué significa. */}
+                    <div className="col-span-2 md:col-span-1">
+                      <dt className="text-xs uppercase text-muted-foreground">Débito automático</dt>
+                      <dd className="mt-1">
+                        <AutoDebitForm memberId={member.id} autoDebit={member.autoDebit} />
+                      </dd>
+                    </div>
                     <Field label="Fecha de ingreso" value={formatDateAR(member.joinedAt)} />
                     <Field label="Fecha de egreso" value={member.leftAt ? formatDateAR(member.leftAt) : null} />
                     {member.withdrawalReason && <Field label="Motivo de baja" value={REASON_LABELS[member.withdrawalReason]} />}

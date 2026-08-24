@@ -5,13 +5,21 @@ import { describe, expect, it, vi } from "vitest";
 // `actorId`, y cada `mockResolvedValueOnce` del cuerpo no compila.
 type AdminDouble = { ok: boolean; actorId?: number; reason?: string; error?: string };
 type MemberDouble = {
-  id: number; fullName: string; status: string;
+  id: number; fullName: string; status: string; category: string;
   memberships?: { memberNumber: number; book: { status: string } }[];
 };
 type FeeGroup = { memberId: number; _count: { _all: number } };
+// Sin este tipo, `cancelled: []` infiere `never[]` y ningún `mockResolvedValueOnce`
+// con un preapprovalId adentro compila.
+type DebitsDouble = {
+  debits: { cancelled: string[]; failed: Array<{ preapprovalId: string; code: string }> };
+};
 
 const mocks = vi.hoisted(() => ({
-  withdraw: vi.fn(),
+  // El lote pasa por `withdrawWithDebits`, no por `memberService.withdraw`: es
+  // el camino que además CANCELA el débito automático en Mercado Pago. Por
+  // defecto devuelve el desenlace feliz (nada abierto).
+  withdraw: vi.fn(async (): Promise<DebitsDouble> => ({ debits: { cancelled: [], failed: [] } })),
   audit: vi.fn(async () => {}),
   admin: vi.fn(async (): Promise<AdminDouble> => ({ ok: false, reason: "not_admin", error: "Necesitás permisos de administrador." })),
   prisma: {
@@ -38,7 +46,9 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
-vi.mock("@/lib/members/service", () => ({ memberService: { withdraw: mocks.withdraw } }));
+vi.mock("@/lib/members/withdraw-with-debits", () => ({
+  withdrawWithDebits: { withdraw: mocks.withdraw },
+}));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/auth/require-admin", () => ({ requireAdmin: mocks.admin }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -82,14 +92,15 @@ describe("declareArrearsAction", () => {
   it("da de baja por mora a cada seleccionado con ≥4 pendientes, audita y redirige", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.prisma.member.findMany.mockResolvedValueOnce([
-      { id: 1, fullName: "A", status: "active" }, { id: 2, fullName: "B", status: "active" },
+      { id: 1, fullName: "A", status: "active", category: "active" },
+      { id: 2, fullName: "B", status: "active", category: "active" },
     ]);
     mocks.prisma.fee.count.mockResolvedValueOnce(5).mockResolvedValueOnce(3);
-    mocks.withdraw.mockResolvedValue({});
+    mocks.withdraw.mockResolvedValue({ debits: { cancelled: [], failed: [] } });
     await declareArrearsAction({}, confirmed(form("1,2"), [1, 2], { minuteId: 3 }));
     expect(mocks.withdraw).toHaveBeenCalledTimes(1);
     expect(mocks.withdraw).toHaveBeenCalledWith(expect.objectContaining({ memberId: 1, reason: "arrears", minuteId: 3, actorId: 9 }));
-    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "arrears_declared", entity: "member", entityId: 1, detail: { minuteId: 3, pendingCount: 5 } }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "arrears_declared", entity: "member", entityId: 1, detail: { minuteId: 3, pendingCount: 5, debitsCancelled: [], debitsFailed: [] } }));
     // El 2 no llega a 4 cuotas: queda como fallo y no se redirige (éxito parcial).
     expect(redirect).not.toHaveBeenCalled();
   });
@@ -106,7 +117,8 @@ describe("declareArrearsAction", () => {
     mocks.withdraw.mockClear();
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     const roll: MemberDouble[] = [
-      { id: 5, fullName: "C", status: "active" }, { id: 6, fullName: "D", status: "active" },
+      { id: 5, fullName: "C", status: "active", category: "active" },
+      { id: 6, fullName: "D", status: "active", category: "collaborator" },
     ];
     mocks.prisma.member.findMany.mockImplementationOnce(async (args: { where: { id: { in: number[] } } }) =>
       roll.filter((m) => args.where.id.in.includes(m.id)),
@@ -135,7 +147,7 @@ describe("declareArrearsAction", () => {
     mocks.withdraw.mockClear();
     mocks.audit.mockClear();
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    const roll: MemberDouble[] = [{ id: 7, fullName: "E", status: "active" }];
+    const roll: MemberDouble[] = [{ id: 7, fullName: "E", status: "active", category: "active" }];
     mocks.prisma.member.findMany.mockImplementationOnce(async (args: { where: { id: { in: number[] } } }) =>
       roll.filter((m) => args.where.id.in.includes(m.id)),
     );
@@ -159,7 +171,9 @@ describe("declareArrearsAction", () => {
   it("descarta el acta que creó este lote si no se declaró ninguna cesantía", async () => {
     mocks.withdraw.mockClear();
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.prisma.member.findMany.mockResolvedValueOnce([{ id: 1, fullName: "Perez Ana", status: "active" }]);
+    mocks.prisma.member.findMany.mockResolvedValueOnce([
+      { id: 1, fullName: "Perez Ana", status: "active", category: "active" },
+    ]);
     mocks.prisma.fee.count.mockResolvedValueOnce(2);
     mocks.prisma.minute.create.mockResolvedValueOnce({ id: 77 });
     const newMinute = {
@@ -188,8 +202,8 @@ describe("declareArrearsAction", () => {
 // baja recién ocurre en el segundo.
 describe("declareArrearsAction — paso de confirmación", () => {
   const roll: MemberDouble[] = [
-    { id: 1, fullName: "Perez Ana", status: "active", memberships: [{ memberNumber: 41, book: { status: "open" } }] },
-    { id: 2, fullName: "Gomez Luis", status: "active", memberships: [{ memberNumber: 12, book: { status: "closed" } }] },
+    { id: 1, fullName: "Perez Ana", status: "active", category: "active", memberships: [{ memberNumber: 41, book: { status: "open" } }] },
+    { id: 2, fullName: "Gomez Luis", status: "active", category: "active", memberships: [{ memberNumber: 12, book: { status: "closed" } }] },
   ];
 
   function byId() {
@@ -321,5 +335,92 @@ describe("arrearsConfirmToken", () => {
       minuteNew: "1", minuteType: "board", minuteNumber: 3,
       minuteDate: "2026-08-20", minuteDescription: undefined,
     })).not.toBe(base);
+  });
+});
+
+// ── REG-15 y el tercer desenlace ──────────────────────────────────────────────
+//
+// Dos cosas que la 4C agrega al lote. La primera es estatutaria: la cesantía por
+// mora alcanza a activos y colaboradores (Art. 9 inc. c), y hasta acá la
+// pantalla le ofrecía la casilla al adherente y esta acción lo daba de baja. La
+// segunda es de plata: la cesantía puede salir y el débito quedar vivo, y eso no
+// es "no se pudo cesantear".
+describe("declareArrearsAction — REG-15 y el débito que queda vivo", () => {
+  function roll(members: MemberDouble[]) {
+    mocks.prisma.member.findMany.mockImplementationOnce(async (args: { where: { id: { in: number[] } } }) =>
+      members.filter((m) => args.where.id.in.includes(m.id)),
+    );
+  }
+
+  it("no cesantea a un adherente por más deuda que tenga", async () => {
+    mocks.withdraw.mockClear();
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    roll([{ id: 3, fullName: "Adherente Ana", status: "active", category: "adherent" }]);
+    mocks.prisma.fee.count.mockResolvedValueOnce(12);
+    const r = await declareArrearsAction({}, confirmed(form("3"), [3], { minuteId: 3 }));
+    expect(mocks.withdraw).not.toHaveBeenCalled();
+    expect(r.failures?.[0].error).toContain("Art. 9 inc. c");
+    // Y el motivo dice qué categoría es: "no corresponde" a secas dejaría al
+    // operador sin saber por qué ese socio sí y este no.
+    expect(r.failures?.[0].error).toContain("Adherente");
+  });
+
+  it("el adherente no frena al activo que va en el mismo lote", async () => {
+    mocks.withdraw.mockClear();
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    roll([
+      { id: 3, fullName: "Adherente Ana", status: "active", category: "adherent" },
+      { id: 4, fullName: "Activo Luis", status: "active", category: "active" },
+    ]);
+    // Una sola lectura de cuotas: la del adherente ni se pide (se corta antes).
+    mocks.prisma.fee.count.mockResolvedValueOnce(6);
+    const r = await declareArrearsAction({}, confirmed(form("3,4"), [3, 4], { minuteId: 3 }));
+    expect(mocks.withdraw).toHaveBeenCalledTimes(1);
+    expect(mocks.withdraw).toHaveBeenCalledWith(expect.objectContaining({ memberId: 4 }));
+    expect(r.declared).toBe(1);
+  });
+
+  it("cesantía OK con el débito vivo: balde propio, no `failures`", async () => {
+    mocks.withdraw.mockClear();
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    roll([{ id: 4, fullName: "Activo Luis", status: "active", category: "active" }]);
+    mocks.prisma.fee.count.mockResolvedValueOnce(6);
+    mocks.withdraw.mockResolvedValueOnce({
+      debits: { cancelled: [], failed: [{ preapprovalId: "pre-1", code: "internal_error" }] },
+    });
+    const r = await declareArrearsAction({}, confirmed(form("4"), [4], { minuteId: 3 }));
+    expect(r.declared).toBe(1);
+    // Meterlo en `failures` diría que la cesantía falló sobre alguien que SÍ
+    // quedó cesante: el operador repetiría una acción ya hecha.
+    expect(r.failures).toBeUndefined();
+    expect(r.debitFailures).toEqual([{ memberId: 4, name: "Activo Luis", count: 1 }]);
+    // Y NO se redirige: el aviso —el único que dice que a un ex socio se le
+    // sigue cobrando— se perdería en el querystring.
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("el asiento lleva qué débitos se cancelaron y cuáles quedaron abiertos", async () => {
+    mocks.audit.mockClear();
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    roll([{ id: 4, fullName: "Activo Luis", status: "active", category: "active" }]);
+    mocks.prisma.fee.count.mockResolvedValueOnce(6);
+    mocks.withdraw.mockResolvedValueOnce({
+      debits: { cancelled: ["pre-9"], failed: [] },
+    });
+    await declareArrearsAction({}, confirmed(form("4"), [4], { minuteId: 3 }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "arrears_declared",
+      detail: { minuteId: 3, pendingCount: 6, debitsCancelled: ["pre-9"], debitsFailed: [] },
+    }));
+  });
+
+  it("cesantía OK y débito cancelado: redirige como siempre", async () => {
+    vi.mocked(redirect).mockClear();
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    roll([{ id: 4, fullName: "Activo Luis", status: "active", category: "active" }]);
+    mocks.prisma.fee.count.mockResolvedValueOnce(6);
+    mocks.withdraw.mockResolvedValueOnce({ debits: { cancelled: ["pre-9"], failed: [] } });
+    await declareArrearsAction({}, confirmed(form("4"), [4], { minuteId: 3 }));
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/deudores?declaradas=1");
   });
 });

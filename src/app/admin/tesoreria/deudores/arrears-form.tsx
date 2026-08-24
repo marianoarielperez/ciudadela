@@ -211,10 +211,15 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
 
       {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
 
+      {/* El titular del lote. La segunda frase sólo aparece si hubo alguien sin
+          declarar: desde que el débito vivo también corta el redirect, este
+          bloque se muestra con `failures` vacío y decía "0 quedaron sin
+          declarar". */}
       {state.declared !== undefined && state.declared > 0 && (
         <FormMessage kind="warning" box>
-          {`${state.declared} ${state.declared === 1 ? "cesantía declarada" : "cesantías declaradas"}. `}
-          {`${failures.length} ${failures.length === 1 ? "quedó" : "quedaron"} sin declarar.`}
+          {`${state.declared} ${state.declared === 1 ? "cesantía declarada" : "cesantías declaradas"}.`}
+          {failures.length > 0 &&
+            ` ${failures.length} ${failures.length === 1 ? "quedó" : "quedaron"} sin declarar.`}
         </FormMessage>
       )}
 
@@ -231,6 +236,35 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
               </li>
             ))}
           </ul>
+        </FormMessage>
+      )}
+
+      {/* El TERCER desenlace: la cesantía salió y el débito no. No va en
+          `failures` —ahí diría que la cesantía falló sobre alguien que sí quedó
+          cesante— y no puede perderse en un redirect: es el único aviso que dice
+          que a un ex socio se le sigue cobrando. */}
+      {state.debitFailures && state.debitFailures.length > 0 && (
+        <FormMessage kind="warning" box as="div">
+          <p className="font-medium">
+            Se declaró la cesantía, pero Mercado Pago no aceptó cancelar el débito automático:
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {state.debitFailures.map((f) => (
+              <li key={f.memberId}>
+                {f.name} — {f.count === 1 ? "1 débito sigue vivo" : `${f.count} débitos siguen vivos`}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1">
+            Mientras sigan vivos se les va a seguir cobrando:{" "}
+            <Link
+              className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              href="/admin/tesoreria/suscripciones"
+            >
+              cancelalos desde Suscripciones
+            </Link>
+            .
+          </p>
         </FormMessage>
       )}
 

@@ -24,6 +24,7 @@
 //
 // El servicio sigue revalidando todo: la pre-validación es para el libro y para
 // el mensaje, nunca la única defensa.
+import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -33,6 +34,7 @@ import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
 import { civilDateUtc } from "@/lib/dates";
 import { electionsOngoing, memberService } from "@/lib/members/service";
+import { withdrawWithDebits, type DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
 } from "@/lib/members/minute-form";
@@ -78,6 +80,15 @@ async function runAction(
     // Puede ser async: el reingreso necesita CONTAR las cuotas pendientes vivas
     // para el asiento, y esa cuenta es una lectura a la base.
     detail?: (member: Member, data: Data) => Record<string, unknown> | Promise<Record<string, unknown>>;
+    /** Lo que `detail` no puede ver: el RESULTADO de `run`. Se fusiona sobre el
+     *  `detail`. Lo usa la baja para asentar qué débitos se cancelaron y cuáles
+     *  quedaron abiertos — sin los ids, el asiento diría que algo falló sin
+     *  decir qué reintentar. */
+    detailFromResult?: (result: unknown) => Record<string, unknown>;
+    /** Querystring del redirect final, derivado de lo que devolvió `run`. Lo usa
+     *  la baja: si Mercado Pago no aceptó cancelar el débito, la ficha tiene que
+     *  decirlo — la baja salió igual y el cobro sigue vivo. */
+    redirectQuery?: (result: unknown) => string;
   },
 ): Promise<State> {
   const actor = await requireAdmin();
@@ -117,8 +128,9 @@ async function runAction(
     return { error: messageOf(e) };
   }
 
+  let result: unknown;
   try {
-    await opts.run({ actorId, memberId, minuteId }, member, data);
+    result = await opts.run({ actorId, memberId, minuteId }, member, data);
   } catch (e) {
     if (createdMinute) await discardUnusedMinute(prisma, minuteId);
     return { error: messageOf(e) };
@@ -130,11 +142,16 @@ async function runAction(
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actorId, action: opts.auditAction, entity: "member", entityId: memberId,
-    detail: { minuteId, ...(opts.detail ? await opts.detail(member, data) : {}) }, ip,
+    detail: {
+      minuteId,
+      ...(opts.detail ? await opts.detail(member, data) : {}),
+      ...(opts.detailFromResult ? opts.detailFromResult(result) : {}),
+    },
+    ip,
   });
 
   // Fuera del try: redirect() señaliza con una excepción y el catch se la comería.
-  redirect(`/admin/socios/${memberId}`);
+  redirect(`/admin/socios/${memberId}${opts.redirectQuery?.(result) ?? ""}`);
 }
 
 export async function withdrawAction(_p: State, formData: FormData): Promise<State> {
@@ -146,14 +163,30 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
     },
     {
       guard: (member) => canWithdraw(member),
+      // `withdrawWithDebits` y no `memberService.withdraw`: dejar de ser socio
+      // tiene que cortar el débito automático por el camino que sea (REG-16 no
+      // devenga más, así que un débito vivo le cobra a alguien que ya no es
+      // socio). La cancelación corre DESPUÉS del commit.
       run: ({ memberId, minuteId, actorId }, _member, data) =>
-        memberService.withdraw({
+        withdrawWithDebits.withdraw({
           memberId, minuteId, actorId,
           reason: data.reason as WithdrawalReason,
           detail: data.detail as string | undefined,
         }),
       auditAction: "member_withdraw",
       detail: (_m, data) => ({ reason: data.reason }),
+      // Los preapprovalIds SÍ van al asiento: `cancelFailed: true` sin decir QUÉ
+      // cancelar no le sirve a nadie, y el asiento es donde el operador va a
+      // buscar el id para reintentar en el panel de MP. Es un id de MP, no un
+      // dato personal (ni el `payerEmail` ni el DNI viajan acá).
+      detailFromResult: (r) => {
+        const d = (r as { debits: DebitCancellation }).debits;
+        return { debitsCancelled: d.cancelled, debitsFailed: d.failed };
+      },
+      redirectQuery: (r) => {
+        const failed = (r as { debits: DebitCancellation }).debits.failed.length;
+        return failed > 0 ? `?debito=pendiente&n=${failed}` : "";
+      },
     },
   );
 }
@@ -247,4 +280,50 @@ export async function readmitAction(_p: State, formData: FormData): Promise<Stat
       }),
     },
   );
+}
+
+// ── Corrección del flag de débito automático ──────────────────────────────────
+//
+// `Member.autoDebit` tiene tres escrituras y ninguna lo BAJA (padrón importado,
+// alta web, vinculación manual), y cuatro superficies lo muestran, incluida la
+// exportación que va a la Comisión. Hasta acá no había ningún camino para
+// corregirlo: un socio que dejó de pagar por débito hace tres años seguía
+// figurando con débito en la ficha y en el padrón.
+//
+// No pasa por `runAction`: no es una acción societaria. No hay acta, no hay
+// movimiento y no cambia el estado del socio — es la corrección de un dato de
+// ficha. Lo que sí lleva es auditoría, porque toca un dato que sale en la
+// exportación.
+const autoDebitSchema = z.object({
+  memberId: z.coerce.number("Socio inválido.").int("Socio inválido.").positive("Socio inválido."),
+  // El checkbox manda "on" o no manda nada; cualquier otra cosa es un POST a mano.
+  autoDebit: z.literal("on", { error: "Valor inválido." }).optional(),
+});
+
+/** El flag NO significa "tiene débito automático andando": significa que en
+ *  algún momento hubo intención de débito (ver `members/auto-debit.ts`). Por eso
+ *  esta acción no toca ninguna suscripción de Mercado Pago —no crea ni cancela
+ *  nada— y por eso el texto de la pantalla dice lo que dice. */
+export async function setAutoDebitAction(_p: State, formData: FormData): Promise<State> {
+  const actor = await requireAdmin();
+  if (!actor.ok) return { error: actor.error };
+  const parsed = parseForm(autoDebitSchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const to = parsed.data.autoDebit === "on";
+  const member = await prisma.member.findUnique({
+    where: { id: parsed.data.memberId }, select: { id: true, autoDebit: true },
+  });
+  if (!member) return { error: "El socio no existe." };
+  // Sin cambio no se escribe ni se audita: el formulario se puede reenviar
+  // (recarga, doble clic) y una auditoría de "false → false" es ruido en el
+  // único registro donde se busca quién tocó qué.
+  if (member.autoDebit === to) return {};
+  await prisma.member.update({ where: { id: member.id }, data: { autoDebit: to } });
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
+  await audit({
+    userId: actor.actorId, action: "member_auto_debit_set", entity: "member", entityId: member.id,
+    detail: { from: member.autoDebit, to }, ip,
+  });
+  revalidatePath(`/admin/socios/${member.id}`);
+  return {};
 }

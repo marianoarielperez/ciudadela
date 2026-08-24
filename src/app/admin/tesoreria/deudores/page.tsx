@@ -9,6 +9,7 @@
 //
 // El encabezado NO se escribe acá: lo pone el layout de Tesorería.
 import Link from "next/link";
+import type { MemberCategory } from "@/generated/prisma/client";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +23,7 @@ import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, STATUS_LABELS } from "@/lib/member
 import { prisma } from "@/lib/prisma";
 import { fetchDebtors, parseDebtorFilters } from "@/lib/treasury/debtors";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { ARREARS_THRESHOLD, type ArrearsLevel } from "@/lib/treasury/rules";
+import { ACCRUING_CATEGORIES, ARREARS_THRESHOLD, type ArrearsLevel } from "@/lib/treasury/rules";
 import { ArrearsForm } from "./arrears-form";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,17 @@ const LEVEL_LABEL: Record<ArrearsLevel, string> = {
   0: "Al día", 1: "1 cuota", 2: "En mora", 4: "Cesantía posible",
 };
 
+/** `arrearsLevel` cuenta cuotas y no sabe de categorías, así que un adherente con
+ *  4 o más llegaba al badge como "Cesantía posible" — la fila que la misma
+ *  pantalla se niega a ofrecer para tildar (REG-15). Su deuda es real y sigue
+ *  siendo mora; lo que no corresponde es prometer una cesantía que el estatuto no
+ *  habilita. Se corrige acá y no en `arrearsLevel` porque el nivel también manda
+ *  el color y lo leen otras pantallas: lo que cambia es lo que ESTA tabla dice. */
+function levelLabel(level: ArrearsLevel, category: MemberCategory): string {
+  if (level === 4 && !ACCRUING_CATEGORIES.includes(category)) return LEVEL_LABEL[2];
+  return LEVEL_LABEL[level];
+}
+
 export default async function DeudoresPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
@@ -58,7 +70,12 @@ export default async function DeudoresPage(props: {
     id: m.id,
     label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
-  const candidates = rows.filter((r) => r.pendingCount >= ARREARS_THRESHOLD).map((r) => r.memberId);
+  // REG-15: la casilla sólo para quien el estatuto habilita a cesantear. El
+  // adherente con deuda SIGUE siendo visible como deudor —su deuda es real— pero
+  // sin casilla: la cesantía por mora no lo alcanza.
+  const candidates = rows
+    .filter((r) => r.pendingCount >= ARREARS_THRESHOLD && ACCRUING_CATEGORIES.includes(r.category))
+    .map((r) => r.memberId);
   const hasFilters = Boolean(filters.level || filters.q);
   const declared = Array.isArray(sp.declaradas) ? sp.declaradas[0] : sp.declaradas;
 
@@ -90,11 +107,13 @@ export default async function DeudoresPage(props: {
         {rows.map((r) => (
           <TableRow key={r.memberId}>
             {/* La columna existe sólo si hay algo que tildar, y la casilla sólo
-                en las filas que el estatuto habilita: el que debe 3 cuotas no
-                tiene checkbox que tildar por error. */}
+                en las filas que el estatuto habilita: ni el que debe 3 cuotas ni
+                el adherente, cualquiera sea su deuda. La condición pregunta por
+                la lista ya calculada en vez de repetir el umbral, así no puede
+                divergir del filtro de arriba. */}
             {candidates.length > 0 && (
               <TableCell>
-                {r.pendingCount >= ARREARS_THRESHOLD && (
+                {candidates.includes(r.memberId) && (
                   <label className="flex min-h-11 items-center">
                     <input type="checkbox" name="ids" value={r.memberId} className="size-4" />
                     <span className="sr-only">Seleccionar a {r.fullName}</span>
@@ -117,7 +136,7 @@ export default async function DeudoresPage(props: {
               {r.debt !== null ? formatARS(r.debt) : "—"}
             </TableCell>
             <TableCell>{r.lastPaidAt ? formatDateAR(r.lastPaidAt) : "—"}</TableCell>
-            <TableCell><Badge variant={arrearsBadgeVariant(r.level)}>{LEVEL_LABEL[r.level]}</Badge></TableCell>
+            <TableCell><Badge variant={arrearsBadgeVariant(r.level)}>{levelLabel(r.level, r.category)}</Badge></TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -150,7 +169,9 @@ export default async function DeudoresPage(props: {
         >
           <option value="">Todos los deudores</option>
           <option value="2">En mora (2 o más)</option>
-          <option value="4">Candidatos a cesantía (4 o más)</option>
+          {/* "4 cuotas o más" y no "candidatos a cesantía": el filtro cuenta cuotas,
+              y desde REG-15 deber 4 no alcanza para ser candidato. */}
+          <option value="4">4 cuotas o más</option>
         </select>
         <Button type="submit" variant="secondary">Filtrar</Button>
       </form>
@@ -181,7 +202,9 @@ export default async function DeudoresPage(props: {
       {rows.length > 0 && (
         <p className="text-sm text-muted-foreground">
           {`${rows.length} ${rows.length === 1 ? "socio" : "socios"} con cuotas pendientes`}
-          {candidates.length > 0 && ` · ${candidates.length} con ${ARREARS_THRESHOLD} o más`}.
+          {/* "Candidatos" y no "con 4 o más": desde REG-15 la cuenta excluye a
+              los adherentes, que pueden deber 4 y no ser cesanteables. */}
+          {candidates.length > 0 && ` · ${candidates.length} ${candidates.length === 1 ? "candidato" : "candidatos"} a cesantía`}.
         </p>
       )}
 

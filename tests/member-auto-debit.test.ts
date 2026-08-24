@@ -76,8 +76,13 @@ describe("AUTO_DEBIT_WARNINGS", () => {
   // DESTINO de cada aviso —lo único que el operador tiene que poder hacer
   // después de leerlo— y el TIEMPO VERBAL, que es lo que distingue un hecho
   // verificado de una suposición del Excel de 2026.
-  it("la baja manda a cancelar en Mercado Pago; la categoría, al lote de Valores", () => {
-    expect(AUTO_DEBIT_WARNINGS.baja.subscription).toMatch(/cancelar la\s+suscripción a mano en el panel de Mercado Pago/);
+  it("la baja promete la cancelación y nombra la salida; la categoría, el lote de Valores", () => {
+    // Desde la 4C la baja SÍ cancela (`withdrawWithDebits`), así que el texto ya
+    // no puede decir "el sistema NO la cancela". Lo que sigue siendo cierto es
+    // que puede fallar, y ahí queda la cancelación a mano: el destino que el
+    // texto tiene que nombrar es Suscripciones, que es donde se reintenta.
+    expect(AUTO_DEBIT_WARNINGS.baja.subscription).toMatch(/el sistema la va a cancelar/);
+    expect(AUTO_DEBIT_WARNINGS.baja.subscription).toMatch(/Suscripciones/);
     expect(AUTO_DEBIT_WARNINGS.categoria.subscription).toMatch(/Valores de cuota/);
     // Y los cuatro nombran Mercado Pago, que es de dónde sale el cobro.
     for (const bySignal of Object.values(AUTO_DEBIT_WARNINGS)) {
@@ -94,6 +99,15 @@ describe("AUTO_DEBIT_WARNINGS", () => {
       expect(byAction.flag_only).toContain("Si ese débito todavía existe");
       expect(byAction.flag_only).not.toContain("le va a seguir cobrando la cuota");
     }
+  });
+
+  // La baja cancela lo que el sistema CONOCE: recorre `mp_subscriptions` por
+  // `memberId`. Prometerle la cancelación a un socio cuya única señal es el flag
+  // del padrón sería inventar un hecho, que es justo lo que estos textos vinieron
+  // a sacar de la pantalla.
+  it("la baja no le promete la cancelación al socio sin fila local", () => {
+    expect(AUTO_DEBIT_WARNINGS.baja.flag_only).toMatch(/no va a cancelar nada/);
+    expect(AUTO_DEBIT_WARNINGS.baja.flag_only).not.toMatch(/el sistema la va a cancelar/);
   });
 
   it("al socio con flag solo no lo manda al lote, que nunca lo va a listar", () => {

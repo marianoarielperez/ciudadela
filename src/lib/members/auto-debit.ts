@@ -1,15 +1,15 @@
 // El aviso que le dice al operador que la baja o el cambio de categoría que está
 // por registrar NO toca el débito automático del socio en Mercado Pago.
 //
-// El hecho que lo justifica: `withdrawAction` y `changeCategoryAction`
-// (admin/socios/[id]/actions.ts) escriben la ficha, el acta y la auditoría, y
-// nada más. Ninguna de las dos toca Mercado Pago, así que a un socio dado de
-// baja se le sigue debitando la cuota todos los meses y a uno recategorizado se
-// le sigue cobrando el monto viejo hasta que alguien haga algo. Lo que cambió
-// con el Módulo 4 es QUÉ hay que hacer: el monto ya se empuja desde el panel
-// (lote REG-34, /admin/tesoreria/valores), la cancelación sigue siendo a mano en
-// Mercado Pago. Es plata real de un vecino: la pantalla tiene que decirlo antes,
-// no el socio tres meses después.
+// El hecho que lo justifica: `changeCategoryAction` (admin/socios/[id]/actions.ts)
+// escribe la ficha, el acta y la auditoría, y nada más — a un recategorizado se
+// le sigue cobrando el monto viejo hasta que alguien corra el lote REG-34
+// (/admin/tesoreria/valores). La baja era igual hasta la 4C y ya no lo es:
+// `withdrawAction` pasa por `withdrawWithDebits` y cancela la suscripción
+// después del commit. Pero cancela lo que el sistema CONOCE y puede fallar sin
+// deshacer la baja, así que el aviso sigue haciendo falta: dice qué va a pasar y
+// qué queda por hacer si no pasa. Es plata real de un vecino: la pantalla tiene
+// que decirlo antes, no el socio tres meses después.
 //
 // QUÉ SE MIRA, y por qué las dos señales
 // --------------------------------------
@@ -96,15 +96,16 @@ export function autoDebitSignal(input: {
  *  debería hacer. Si alguno de estos caminos cambia, el texto cambia con él:
  *
  *  `baja`
- *   - Nada cancela la suscripción al dar de baja: `memberService.withdraw`
- *     (members/service.ts) escribe `Member`, los tokens, el `User` y el
- *     `Movement`, y no toca `MpSubscription` ni llama a MP. Los tres llamadores
- *     de `cancelPreapproval` son de SOLICITUDES (rechazo en
- *     admin/solicitudes/actions.ts, vencimiento en applications/cron.ts y
- *     preapproval huérfano en mp/reconcile.ts): ninguno mira socios. Que la
- *     cancelación automática llegue algún día está escrito (docs/06 §8 y la
- *     spec de 4B la ponen en el Módulo 5), pero HOY no existe: el texto habla
- *     del sistema que hay, y por eso no nombra ningún módulo.
+ *   - Desde la 4C la baja SÍ cancela: las dos pantallas que dan de baja —ésta y
+ *     el lote de cesantía por mora— pasan por `withdrawWithDebits`
+ *     (members/withdraw-with-debits.ts), que después del commit cancela en MP
+ *     toda suscripción del socio que no se pueda afirmar muerta. Sigue siendo
+ *     best-effort: si MP no contesta, la baja queda igual y el fallo se
+ *     REPORTA —la ficha con `?debito=pendiente`, el lote con su tercer balde—,
+ *     y por eso el texto promete la cancelación pero nombra la salida.
+ *   - Lo que la baja NO alcanza es una suscripción sin fila local: el módulo
+ *     recorre `mp_subscriptions` por `memberId`. De ahí que `flag_only` diga
+ *     que no va a cancelar nada.
  *   - Un cobro que llega con la suscripción vinculada resuelve como `debit`
  *     (mp/resolve.ts) y `registerPaymentCore` acota `n` a las cuotas pendientes
  *     porque el socio está `withdrawn` (treasury/service.ts): imputa la MÁS
@@ -135,19 +136,20 @@ export function autoDebitSignal(input: {
 export const AUTO_DEBIT_WARNINGS = {
   baja: {
     subscription:
-      "Este socio tiene una suscripción de débito automático viva en Mercado Pago. El sistema NO la " +
-      "cancela: mientras la suscripción siga activa, Mercado Pago le va a seguir cobrando la cuota " +
-      "todos los meses. Mientras le queden cuotas pendientes, cada cobro se imputa a la más vieja y " +
-      "emite recibo; cuando no queden, el cobro cae en Tesorería → Sin conciliar y esa plata, que ya " +
-      "salió de la cuenta del vecino, queda esperando una decisión. Para cortar el débito hay que " +
-      "cancelar la suscripción a mano en el panel de Mercado Pago.",
+      "Este socio tiene una suscripción de débito automático viva en Mercado Pago. Al registrar la " +
+      "baja el sistema la va a cancelar. Si Mercado Pago no acepta la cancelación, la ficha te lo " +
+      "avisa al volver y la suscripción queda para cancelar desde Tesorería → Suscripciones: " +
+      "mientras siga viva le va a seguir cobrando la cuota todos los meses. Un cobro que llegue " +
+      "antes de que se corte se imputa a la cuota pendiente más vieja y emite recibo; si no le " +
+      "quedan pendientes, cae en Tesorería → Sin conciliar y esa plata, que ya salió de la cuenta " +
+      "del vecino, queda esperando una decisión.",
     flag_only:
       "La ficha de este socio dice que tiene débito automático, pero el sistema no conoce ninguna " +
       "suscripción viva suya en Mercado Pago, ni vinculada ni cancelada: ese dato quedó viejo o " +
-      "nunca se vinculó. Si ese débito todavía existe, el sistema tampoco lo cancela, " +
-      "y cada cobro va a caer en Tesorería → Sin conciliar en lugar de imputarse a una cuota. " +
-      "Buscalo en el panel de Mercado Pago: si está vivo, cancelalo ahí; si no, no hay nada que " +
-      "hacer.",
+      "nunca se vinculó. La baja sólo cancela las suscripciones que el sistema conoce, así que acá " +
+      "no va a cancelar nada. Si ese débito todavía existe, cada cobro va a caer en Tesorería → " +
+      "Sin conciliar en lugar de imputarse a una cuota. Buscalo en el panel de Mercado Pago: si " +
+      "está vivo, cancelalo ahí; si no, no hay nada que hacer.",
   },
   categoria: {
     subscription:
