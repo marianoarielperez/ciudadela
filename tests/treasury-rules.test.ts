@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { civilDateUtc } from "@/lib/dates";
 import {
   accrues, allocate, arrearsLevel, cashConceptsFor, categoryPaysFee, coverageFloor, debtAmount,
-  feeAmountFor, firstAccrualPeriod, IMPORT_COVERAGE_FLOOR, revertFees,
+  feeAmountFor, firstAccrualPeriod, IMPORT_COVERAGE_FLOOR, periodsToAccrue, revertFees,
 } from "@/lib/treasury/rules";
 import { describePeriods, paymentConcept } from "@/lib/treasury/labels";
 
@@ -240,5 +240,51 @@ describe("labels", () => {
   });
   it("paymentConcept sin períodos cae en el genérico, nunca vacío", () => {
     expect(paymentConcept("cash", [])).toBe("Cuota social");
+  });
+});
+
+describe("periodsToAccrue", () => {
+  // Socio del padrón: ingresó mucho antes de la foto de deuda, así que su piso
+  // es IMPORT_COVERAGE_FLOOR = 2026-09.
+  const padron = { status: "active" as const, category: "active" as const, joinedAt: new Date("2019-03-10T12:00:00Z") };
+
+  it("desde el piso de cobertura hasta upTo inclusive", () => {
+    expect(periodsToAccrue(padron, "2026-09", [])).toEqual(["2026-09"]);
+  });
+  it("backfillea: primera corrida en noviembre crea septiembre Y octubre", () => {
+    expect(periodsToAccrue(padron, "2026-10", [])).toEqual(["2026-09", "2026-10"]);
+  });
+  it("nunca antes del piso: la foto de deuda cubre hasta agosto de 2026", () => {
+    expect(periodsToAccrue(padron, "2026-12", [])).not.toContain("2026-08");
+  });
+  it("saltea lo que ya existe, venga del import o del propio devengo", () => {
+    expect(periodsToAccrue(padron, "2026-11", ["2026-09", "2026-10"])).toEqual(["2026-11"]);
+  });
+  it("vacío si ya está todo cubierto (correr dos veces el mismo día no crea nada)", () => {
+    expect(periodsToAccrue(padron, "2026-09", ["2026-09"])).toEqual([]);
+  });
+  it("vacío si upTo es anterior al piso (alta futura: un socio de noviembre no devenga en octubre)", () => {
+    const nuevo = { ...padron, joinedAt: new Date("2026-11-05T12:00:00Z") };
+    expect(periodsToAccrue(nuevo, "2026-10", [])).toEqual([]);
+  });
+  it("REG-14: la cuota de ingreso cubre el mes de alta, así que arranca el mes siguiente", () => {
+    const alta = { ...padron, joinedAt: new Date("2026-09-21T12:00:00Z") };
+    expect(periodsToAccrue(alta, "2026-11", [])).toEqual(["2026-10", "2026-11"]);
+  });
+  it("REG-11: el reingreso manda sobre joinedAt — no se devengan los meses de baja", () => {
+    const reingreso = { ...padron, readmittedAt: new Date("2026-11-08T12:00:00Z") };
+    expect(periodsToAccrue(reingreso, "2026-12", [])).toEqual(["2026-12"]);
+  });
+  it("la baja no devenga: sus pendientes quedan congeladas (REG-16)", () => {
+    expect(periodsToAccrue({ ...padron, status: "withdrawn" }, "2026-12", [])).toEqual([]);
+  });
+  it("el suspendido SÍ devenga: la suspensión es disciplinaria, no eximición", () => {
+    expect(periodsToAccrue({ ...padron, status: "suspended" }, "2026-09", [])).toEqual(["2026-09"]);
+  });
+  it("sólo devengan las categorías obligadas (el adherente aporta voluntariamente)", () => {
+    for (const category of ["adherent", "cadet", "honorary", "lifetime"] as const) {
+      expect(periodsToAccrue({ ...padron, category }, "2026-12", [])).toEqual([]);
+    }
+    expect(periodsToAccrue({ ...padron, category: "collaborator" }, "2026-09", [])).toEqual(["2026-09"]);
   });
 });

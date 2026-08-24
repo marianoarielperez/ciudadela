@@ -2,7 +2,7 @@
 // sin fixtures. Los mensajes que llegan a pantalla viven en las actions.
 import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
 import { DEBT_SNAPSHOT_DATE } from "./debt-import";
-import { addMonths, comparePeriods, periodOf, type Period } from "./periods";
+import { addMonths, comparePeriods, periodOf, periodRange, type Period } from "./periods";
 
 export type FeeValueAmounts = { activeAmount: number; sharedAmount: number };
 
@@ -90,6 +90,34 @@ export function accrues(
   if (m.status === "withdrawn") return false;
   if (!ACCRUING_CATEGORIES.includes(m.category)) return false;
   return comparePeriods(period, firstAccrualPeriod(m.joinedAt)) >= 0;
+}
+
+/** Qué períodos hay que CREARLE a este socio para que su cuenta esté completa
+ *  hasta `upTo` inclusive. Vacío si la categoría no devenga, si está de baja, o
+ *  si ya está todo cubierto.
+ *
+ *  Es la contracara de `allocate`: las dos arrancan en `coverageFloor(m)`, así
+ *  que el mes que el devengo materializa es exactamente el mes que un pago
+ *  habría cubierto. Si cada una calculara su propio piso, el sistema le crearía
+ *  una cuota de un mes y le imputaría el pago a otro.
+ *
+ *  A diferencia de `accrues`, ésta SÍ sirve para recorrer el pasado: no
+ *  pregunta por un período suelto contra el status de hoy, sino que recorre un
+ *  rango cuyo piso ya conoce el reingreso (`readmittedAt`, que el llamador trae
+ *  del `Movement` más nuevo — REG-11 impide derivarlo de `joinedAt`).
+ *
+ *  `existing` son TODOS los períodos que el socio ya tiene, con cualquier
+ *  estado y cualquier origen: una cuota `import` manda sobre el devengo porque
+ *  ya representa ese mes, y una `paid` no puede volver a nacer pendiente. */
+export function periodsToAccrue(
+  m: { status: MemberStatus; category: MemberCategory; joinedAt: Date; readmittedAt?: Date | null },
+  upTo: Period,
+  existing: Period[],
+): Period[] {
+  if (m.status === "withdrawn") return [];
+  if (!ACCRUING_CATEGORIES.includes(m.category)) return [];
+  const taken = new Set(existing);
+  return periodRange(coverageFloor(m), upTo).filter((p) => !taken.has(p));
 }
 
 export const ARREARS_WARNING = 2; // alerta desde la 2ª (REG-15)
