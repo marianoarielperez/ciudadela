@@ -20,7 +20,9 @@ export default async function MiCuentaPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   // La página se autoriza sola (el layout corre en paralelo y no la protege).
-  const actor = await requireMember();
+  // El suspendido entra en modo lectura (spec M5 §5): ve su cuenta y puede
+  // pagar, igual que un socio vigente.
+  const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return null;
   const sp = await props.searchParams;
   // `?volvio=1` lo pone la `back_url` de la preferencia de Mercado Pago. El

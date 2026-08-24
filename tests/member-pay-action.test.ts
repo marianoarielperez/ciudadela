@@ -54,15 +54,29 @@ describe("startMemberPaymentAction", () => {
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
-  it("un socio suspendido recibe el motivo y no llega a Mercado Pago", async () => {
-    // `requireMember` resuelve contra la fila viva: el JWT de 8 h que todavía
-    // dice "socio" no alcanza para pagar desde el panel (REG-20).
+  it("un socio suspendido llega en modo lectura y puede pagar (REG-20 amendment)", async () => {
+    // Pagar es la única action que el modo lectura le permite (spec M5 §5):
+    // saldar deuda lo acerca a la rehabilitación. `requireMember` se lo
+    // devuelve `ok: true` con `suspension` cargado, no bloqueado.
     mocks.member.mockResolvedValueOnce({
-      ok: false, reason: "suspended",
-      error: "Tu condición de socio está suspendida: mientras dure la suspensión no podés operar desde tu panel (Art. 10). Comunicate con la vecinal.",
+      ok: true, userId: 42, memberId: 14, fullName: "Juan Pérez",
+      suspension: { from: new Date("2026-01-01"), to: null },
+    });
+    mocks.findUniqueOrThrow.mockResolvedValueOnce({ id: 14, category: "active" });
+    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 18000, unit: 6000, reference: "pago:14:3", expiresAt: new Date("2026-08-26T15:00:00.000Z") });
+    const r = await startMemberPaymentAction({}, form());
+    expect(r).toEqual({ redirectUrl: MP_URL });
+    expect(mocks.create).toHaveBeenCalledWith({ member: { id: 14, category: "active" }, n: 3 });
+  });
+
+  it("un socio dado de baja recibe el motivo y no llega a Mercado Pago", async () => {
+    // El cesante no llega nunca, ni siquiera en modo lectura (Art. 9).
+    mocks.member.mockResolvedValueOnce({
+      ok: false, reason: "withdrawn",
+      error: "Figurás con baja en el padrón, así que tu panel de socio no está disponible.",
     });
     const r = await startMemberPaymentAction({}, form());
-    expect(r.error).toContain("suspendida");
+    expect(r.error).toContain("baja");
     expect(mocks.create).not.toHaveBeenCalled();
   });
 

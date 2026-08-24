@@ -40,7 +40,7 @@ function Shell({
               <span className="block text-xs text-muted-foreground">Panel de socio</span>
             </span>
           </Link>
-          <SignOutButton />
+          <SignOutButton className="inline-flex min-h-12 items-center px-2 text-sm underline underline-offset-2 rounded-md outline-hidden focus-visible:ring-2 focus-visible:ring-ring" />
         </div>
         {showTabs && (
           <div className="mx-auto w-full max-w-2xl px-4">

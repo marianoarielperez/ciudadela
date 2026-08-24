@@ -36,8 +36,9 @@ export default async function MiHomePage() {
   // El layout no protege a la página: Next renderiza los dos en paralelo, así
   // que el `redirect` del layout no impide que el código de la página corra.
   // Cada pantalla (y cada server action) de socio se autoriza a sí misma; lo que
-  // se muestra sale de la ficha viva, no del token.
-  const actor = await requireMember()
+  // se muestra sale de la ficha viva, no del token. El suspendido entra en modo
+  // lectura (spec M5 §5): ve esta pantalla igual que cualquier socio vigente.
+  const actor = await requireMember({ allowSuspended: true })
   if (!actor.ok) return null // el layout ya explica por qué
   // La categoría sale de la ficha viva, no del token: una recategorización a
   // vitalicio tiene que quitar la tarjeta de pagar sin esperar a que caduque la
