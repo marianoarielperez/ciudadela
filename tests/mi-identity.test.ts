@@ -57,7 +57,7 @@ describe("electoralStatusFor", () => {
 describe("electoralSentence", () => {
   it("has a sentence for every state", () => {
     expect(electoralSentence({ eligible: true, arrearsMatter: false })).toContain(
-      "Cumplís con los requisitos para votar cuando haya elecciones.",
+      "Cumplís con la antigüedad necesaria para votar cuando haya elecciones.",
     );
     expect(electoralSentence({ eligible: false, reason: "seniority", daysMissing: 10 })).toContain("10");
     expect(electoralSentence({ eligible: false, reason: "arrears", arrears: 3 })).toContain("al día");
@@ -67,13 +67,13 @@ describe("electoralSentence", () => {
 
   it("adds the fee reminder only for accruing categories (active, collaborator)", () => {
     expect(electoralSentence({ eligible: true, arrearsMatter: true })).toBe(
-      "Cumplís con los requisitos para votar cuando haya elecciones. Recordá mantener tu cuota social al día.",
+      "Cumplís con la antigüedad necesaria para votar cuando haya elecciones. Recordá mantener tu cuota social al día.",
     );
   });
 
   it("skips the fee reminder for non-accruing categories (adherent, honorary, lifetime)", () => {
     expect(electoralSentence({ eligible: true, arrearsMatter: false })).toBe(
-      "Cumplís con los requisitos para votar cuando haya elecciones.",
+      "Cumplís con la antigüedad necesaria para votar cuando haya elecciones.",
     );
   });
 

@@ -59,8 +59,8 @@ export function electoralStatusFor(input: {
 export function electoralSentence(s: ElectoralStatus): string {
   if (s.eligible) {
     return s.arrearsMatter
-      ? "Cumplís con los requisitos para votar cuando haya elecciones. Recordá mantener tu cuota social al día."
-      : "Cumplís con los requisitos para votar cuando haya elecciones.";
+      ? "Cumplís con la antigüedad necesaria para votar cuando haya elecciones. Recordá mantener tu cuota social al día."
+      : "Cumplís con la antigüedad necesaria para votar cuando haya elecciones.";
   }
   switch (s.reason) {
     case "category":
