@@ -3,6 +3,8 @@
 import { formatARS, formatDateTimeAR } from "@/lib/format";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
+// Módulo puro (sin Prisma): importarlo acá no arrastra el cliente a la plantilla.
+import { periodLabel } from "@/lib/treasury/periods";
 
 type Rendered = { subject: string; text: string; html: string };
 
@@ -311,6 +313,48 @@ Si no completás el pago, la solicitud vence a los 7 días de iniciada y vas a t
     html: layout("Tu solicitud está esperando el pago", `<p>Tu solicitud de asociación a la ${esc(ORG)} quedó pendiente de autorizar el débito automático en Mercado Pago.</p>
 ${button(opts.url, "Retomar y completar el pago")}
 <p>Si no completás el pago, la solicitud <strong>vence a los 7 días</strong> de iniciada y vas a tener que empezar de nuevo.</p>`),
+  };
+}
+
+/** Recordatorio de vencimiento (4C §5). Sale el ÚLTIMO día del mes: mañana la
+ *  cuota pasa a ser mora.
+ *
+ *  Saluda por nombre —va a la casilla de la ficha del socio— y **no** trae link
+ *  de pago: el link de Checkout Pro vence a las 72 h y lo emite un operador
+ *  desde la ficha, así que meterlo acá sería prometer un camino que este correo
+ *  no puede sostener. Se nombran las tres salidas reales: la sede, el débito
+ *  automático y pedir un link. */
+export function feeReminderEmail(opts: {
+  name: string; period: string; amount: number | null; arrears: number; debt: number | null;
+}): Rendered {
+  const month = periodLabel(opts.period);
+  const importe = opts.amount === null ? "" : ` de ${formatARS(opts.amount)}`;
+  const arrearsText =
+    opts.arrears > 0
+      ? `\n\nAdemás tenés ${opts.arrears} ${opts.arrears === 1 ? "cuota atrasada" : "cuotas atrasadas"}${
+          opts.debt === null ? "" : ` por ${formatARS(opts.debt)}`
+        }.`
+      : "";
+  const arrearsHtml =
+    opts.arrears > 0
+      ? `<p>Además tenés <strong>${opts.arrears} ${opts.arrears === 1 ? "cuota atrasada" : "cuotas atrasadas"}</strong>${
+          opts.debt === null ? "" : ` por <strong>${esc(formatARS(opts.debt))}</strong>`
+        }.</p>`
+      : "";
+  return {
+    subject: `Tu cuota de ${month} vence mañana — Vecinal Ciudadela`,
+    text: `Hola ${opts.name}:
+
+Te recordamos que tu cuota social de ${month}${importe} vence mañana.${arrearsText}
+
+Podés pagarla en la sede, por débito automático o pidiéndonos un link de pago por Mercado Pago: respondé este mensaje y te lo mandamos.
+
+Si ya pagaste, ignorá este correo.${SIGNATURE}`,
+    html: layout(`Tu cuota de ${month} vence mañana`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>Te recordamos que tu <strong>cuota social de ${esc(month)}</strong>${opts.amount === null ? "" : ` de <strong>${esc(formatARS(opts.amount))}</strong>`} vence mañana.</p>
+${arrearsHtml}
+<p>Podés pagarla en la sede, por débito automático o pidiéndonos un link de pago por Mercado Pago: respondé este mensaje y te lo mandamos.</p>
+<p>Si ya pagaste, ignorá este correo.</p>`),
   };
 }
 

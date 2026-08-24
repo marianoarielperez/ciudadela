@@ -72,6 +72,19 @@ export function isFirstCivilDayOfMonth(at: Date = new Date()): boolean {
   return civilDayOf(at).getUTCDate() === 1;
 }
 
+/** ¿El día civil ARGENTINO de `at` es el ÚLTIMO del mes? Lo pregunta el
+ *  recordatorio de vencimiento, que avisa la víspera de la mora.
+ *
+ *  Se resuelve sumando un día al MEDIODÍA del día civil y mirando si cambió de
+ *  mes: mediodía + 24 h sigue siendo mediodía, así que no hay borde de horario
+ *  que lo confunda, y febrero (28 o 29) sale solo. Un cron atado al "día 30"
+ *  simplemente no avisaría nunca en febrero. */
+export function isLastCivilDayOfMonth(at: Date = new Date()): boolean {
+  const today = civilDayOf(at);
+  const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+  return tomorrow.getUTCMonth() !== today.getUTCMonth();
+}
+
 export function addMonths(p: Period, n: number): Period {
   const total = periodYear(p) * 12 + (periodMonth(p) - 1) + n;
   const year = Math.floor(total / 12);

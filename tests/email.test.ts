@@ -5,8 +5,8 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { makeMailer } from "@/lib/email";
 import {
-  invitationEmail, loginEmailMovedNotice, loginEmailVerification, passwordResetEmail,
-  paymentLinkEmail, portalInvite, receiptEmail, verificationEmail,
+  feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
+  passwordResetEmail, paymentLinkEmail, portalInvite, receiptEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import { getTransport, makeAllowlistTransport, type MailMessage } from "@/lib/email/transport";
@@ -180,6 +180,31 @@ describe("templates", () => {
       .toContain("1 cuota social por $ 6.000,00");
     expect(paymentLinkEmail({ name: 'Ana & "Co"', count: 1, amount: 1, url: "https://mpago.la/x", expiresAt: EXPIRES }).html)
       .toContain("Ana &amp; &quot;Co&quot;");
+  });
+
+  it("el recordatorio dice el mes, el importe y qué pasa mañana", () => {
+    const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: 6000, arrears: 0, debt: 0 });
+    expect(m.subject).toContain("Vecinal Ciudadela");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Ana");
+      expect(body).toContain("septiembre");
+      expect(body).toContain("6.000");
+      // No hay que asustar a quien está al día: si no arrastra nada, el correo
+      // no habla de deuda.
+      expect(body).not.toContain("atrasada");
+    }
+  });
+  it("si arrastra deuda, la nombra con cuotas y monto a valor vigente", () => {
+    const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: 6000, arrears: 3, debt: 18000 });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("3");
+      expect(body).toContain("18.000");
+    }
+  });
+  it("sin valor de cuota vigente no inventa un importe", () => {
+    const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: null, arrears: 0, debt: null });
+    expect(m.text).not.toContain("$");
+    expect(m.text).toContain("septiembre");
   });
 });
 

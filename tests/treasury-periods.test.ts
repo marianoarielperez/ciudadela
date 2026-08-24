@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  addMonths, comparePeriods, currentPeriod, isPeriod, lastPeriodsOfYear, periodLabel, periodOf,
-  periodRange,
+  addMonths, comparePeriods, currentPeriod, isLastCivilDayOfMonth, isPeriod, lastPeriodsOfYear,
+  periodLabel, periodOf, periodRange,
 } from "@/lib/treasury/periods";
 
 describe("periods", () => {
@@ -49,5 +49,22 @@ describe("periods", () => {
     expect(isPeriod("2026-08")).toBe(true);
     expect(isPeriod("2026-13")).toBe(false);
     expect(isPeriod("26-08")).toBe(false);
+  });
+});
+
+describe("isLastCivilDayOfMonth", () => {
+  it("el 30/09 a las 10:00 AR es el último día de septiembre", () => {
+    expect(isLastCivilDayOfMonth(new Date("2026-09-30T13:00:00Z"))).toBe(true);
+  });
+  it("el 29/09 no", () => {
+    expect(isLastCivilDayOfMonth(new Date("2026-09-29T13:00:00Z"))).toBe(false);
+  });
+  it("febrero avisa el 28 (y el 29 en bisiesto): el aviso no se salta un mes", () => {
+    expect(isLastCivilDayOfMonth(new Date("2027-02-28T13:00:00Z"))).toBe(true);
+    expect(isLastCivilDayOfMonth(new Date("2028-02-29T13:00:00Z"))).toBe(true);
+    expect(isLastCivilDayOfMonth(new Date("2028-02-28T13:00:00Z"))).toBe(false);
+  });
+  it("el 31/12 a las 22:00 AR sigue siendo el último día de diciembre, aunque en UTC ya sea enero", () => {
+    expect(isLastCivilDayOfMonth(new Date("2027-01-01T01:00:00Z"))).toBe(true);
   });
 });
