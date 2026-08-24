@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormMessage } from "@/components/admin/form-message";
 import { AutoDebitForm } from "./auto-debit-form";
+import { confirmAddressAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,11 @@ export default async function SocioPage(props: {
   // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
   // cada render (mismo criterio que la ruta hermana `[accion]`).
   const [member, feeValue, subscriptions] = await Promise.all([
+    // `include` sin `select` explícito: Prisma ya devuelve todas las columnas
+    // escalares del socio, `addressPendingReview` incluida, así que el aviso de
+    // constatación de más abajo lee `member.addressPendingReview` sin sumar
+    // nada acá (a diferencia de `select`, que el brief de la Tarea 9 pedía
+    // tocar y que esta pantalla no usa).
     prisma.member.findUnique({
       where: { id: memberId },
       include: {
@@ -133,6 +139,18 @@ export default async function SocioPage(props: {
           {debitPending === 1
             ? " — mientras siga vivo, se le va a seguir cobrando."
             : " — mientras sigan vivos, se le va a seguir cobrando."}
+        </FormMessage>
+      )}
+
+      {member.addressPendingReview && (
+        <FormMessage kind="warning" box>
+          El socio actualizó su domicilio desde el panel y está pendiente de constatación.
+          <form action={confirmAddressAction} className="mt-2">
+            <input type="hidden" name="memberId" value={member.id} />
+            <Button variant="outline" className="min-h-11">
+              Marcar constatado
+            </Button>
+          </form>
         </FormMessage>
       )}
 

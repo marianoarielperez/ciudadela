@@ -257,3 +257,11 @@ export const MEMBER_PAY_LIMIT = 5
  *  mejor que el origen, y dos vecinos detrás del mismo CGNAT no tienen por qué
  *  gastarse el cupo entre ellos. */
 export const memberPayLimiter = createRateLimiter({ limit: MEMBER_PAY_LIMIT, windowMs: 60_000 })
+
+export const MEMBER_EDIT_LIMIT = 6
+
+/** Edición de datos propios en /mi/datos, por memberId (mismo criterio que
+ *  memberPayLimiter: la pantalla es autenticada, así que hay una identidad
+ *  mejor que la IP). El cambio de email además consume los cupos de
+ *  verificación existentes (verificationMemberLimiter) al enviar el correo. */
+export const memberEditLimiter = createRateLimiter({ limit: MEMBER_EDIT_LIMIT, windowMs: 60_000 })

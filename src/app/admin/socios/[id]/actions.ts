@@ -327,3 +327,26 @@ export async function setAutoDebitAction(_p: State, formData: FormData): Promise
   revalidatePath(`/admin/socios/${member.id}`);
   return {};
 }
+
+/** M5: apaga el "pendiente de constatación" que prende la autoedición del
+ *  domicilio en /mi/datos. Sin acta: constatar no es un acto estatutario. */
+export async function confirmAddressAction(formData: FormData): Promise<void> {
+  const actor = await requireAdmin();
+  if (!actor.ok) return;
+  const memberId = Number(formData.get("memberId"));
+  if (!Number.isInteger(memberId) || memberId <= 0) return;
+  await prisma.member.update({
+    where: { id: memberId },
+    data: { addressPendingReview: false },
+  });
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
+  await audit({
+    userId: actor.actorId,
+    action: "member_address_confirmed",
+    entity: "member",
+    entityId: memberId,
+    detail: {},
+    ip,
+  });
+  revalidatePath(`/admin/socios/${memberId}`);
+}
