@@ -31,6 +31,7 @@ vi.mock("@/lib/auth/rate-limiter", async (importOriginal) => {
 });
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("next/headers", () => ({ headers: async () => ({ get: () => "1.2.3.4" }) }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUniqueOrThrow: vi.fn(async () => ({ email: "vieja@x.com" })) },
@@ -138,5 +139,59 @@ describe("changeEmailAction", () => {
     const r = await changeEmailAction({}, fd({ email: "deotro@x.com" }));
     expect(r.error).toContain("en uso");
     expect(r.error).not.toContain("socio"); // voz de socio, no de operador
+  });
+
+  // Fix 1: el guardado YA commiteó cuando `announce` corre; si revienta, el
+  // socio no puede quedar con un cambio de email sin auditar ni ver la
+  // pantalla de error genérica sobre un guardado que en realidad funcionó.
+  it("keeps the save and its audit trail even if announce() blows up", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.member.findUniqueOrThrow)
+      .mockResolvedValueOnce({ email: "vieja@x.com" } as never) // before
+      .mockResolvedValueOnce({
+        id: 7, status: "active", email: "nueva@x.com", emailStatus: "declared", userId: 9,
+      } as never); // fresh, para announce
+    updateMember.mockResolvedValueOnce({
+      member: {}, revokedTokens: 0,
+      accountEmailMove: { from: "vieja@x.com", to: "nueva@x.com" }, accountEmailUpdated: true,
+    });
+    const { accountEmailNotice } = await import("@/lib/members/account-email-notice");
+    vi.mocked(accountEmailNotice.announce).mockRejectedValueOnce(new Error("smtp down"));
+    const { audit } = await import("@/lib/audit");
+
+    const r = await changeEmailAction({}, fd({ email: "Nueva@X.com" }));
+
+    expect(r.done).toBe(true);
+    expect(r.warning).toBeTruthy();
+    expect(vi.mocked(audit)).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "member_self_update" }),
+    );
+    expect(vi.mocked(audit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "member_self_login_email_moved",
+        detail: expect.objectContaining({ notifiedPrevious: false, verificationSent: false }),
+      }),
+    );
+  });
+
+  it("audits the edit BEFORE calling announce, so a crash there can't erase the trail", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.member.findUniqueOrThrow)
+      .mockResolvedValueOnce({ email: "vieja@x.com" } as never)
+      .mockResolvedValueOnce({
+        id: 7, status: "active", email: "nueva@x.com", emailStatus: "declared", userId: 9,
+      } as never);
+    updateMember.mockResolvedValueOnce({
+      member: {}, revokedTokens: 0,
+      accountEmailMove: { from: "vieja@x.com", to: "nueva@x.com" }, accountEmailUpdated: true,
+    });
+    const { accountEmailNotice } = await import("@/lib/members/account-email-notice");
+    const { audit } = await import("@/lib/audit");
+
+    await changeEmailAction({}, fd({ email: "Nueva@X.com" }));
+
+    const auditOrder = vi.mocked(audit).mock.invocationCallOrder[0];
+    const announceOrder = vi.mocked(accountEmailNotice.announce).mock.invocationCallOrder[0];
+    expect(auditOrder).toBeLessThan(announceOrder);
   });
 });

@@ -57,7 +57,7 @@ describe("electoralSentence", () => {
     expect(electoralSentence({ eligible: true })).toContain("Habilitado");
     expect(electoralSentence({ eligible: false, reason: "seniority", daysMissing: 10 })).toContain("10");
     expect(electoralSentence({ eligible: false, reason: "arrears", arrears: 3 })).toContain("al día");
-    expect(electoralSentence({ eligible: false, reason: "category" })).toBeTruthy();
-    expect(electoralSentence({ eligible: false, reason: "suspended" })).toBeTruthy();
+    expect(electoralSentence({ eligible: false, reason: "category" })).toContain("categoría");
+    expect(electoralSentence({ eligible: false, reason: "suspended" })).toContain("suspensión");
   });
 });

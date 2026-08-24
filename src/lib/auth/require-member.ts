@@ -124,7 +124,8 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
     if (member.status === "withdrawn") {
       return { ok: false, reason: "withdrawn", error: MEMBER_BLOCKED.withdrawn };
     }
-    if (member.status === "suspended" && !opts.allowSuspended) {
+    const isSuspended = member.status === "suspended";
+    if (isSuspended && !opts.allowSuspended) {
       return { ok: false, reason: "suspended", error: MEMBER_BLOCKED.suspended };
     }
     // `User.active` es la palanca de "cuenta deshabilitada", y hasta acá sólo la
@@ -146,10 +147,9 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
       userId,
       memberId: member.id,
       fullName: member.fullName,
-      suspension:
-        member.status === "suspended"
-          ? { from: member.suspendedFrom, to: member.suspendedTo }
-          : null,
+      suspension: isSuspended
+        ? { from: member.suspendedFrom, to: member.suspendedTo }
+        : null,
     };
   };
 }
