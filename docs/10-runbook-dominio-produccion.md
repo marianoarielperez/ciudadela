@@ -601,6 +601,10 @@ Tienen que quedar **dos** líneas: solicitudes 08:05 y conciliación 03:00. El a
 `/root/.sigev-cron-secret` tiene que existir, con permisos `600` y el mismo valor que
 `CRON_SECRET` del `.env`.
 
+> **Al desplegar la 4C esas dos pasan a ser seis** (§4.5, y el bloque completo en
+> `docs/11` Parte H). Este párrafo describe el estado tras la 4B, que es lo que
+> había en el VPS al escribirlo.
+
 **4. Vincular las dos suscripciones preexistentes**, desde
 `/admin/tesoreria/suscripciones` (hace falta **superadmin**):
 
@@ -640,7 +644,134 @@ Cuenta corriente.
 2026-09 + recibo + email. Si el webhook no llega, el reconcile de las 03:00 del
 11/09 lo registra igual — para eso está.
 
-### 4.5 Verificación post-deploy (cualquier despliegue)
+### 4.5 Específico de la fase 4C (crons, notificaciones, salud, padrón electoral)
+
+Es un **despliegue normal** (4.1): una migración aditiva, dos variables opcionales,
+ningún import y ningún dato que se toque. Lo que tiene de propio es lo de después
+— y una fecha.
+
+> **La fecha dura: el cron de devengo tiene que estar arriba antes del
+> 01/10/2026.** Hasta esa fecha no hay ningún mes devengable (la foto de deuda
+> cubre hasta agosto y septiembre recién vence el 01/10), así que desplegar antes
+> **no crea nada** y es lo correcto. Desplegar **después** tampoco rompe nada: la
+> primera corrida backfillea sola desde el piso de cobertura, así que un deploy del
+> 05/11 crea septiembre **y** octubre en una sola pasada. Lo que sí es un problema
+> es no desplegarlo: mientras el cron no esté en el crontab, los socios al día se
+> muestran "al día" debiendo septiembre, porque no hay fila que contar.
+
+**1. Migración que trae**: `20260824101648_add_module_4c_notifications`. Es
+**estrictamente aditiva** —una columna nullable (`notifications.period CHAR(7)`) y
+cuatro índices—, sin un solo `DROP` ni `MODIFY`. Verificada contra la base local por
+`information_schema`, no sólo por `migrate status`. No toca `payments`, `fees`,
+`receipts` ni `receipt_sequences`.
+
+**2. Variables de entorno**: dos, y **ninguna es obligatoria** (las dos tienen
+default). Se agregan al `.env` del VPS antes del build:
+
+```bash
+cd /root/dev/ciudadela
+grep -q '^BACKUP_DIR='     .env || echo 'BACKUP_DIR=/var/sigev/backups' >> .env
+grep -q '^MAIL_BATCH_CAP=' .env || echo 'MAIL_BATCH_CAP=50'            >> .env
+grep -n 'BACKUP_DIR\|MAIL_BATCH_CAP' .env
+```
+
+- **`BACKUP_DIR`** tiene que ser **la misma carpeta que escribe `scripts/backup.sh`**
+  (`WORK=/var/sigev/backups`, línea 12), porque lo que la pantalla lee es el sello
+  `LAST_OK` que ese script deja ahí. Si no está, `/admin/salud` dice **"Sin
+  configurar"** y no puede afirmar nada sobre el backup; si apunta a otra carpeta,
+  dice **"Sin rastro"**, que es peor porque parece un backup roto.
+- **`MAIL_BATCH_CAP`** es el tope de correos **por corrida** (default 50; un 0 o
+  basura cae al default). No es un tope de cobros: el presupuesto se consume siempre
+  río abajo de la escritura del dinero.
+- **`digest_recipients` NO es una variable de entorno.** Se carga desde
+  `/admin/configuracion` (paso 4), como los ids de plan de Mercado Pago: cambiar
+  quién recibe el resumen no puede exigir un deploy ni un `pm2 restart`.
+
+**3. El deploy**, que es el de 4.1 sin nada agregado (backup previo primero):
+
+```bash
+cd /root/dev/ciudadela && git pull --ff-only && npm ci && npx prisma migrate deploy && NODE_ENV=production npx prisma db seed && npm run build && pm2 restart sigev --update-env && pm2 save && pm2 logs sigev --lines 20 --nostream
+```
+
+Después del restart, **en este orden**:
+
+**4. `/admin/salud` por primera vez** (hace falta **superadmin**; un admin común ve
+una pantalla de bloqueo y ni siquiera tiene la sección en la lateral). Lo que tiene
+que verse recién desplegado:
+
+- `reconcile` y `applications` con su última corrida — `applications` empieza a
+  escribir `cron_runs` en esta fase, así que su primera fila aparece recién con la
+  corrida de las 08:05 del día siguiente;
+- `accrual`, `reminder` y `digest` en **"Nunca corrió"**: es lo correcto antes de
+  agregar las líneas del crontab;
+- el backup en **"Al día"**. Si dice "Sin configurar", faltó `BACKUP_DIR` (paso 2);
+  si dice "No se puede leer", el sello está pero el proceso de la app no tiene
+  permiso sobre la carpeta — ahí lo roto son los permisos de la pantalla, no el
+  backup. Si dice **"Sin rastro"**, comprobalo a mano antes de sacar conclusiones:
+  `ls -l /var/sigev/backups/LAST_OK`. El sello lo escribe la versión del script que
+  está en el repo desde el 17/08/2026; si el VPS quedó con una copia anterior, el
+  archivo no existe y hay que actualizar el script, no el backup.
+
+**5. Cargar `digest_recipients`** en `/admin/configuracion` (superadmin) con la
+dirección de la Comisión. **Vacío = el resumen no se manda a nadie**, y la corrida
+igual cierra en verde: `recipients: 0` no es un fallo.
+
+**6. Las líneas del crontab** — el bloque idempotente de `docs/11` Parte H, "El
+crontab final: seis líneas". Tienen que quedar **seis**: `reconcile` 03:00, backup
+04:00, `applications` 08:05, `accrual` 00:30, `digest` 07:30 y `reminder` 10:00.
+
+**7. Prueba en seco de los tres endpoints nuevos**, sin esperar al horario:
+
+```bash
+export S=$(cat /root/.sigev-cron-secret)
+for j in accrual reminder digest; do
+  echo "== $j"
+  curl -sS -X POST -H "Authorization: Bearer $S" \
+    "https://vecinalciudadela.ar/api/cron/$j" -w '\nHTTP %{http_code}\n'
+done
+```
+
+`accrual` y `reminder` van a responder `{"skipped":"not_first_day"}` y
+`{"skipped":"not_last_day"}` cualquier día que no sea el suyo, y **eso es lo
+correcto**: prueban que el endpoint existe, que el secreto es el bueno y que la
+guarda del día funciona. Los dos `skipped` no escriben en `cron_runs`, así que no
+ensucian `/admin/salud`.
+
+**`digest` es la excepción y conviene saberlo antes de tocarlo**: no tiene guarda de
+calendario. Si el día anterior hubo alguna novedad, esta llamada **manda el resumen
+de verdad** a lo que haya en `digest_recipients` y deja su fila en `cron_runs`. No
+es un problema —es el correo que iba a salir a las 07:30 igual—, pero si preferís
+una prueba inocua, corré este paso **antes** del paso 5, con la clave todavía vacía:
+sin destinatarios cierra en verde con `recipients: 0`.
+
+En los tres, sin la cabecera `Authorization` tiene que dar **401**; si `CRON_SECRET`
+no está en el `.env`, **503**.
+
+**8. La verificación que cierra la fecha dura.** El 01/10/2026, después de las
+00:30, el devengo tiene que tener **su línea**:
+
+```bash
+grep 'api/cron/accrual' /var/log/sigev-cron.log | tail -3
+```
+
+La del 01/10 **no** dice `skipped`: dice el summary con `feesCreated`. Y en
+`/admin/salud` el job "Devengo de cuotas" pasa de "Nunca corrió" a su última corrida.
+Si ese día no corrió, la escotilla está en `docs/11` Parte H ("Las dos escotillas"):
+`POST /api/cron/accrual?force=1`, que se puede disparar cualquier día del mes y
+**volver a correr sin duplicar nada**.
+
+**9. Ojo con `EMAIL_ALLOWLIST`.** Mientras siga definida en producción, el
+recordatorio y el resumen se bloquean para toda dirección que no esté en la lista.
+Eso **no** ensucia `/admin/salud` —un bloqueo de allowlist se cuenta aparte y no
+escribe `failed`, justamente para que el tablero no nazca en rojo— pero tampoco le
+llega a nadie. Borrarla sigue siendo un paso del checklist de lanzamiento de
+`docs/07`. El **devengo no manda correos**, así que es el único de los tres que
+anda completo con la allowlist puesta.
+
+**10. Lo que NO hay que hacer**: probar un cobro, como siempre (4.3). Y no hace
+falta tocar nada de Mercado Pago: la fase no cambió credenciales, webhooks ni planes.
+
+### 4.6 Verificación post-deploy (cualquier despliegue)
 
 ```bash
 curl -sI https://vecinalciudadela.ar | grep -i 'content-security-policy'

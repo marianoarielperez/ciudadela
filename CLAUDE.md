@@ -69,7 +69,9 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   en `src/lib/admin/dashboard-cards.ts` y un test verifica que no se desincronicen.
   La lateral lista solo secciones que funcionan; el roadmap ("Próximamente") vive en las
   tarjetas de Inicio. **Tesorería ya está en la lateral** (entre Socios y Actas) y su
-  tarjeta del tablero dejó de ser "Próximamente".
+  tarjeta del tablero dejó de ser "Próximamente". La fase 4C sumó **Salud** y
+  **Padrón electoral** al grupo Sistema, las dos `superadminOnly` — que es display:
+  la autorización real va igual en la ruta y en cada action.
 - **Encabezado**: `PageHeader` (`title`, `breadcrumb`, `actions`, `children`). Convenciones
   acordadas: la **entidad va en el `<h1>`** (el nombre del socio, el título de la noticia) y
   la miga lleva la referencia corta; la **última miga es un sustantivo corto** ("Baja",
@@ -207,6 +209,62 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   rechaza y devolvía 400 en silencio, un preapproval que viaja dentro del pago, y
   documentación propia que era falsa. Lo verificado está en `docs/11` Parte J.
 
+## Patrones que estrenó el Módulo 4 (fase 4C)
+
+- **Un cron que decide no actuar NO es una corrida.** Los tres crons nuevos corren
+  todos los días y deciden adentro (`willAct()` vive en el MÓDULO, nunca en la
+  ruta); un día que no corresponde responde 200 con `{skipped}` y **no escribe
+  `CronRun`**. Corolario en la pantalla: `/admin/salud` muestra la última corrida
+  **efectiva** y marca *stale* recién al doble del período esperado — que es
+  **mensual** para el devengo y el recordatorio (31 días), no diario. Medirlos a los
+  cinco con la misma vara los pintaría de rojo 29 días de cada 30.
+- **Veredicto de dos niveles, y ninguna pantalla nace en rojo.** `/admin/salud`
+  separa *act* (algo roto **con una salida que lo apaga**: es el único rojo) de
+  *review* (ausencias, colas normales, cruces sanos). Y distingue **historia** de
+  **cola**: `inboxTotal`, `mismatchesEver`, `failedEver` se redactan como contexto
+  de recorte, nunca como trabajo pendiente. Un contador acumulativo sin ventana ni
+  acción que lo baje es una alarma que enseña a ignorar el tablero — el proyecto ya
+  lo corrigió tres veces.
+- **Dos semánticas de "suscripción viva"** (`src/lib/mp/subscription-status.ts`):
+  `canStillCharge` es lista **BLANCA** (no prometer un débito que no existe) e
+  `isNotCancelled` es lista **NEGRA de un valor** (no saber es peor que avisar de
+  más). Ante un estado que MP no documente fallan hacia lados **opuestos**, y ahí
+  está el punto: no son complementarias, y hay un test dedicado a que no lo sean.
+  Antes había seis definiciones sueltas y dos costaban plata.
+- **`coverageFloor` lo comparten devengo, recordatorio e imputación.** No es una
+  regla copiada tres veces: es la misma función. La revisión encontró que el
+  recordatorio le reclamaba septiembre a quien ingresó en septiembre —su cuota de
+  ingreso cubre ese mes (REG-14)— porque no aplicaba el piso. Se arregló
+  **compartiendo la función**, no reimplementándola: así devengo y aviso no pueden
+  divergir. Mismo criterio que ya valía entre `coverageFloor` y `allocate`.
+- **El mailer dice la verdad, en su único punto de escritura.** `Notification.failed`
+  + `error` con el **CÓDIGO** del fallo (nunca la dirección, Ley 25.326) se escribe
+  en un solo lugar y cubre los doce call-sites de golpe. Y un bloqueo por
+  `EMAIL_ALLOWLIST` **NO es un fallo**: es el entorno de prueba andando. Si contara,
+  en producción —donde la allowlist está puesta— una sola corrida dejaría ~160 filas
+  rojas y la pantalla de salud nacería inservible.
+- **El tope de correos es un presupuesto INYECTADO por corrida** (`MailBudget`), no
+  un contador de módulo: el procesador del webhook es un singleton de proceso y un
+  contador global lo habría dejado mudo después de 50 correos hasta el próximo
+  restart de PM2. El cupo **vuelve** (`refund()`) cuando el envío termina sin correo,
+  así que el tope cuenta correos **mandados** y no intentos.
+- **La cancelación del débito al dar de baja vive DESPUÉS del commit**, en un módulo
+  de dominio (`members/withdraw-with-debits.ts`) que comparten la baja individual y
+  el lote de cesantía. Una llamada de red adentro de la `$transaction` sostiene el
+  lock hasta el timeout de 5 s de Prisma — mismo corolario que el PDF del recibo.
+- **Con `@prisma/adapter-mariadb` NO existe `meta.target`.** El nombre del unique
+  violado viaja en `meta.driverAdapterError.cause.constraint.index`. Una guarda
+  escrita contra `meta.target` —lo que dice la doc de Prisma y lo que el repo ya
+  tenía— **pasa todos los tests y nunca matchea en producción**, porque el fake de
+  los tests es el que miente. Se lee de `src/lib/treasury/unique-violation.ts`, que
+  soporta las dos formas y **falla cerrada**. La lección de la 4B —medir antes de
+  suponer— también vale contra el driver de la base, no sólo contra Mercado Pago.
+- **Una escotilla manual para todo lo que actúa un solo día del mes.** El devengo y
+  el recordatorio aceptan `?force=1` detrás del mismo `CRON_SECRET`, y el
+  recordatorio **adapta el texto por CALENDARIO y no por el parámetro** ("venció y
+  quedó impaga" en vez de "vence mañana"). Sin escotilla, una corrida perdida no se
+  recuperaba hasta el mes siguiente. El `curl` copiable está en `docs/11` Parte H.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -269,7 +327,12 @@ RECEIPTS_DIR=/var/sigev/recibos            # PDFs de recibos; dev: ./recibos
                                            # (gitignored). Ya lo respalda backup.sh
 NEXT_PUBLIC_TURNSTILE_SITE_KEY=***         # pública: viaja en el HTML
 TURNSTILE_SECRET_KEY=***                   # dev: claves dummy de Cloudflare
-CRON_SECRET=***                            # protege endpoints internos de cron
+CRON_SECRET=***                            # protege los CINCO endpoints de cron
+BACKUP_DIR=/var/sigev/backups              # 4C: carpeta donde backup.sh deja el
+                                           # sello LAST_OK que lee /admin/salud.
+                                           # Sin ella el panel dice "sin configurar"
+MAIL_BATCH_CAP=50                          # 4C: tope de EMAILS por corrida (no de
+                                           # cobros). Vacío o basura → 50
 ```
 
 Los ids de los dos planes de Mercado Pago **no son variables de entorno**: viven
@@ -280,32 +343,32 @@ Desde el Módulo 4 el **monto** ya no sale de ahí: la tabla `fee_values` es la
 alta web, la recategorización y el lote REG-34 leen el monto de `fee_values`, y
 el único uso que les queda es el aviso de divergencia plan-vs-valor de la
 conciliación diaria, que simplemente no corre si no están cargados.
+Lo mismo vale para **`digest_recipients`** (fase 4C): quién recibe el resumen
+diario a la Comisión vive en `Configuration` y se edita desde
+`/admin/configuracion`. Cambiar los destinatarios no puede exigir un deploy.
 
 ## Prioridad actual
 
-Módulos 0, 1, 2 y 3 cerrados y desplegados. Del **Módulo 4** están cerradas la
-**fase 4A** (cuenta corriente, efectivo, recibos, deudores) y la **fase 4B**
-(Mercado Pago: webhook que aplica, Checkout Pro, bandeja sin conciliar, ingresos no
-societarios, vinculación de suscripciones, conciliación diaria, lote REG-34).
+Módulos 0, 1, 2 y 3 cerrados y desplegados. El **Módulo 4 está cerrado entero**:
+**4A** (cuenta corriente, efectivo, recibos, deudores), **4B** (Mercado Pago:
+webhook que aplica, Checkout Pro, bandeja sin conciliar, ingresos no societarios,
+vinculación de suscripciones, conciliación diaria, lote REG-34) y **4C** (crons de
+devengo / recordatorio / resumen, `Notification.failed` con reenvío, aviso del
+débito rechazado, `/admin/salud`, padrón electoral y la cancelación del débito de MP
+al dar de baja). Sigue el **Módulo 5** (panel de socio). Ver `docs/07`.
 
-Sigue la **4C**: crons de devengo / mora / resumen, `payment_rejected` que le avisa
-al socio, `Notification.failed` + reintento, `/admin/salud` (que tiene que mostrar
-`cron_runs`, ya escrito por la conciliación), padrón electoral, y **cancelar la
-suscripción de MP al dar de baja a un socio** —reasignado desde el M5 el 23/08/2026:
-las bajas del panel ya corren, así que hoy se puede dejar de ser socio y seguir
-siendo debitado—. Ver `docs/07-plan-de-etapas.md`.
-
-**El devengo tiene fecha dura: antes del 01/10/2026.** El padrón cubre a todos hasta
-agosto de 2026 y el import trajo sólo lo impago, así que un socio al día no tiene
-ninguna fila de cuota. Desde octubre, los que estén al día se van a mostrar "al día"
-debiendo septiembre: no hay fila que contar. `coverageFloor` (`treasury/rules.ts`) ya
-resuelve la IMPUTACIÓN —un pago cae siempre en el primer mes no cubierto— pero la
-deuda VISIBLE cuenta filas, y esas las crea el devengo. El cron tiene que
-**backfillear desde el piso**, no crear sólo el mes corriente. Detalle y los otros dos
-requisitos no obvios: `docs/07-plan-de-etapas.md`, fase 4C.
+**Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
+01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab
+del VPS. Mientras no esté, no se crea ninguna fila: el padrón cubre a todos hasta
+agosto de 2026 y el import trajo sólo lo impago, así que desde octubre los socios al
+día se mostrarían "al día" debiendo septiembre. Desplegar tarde **no** rompe nada
+—la primera corrida backfillea sola desde el piso de cobertura—, pero no desplegar
+sí. Procedimiento: `docs/10` §4.5; crontab de seis líneas y las dos escotillas de
+re-disparo: `docs/11` Parte H.
 
 Verificación real pendiente de la 4B: el **débito del socio 14 del 10/09/2026** tiene
-que entrar solo. Y en el primer `reconcile` de producción hay que confirmar que
-`GET /v1/payments/search` indexa (en sandbox no lo hace).
+que entrar solo. (`GET /v1/payments/search` **sí indexa en producción** — quedó
+confirmado en el primer `reconcile` real, que recuperó 24 débitos históricos; en
+sandbox devolvía 0 siempre.)
 
 No arrancar una fase sin cerrar los criterios de aceptación de la anterior.

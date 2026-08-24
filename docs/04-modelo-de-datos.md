@@ -131,7 +131,11 @@ Identidad única de la persona a través de todos los libros.
   suspendidos: la suspensión no exime de la cuota). Adherentes NO devengan (su
   aporte es voluntario y se registra como Pago suelto). Honorarios y vitalicios:
   exentos. El primer devengo es el **primer mes completo posterior al ingreso**.
-  El cron que las crea es alcance de la fase 4C.
+  El cron que las crea es `POST /api/cron/accrual` (fase 4C). Ojo con una
+  precisión que la 4C fijó: corre el día 1 y devenga **hasta el mes vencido**
+  (mes corriente − 1), no el mes en curso — la fila nace cuando la cuota ya es
+  mora, que es lo que deja correctos a los 21 puntos del sistema que cuentan
+  filas `pending` a secas.
 - `origen = import` son las cuotas sintéticas que crea `scripts/import-deuda.ts`
   desde `datos/deuda.xlsx` (ver "Importación inicial"). Las `accrual` que ya
   existan mandan: el import nunca las pisa, las saltea y las cuenta en el reporte.
@@ -264,9 +268,13 @@ Identidad única de la persona a través de todos los libros.
   `error`
 - Última corrida de cada cron. **La estrenó la conciliación diaria de la fase 4B**
   (`job = "reconcile"`): escribe la fila al empezar y la cierra con el resumen
-  completo, aunque haya errores. Los crons de notificación de la 4C se suman ahí.
-- Hasta que exista `/admin/salud` (fase 4C), **esta tabla y el asiento
-  `reconcile_cron` son el único lugar donde mirar** si la red de contención anduvo.
+  completo, aunque haya errores. Desde la fase 4C escriben ahí **los cinco**:
+  `reconcile`, `applications`, `accrual`, `reminder` y `digest`. Los tres nuevos
+  corren todos los días pero **sólo abren fila cuando actúan**: un día que no
+  corresponde no deja rastro, a propósito.
+- Desde la fase 4C esta tabla se lee desde **`/admin/salud`** (superadmin), que
+  muestra la última corrida de cada job y distingue una corrida **colgada**
+  (`terminada_at` nulo con `iniciada_at` viejo) de una que terminó mal.
   El endpoint devuelve **207** cuando corrió entera con errores, y la causa de cada
   uno viaja en `summary.errors[]`.
 
@@ -322,9 +330,15 @@ Identidad única de la persona a través de todos los libros.
   `rebotada` | `fijada_cartelera` | `cumplida_cartelera` | **`failed`**),
   `brevo_message_id`, `cartelera_desde`, `cartelera_hasta` (20 días hábiles,
   REG-10), `payload_resumen`, `error`
-- `failed` + `error` (código del fallo de envío, **nunca la dirección**) existen en
-  el schema desde la migración del Módulo 4, pero **todavía no los escribe nadie**:
-  el reintento desde el panel es alcance de la fase 4C.
+- `failed` + `error` (código del fallo de envío, **nunca la dirección**) los escribe
+  el mailer desde la fase 4C, en su único punto de escritura: cubre los doce
+  call-sites de golpe. Un bloqueo por `EMAIL_ALLOWLIST` **no** cuenta como fallo (es
+  el entorno de prueba andando). `/admin/salud` los lista y ofrece reenviar los
+  recibos, que es lo que el sistema puede rehacer.
+- `period` (CHAR(7), nullable, migración de la 4C) es la dedupe del recordatorio de
+  vencimiento: un socio recibe un solo aviso por período. **No lleva unique** a
+  propósito — con `failed` escribiéndose, un intento fallido bloquearía el reintento
+  de ese mes.
 
 ### ActionToken (`action_tokens`) — enlaces de un solo uso
 - `purpose` (`email_verification` | invitación de acceso | recupero de

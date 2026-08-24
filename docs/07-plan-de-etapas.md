@@ -3,9 +3,10 @@
 Regla: no se arranca un módulo sin cerrar los criterios de aceptación (CA) del anterior.
 El lanzamiento público espera a la oficialización de la IGJ. **Desde el 20/08/2026 hay
 un solo entorno desplegado, `vecinalciudadela.ar`** (el staging `sigev.redaccion.ar` se
-dio de baja): el sitio ya está publicado pero sin difundir, con ASOCIATE apagado, MP en
-modo prueba y `EMAIL_ALLOWLIST` puesta. Los módulos 1-5 son usables internamente desde
-antes del lanzamiento.
+dio de baja): el sitio ya está publicado pero sin difundir, con ASOCIATE apagado y
+`EMAIL_ALLOWLIST` puesta. **Mercado Pago corre ahí con credenciales productivas desde el
+22/08/2026** (piloto real del socio 306), así que no se prueban cobros contra el dominio.
+Los módulos 1-5 son usables internamente desde antes del lanzamiento.
 
 ## Módulo 0 — Base
 Scaffold Next.js 15 + TS + Prisma + MariaDB (`sigev` DB y usuario dedicado),
@@ -116,7 +117,9 @@ captcha y concluyó que fallaba Turnstile. La causa es `parseForm`
 (`src/lib/forms.ts`): se queda con el `message` del primer issue de zod y **descarta
 `path`**, que es donde viene el nombre del campo. **Afecta a todos los formularios
 públicos**, no sólo al wizard. Arreglo propuesto: devolver también el campo y que el
-formulario lleve el foco ahí. No es 4B; queda por decidir en qué fase entra.
+formulario lleve el foco ahí. **La fase 4C hizo la mitad**: `parseForm` ya devuelve el
+campo que falló. Lo que falta es consumirlo —propagar el estado y `aria-invalid` pantalla
+por pantalla, y llevar el foco—, así que el síntoma que motivó la deuda sigue igual. → M5.
 
 Ideas incorporadas durante el desarrollo del Módulo 1: bloqueo del botón ASOCIATE
 según el estado de la persona (socio vigente → avisarle que ya está asociado; ex
@@ -128,7 +131,8 @@ continuar). Resumen mensual de socios aceptados para confeccionar el acta.
 Se ejecuta en **tres fases**, cada una con su branch, su merge a `main` con los
 tests en verde y su despliegue antes de empezar la siguiente.
 
-**Estado al 23/08/2026: 4A y 4B cerradas; la prioridad es la 4C.**
+**Estado al 24/08/2026: las tres fases cerradas.** Lo único que queda del Módulo 4 es un
+paso de operación con fecha: desplegar el cron de devengo antes del **01/10/2026**.
 
 ### Fase 4A — Cuenta corriente y efectivo — **CERRADA** (22/08/2026)
 
@@ -230,51 +234,141 @@ Y un **hallazgo de producto** que no es un bug: cuando la tarjeta rechaza, MP
 `collection_status=rejected`. La pantalla de rechazo es defensiva, no el camino
 habitual.
 
-**Deuda que la fase deja anotada** (decidir en 4C o M5):
+**Deuda que la fase deja anotada** — estado tras la fase 4C (24/08/2026):
 
-- **Cuatro definiciones de "suscripción viva"** conviven en el repo
-  (`["authorized","paused"]`, `["authorized","pending","paused"]`,
-  `["authorized","pending"]` y `"authorized"` a secas). Consecuencia real: una
-  `paused` no dispara el aviso "el socio ya tiene otra viva" del vinculador, pero
-  la ficha sí la muestra como débito automático.
-- **`Member.autoDebit` no se puede corregir desde ninguna pantalla.** Tiene tres
-  escrituras y ninguna lo baja. La ficha avisa de la discrepancia; el dato sigue mal
-  en la pestaña Ficha, en la columna del padrón y en la exportación.
+- ~~**Cuatro definiciones de "suscripción viva"**~~ → **cerrada en 4C**. Eran
+  cinco, y la 4C encontró una **sexta** que el escaneo no había visto (la pantalla
+  de Suscripciones pedía sólo `authorized`, así que una huérfana `paused` entraba
+  al contador de salud y no a la pantalla). Hoy hay **dos** semánticas nombradas en
+  `src/lib/mp/subscription-status.ts` y cada una falla hacia su lado seguro.
+- ~~**`Member.autoDebit` no se puede corregir desde ninguna pantalla**~~ →
+  **cerrada en 4C**: toggle en la ficha del socio, con asiento.
+- ~~**La ventana del link de pago con precio viejo**~~ → **cerrada en 4C**:
+  `/admin/salud` cuenta los `link_amount_mismatch` (como historia, no como cola).
 - **`mp_subscriptions.member_id` es índice, no unique**: un socio puede terminar con
-  dos preapprovals vivos (dos débitos por mes). La ficha avisa; nada lo impide.
+  dos preapprovals vivos (dos débitos por mes). La ficha avisa; nada lo impide. La
+  4C agregó el botón de cancelar, pero **acotado a socios dados de baja** (enmienda
+  del operador), así que el socio **vigente** con dos débitos sigue sin remedio
+  dentro del sistema: hay que cancelar uno desde el panel de Mercado Pago.
 - **Reimputar un cobro cuyo recibo se anuló** no tiene camino: el pago anulado
   conserva su `mpPaymentId`, que es la barrera contra reenvíos de MP. Arreglarlo de
   fondo exige decidir qué pasa con esa barrera.
-- **La ventana del link de pago con precio viejo** (hasta 72 h) no la muestra
-  ninguna pantalla: sólo queda el asiento `link_amount_mismatch`. Verla es 4C.
 - **La navegación por ejercicio** existe en Otros ingresos pero no en Deudores,
   Efectivo ni Recibos (decisión del cliente: no ensanchar la fase antes del 10/09).
+- **`AdminActor` no devuelve los roles vivos**, así que el layout del panel llama a
+  `auth()` una segunda vez; y **4 formularios y 9 `<select>` crudos** siguen sin
+  migrar a `synced-fields` (se ven planos en modo oscuro). Las dos son deuda del
+  shell del panel, **→ Módulo 5**.
 
-### Fase 4C — Notificaciones y salud (pendiente) — **prioridad actual**
+### Fase 4C — Crons, notificaciones, salud y padrón electoral — **CERRADA** (24/08/2026)
 
-Crons de devengo (día 1), aviso de mora (día 30) y resumen diario a la Comisión;
-`payment_rejected` que avisa al socio; `Notification.failed` + reintento desde el
-panel; `/admin/salud`; export del padrón electoral (REG-31); crontab completo
-documentado.
+Migración `20260824101648_add_module_4c_notifications`, **estrictamente aditiva**:
+`notifications.period CHAR(7) NULL` y cuatro índices (`notifications.status`,
+`notifications(type, period)`, `audit_log.action` y
+`webhook_events(origin, received_at)`). Cero `DROP` y cero `MODIFY`: apta para
+`migrate deploy` sobre la base con socios reales.
 
-**Se le suman, de la fase 4B (23/08/2026):**
+**Qué quedó andando:** cron de **devengo** (`/api/cron/accrual`, actúa el día 1,
+con backfill desde `coverageFloor`), **recordatorio de vencimiento**
+(`/api/cron/reminder`, actúa el último día del mes), **resumen diario a la
+Comisión** (`/api/cron/digest`, sin novedades no envía y no escribe `CronRun`),
+`Notification.failed` con el **código** del error y reenvío por entidad, tope de
+envíos por corrida (`MAIL_BATCH_CAP`), aviso al socio del **débito rechazado** con
+el motivo en castellano, **`/admin/salud`** con los cinco crons y el backup, la
+**hoja imprimible** de deudores sin email, el **padrón electoral** (REG-31 +
+enmienda del operador), la **cancelación del débito en Mercado Pago al dar de
+baja** —individual y en lote— y las siete deudas heredadas de 4B que la fase
+levantó.
 
-- **Cancelar la suscripción de MP al dar de baja a un socio.** Reasignado acá desde
-  el "Módulo 5" que decían `docs/06` §8 y la spec de 4B, donde no tenía fase
-  asignada en este documento. El motivo: las bajas del **panel** —cesantía por mora
-  en lote (4A) y baja por acta (M1)— **ya existen y ya corren**, así que hoy se
-  puede dejar de ser socio y seguir siendo debitado todos los meses. Es el mismo
-  agujero que el M5 iba a tapar, pero está abierto ahora y no depende del panel del
-  socio. Alcance: llamar a `cancelPreapproval` al confirmar la baja, best-effort
-  con **fallo visible en pantalla** (mismo criterio que el rechazo de solicitudes:
-  la baja no se deshace por un error de red, pero tampoco se calla).
-- **Ver la ventana del link de pago con precio viejo**: hoy un pago por link
-  posterior a una actualización REG-34 se imputa igual y sólo deja el asiento
-  `link_amount_mismatch`, que ninguna pantalla muestra.
-- **`/admin/salud` tiene que mostrar `cron_runs`**, que ya escribe la conciliación
-  diaria de la 4B: hoy el resultado sólo se lee por SQL.
+Suite al cerrar: **154 archivos / 2289 tests**, sobre una base de rama de 130
+archivos / 1803 tests (los 1786 del cierre de 4B más los del piso de cobertura,
+que se mergeó después): **+24 archivos y +486 tests**. Los archivos de integración
+que corren contra MariaDB real y se saltean sin `DATABASE_URL_TEST` pasaron de dos
+a **tres**: la 4C sumó `tests/integration/unique-violation.test.ts`.
 
-**El devengo tiene FECHA DURA: antes del 01/10/2026.** No es una prioridad entre
+**Estado de los CA** (spec 4C §14). Distinción importante: casi todo lo de esta
+fase **no se puede ejercitar en producción** —el devengo no tiene ningún mes
+devengable hasta el 01/10/2026, y con `EMAIL_ALLOWLIST` puesta los correos no
+salen—, así que la columna dice de dónde sale la confianza en cada caso.
+
+| # | Criterio | Estado |
+|---|---|---|
+| 1 | Correr el devengo dos veces el mismo día crea una sola cuota por socio | ✅ lectura previa + `createMany` con `skipDuplicates` sobre `fees_member_id_period_key`. La **forma del P2002** que respalda el reintento se fija contra MariaDB real en `tests/integration/unique-violation.test.ts`, y el revisor comprobó a mano el caso de producción (el `createMany` **dentro de una `$transaction`**) contra la base local |
+| 2 | La primera corrida backfillea desde `coverageFloor` (el 01/11 crea 2026-09 y 2026-10) | ⚠️ por tests, y un dry run contra la base local (35 socios, 35 filas, `upTo` 2026-09). No se puede reproducir en producción antes del 01/10: la ventana de `upTo` está vacía hasta esa fecha |
+| 3 | El 15 del mes, ni el que pagó ni el que no pagó el mes en curso aparecen en Deudores | ⚠️ por construcción y por tests: el techo del devengo es el **mes vencido** y ninguna pantalla se tocó |
+| 4 | El recordatorio: nada salvo el último día; una sola vez por socio y período; febrero avisa el 28/29 | ⚠️ por tests (los dos bordes de mes y febrero, y la dedupe corrida dos veces). El **plan de consulta** sí se midió contra MariaDB con 17.136 filas sintéticas: usa el índice, 0,43 ms |
+| 5 | El resumen sin novedades no se envía y no ensucia `/admin/salud` | ✅ el envío se verificó **de punta a punta contra el dev server** y llegó un correo real; la rama "sin novedades" (que no abre `CronRun`) está por tests |
+| 6 | Un débito rechazado le llega al socio en castellano; el resultado del webhook no cambia | ⚠️ por tests, con la regla dura —el `WebhookResult` es idéntico al de antes— perseguida por la revisión en los **ocho** caminos de fallo. Ojo: con la allowlist puesta no se escribe fila `Notification`, así que **la dedupe está dormida** hasta que se borre |
+| 7 | Un email con el transporte roto queda `failed` y "Reenviar" lo saca; la allowlist NO queda `failed` | ✅ test de **costura** sobre el transporte real (no sobre dobles) y prueba de mutación: envolver el código de la allowlist falla sólo ese test, que era el hueco exacto |
+| 8 | `/admin/salud` muestra los cinco crons + backup, MP, la bandeja, las divergencias y los `link_amount_mismatch`; una corrida colgada se distingue | ✅ recorrida contra la base local con datos sembrados — de esa corrida salió el hallazgo de que `CronRun.summary` publicaba un `preapproval_id` entero. `applications` empezó a escribir `CronRun` en esta fase; antes era el único cron que corría en producción sin dejar huella |
+| 9 | El padrón a una fecha dada lista habilitados y morosos-con-cuotas, imprimible, exportable y con asiento | ⚠️ por tests y por revisión de código; el BOM del CSV comprobado **por bytes**. No hubo simulacro de mesa |
+| 10 | La baja cancela la suscripción en MP; si MP falla, la pantalla lo dice. El lote, ídem con el tercer balde | ✅ **verificado en el navegador contra la API real de sandbox**, los dos desenlaces: fallo `http_404` con el espejo intacto, y éxito con la fila pasando a Cancelada |
+| 11 | Deudores no ofrece casilla de cesantía a adherentes | ⚠️ por tests, con el filtro REG-15 en las **dos** capas (pantalla y action) |
+| 12 | Generar un link de pago para un cesante está bloqueado con mensaje claro | ⚠️ por tests. Era el agujero que **tomaba plata**: se generaba el link, el vecino pagaba y esa plata caía en la bandeja sin poder imputarse |
+| 13 | Un valor nuevo en `digest_recipients` cambia los destinatarios sin reiniciar nada | ✅ el correo real del CA 5 salió a la dirección cargada en la clave, sin deploy ni restart |
+
+**Tres desvíos deliberados de la letra de la spec**, todos verificados contra el
+código antes de tomarlos:
+
+1. **§4 dice `status: "active"` y el cron consulta `active` + `suspended`**, porque
+   `accrues()` sólo excluye a los dados de baja: un suspendido sigue debiendo. Hoy
+   no cambia ninguna fila (hay **0 suspendidos**).
+2. **La dedupe del recordatorio no lleva `unique`.** Con `failed` escribiéndose,
+   un intento fallido bloquearía el reintento de ese período. Queda lectura previa
+   que excluye `failed`, sobre la premisa de **un solo proceso** de `docs/03`.
+3. **Se agregó un índice que la spec no nombra** (`webhook_events(origin, received_at)`):
+   las dos consultas del panel de Mercado Pago de `/admin/salud` eran full scan.
+
+**El hallazgo que ningún test podía ver.** Con `@prisma/adapter-mariadb` **no
+existe `meta.target`**: el nombre del unique violado viaja en
+`meta.driverAdapterError.cause.constraint.index`. Una guarda escrita contra
+`meta.target` —que es lo que dice la documentación de Prisma y lo que el repo ya
+tenía en `applications/record.ts`— habría pasado todos los tests y **nunca** habría
+matcheado en producción; el fake de los tests era el que mentía. Se centralizó en
+`src/lib/treasury/unique-violation.ts`, que lee las dos formas y **falla cerrada**
+(si el adapter cambia, no reintenta). Es la misma lección de la 4B —medir antes de
+suponer—, esta vez contra el driver de la base.
+
+**Deuda que la fase deja anotada** (para el M5 o para cuando moleste):
+
+- **El foco de `parseForm`**: la función ya devuelve el campo que falló, pero
+  **nadie lo consume todavía**. Lo entregado es la plomería; el síntoma que motivó
+  la deuda —que el mensaje no dice DÓNDE falló— sigue igual. Llevar el foco exige
+  propagar estado y `aria-invalid` pantalla por pantalla.
+- **El socio VIGENTE con dos débitos vivos** no tiene remedio dentro del sistema
+  (arriba, en la deuda de 4B): la baja no corresponde y el botón de cancelar está
+  acotado a socios dados de baja.
+- **El tope del lote de cesantía cuenta SOCIOS, no llamadas de red**
+  (`ARREARS_BATCH_MAX = 25`). Un socio con dos suscripciones vivas vuelve a acercar
+  el 504 que el tope vino a evitar. Mitigado, no cerrado.
+- **La escotilla del recordatorio alcanza UN MES.** Si el aviso se pierde el 30/09
+  y se fuerza el 31/10, el correo avisa **octubre**: septiembre queda irrecuperable.
+- **`stoppedForActive` tiene un falso positivo que ninguna acción apaga**: el socio
+  vigente que se pasó a efectivo y le cancelaron el débito. Por eso la pantalla lo
+  pinta en gris y no en rojo.
+- **`FORCE_VALUES` y el mensaje del 400 están duplicados literalmente** entre
+  `accrual/route.ts` y `reminder/route.ts`. Extraerlos a `src/lib/cron/force-param.ts`
+  **antes** de que aparezca un tercer cron con escotilla.
+- **`accrues()` quedó sin call-site de producción** (lo reemplazó `periodsToAccrue`,
+  que sí sabe recorrer el pasado). **Se conserva a propósito**, con sus tests: es el
+  predicado de consulta "¿este socio devenga este mes?" y `rules.ts:104` lo usa como
+  contraste para explicar por qué la otra función existe.
+- **Tres barridos por rango sin índice** en el resumen diario (`payments.created_at`,
+  `notifications.sent_at`, `webhook_events.received_at` sin `origin`), y **ninguno
+  sobre `receipts.emailed_at`**. Irrelevante al volumen de hoy.
+- **Una anulación no es novedad en ningún renglón del resumen**: un pago registrado
+  y anulado el mismo día desaparece del correo.
+
+**Dos cosas que hay que tener presentes al desplegar, y no son bugs:** la hoja de
+gestión manual va a salir en producción con las columnas **Domicilio y Teléfono
+casi vacías** (el padrón trajo DNI, nombre y categoría, pero domicilio y teléfono
+se cargan a mano: hoy hay 2 socios con calle y 1 con teléfono sobre 278); y el
+asiento `electoral_roll_generated` significa "la página se renderizó", no "alguien
+produjo un padrón".
+
+**El devengo tiene FECHA DURA: antes del 01/10/2026.** Está **implementado y
+testeado**, pero lo que vence es el **despliegue** (`docs/10` §4.6): mientras el
+cron no esté en el crontab del VPS, no crea ninguna fila. No es una prioridad entre
 otras, es un vencimiento. El modelo que confirmó el operador el 23/08/2026 es de dos
 niveles: la cuota del mes M **nace el 01/M** (está al cobro, se puede pagar durante
 el mes) y recién es **deuda/mora el 01/M+1**. El padrón (`deuda.xlsx`, foto del
@@ -286,29 +380,23 @@ hace que un pago impute el primer mes NO cubierto, así que la plata cae bien—
 deuda visible (Deudores, la ficha, `/mi`) cuenta filas, y esas filas sólo las crea el
 devengo.
 
-Tres cosas que el devengo tiene que hacer, y que no son obvias:
+Tres cosas que el devengo tenía que hacer, y que no eran obvias. **Las tres
+quedaron hechas**, y así se resolvieron:
 
-1. **Backfillear desde `coverageFloor`, no crear sólo el mes corriente.** El piso ya
-   existe y es la pieza que este cron necesita: es la misma función que decide a qué
-   mes va un pago, así que devengo e imputación no pueden divergir. Si el cron corre
-   por primera vez en noviembre, tiene que crear septiembre Y octubre.
-2. **No devengar el mes en curso como deuda.** Con el modelo de dos niveles, el 15 de
-   octubre la cuota de octubre existe (al cobro) pero no es mora. O el cron devenga el
-   día 1 del mes siguiente, o las pantallas distinguen los dos estados — pero alguna de
-   las dos cosas hay que hacer, o Deudores va a acusar de morosos a socios que están en
-   fecha.
-3. **Tope o agrupación de emails.** El 23/08/2026 la conciliación recuperó 24 débitos
-   históricos de un solo socio y **le mandó 24 recibos de golpe** (verificado: llegaron
-   los 24). Con 160 socios vigentes y sin `EMAIL_ALLOWLIST`, un devengo o una
-   conciliación con backlog son cientos de correos en minutos. Brevo tiene cuota, y un
-   vecino que recibe 24 mails no lee ninguno.
-
-CA: correr el devengo dos veces el mismo día crea una sola cuota por socio; el
-aviso de mora en un día que no es 30 no envía nada y el 30 envía una sola vez a
-cada deudor; el resumen sin novedades no se envía; un email con el transporte roto
-queda `failed` y "Reintentar" lo saca; `/admin/salud` muestra las cinco corridas y
-el backup; **declarar la baja de un socio con débito cancela su suscripción en MP y,
-si MP falla, la pantalla lo dice**.
+1. **Backfillear desde `coverageFloor`, no crear sólo el mes corriente.** Hecho, y
+   con la **misma función** que decide a qué mes va un pago (`coverageFloor` en
+   `treasury/rules.ts`): devengo, recordatorio e imputación no pueden divergir
+   porque comparten la expresión. Si el cron corre por primera vez en noviembre,
+   crea septiembre **y** octubre.
+2. **No devengar el mes en curso como deuda.** Resuelto por el lado del cron: el
+   techo es el **mes vencido** (mes corriente − 1), así que la fila nace el 01/M+1,
+   cuando la cuota ya es mora. Es lo que deja correctos, **sin tocarlos**, a los 21
+   puntos del sistema que cuentan filas `pending` a secas. Ninguna pantalla se tocó.
+3. **Tope o agrupación de emails.** Resuelto con `MAIL_BATCH_CAP` (default 50) como
+   **presupuesto por corrida**, no como contador global. El cupo **vuelve** cuando
+   el envío termina sin correo (socio sin casilla, recibo anulado), así que el tope
+   cuenta correos mandados y no intentos: con 37 casillas sobre 278 socios, un tope
+   de intentos se habría agotado sin mandar ninguno.
 
 **Alcance agregado el 21/08/2026 — propagación del valor de cuota (REG-34).**
 **Cerrado en la fase 4B**: el lote vive en `/admin/tesoreria/valores` y quedó
@@ -332,6 +420,11 @@ cuotas adeudadas, indicando cuántas debe (notificación fehaciente); resumen di
 a las 9:00 a la Comisión con las novedades del día anterior (no se envía si no
 hubo novedades); export del padrón electoral (REG-31), diferido desde el Módulo 1
 porque depende del dato de deuda real.
+
+**Las cinco entraron**, con dos precisiones que aparecieron al construirlas: el
+aviso no sale "el día 30" sino el **último día civil del mes** (en febrero el 30 no
+existe y ese mes nunca habría avisado), y el resumen sale **07:30** y no 09:00, para
+que la Comisión lo tenga antes de arrancar el día.
 
 ### Insumos que deja el Módulo 3 para el Módulo 4
 
@@ -418,10 +511,16 @@ autenticado en Brevo) → carga de fichas completa (160 vigentes: 36 activos +
 124 adherentes) → **suscripciones preexistentes vinculadas** (la pantalla existe
 desde la fase 4B; se hace al desplegarla, ver `docs/10` §4.4) → acta marco de
 admisión digital dictada (REG-12) → **textos legales aprobados por la CD y cargados
-en `/admin/configuracion`** → **crontab con sus dos líneas** (`docs/11`, Parte H:
-`/api/cron/applications` 08:05 y `/api/cron/reconcile` 03:00; la fase 4C suma
-devengo, mora y resumen) → activar `asociate_activo` → convocar re-empadronamiento
-dentro de los 90 días.
+en `/admin/configuracion`** → **crontab con sus seis líneas** (`docs/11`, Parte H:
+backup 04:00, `reconcile` 03:00, `applications` 08:05, `accrual` 00:30,
+`digest` 07:30 y `reminder` 10:00) → **`digest_recipients` cargada** en
+`/admin/configuracion`, o el resumen diario no se le manda a nadie → activar
+`asociate_activo` → convocar re-empadronamiento dentro de los 90 días.
+
+**El devengo no espera al lanzamiento.** Su línea del crontab tiene fecha dura
+—**antes del 01/10/2026**— y es independiente de todo lo demás de esta lista: no
+manda correos, así que la `EMAIL_ALLOWLIST` no lo afecta. Procedimiento completo en
+`docs/10` §4.6.
 
 Nota sobre los ids de plan: desde la fase 4A el monto no sale de ahí —`fee_values`
 es la única fuente— y desde la fase 4B **los ids son opcionales**: el alta web, la

@@ -229,9 +229,9 @@ Cuatro cosas que hay que leer bien:
    `expiration_date_to` — uno sin el otro no hace nada. Sin vencimiento, el link
    congela el precio del día en que se generó, y un pago posterior a una
    actualización REG-34 se imputa igual dejando sólo un asiento
-   `link_amount_mismatch` que ninguna pantalla muestra. 72 h cubre
-   viernes-tarde → lunes y acota esa ventana de infinito a tres días. Verla es
-   deuda de la fase 4C (`/admin/salud`).
+   `link_amount_mismatch`. 72 h cubre viernes-tarde → lunes y acota esa ventana
+   de infinito a tres días. Desde la fase 4C **`/admin/salud` cuenta esos
+   asientos** — como historia acumulada, no como cola de trabajo.
 4. **El monto sale de `fee_values`**, y el importe que efectivamente pagó el vecino
    se compara al aplicar: si difiere, la cuota se imputa **igual** (la plata entró)
    y queda el asiento `link_amount_mismatch`.
@@ -413,8 +413,9 @@ El resumen lleva `paymentsRecovered/Inbox/Skipped`, `debitsRecovered/Inbox/Skipp
 `errorsOmitted`). **La causa de cada error viaja entera** en `errors[]`: es el único
 canal por el que alguien se entera de que la red se rompió.
 
-Hasta que exista `/admin/salud` (fase 4C), el resultado se lee en `cron_runs` y en
-la auditoría. Ver el bloque de consulta en `docs/11` Parte H.
+Desde la fase 4C el resultado se lee en **`/admin/salud`** (superadmin), que muestra
+la última corrida de cada cron con su resumen. La consulta SQL directa sigue
+sirviendo y está en `docs/11` Parte H.
 
 > **`amountDivergent` puede aparecer en 1 y bajar a 0 en la corrida siguiente sin
 > que nadie toque nada**: la lista de suscripciones se junta antes del sync, así que
@@ -451,14 +452,24 @@ tres categorías sin cuota (cadete, honorario, vitalicio).
   rechazo no se deshace por un error de red, pero tampoco se calla.
 - Expiración por falta de pago (cron de solicitudes): misma cancelación,
   best-effort; si falla queda contada en `errors` de la corrida.
-- **Baja o renuncia de un socio con débito: cancelar la suscripción por API al
-  confirmar la baja. Alcance de la fase 4C** (reasignado el 23/08/2026; antes decía
-  "Módulo 5" y `docs/07` no se lo asignaba a ninguna fase). El motivo del cambio: las
-  bajas del **panel** —cesantía por mora en lote, baja por acta— ya existen y ya
-  corren, así que el agujero está **vivo hoy**, no cuando llegue el panel del socio.
-  Mientras tanto: el lote de §7 avisa cuando una suscripción divergente es de alguien
-  dado de baja, y la ficha del socio muestra su suscripción viva — pero **nada la
-  cancela solo**, hay que hacerlo desde el panel de Mercado Pago.
+- **Baja o renuncia de un socio con débito: se cancela la suscripción por API al
+  confirmar la baja. HECHO en la fase 4C** (24/08/2026; se había reasignado a esa
+  fase el 23/08 desde el "Módulo 5" que decía este documento). Vale para las **dos**
+  bajas del panel —la individual por acta y el lote de cesantía por mora—, que
+  comparten el mismo módulo de dominio (`src/lib/members/withdraw-with-debits.ts`).
+  Tres precisiones que importan:
+  - **La llamada a MP vive FUERA de la `$transaction` de la baja**, después del
+    commit. Una llamada de red adentro sostiene el lock de las filas hasta el
+    timeout de 5 s de Prisma — mismo corolario que el PDF del recibo (REG-33).
+  - Es **best-effort con fallo visible**: la baja no se deshace por un error de red,
+    pero la pantalla dice que la suscripción **quedó sin cancelar**, y el lote la
+    cuenta en su tercer balde ("cesanteado pero el débito sigue vivo").
+  - Se cancela por **lista negra**: todo lo que no esté ya cancelado, incluido un
+    estado que MP no documente. No saber es peor que cancelar de más.
+- **Lo que sigue sin cubrir**: el socio **vigente** con dos suscripciones vivas. El
+  botón de cancelar de `/admin/tesoreria/suscripciones` está acotado a socios dados
+  de baja (enmienda del operador), así que ahí hay que cancelar una desde el panel de
+  Mercado Pago. `mp_subscriptions.member_id` es índice y no unique: nada lo impide.
 - Recategorización de una solicitud: si el monto de la categoría nueva difiere, se
   actualiza la suscripción por API **antes** de tocar la fila local. Si MP falla, la
   acción se corta entera: al revés, la solicitud diría "activo" mientras el débito

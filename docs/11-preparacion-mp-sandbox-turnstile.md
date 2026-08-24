@@ -355,17 +355,132 @@ mysql sigev -e "SELECT id, started_at, ok, summary FROM cron_runs WHERE job='rec
 - Un `401` sigue significando secreto que no coincide; un `503`, `CRON_SECRET`
   sin definir en el `.env`.
 
-### Estado del crontab tras la fase 4B (23/08/2026)
+### El crontab final: seis líneas (fase 4C, 24/08/2026)
 
-**Dos líneas**: `/api/cron/applications` a las 08:05 y `/api/cron/reconcile` a las
-03:00.
+Cinco endpoints de la app más el backup. Este es el estado **completo y
+definitivo** del crontab de root del VPS:
 
-Sigue faltando lo contraintuitivo: **las cuotas del mes todavía no se devengan
-solas**. Las que hay salieron del import de `datos/deuda.xlsx`. El devengo del
-día 1, el aviso de mora del día 30 y el resumen diario a la Comisión son de la
-fase **4C**, y recién ahí este crontab suma la tercera, cuarta y quinta línea.
-Cuando pase, `/admin/salud` va a mostrar la última corrida de cada uno; hoy eso
-se lee en `cron_runs`.
+| Hora | Qué | Cadencia real |
+|---|---|---|
+| `0 3 * * *` | `/api/cron/reconcile` | todos los días, actúa todos los días |
+| `0 4 * * *` | `backup.sh` | todos los días (**no** es un endpoint) |
+| `5 8 * * *` | `/api/cron/applications` | todos los días, actúa todos los días |
+| `30 0 * * *` | `/api/cron/accrual` | todos los días, **actúa el día 1** |
+| `30 7 * * *` | `/api/cron/digest` | todos los días, **sin novedades no envía** |
+| `0 10 * * *` | `/api/cron/reminder` | todos los días, **actúa el último día del mes** |
+
+Bloque copiable para dejarlo así. Es **idempotente**: se puede correr más de una
+vez sin duplicar ninguna línea.
+
+```bash
+# La línea del secreto tiene que existir ANTES: sin ella el cron manda un Bearer
+# vacío y todas las corridas mueren en 401.
+test -s /root/.sigev-cron-secret || echo 'FALTA /root/.sigev-cron-secret — pará acá'
+
+crontab -l > /root/crontab.bak
+
+export CRON_URL=https://vecinalciudadela.ar/api/cron
+add_cron() {  # $1 = expresión horaria, $2 = job
+  local line="$1 curl -sS --max-time 900 -X POST -H \"Authorization: Bearer \$(cat /root/.sigev-cron-secret)\" $CRON_URL/$2 >> /var/log/sigev-cron.log 2>&1"
+  crontab -l 2>/dev/null | grep -qF "/api/cron/$2" || (crontab -l 2>/dev/null; echo "$line") | crontab -
+}
+add_cron "0 3 * * *"  reconcile     # conciliación con Mercado Pago
+add_cron "5 8 * * *"  applications  # mantenimiento de solicitudes
+add_cron "30 0 * * *" accrual       # devengo — corre a diario, ACTÚA el día 1
+add_cron "30 7 * * *" digest        # resumen diario — sin novedades no envía
+add_cron "0 10 * * *" reminder      # recordatorio — ACTÚA el último día del mes
+
+crontab -l | grep -E 'backup|api/cron'   # verificación: 5 de app + el backup
+```
+
+El `grep -qF` es lo que lo hace idempotente. La versión sin guarda
+—`(crontab -l; echo …) | crontab -` a secas— **duplica la línea** en el segundo
+intento.
+
+**La sexta línea es la del backup**, a las 04:00 (`scripts/backup.sh:3` dice esa
+hora), y **no** es un endpoint: es el script de shell que deja el sello `LAST_OK`
+que `/admin/salud` lee. Por eso el bloque de arriba no la agrega, sólo la verifica
+—la ruta con la que quedó instalada en el VPS la dice el propio `crontab -l`, este
+documento no la fija—. Si nunca se instaló, el panel va a decir **"Sin rastro"**
+—que es distinto de "Atrasado"— y hay que instalarla antes de creerle a esa
+tarjeta.
+
+**Los tres crons nuevos corren todos los días y deciden adentro** si actúan:
+
+- `accrual` responde `{"skipped":"not_first_day"}` los días 2 a 31,
+- `reminder` responde `{"skipped":"not_last_day"}` salvo el último día del mes,
+- `digest` responde `{"skipped":"no_news"}` los días sin novedades.
+
+Ninguna de esas respuestas escribe una fila en `cron_runs`, y eso es a propósito:
+`/admin/salud` muestra la última corrida **efectiva**, y 29 filas vacías por mes
+taparían la única que importa. **Un `skipped` en `/var/log/sigev-cron.log` es una
+corrida sana.**
+
+Por eso la pantalla tampoco los mide a los cinco con la misma vara: `reconcile` y
+`applications` se esperan cada 24 h, `accrual` y `reminder` **cada 31 días**, y
+`digest` cada 7 (con 160 vigentes y el débito concentrado alrededor del 10, el día
+sin novedades va a ser la regla, no la excepción).
+
+**El 524 de Cloudflare sigue valiendo**: un corte a los ~100 s no significa que el
+cron no haya corrido — la verdad está en `cron_runs`, que desde la 4C se lee desde
+`/admin/salud` en vez de por SQL. El devengo no corre ese riesgo (segundos, sin
+red); los de email sí el día que sean cientos de envíos, y para eso está
+`MAIL_BATCH_CAP`.
+
+Y **200 / 207 / 401 / 503 significan lo mismo en los cinco**: 207 es "corrió entera
+pero algo falló"; 401 es que el secreto del crontab no coincide con el `.env`; 503
+es que `CRON_SECRET` no está definida en el `.env` del VPS.
+
+### Las dos escotillas: volver a disparar el devengo y el recordatorio
+
+`accrual` y `reminder` **actúan un solo día del mes**. Si esa corrida se pierde —el
+VPS caído, un hipo de la base—, sin escotilla el devengo recién se recuperaba el
+mes siguiente y el aviso de ese mes no salía nunca. Las dos escotillas viajan
+detrás del **mismo `CRON_SECRET`**: no hay barrera nueva.
+
+```bash
+export S=$(cat /root/.sigev-cron-secret)
+export URL=https://vecinalciudadela.ar/api/cron
+```
+
+**Devengo** — `?force=1` saltea la guarda del día 1; `?upTo=AAAA-MM` elige hasta
+qué mes devengar (opcional: sin él usa el mes vencido).
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $S" "$URL/accrual?force=1" -w '\nHTTP %{http_code}\n'
+curl -sS -X POST -H "Authorization: Bearer $S" "$URL/accrual?force=1&upTo=2026-09" -w '\nHTTP %{http_code}\n'
+```
+
+- **Qué esperar**: el summary de la corrida con `"forced":true`, y una fila nueva en
+  `cron_runs` visible en `/admin/salud` (una corrida forzada **es** una corrida).
+- **Volver a correrlo no duplica nada**: `feesCreated` da 0 la segunda vez.
+- **`upTo` tiene rango**: piso `IMPORT_COVERAGE_FLOOR`, techo el mes vencido. Fuera
+  de rango es **400 con el rango en el cuerpo**, no un 500 ni un silencio. **Hasta
+  el 01/10/2026 todo `upTo` explícito da 400**, porque el piso queda por encima del
+  techo: es correcto, la ventana se abre sola.
+- Ojo con las mayúsculas: `?FORCE=1` y `?upto=` **se ignoran en silencio**.
+
+**Recordatorio** — `?force=1` saltea la guarda del último día del mes.
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $S" "$URL/reminder?force=1" -w '\nHTTP %{http_code}\n'
+```
+
+- **Qué esperar**: el summary con `"forced":true`, y el **texto del correo adaptado
+  por calendario**: forzado el mismo último día sale "vence mañana"; forzado
+  después, **"tu cuota de septiembre venció y quedó impaga"**. El aviso sigue
+  sirviendo y no le miente al vecino sobre la fecha.
+- **Alcance de un mes**: el recordatorio avisa por el período que corresponde **al
+  día en que se lo corre**. Si el aviso se pierde el 30/09 y se fuerza el 31/10,
+  avisa **octubre** — septiembre queda irrecuperable por esta vía.
+- Corrido dos veces, la dedupe corta: en la segunda corrida `sent` queda en 0 y los
+  mismos socios se cuentan en `alreadyNotified`.
+
+**`digest` no tiene escotilla**, a propósito: corre todos los días y su ventana es
+el día civil anterior, así que "forzarlo" sería volver a mandar el resumen de ayer.
+
+En los dos, `?force=` sólo acepta `1` o `true`; cualquier otro valor es un **400**,
+y la validación corre **antes** de tocar la base y antes de abrir el `CronRun`.
 
 ---
 

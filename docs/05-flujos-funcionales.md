@@ -521,6 +521,17 @@ ${CRON_SECRET}` (comparación timing-safe; sin la variable el endpoint responde
    corrida — incluso si falló a la mitad, porque ese asiento es el único registro
    consultable de qué alcanzó a hacer.
 
+**Desde la fase 4C** este cron dejó de ser el único que corría en producción sin
+dejar huella: escribe una fila en `cron_runs` como los otros cuatro, y por lo tanto
+aparece en `/admin/salud`. Con eso llegó también su código de estado: **200** si no
+hubo ningún error por ítem, y **207** si la corrida terminó entera pero alguna
+solicitud falló (misma semántica que la conciliación de MP; `docs/11` Parte H). El
+crontab del VPS usa `curl -s` **sin `--fail`**, así que el 207 no cambia nada de lo
+que ya corría: es una señal para quien lee el log o el tablero. La guarda del
+`Authorization` vive desde la 4C en un módulo compartido por los cinco crons —503
+sin `CRON_SECRET`, 401 con bearer que no coincide, comparación timing-safe—, así
+que no puede divergir entre endpoints.
+
 La ventana efectiva del recordatorio es **de 3 a 7 días**: quien entra al sistema
 recién al sexto día y medio recibe el aviso y expira en la corrida siguiente, con
 menos de 24 h de margen. Es correcto (nunca expira antes de avisar), pero apretado.
