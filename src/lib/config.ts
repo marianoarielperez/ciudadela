@@ -18,6 +18,11 @@ export const CONFIG_KEYS = {
    *  desde /admin/configuracion: cambiar quién lo recibe no puede exigir un
    *  deploy ni un reinicio de PM2. */
   digestRecipients: "digest_recipients",
+  /** Bloquea los cambios de categoría mientras hay elecciones (Art. 5° ter).
+   *  Lo leía `members/service.ts` con la clave escrita a mano; desde la 4C hay
+   *  una pantalla que lo escribe (`/admin/padron-electoral`) y la clave vive en
+   *  un solo lugar. */
+  electionsOngoing: "elecciones_en_curso",
 } as const;
 
 type Db = Pick<PrismaClient, "configuration">;

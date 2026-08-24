@@ -38,7 +38,13 @@ vi.mock("@/lib/tokens", () => ({ tokens: { issue: vi.fn(), revokeForMember: vi.f
 vi.mock("@/lib/email", () => ({ mailer: mailerMock }));
 vi.mock("@/lib/mp/gateway", () => ({ mpGateway: gatewayMock }));
 vi.mock("@/lib/treasury/fee-values", () => feeValuesMock);
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// Mock PARCIAL: `@/lib/config` —que llega hasta acá por `members/service`—
+// evalúa `unstable_cache` al importarse, así que el resto del módulo tiene que
+// seguir existiendo.
+vi.mock("next/cache", async (orig) => ({
+  ...(await orig<typeof import("next/cache")>()),
+  revalidatePath: vi.fn(),
+}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers([["x-real-ip", "1.2.3.4"]]) }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {

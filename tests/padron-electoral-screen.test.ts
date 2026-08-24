@@ -1,0 +1,233 @@
+// La pantalla del padrón electoral (spec 4C §9), renderizada de verdad.
+//
+// Lo que se afirma acá es sobre PAPEL y sobre autorización, que es lo que no se
+// puede ver desde el dominio: qué datos de los vecinos salen impresos y cuáles
+// NO (Ley 25.326), que el moroso figure en vez de desaparecer, que una fecha
+// basura no arme ningún padrón, y que un admin común no vea ni una fila.
+//
+// La cobertura sigue la partición del código:
+//  - `ElectoralRollSheet` decide qué columnas salen impresas y qué dice la hoja.
+//  - `PadronElectoralPage` decide quién puede verla, qué fecha usa y qué queda
+//    asentado.
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+type AdminDouble = { ok: boolean; actorId?: number; reason?: string; error?: string };
+
+const mocks = vi.hoisted(() => ({
+  superadmin: vi.fn(async (): Promise<AdminDouble> => ({ ok: true, actorId: 7 })),
+  current: vi.fn(async (): Promise<unknown> => ({ activeAmount: 6000, sharedAmount: 3000 })),
+  getBool: vi.fn(async () => false),
+  buildRoll: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/lib/auth/require-admin", () => ({ requireSuperadmin: mocks.superadmin }));
+vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: { current: mocks.current } }));
+vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Map([["x-real-ip", "10.0.0.7"]])),
+}));
+// El formulario del flag es un componente cliente con `useActionState`: se
+// renderiza, pero su action arrastraría el cliente de Prisma a este test.
+vi.mock("@/app/admin/padron-electoral/actions", () => ({ setElectionsFlagAction: vi.fn() }));
+
+import PadronElectoralPage from "@/app/admin/padron-electoral/page";
+import { ElectoralRollSheet } from "@/app/admin/padron-electoral/roll-sheet";
+import { audit } from "@/lib/audit";
+import { configReader } from "@/lib/config";
+import { buildElectoralRoll, type ElectoralRoll, type ElectoralRow } from "@/lib/members/electoral";
+
+vi.mock("@/lib/config", async (orig) => ({
+  ...(await orig<typeof import("@/lib/config")>()),
+  configReader: { getBool: mocks.getBool, getString: vi.fn(async () => null) },
+}));
+vi.mock("@/lib/members/electoral", async (orig) => ({
+  ...(await orig<typeof import("@/lib/members/electoral")>()),
+  buildElectoralRoll: mocks.buildRoll,
+}));
+
+const AT = new Date("2026-11-15T12:00:00Z");
+const GENERATED_AT = new Date("2026-11-10T18:30:00Z");
+
+const row = (over: Partial<ElectoralRow> = {}): ElectoralRow => ({
+  memberId: 1,
+  memberNumber: 42,
+  fullName: "Coñuecar, Marta",
+  category: "active",
+  joinedAt: new Date("2019-09-01T12:00:00Z"),
+  seniorityDays: 2632,
+  arrears: 0,
+  debt: 0,
+  ...over,
+});
+
+const roll = (over: Partial<ElectoralRoll> = {}): ElectoralRoll => ({
+  at: AT,
+  period: "2026-11",
+  enabled: [],
+  toPurge: [],
+  purgeFees: 0,
+  purgeAmount: 0,
+  ...over,
+});
+
+const sheet = (r: ElectoralRoll, valued = true) =>
+  renderToStaticMarkup(
+    createElement(ElectoralRollSheet, { roll: r, valued, generatedAt: GENERATED_AT }),
+  );
+
+const page = async (fecha?: string) =>
+  renderToStaticMarkup(
+    await PadronElectoralPage({ searchParams: Promise.resolve(fecha ? { fecha } : {}) }),
+  );
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.superadmin.mockResolvedValue({ ok: true, actorId: 7 });
+  mocks.current.mockResolvedValue({ activeAmount: 6000, sharedAmount: 3000 });
+  mocks.getBool.mockResolvedValue(false);
+  mocks.buildRoll.mockResolvedValue(roll());
+});
+
+describe("ElectoralRollSheet — qué sale impreso", () => {
+  it("lista al habilitado con las columnas de REG-31 y la fecha de ingreso", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain("Coñuecar, Marta");
+    expect(html).toContain("42");
+    expect(html).toContain("Activo");
+    expect(html).toContain("01/09/2019");
+  });
+
+  it("no imprime el DNI ni el domicilio ni la casilla de nadie", () => {
+    // La hoja se la lleva la Junta Electoral y en papel ya no queda ningún
+    // control de acceso (Ley 25.326). Las columnas son las de REG-31.
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).not.toContain("DNI");
+    expect(html).not.toContain("Domicilio");
+    expect(html).not.toContain("Teléfono");
+    expect(html).not.toContain("Email");
+  });
+
+  it("al moroso lo LISTA con lo que tiene que pagar en la mesa, no lo excluye", () => {
+    // La enmienda del 23/08/2026: el moroso purga hasta una hora antes y vota.
+    const html = sheet(
+      roll({
+        toPurge: [row({ memberId: 2, fullName: "Gómez, Luis", arrears: 3, debt: 18000 })],
+        purgeFees: 3,
+        purgeAmount: 18000,
+      }),
+    );
+
+    expect(html).toContain("Con deuda a purgar");
+    expect(html).toContain("Gómez, Luis");
+    expect(html).toContain("18.000");
+    expect(html).toContain("no está excluido");
+    expect(html).toContain("Total a purgar");
+  });
+
+  it("el bloque de habilitados no lleva columnas de plata", () => {
+    const html = sheet(roll({ enabled: [row({ arrears: 5, debt: 15000 })] }));
+
+    expect(html).not.toContain("A purgar</th>");
+    expect(html).not.toContain("15.000");
+  });
+
+  it("dice de cuándo son sus números: una hoja de ayer se lee como la de hoy", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain("elección del 15/11/2026");
+    expect(html).toContain("10/11/2026");
+  });
+
+  it("sin valor de cuota vigente lo dice en vez de imprimir un cero", () => {
+    const html = sheet(roll({ toPurge: [row({ arrears: 2, debt: null })], purgeFees: 2 }), false);
+
+    expect(html).toContain("No hay un valor de cuota vigente");
+  });
+
+  it("un bloque vacío no renderiza un thead sin filas", () => {
+    const html = sheet(roll());
+
+    expect(html).not.toContain("<thead");
+    expect(html).toContain("Ningún socio queda habilitado a esta fecha.");
+    expect(html).toContain("no hay nada que purgar");
+  });
+});
+
+describe("PadronElectoralPage", () => {
+  it("bloquea al admin común sin armar ningún padrón", async () => {
+    mocks.superadmin.mockResolvedValue({
+      ok: false,
+      reason: "not_admin",
+      error: "Solo el superadmin puede cambiar la configuración.",
+    });
+
+    const html = await page("2026-11-15");
+
+    expect(html).toContain("Solo el superadmin");
+    expect(buildElectoralRoll).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(html).not.toContain("Exportar CSV");
+  });
+
+  it("usa la fecha de la URL, no el reloj", async () => {
+    await page("2026-11-15");
+
+    expect(vi.mocked(buildElectoralRoll).mock.calls[0][1]).toEqual(AT);
+  });
+
+  it("rechaza una fecha inválida sin tocar la base ni auditar", async () => {
+    const html = await page("2026-02-31");
+
+    expect(html).toContain("La fecha de la elección no es válida.");
+    expect(buildElectoralRoll).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    // Sin padrón no hay nada que exportar ni que imprimir.
+    expect(html).not.toContain("Exportar CSV");
+  });
+
+  it("deja asiento al generar, con la fecha usada y los tamaños — nunca un nombre", async () => {
+    mocks.buildRoll.mockResolvedValue(
+      roll({
+        enabled: [row()],
+        toPurge: [row({ memberId: 2, fullName: "Gómez, Luis", arrears: 3, debt: 18000 })],
+        purgeFees: 3,
+        purgeAmount: 18000,
+      }),
+    );
+
+    await page("2026-11-15");
+
+    expect(audit).toHaveBeenCalledTimes(1);
+    const entry = vi.mocked(audit).mock.calls[0][0];
+    expect(entry).toMatchObject({
+      userId: 7,
+      action: "electoral_roll_generated",
+      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3 },
+      ip: "10.0.0.7",
+    });
+    const serialized = JSON.stringify(entry.detail);
+    expect(serialized).not.toContain("Coñuecar");
+    expect(serialized).not.toContain("Gómez");
+  });
+
+  it("lleva el link de exportación a la misma fecha que muestra", async () => {
+    const html = await page("2026-11-15");
+
+    expect(html).toContain("/api/admin/padron-electoral?fecha=2026-11-15");
+  });
+
+  it("ofrece el interruptor de elecciones con el estado guardado", async () => {
+    mocks.getBool.mockResolvedValue(true);
+
+    const html = await page("2026-11-15");
+
+    expect(vi.mocked(configReader.getBool)).toHaveBeenCalledWith("elecciones_en_curso");
+    expect(html).toContain("Hay elecciones en curso");
+    expect(html).toContain("bloquea los cambios de categoría");
+  });
+});

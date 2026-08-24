@@ -38,7 +38,8 @@ describe("navForRoles", () => {
     const hrefs = navForRoles(["superadmin", "admin"]).flatMap((g) => g.items.map((i) => i.href));
     expect(hrefs).toEqual([
       "/admin", "/admin/solicitudes", "/admin/socios", "/admin/tesoreria", "/admin/actas",
-      "/admin/noticias", "/admin/actividades", "/admin/salud", "/admin/configuracion",
+      "/admin/noticias", "/admin/actividades", "/admin/salud", "/admin/padron-electoral",
+      "/admin/configuracion",
     ]);
   });
 
@@ -49,9 +50,23 @@ describe("navForRoles", () => {
     const sistema = ADMIN_NAV.find((g) => g.label === "Sistema")!;
     const salud = sistema.items.find((i) => i.href === "/admin/salud")!;
     expect(salud).toMatchObject({ label: "Salud", icon: "activity", superadminOnly: true });
-    expect(sistema.items.map((i) => i.href)).toEqual(["/admin/salud", "/admin/configuracion"]);
+    expect(sistema.items.map((i) => i.href)).toEqual([
+      "/admin/salud", "/admin/padron-electoral", "/admin/configuracion",
+    ]);
     expect(
       navForRoles(["admin"]).some((g) => g.items.some((i) => i.href === "/admin/salud")),
+    ).toBe(false);
+  });
+
+  it("el padrón electoral es sólo del superadmin: prende y apaga una regla estatutaria", () => {
+    // El flag `elecciones_en_curso` que se escribe desde esa pantalla bloquea
+    // los cambios de categoría de TODO el panel (Art. 5° ter), y el padrón que
+    // genera es el documento que se le entrega a la Junta Electoral.
+    const sistema = ADMIN_NAV.find((g) => g.label === "Sistema")!;
+    const padron = sistema.items.find((i) => i.href === "/admin/padron-electoral")!;
+    expect(padron).toMatchObject({ label: "Padrón electoral", icon: "vote", superadminOnly: true });
+    expect(
+      navForRoles(["admin"]).some((g) => g.items.some((i) => i.href === "/admin/padron-electoral")),
     ).toBe(false);
   });
 

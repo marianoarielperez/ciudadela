@@ -2,6 +2,7 @@
 // writes a Movement. Audit rows are written by the calling server action
 // (it knows actor IP); this service records actor ids on movements.
 import type { Book, MemberCategory, PrismaClient, WithdrawalReason } from "@/generated/prisma/client";
+import { CONFIG_KEYS } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { canChangeCategory, canReadmit, canSuspend, canWithdraw } from "./rules";
 import { revokeStaleMemberTokens } from "./write";
@@ -18,7 +19,7 @@ type Tx = Pick<
 // src/app/admin/socios/[id]/actions.ts) y para no ofrecer el formulario cuando ya
 // se sabe que el cambio está bloqueado.
 export async function electionsOngoing(db: Pick<PrismaClient, "configuration">): Promise<boolean> {
-  const row = await db.configuration.findUnique({ where: { key: "elecciones_en_curso" } });
+  const row = await db.configuration.findUnique({ where: { key: CONFIG_KEYS.electionsOngoing } });
   return row?.value === true;
 }
 

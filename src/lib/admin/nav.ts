@@ -5,7 +5,7 @@ import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
   | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings"
-  | "activity";
+  | "activity" | "vote";
 
 export type AdminNavItem = {
   href: string;
@@ -48,6 +48,9 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       // Configuración es la que se abre cuando hay que cambiar algo. Lo urgente
       // arriba.
       { href: "/admin/salud", label: "Salud", icon: "activity", superadminOnly: true },
+      // El padrón electoral se usa dos veces cada dos años, así que va después
+      // de Salud; pero antes de Configuración, que es la pantalla-cajón.
+      { href: "/admin/padron-electoral", label: "Padrón electoral", icon: "vote", superadminOnly: true },
       { href: "/admin/configuracion", label: "Configuración", icon: "settings", superadminOnly: true },
     ],
   },

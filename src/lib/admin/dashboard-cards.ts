@@ -71,6 +71,13 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
         superadminOnly: true,
       },
       {
+        title: "Padrón electoral",
+        description: "Padrón para la Junta Electoral a una fecha dada, con los morosos que pueden purgar su deuda.",
+        href: "/admin/padron-electoral",
+        cta: "Generar",
+        superadminOnly: true,
+      },
+      {
         title: "Configuración",
         description: "Parámetros del sistema.",
         href: "/admin/configuracion",
