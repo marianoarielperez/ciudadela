@@ -31,9 +31,10 @@ const schema = z.object({
 });
 
 export async function startMemberPaymentAction(_prev: PayState, formData: FormData): Promise<PayState> {
-  // Resuelve contra la fila viva: un socio dado de baja o suspendido no llega
-  // acá aunque su JWT todavía diga "socio".
-  const actor = await requireMember();
+  // Resuelve contra la fila viva. El SUSPENDIDO sí llega: pagar es la única
+  // action que el modo lectura le permite (spec M5 §5 — saldar deuda lo acerca
+  // a la rehabilitación). Un socio dado de baja no llega nunca.
+  const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return { error: actor.error };
   // Cada clic crea una preferencia en Mercado Pago. Va antes del parseo: lo que
   // se raciona es el llamado a MP, y un formulario mal armado repetido cinco

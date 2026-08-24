@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requireMember } from "@/lib/auth/require-member";
 import { hasRecentLinkPayment, readReturnOutcome } from "@/lib/mp/return-status";
 import { prisma } from "@/lib/prisma";
@@ -20,7 +19,9 @@ export default async function MiCuentaPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   // La página se autoriza sola (el layout corre en paralelo y no la protege).
-  const actor = await requireMember();
+  // El suspendido entra en modo lectura (spec M5 §5): ve su cuenta y puede
+  // pagar, igual que un socio vigente.
+  const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return null;
   const sp = await props.searchParams;
   // `?volvio=1` lo pone la `back_url` de la preferencia de Mercado Pago. El
@@ -62,9 +63,6 @@ export default async function MiCuentaPage(props: {
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <Link className="text-sm text-primary hover:underline" href="/mi">
-          ← Inicio
-        </Link>
         <h1 className="text-2xl font-bold">Mi cuenta</h1>
         <p className="text-sm text-muted-foreground">
           {paysFee
@@ -83,7 +81,7 @@ export default async function MiCuentaPage(props: {
         />
       )}
 
-      <div className="rounded-xl border bg-background p-4">
+      <div className="rounded-xl bg-card p-4 ring-1 ring-foreground/10">
         <AccountSection
           member={member}
           account={account}

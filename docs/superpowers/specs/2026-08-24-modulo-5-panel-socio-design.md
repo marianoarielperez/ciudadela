@@ -107,7 +107,16 @@ proyecto es light-only de hecho: no hay ThemeProvider montado).
   CTA Pagar), débito automático (estado + CTA), solicitudes pendientes si las hay.
 - Se reutilizan los patrones probados: boleta previa de `pay-form`, `ChoiceCard`,
   eyebrows `text-xs uppercase tracking-[0.08em]`, `FormMessage`, `EmptyState`,
-  `PeriodStrip`, `status-badges`. Chips de filtro por año en el libro de pagos.
+  `PeriodStrip`, `status-badges`.
+- **Enmienda (implementación, 24/08/2026):** se descartaron los chips de filtro
+  por año del libro de pagos. `AccountSection` —el componente que ya comparten
+  `/mi/cuenta` y la ficha de tesorería del admin— arma el índice número→id de
+  recibos a partir de la lista completa de pagos que recibe
+  (`src/components/admin/account-section.tsx:211`); pasarle una lista filtrada
+  por año dejaba sin link clicable las celdas pagadas de los años que quedaban
+  afuera del filtro. Resolverlo de raíz exigía tocar ese componente compartido,
+  fuera de lo que el operador pidió para esta fase, y hoy ningún socio del
+  padrón tiene pagos en dos o más años. Quedó el restyle sin los chips.
 - Prohibido: verde/ámbar crudo (usar `--success`/`--warning`); tokens
   `--sidebar-*` (identidad exclusiva del admin); `#2E9BDF` en controles (solo
   `--primary` `#0079BC` para lo interactivo).

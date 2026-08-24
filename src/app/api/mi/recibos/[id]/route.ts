@@ -23,7 +23,9 @@ import {
 } from "@/lib/treasury/receipt-response";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const actor = await requireMember();
+  // El suspendido entra en modo lectura (spec M5 §5): puede ver y descargar sus
+  // propios recibos, igual que un socio vigente. El dado de baja sigue afuera.
+  const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return new Response(actor.error, { status: 403 });
 
   const { id } = await params;

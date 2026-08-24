@@ -20,6 +20,7 @@ function makeMember(overrides: Partial<Member & { street: Street | null }> = {})
     streetText: "Pizarro , Francisco",
     streetNumber: "1234",
     neighborhood: "Ciudadela",
+    addressPendingReview: false,
     email: "marta@example.com",
     emailStatus: "verified",
     emailVerifiedAt: null,

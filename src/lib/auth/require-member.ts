@@ -11,9 +11,12 @@
 //
 // Por eso la autorización se resuelve contra la fila viva de `Member`:
 //   - `withdrawn` → no hay socio que representar (Art. 9).
-//   - `suspended` → REG-20: no puede operar desde su panel mientras dure la
-//     suspensión. Se mira `status` y no `suspendedFrom/To`: el estado es la
-//     única fuente de verdad y lo mueven las actas (`suspend`/`endSuspension`).
+//   - `suspended` → REG-20: por defecto no puede operar desde su panel mientras
+//     dure la suspensión. Se mira `status` y no `suspendedFrom/To`: el estado es
+//     la única fuente de verdad y lo mueven las actas (`suspend`/`endSuspension`).
+//     Enmienda M5 (spec §5, docs/02 vs. docs/05): el llamador puede pasar
+//     `allowSuspended` para dejarlo entrar en modo LECTURA —ve su cuenta y puede
+//     pagar, ninguna otra acción—; las actions que mutan datos no la pasan.
 //   - sin ficha vinculada → el usuario no es socio, sea lo que diga el token.
 //   - `User.active` en `false` → la cuenta de acceso está cerrada, aunque la
 //     ficha esté impecable. Es la misma palanca que mira `require-admin`.
@@ -42,8 +45,25 @@ export type MemberBlockReason =
   | "withdrawn"
   | "disabled";
 
+export type RequireMemberOptions = {
+  /** Deja pasar al SUSPENDIDO en modo lectura (spec M5 §5: ve su cuenta y puede
+   *  pagar; ninguna otra acción). Las actions que muten datos NO pasan esta
+   *  opción y siguen bloqueando. El cesante queda afuera siempre. */
+  allowSuspended?: boolean;
+};
+
+export type MemberSuspension = { from: Date | null; to: Date | null };
+
 export type MemberActor =
-  | { ok: true; userId: number; memberId: number; fullName: string }
+  | {
+      ok: true;
+      userId: number;
+      memberId: number;
+      fullName: string;
+      /** `null` si el socio está vigente; con fechas si entró como suspendido
+       *  vía `allowSuspended` (el banner del shell las muestra). */
+      suspension: MemberSuspension | null;
+    }
   | { ok: false; reason: MemberBlockReason; error: string };
 
 /** Los mensajes son de cara al socio (es-AR) y los usa también la pantalla de
@@ -74,10 +94,12 @@ export type MemberLookup = (userId: number) => Promise<{
   active: boolean;
   /** De `User.passwordChangedAt`, por el vínculo de la ficha. */
   passwordChangedAt: Date | null;
+  suspendedFrom: Date | null;
+  suspendedTo: Date | null;
 } | null>;
 
 export function makeRequireMember(getSession: GetSession, findMemberByUserId: MemberLookup) {
-  return async function requireMember(): Promise<MemberActor> {
+  return async function requireMember(opts: RequireMemberOptions = {}): Promise<MemberActor> {
     const session = await getSession();
     const id = session?.user?.id;
     // Un id no numérico no puede convertirse en NaN silencioso: NaN como clave
@@ -102,7 +124,8 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
     if (member.status === "withdrawn") {
       return { ok: false, reason: "withdrawn", error: MEMBER_BLOCKED.withdrawn };
     }
-    if (member.status === "suspended") {
+    const isSuspended = member.status === "suspended";
+    if (isSuspended && !opts.allowSuspended) {
       return { ok: false, reason: "suspended", error: MEMBER_BLOCKED.suspended };
     }
     // `User.active` es la palanca de "cuenta deshabilitada", y hasta acá sólo la
@@ -119,7 +142,15 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
     if (!member.active) {
       return { ok: false, reason: "disabled", error: MEMBER_BLOCKED.disabled };
     }
-    return { ok: true, userId, memberId: member.id, fullName: member.fullName };
+    return {
+      ok: true,
+      userId,
+      memberId: member.id,
+      fullName: member.fullName,
+      suspension: isSuspended
+        ? { from: member.suspendedFrom, to: member.suspendedTo }
+        : null,
+    };
   };
 }
 
@@ -128,7 +159,7 @@ export function makeRequireMember(getSession: GetSession, findMemberByUserId: Me
  * propósito, igual que en `require-admin.ts`: "@/auth" arrastra NextAuth y
  * Prisma, y este módulo lo importan también los tests.
  */
-export async function requireMember(): Promise<MemberActor> {
+export async function requireMember(opts: RequireMemberOptions = {}): Promise<MemberActor> {
   const [{ auth }, { prisma }] = await Promise.all([import("@/auth"), import("@/lib/prisma")]);
   return makeRequireMember(auth, async (userId) => {
     const member = await prisma.member.findUnique({
@@ -137,6 +168,8 @@ export async function requireMember(): Promise<MemberActor> {
         id: true,
         fullName: true,
         status: true,
+        suspendedFrom: true,
+        suspendedTo: true,
         user: { select: { active: true, passwordChangedAt: true } },
       },
     });
@@ -149,8 +182,10 @@ export async function requireMember(): Promise<MemberActor> {
       id: member.id,
       fullName: member.fullName,
       status: member.status,
+      suspendedFrom: member.suspendedFrom,
+      suspendedTo: member.suspendedTo,
       active: member.user?.active ?? false,
       passwordChangedAt: member.user?.passwordChangedAt ?? null,
     };
-  })();
+  })(opts);
 }

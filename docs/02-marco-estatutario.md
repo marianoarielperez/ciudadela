@@ -114,6 +114,13 @@ Reglas de sistema:
   Arts. 10-11) queda FUERA del alcance v1. El sistema solo registra el resultado
   (suspensión con fechas desde/hasta, o expulsión) con su acta. Un socio suspendido
   no puede operar desde su panel mientras dure la suspensión.
+  **Aclaración de implementación (Módulo 5, fase 5A, decisión del operador del
+  24/08/2026):** "no puede operar" se implementó como **ver + pagar**. El
+  suspendido consulta su cuenta corriente y sus recibos y puede pagar sus cuotas
+  —saldar deuda lo acerca a la rehabilitación, la suspensión no lo exime de
+  devengar—, pero no puede ejecutar ninguna otra acción del panel (adherir o
+  cancelar débito automático, editar sus datos, solicitar baja o cambio de
+  categoría).
 
 ## Re-empadronamiento de adherentes (Art. 9° bis y Art. 40)
 

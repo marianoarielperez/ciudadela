@@ -469,18 +469,79 @@ efecto**; **7 está cerrado**; **8 queda abierto** y sin fase asignada.
    recategorizar. Candidato a señal de la bandeja o del resumen.
 
 ## Módulo 5 — Panel de socio
-Login/recupero, mis datos (con re-verificación de email), mi cuenta corriente,
-pagar pendientes por link, aporte voluntario / adherir al débito (adherentes),
-solicitar baja (circuito completo con aceptación por acta), vista suspendido.
+
+Se ejecuta en dos fases, como el Módulo 4: **5A** (shell, rediseño y lectura, sin
+Mercado Pago) y **5B** (débito automático autogestionado y solicitudes,
+transaccional). El diseño completo de las dos fases, con las decisiones del
+operador y las enmiendas a `docs/02` y `docs/05`, está en
+`docs/superpowers/specs/2026-08-24-modulo-5-panel-socio-design.md`.
+
+### Fase 5A — Shell, rediseño y lectura — **CERRADA** (24/08/2026)
+
+Shell propio de `/mi` con pestañas por URL (Inicio, Mi cuenta, Mis datos,
+Estatuto; config pura en `src/lib/mi/nav.ts`, componente `MiTabs`), skip link,
+`<main id="contenido" tabIndex={-1}>` y fronteras `error.tsx`/`not-found.tsx`
+propias — hasta acá el panel caía en el chrome global y no tenía navegación.
+`requireMember` ganó la opción `{ allowSuspended }` y el actor `ok` trae
+`suspension: { from, to } | null`; con eso, el socio suspendido ve su panel, su
+cuenta y sus recibos, y **puede pagar** — ninguna otra acción, cableado en la
+home, la cuenta, la ruta del recibo propio y la action de pago. El cesante sigue
+totalmente bloqueado. La home quedó reescrita alrededor de la **credencial de
+socio** (franja con la foto aérea del barrio, número de socio del libro abierto,
+categoría, antigüedad y estado electoral REG-31 — reutilizando la lógica del
+padrón electoral de la fase 4C, `src/lib/members/electoral.ts`, en vez de
+reimplementarla) más el estado de cuenta y los accesos; desapareció la tarjeta
+muerta "Próximamente". `/mi/cuenta` quedó restyleada y perdió el link "← Inicio"
+(las pestañas ya navegan). `/mi/datos` entra en funcionamiento: el socio ve su
+ficha y edita teléfono, domicilio (queda "pendiente de constatación", columna
+nueva `Member.addressPendingReview`, que la ficha admin puede marcar constatada)
+y email (dispara la re-verificación REG-08 reutilizando `memberWriter.updateMember`
+y `accountEmailNotice.announce`). `/mi/estatuto` + `GET /api/mi/estatuto`
+publican el PDF (`datos/estatuto.pdf`) detrás de autenticación — el movido desde
+el Módulo 2 del 19/08/2026 queda hecho.
+
+Doce commits, 2346 tests, build y lint limpios.
+
+**Dos enmiendas que dejó la fase:**
+
+1. Se sacaron los **chips de filtro por año** de `/mi/cuenta` (decisión del
+   operador, 24/08/2026): `AccountSection` —el componente que ya comparten
+   `/mi/cuenta` y la ficha de tesorería del admin— arma el índice número→id de
+   recibos a partir de la lista completa de pagos que recibe, así que pasarle
+   una lista filtrada por año dejaba sin link clicable las celdas pagadas de los
+   años que quedaban afuera del filtro. Arreglarlo de raíz exigía tocar ese
+   componente compartido, fuera de lo pedido para esta fase, y hoy ningún socio
+   del padrón tiene pagos en dos o más años. Quedó el restyle sin los chips
+   (detalle técnico en la spec, §3.3).
+2. La contradicción entre `docs/02` REG-20 ("no puede operar") y `docs/05` §7
+   (que hablaba de un "panel en solo-lectura" sin precisar qué significaba) se
+   resolvió a favor de **"ver + pagar"**: ya estaba decidida en la spec del
+   módulo (§5.1) antes de escribir código; esta fase la implementó y los dos
+   documentos quedaron alineados con una aclaración de implementación en
+   REG-20.
+
+### Fase 5B — Débito automático y solicitudes — pendiente
+
+Queda por hacer: adherirse y cancelar el débito automático desde `/mi/debito`
+(con la regla anti-duplicación mensual: quien pagó una cuota en el mes calendario
+en curso no puede adherirse hasta el mes siguiente); solicitud de baja (REG-19) y
+solicitud de cambio de categoría (REG-07) desde `/mi/solicitudes`, con una
+bandeja nueva "Solicitudes de socios" en el grupo Gestión del panel admin; y, al
+aceptar una recategorización de un socio con débito vivo, la actualización del
+monto en Mercado Pago **en el acto**, antes de escribir el cambio local (si MP
+falla, la acción se corta entera).
 
 CA: un socio real de prueba paga 2 cuotas atrasadas por link en sandbox y las ve
-aplicadas con sus recibos; una solicitud de baja llega a la bandeja admin, se acepta
-con acta y el socio queda `baja` con motivo `renuncia`.
+aplicadas con sus recibos — ya verificado en la fase 4B (Checkout Pro desde
+`/mi/cuenta`, pago real de $12.000); una solicitud de baja llega a la bandeja
+admin, se acepta con acta y el socio queda `baja` con motivo `renuncia` — CA-5B-3
+de la spec, pendiente de la 5B.
 
 Ideas incorporadas durante el desarrollo del Módulo 1: que el socio vea cuántas
-cuotas debe; que pueda solicitar cambio de categoría solo si no tiene deuda de
-tesorería (REG-07). Del Módulo 2: publicar el estatuto como PDF dentro del panel
-del socio (movido desde el Módulo 2 el 19/08/2026; fuente: `datos/estatuto.docx`).
+cuotas debe (cerrado en la 4A, `/mi/cuenta`); que pueda solicitar cambio de
+categoría solo si no tiene deuda de tesorería (REG-07, queda para la 5B). Del
+Módulo 2: publicar el estatuto como PDF dentro del panel del socio (movido desde
+el Módulo 2 el 19/08/2026; fuente: `datos/estatuto.docx`; **cerrado en la 5A**).
 
 ## Módulo 6 — Re-empadronamiento y cierre de libro
 Wizard público (DNI+apellido enmascarado, rate limit), activación con validaciones

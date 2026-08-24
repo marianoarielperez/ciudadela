@@ -44,7 +44,9 @@ import { treasuryService } from "@/lib/treasury/service";
 type MockedFn = ReturnType<typeof vi.fn>;
 
 const ADMIN_OK: AdminActor = { ok: true, actorId: 9 };
-const MEMBER_OK: MemberActor = { ok: true, userId: 3, memberId: 144, fullName: "Ana Gómez" };
+const MEMBER_OK: MemberActor = {
+  ok: true, userId: 3, memberId: 144, fullName: "Ana Gómez", suspension: null,
+};
 
 const ON_DISK = Buffer.from("%PDF-1.4 en disco");
 const REGENERATED = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]);
@@ -203,7 +205,7 @@ describe("GET /api/mi/recibos/[id]", () => {
 
   it("responde 404 —no 403— para el recibo de otro socio: no revela que existe", async () => {
     (requireMember as MockedFn).mockResolvedValue({
-      ok: true, userId: 3, memberId: 999, fullName: "Otro",
+      ok: true, userId: 3, memberId: 999, fullName: "Otro", suspension: null,
     } satisfies MemberActor);
 
     const res = await call(memberGet);
@@ -231,9 +233,26 @@ describe("GET /api/mi/recibos/[id]", () => {
     expect(prisma.receipt.findUnique).not.toHaveBeenCalled();
   });
 
-  it("responde 403 al socio suspendido o dado de baja", async () => {
+  // REG-20 amendment (spec M5 §5): el suspendido pasa por `allowSuspended` y
+  // llega en modo LECTURA — puede ver y descargar sus propios recibos, igual
+  // que un socio vigente. `requireMember` se lo devuelve con `suspension`
+  // cargado, pero eso no cambia nada de lo que sirve esta ruta.
+  it("el socio suspendido entra en modo lectura: ve su propio recibo", async () => {
     (requireMember as MockedFn).mockResolvedValue({
-      ok: false, reason: "suspended", error: "Tu condición de socio está suspendida.",
+      ok: true, userId: 3, memberId: 144, fullName: "Ana Gómez",
+      suspension: { from: null, to: null },
+    } satisfies MemberActor);
+
+    const res = await call(memberGet);
+
+    expect(res.status).toBe(200);
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(ON_DISK);
+  });
+
+  it("responde 403 al socio dado de baja", async () => {
+    (requireMember as MockedFn).mockResolvedValue({
+      ok: false, reason: "withdrawn",
+      error: "Figurás con baja en el padrón, así que tu panel de socio no está disponible.",
     } satisfies MemberActor);
 
     expect((await call(memberGet)).status).toBe(403);

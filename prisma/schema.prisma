@@ -194,6 +194,10 @@ model Member {
   streetText       String?           @map("street_text") @db.VarChar(120)
   streetNumber     String?           @map("street_number") @db.VarChar(10)
   neighborhood     String?           @db.VarChar(60)
+  /// Prendido cuando el SOCIO edita su domicilio desde /mi/datos (M5): queda
+  /// "pendiente de constatación" para la CD (docs/05 §7), que lo apaga desde la
+  /// ficha. El modo carga del admin NO lo toca.
+  addressPendingReview Boolean        @default(false) @map("address_pending_review")
   email            String?           @db.VarChar(191)
   emailStatus      EmailStatus       @default(none) @map("email_status")
   emailVerifiedAt  DateTime?         @map("email_verified_at")
