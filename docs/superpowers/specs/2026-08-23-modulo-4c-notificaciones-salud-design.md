@@ -162,8 +162,14 @@ esta decisión. No hay que enseñarles a distinguir períodos.
   lo mínimo que habilita los tres canales, y nada más (Ley 25.326, `docs/08`).
   Registrar la gestión *en el sistema* quedó explícitamente descartado.
   **Formato: A4 apaisado** (`@page { size: A4 landscape }`) — decisión del
-  operador del 24/08/2026. Con ocho columnas, vertical las aprieta hasta volverlas
-  ilegibles, y una hoja que no se lee no habilita ninguna gestión.
+  operador del 24/08/2026. Son **nueve columnas** (N° de socio, nombre, categoría,
+  cuotas, deuda, teléfono, domicilio, último pago y gestión); en vertical se
+  aprietan hasta volverse ilegibles, y una hoja que no se lee no habilita ninguna
+  gestión. **Categoría se conserva** (decisión del operador, 24/08/2026): de un
+  vistazo dice si el socio es activo o adherente, que cambia cómo se le habla y si
+  es cesanteable (REG-15). El ancho sale de la columna de gestión, no del nombre ni
+  del domicilio — un nombre partido en dos renglones cuesta más que un renglón de
+  anotación más corto.
 - Escala: hoy ~12 de los 35 devengantes tienen email. El tope de §7 aplica.
 
 ## §6. Resumen diario a la Comisión — `POST /api/cron/digest`

@@ -74,10 +74,21 @@ const sheet = (rows: DebtorRow[], feeValue: { validFrom: Date } | null = { valid
 // `<thead …>` y la primera "columna" se lleva media tabla adentro.
 const columns = (html: string) => [...html.matchAll(/<th [^>]*>(.*?)<\/th>/g)].map((m) => m[1]);
 
-// Las ocho columnas acordadas (A4 apaisado). El orden no es decorativo: primero
-// a quién se llama, después por dónde, después qué se le dice, y al final el
-// renglón en blanco donde se anota cómo salió.
-const COLUMNS = ["N°", "Socio", "Domicilio", "Teléfono", "Cuotas", "Deuda", "Último pago", "Gestión"];
+// Las nueve columnas acordadas (A4 apaisado). El orden no es decorativo: primero
+// a quién se llama y de qué categoría es, después por dónde, después qué se le
+// dice, y al final el renglón en blanco donde se anota cómo salió.
+const COLUMNS = [
+  "N°", "Socio", "Categoría", "Domicilio", "Teléfono", "Cuotas", "Deuda", "Último pago", "Gestión",
+];
+
+// El ancho de cada columna, en orden. Va acá y no sólo en el componente porque
+// con `table-fixed` el reparto ES el diseño de la hoja: sobre los 277 mm útiles
+// del A4 apaisado, mover un porcentaje decide si "$ 138.000,00" entra en su
+// celda o se derrama sobre la vecina. El test suma 100 para que una columna
+// nueva no pueda entrar robándole ancho a otra en silencio.
+const WIDTHS = ["5%", "19%", "6%", "17%", "10%", "6%", "11%", "10%", "16%"];
+const widths = (html: string) =>
+  [...html.matchAll(/<th [^>]*class="[^"]*w-\[(\d+)%\]/g)].map((m) => `${m[1]}%`);
 
 describe("ManualCollectionSheet: qué sale impreso", () => {
   it("lleva lo que hace falta para llamar o tocar el timbre: número, nombre, domicilio, teléfono, cuotas y deuda", () => {
@@ -93,13 +104,31 @@ describe("ManualCollectionSheet: qué sale impreso", () => {
     expect(html).toContain("10/04/2026");
   });
 
-  it("imprime exactamente las ocho columnas acordadas, en orden", () => {
+  it("imprime exactamente las nueve columnas acordadas, en orden", () => {
     // Esta es LA guarda de privacidad de la hoja, y por eso mira la lista
-    // completa y no cada columna por separado: agregar una novena —el DNI, la
+    // completa y no cada columna por separado: agregar una décima —el DNI, la
     // casilla, cualquier cosa que se le ocurra a una pantalla futura— rompe acá.
     // Comparar contra strings de un fixture no serviría: `DebtorRow` no tiene
     // DNI ni email, así que esa aserción no podría fallar nunca.
     expect(columns(sheet([debtor()]))).toEqual(COLUMNS);
+  });
+
+  it("dice la categoría del socio: cambia cómo se le habla y si es cesanteable", () => {
+    // Repuesta por el operador el 24/08/2026. Sale de `CATEGORY_LABELS`, que es
+    // lo que nombra el Libro: la hoja no puede llamar distinto a lo que la ficha
+    // llama "Adherente".
+    expect(sheet([debtor({ category: "adherent" })])).toContain("Adherente");
+    expect(sheet([debtor({ category: "active" })])).toContain("Activo");
+  });
+
+  it("reparte los 277 mm del A4 en los anchos acordados, y suman 100", () => {
+    // Con `table-fixed` el navegador reparte exactamente esto. La categoría se
+    // pagó con el ancho de la columna de gestión (22% → 16%) y NO con el del
+    // nombre ni el del domicilio: un nombre partido en dos renglones cuesta más
+    // que un renglón de anotación más corto (decisión del operador).
+    const w = widths(sheet([debtor()]));
+    expect(w).toEqual(WIDTHS);
+    expect(w.reduce((acc, p) => acc + Number(p.slice(0, -1)), 0)).toBe(100);
   });
 
   it("NO imprime el DNI ni la casilla de correo del socio", () => {
@@ -124,7 +153,7 @@ describe("ManualCollectionSheet: qué sale impreso", () => {
     expect(html).toContain("para anotar a mano cómo salió la gestión");
   });
 
-  it("se imprime en A4 apaisado: en vertical, ocho columnas no entran legibles", () => {
+  it("se imprime en A4 apaisado: en vertical, nueve columnas no entran legibles", () => {
     // La regla vive en la hoja y no en `globals.css` porque `@page` no se puede
     // acotar por ruta: en la hoja global daría vuelta el papel de todo el panel.
     expect(sheet([debtor()])).toContain("size: A4 landscape");

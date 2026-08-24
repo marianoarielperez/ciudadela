@@ -2,30 +2,35 @@
 // en un test sin Prisma ni sesión (mismo recurso que `ExerciseStrip`).
 //
 // Qué lleva la hoja y por qué, que es la decisión de fondo (Ley 25.326, docs/08):
-// número y nombre para identificar al vecino en el Libro; domicilio y teléfono,
-// que son los dos canales —el domicilio entró por enmienda del operador del
-// 24/08/2026: la visita es el único canal que le queda al que no tiene ni
-// teléfono ni casilla—; cuántas cuotas debe y cuánto, que es lo que se dice en
-// la llamada; la fecha del último pago, que distingue al socio que se atrasó del
-// que nunca pagó; y una columna en blanco para anotar a mano cómo salió.
+// número y nombre para identificar al vecino en el Libro; categoría, que dice de
+// un vistazo si es activo o adherente —cambia cómo se le habla y si es
+// cesanteable (REG-15)—; domicilio y teléfono, que son los dos canales —el
+// domicilio entró por enmienda del operador del 24/08/2026: la visita es el
+// único canal que le queda al que no tiene ni teléfono ni casilla—; cuántas
+// cuotas debe y cuánto, que es lo que se dice en la llamada; la fecha del último
+// pago, que distingue al socio que se atrasó del que nunca pagó; y una columna
+// en blanco para anotar a mano cómo salió.
 //
 // NO lleva DNI ni email: el DNI no hace falta para llamar ni para tocar un
 // timbre y es el dato más sensible del padrón, y la casilla no existe o rebota
 // en todas estas filas por definición.
 //
-// Tampoco lleva categoría, que sí estaba en la primera versión de siete
-// columnas: es el único dato de la fila que se deduce de los otros dos
-// (`debtAmount` es lineal, así que deuda ÷ cuotas da el valor de la categoría),
-// y el ancho lo necesitan el nombre y la columna de gestión.
+// La categoría se sacó una vez —era deducible de los otros dos números, porque
+// `debtAmount` es lineal y deuda ÷ cuotas da el valor de la categoría— y el
+// operador la repuso el 24/08/2026: nadie divide en una reunión, y el dato
+// decide el tono de la llamada. El ancho salió de la columna de gestión, no del
+// nombre ni del domicilio: un nombre partido en dos renglones cuesta más que un
+// renglón de anotación más corto.
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatARS, formatDateAR } from "@/lib/format";
+import { CATEGORY_LABELS } from "@/lib/members/labels";
 import type { DebtorRow } from "@/lib/treasury/debtors";
 
 export type SheetFeeValue = { validFrom: Date } | null;
 
-// A4 apaisado (decisión del operador, spec §5): en vertical, ocho columnas
+// A4 apaisado (decisión del operador, spec §5): en vertical, nueve columnas
 // aprietan el nombre y el domicilio hasta volverlos ilegibles. La regla vive
 // acá y no en `globals.css` porque `@page` no se puede acotar por ruta: en la
 // hoja de estilos global daría vuelta el papel de TODO el panel.
@@ -42,15 +47,22 @@ const PAGE_CSS = "@page { size: A4 landscape; margin: 12mm 10mm; }";
 // texto más ancho que su celda no envuelve — se derrama sobre la vecina. Están
 // dimensionadas contra el peor caso real del padrón: "$ 138.000,00" (el socio
 // con 23 cuotas impagas) mide ~23 mm a 9 pt, y su columna deja 28,5 mm netos.
+//
+// El 6% de categoría salió del 22% que tenía gestión (enmienda del operador):
+// son 16,6 mm, 14,5 mm netos, y "Adherente" mide ~14,9 mm a 9 pt. Por eso la
+// celda envuelve en vez de recortarse: la etiqueta larga se parte en dos
+// renglones y no se derrama. Partirla no cuesta nada — la fila ya mide
+// `print:h-12` por el renglón que se escribe a mano, no por su texto.
 const W = {
   number: "w-[5%]",
   name: "w-[19%]",
+  category: "w-[6%]",
   address: "w-[17%]",
   phone: "w-[10%]",
   fees: "w-[6%]",
   debt: "w-[11%]",
   lastPaid: "w-[10%]",
-  notes: "w-[22%]",
+  notes: "w-[16%]",
 } as const;
 
 export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
@@ -92,7 +104,7 @@ export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
           así que lo que sobresale se recorta. En la hoja se muestra entero. */}
       <div className="print:[&_[data-slot=table-container]]:overflow-visible">
         {/* En papel el relleno horizontal baja de 8 px a 4 px por lado: son
-            33 mm repartidos entre ocho columnas, y esos 33 mm son la diferencia
+            38 mm repartidos entre nueve columnas, y esos 38 mm son la diferencia
             entre que la deuda entre en su celda o se derrame sobre la vecina. */}
         <Table className="table-fixed print:text-[9pt] print:[&_td]:px-1 print:[&_th]:px-1">
           <TableHeader>
@@ -101,6 +113,9 @@ export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
             <TableRow className="[&_th]:whitespace-normal [&_th]:align-bottom">
               <TableHead className={W.number}>N°</TableHead>
               <TableHead className={W.name}>Socio</TableHead>
+              {/* Va pegada al nombre y no junto a la deuda: es identidad del
+                  socio, no plata. */}
+              <TableHead className={W.category}>Categoría</TableHead>
               <TableHead className={W.address}>Domicilio</TableHead>
               <TableHead className={W.phone}>Teléfono</TableHead>
               <TableHead className={`${W.fees} text-right`}>Cuotas</TableHead>
@@ -123,6 +138,10 @@ export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
                     `table-fixed`, `whitespace-nowrap` deja "Fernández Ordóñez,
                     María" cortada a la mitad de la celda. */}
                 <TableCell className={`${W.name} whitespace-normal`}>{r.fullName}</TableCell>
+                {/* La etiqueta sale de `CATEGORY_LABELS`, que es lo que nombra
+                    el Libro en papel: la hoja y la ficha no pueden llamar
+                    distinto a la misma categoría. */}
+                <TableCell className={`${W.category} whitespace-normal`}>{CATEGORY_LABELS[r.category]}</TableCell>
                 {/* Sin domicilio ni teléfono queda un guión y no una celda
                     vacía: en papel, una celda vacía se lee como un error de
                     impresión. */}
