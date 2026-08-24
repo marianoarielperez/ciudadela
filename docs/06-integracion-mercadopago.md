@@ -345,7 +345,13 @@ a mano. Ver `docs/05` §3.
 
 Pantalla `/admin/tesoreria/suscripciones`, dos bloques:
 
-- **Sin vincular**: `GET /preapproval/search` sin fila local, con **sugerencia** de
+- **Sin vincular**: `GET /preapproval/search` sin fila local y **sin cancelar**
+  (`isNotCancelled`, el mismo predicado con el que el cron cuenta `orphanPreapprovals`:
+  si la pantalla mirara menos que el contador, `/admin/salud` avisaría de una huérfana
+  que no se ve desde ningún lado — una pausada no genera débitos, así que tampoco cae
+  en la bandeja). Cada ficha dice qué pasa si nadie hace nada, que **no** es siempre un
+  cobro próximo: una pausada no cobra hasta que el vecino la reanude y una pendiente
+  todavía no está autorizada. Con **sugerencia** de
   socio por `payer_email` o apellido. La sugerencia por email exige **exactamente
   un** candidato: `Member.email` no es único y un matrimonio con la misma casilla
   habría devuelto el primero por orden de PK, en silencio.
@@ -386,9 +392,14 @@ explota no frena al resto de su bucle):
    `external_reference` no los indexa. Saltea las filas que el operador ya resolvió
    o descartó en la bandeja, para no re-imputar lo que alguien decidió a mano.
 3. **Estado de cada suscripción** contra MP → corrige el espejo local
-   (`subscriptionsSynced`, `subscriptionsDrifted`).
+   (`subscriptionsSynced`). `subscriptionsDrifted` cuenta las que **cambiaron** de
+   estado hacia algo que no es `authorized`: un `pending` que sigue `pending` es un
+   alta en vuelo —o una colgada por un `cancelPreapproval` que falló— y no derivó de
+   nada. Es un **delta de la corrida**, no un stock: el stock se ve en la pantalla de
+   Suscripciones, que es donde el operador puede hacer algo.
 4. **Preapprovals huérfanos**: `external_reference = solicitud:{id}` sin fila
-   `MpSubscription`. Es el único recupero posible si `createPreapproval` sale bien y
+   `MpSubscription`. Las **canceladas se saltean**: no cobran nunca más, y contarlas
+   dejaba un número que ninguna acción podía bajar. Es el único recupero posible si `createPreapproval` sale bien y
    la escritura local falla: sin esto, el vecino tiene un débito autorizado del que
    SIGeV no sabe nada.
 5. **Divergencias de monto**: (a) `auto_recurring.transaction_amount` de cada

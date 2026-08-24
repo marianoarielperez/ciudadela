@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHARGEABLE_STATUSES,
   canStillCharge,
+  countChargeable,
   isKnownDead,
   isNotCancelled,
 } from "@/lib/mp/subscription-status";
@@ -35,26 +36,44 @@ describe("las dos semánticas de 'suscripción viva'", () => {
   });
 });
 
-// Las dos divergencias que costaban plata vivían en un server component y en un
-// cron: la del cron se prueba por comportamiento en `mp-reconcile.test.ts`, pero
-// la del vinculador es una pantalla que lee prisma y Mercado Pago, así que se
-// verifica la FUENTE — mismo criterio estructural que `ADMIN_NAV routes` y que
-// el aviso del pago tardío en `applications-query.test.ts`. Lo que estos tests
-// tienen que impedir es la regresión concreta: que alguien vuelva a escribir la
-// lista de estados a mano en la pantalla.
-describe("los llamadores no vuelven a inventar su propia lista", () => {
-  const src = (...parts: string[]) =>
-    readFileSync(path.resolve(import.meta.dirname, "..", "src", ...parts), "utf8");
-  const vincular = src("app", "admin", "tesoreria", "suscripciones", "[preapprovalId]", "vincular", "page.tsx");
-
-  it("el vinculador cuenta las otras vivas con `canStillCharge`, que incluye `paused`", () => {
-    // Sin `paused` la pantalla no avisaba "este socio ya tiene otra viva" y el
-    // vecino terminaba con dos débitos por mes.
-    expect(vincular).toContain("const otherLive = member?.mpSubscriptions.filter((s) => canStillCharge(s.status)).length ?? 0;");
-    expect(canStillCharge("paused")).toBe(true);
+// El aviso "este socio ya tiene otra viva" es la regla que evita dejarle dos
+// débitos por mes al mismo vecino. Vivía como un `.filter(...).length` dentro de
+// un server component —que lee Prisma y Mercado Pago, así que no se puede
+// renderizar en un test puro— y sólo se podía cubrir mirando el texto fuente.
+// Extraída a `countChargeable`, se prueba por COMPORTAMIENTO: estos tests fallan
+// ante cualquier mutación de la lista, incluidas las que reordenan.
+describe("countChargeable: cuántas de las que ya tiene todavía pueden cobrar", () => {
+  it("cuenta las tres cobrables y ninguna cancelada", () => {
+    expect(countChargeable([{ status: "authorized" }, { status: "pending" }, { status: "paused" }])).toBe(3);
+    expect(countChargeable([{ status: "cancelled" }, { status: "cancelled" }])).toBe(0);
   });
 
-  it("el vinculador no define ninguna lista de estados propia", () => {
+  it("una `paused` CUENTA: es justo la que se reanuda y vuelve a cobrar", () => {
+    // La divergencia que costaba plata: la pantalla contaba sólo `authorized` y
+    // `pending`, así que no avisaba y el vecino terminaba con dos débitos.
+    expect(countChargeable([{ status: "paused" }])).toBe(1);
+  });
+
+  it("un estado que MP invente mañana no se cuenta como cobrable", () => {
+    expect(countChargeable([{ status: "suspended_by_bank_2027" }])).toBe(0);
+  });
+
+  it("sin suscripciones, cero", () => {
+    expect(countChargeable([])).toBe(0);
+  });
+});
+
+// Queda UN chequeo de fuente, y sólo el negativo: que la pantalla no vuelva a
+// escribirse su propia lista de estados. No fija ninguna línea —eso es lo que
+// hacía frágil al test anterior sin hacerlo fuerte—, y la regla en sí ya está
+// probada arriba por comportamiento.
+describe("el vinculador no inventa su propia lista de estados", () => {
+  const vincular = readFileSync(
+    path.resolve(import.meta.dirname, "..", "src", "app", "admin", "tesoreria", "suscripciones", "[preapprovalId]", "vincular", "page.tsx"),
+    "utf8",
+  );
+
+  it("no declara constantes de estado ni arrays literales", () => {
     expect(vincular).not.toMatch(/LIVE_STATUSES/);
     expect(vincular).not.toMatch(/\[\s*"authorized"/);
   });

@@ -87,6 +87,9 @@ export type ReconcileSummary = {
   /** Débitos que el procesador no escribió. */
   debitsSkipped: number;
   subscriptionsSynced: number;
+  /** Suscripciones cuyo estado en MP CAMBIÓ esta corrida hacia algo que no es
+   *  `authorized` (pausada, cancelada, o un estado que MP invente). Es un delta
+   *  de la corrida, no un stock: el criterio y su porqué están donde se cuenta. */
   subscriptionsDrifted: number;
   orphanCreated: number;
   orphanCancelled: number;
@@ -212,11 +215,13 @@ export function makeReconcile(deps: Deps) {
       // plata. Incluye `pending`, que antes quedaba afuera — una suscripción
       // que autorizó y cuyo webhook no llegó nunca se sincronizaba y nadie le
       // buscaba los débitos perdidos.
-      let subs: Array<{ preapprovalId: string; memberId: number | null; member: { category: "active" | "adherent" | "collaborator" | "cadet" | "honorary" | "lifetime" } | null }> = [];
+      let subs: Array<{ preapprovalId: string; memberId: number | null; status: string; member: { category: "active" | "adherent" | "collaborator" | "cadet" | "honorary" | "lifetime" } | null }> = [];
       try {
         subs = await deps.db.mpSubscription.findMany({
           where: { status: { in: [...CHARGEABLE_STATUSES] } },
-          select: { preapprovalId: true, memberId: true, member: { select: { category: true } } },
+          // `status` viaja porque la deriva se mide contra lo que teníamos
+          // guardado, no contra una constante (ver el contador, más abajo).
+          select: { preapprovalId: true, memberId: true, status: true, member: { select: { category: true } } },
         });
       } catch (e) { fail("subscriptions", {}, e); }
       // Si esto falla, los chequeos de divergencia (5a y 5b) no pueden correr:
@@ -252,7 +257,28 @@ export function makeReconcile(deps: Deps) {
             },
           });
           s.subscriptionsSynced++;
-          if (remote.status !== "authorized") s.subscriptionsDrifted++;
+          // DERIVA = el estado CAMBIÓ y no cambió para bien. Las dos mitades
+          // hacen falta, y cada una tapa una alarma que no se apagaba nunca:
+          //
+          //   "cambió"          — un `pending` que sigue `pending` no derivó de
+          //                       nada: es un alta EN VUELO (el vecino tiene
+          //                       hasta `EXPIRE_AFTER_DAYS` para autorizar) o
+          //                       una colgada porque `cancelPreapproval` falló
+          //                       al vencer la solicitud (`applications/cron.ts`
+          //                       es best-effort). Contra la constante a secas,
+          //                       cualquier noche con un wizard en curso
+          //                       reportaba deriva, y la colgada la reportaba
+          //                       TODAS, sin que ninguna acción la bajara.
+          //   "no `authorized`" — un `pending` que pasó a `authorized` cambió,
+          //                       sí, pero es un alta que se completó. Eso no es
+          //                       deriva: es el final feliz.
+          //
+          // Es un contador de LA CORRIDA, no un stock: la noche en que MP pausa
+          // una suscripción se cuenta una vez y después el estado local ya
+          // coincide. El stock —cuántas están pausadas hoy— se lee en
+          // /admin/tesoreria/suscripciones, que es donde el operador puede hacer
+          // algo al respecto. `/admin/salud` (Task 13) muestra corridas.
+          if (remote.status !== sub.status && remote.status !== "authorized") s.subscriptionsDrifted++;
           // 5a. Monto de la suscripción vs. valor vigente de la categoría, en
           // centavos redondeados: mismo criterio que el webhook (`cents`).
           if (feeValue && sub.member && remote.amount !== null) {

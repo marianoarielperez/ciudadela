@@ -1,13 +1,24 @@
 // Suscripciones de Mercado Pago (spec 4B §8). Dos bloques que dicen cosas
 // distintas y por eso no comparten forma:
 //
-//   Sin vincular — lo ACCIONABLE, y arriba. Son débitos que MP ya cobra todos
-//                  los meses y que el sistema no sabe de quién son: mientras no
-//                  tengan dueño, cada cobro cae en la bandeja sin conciliar en
-//                  vez de convertirse en la cuota del socio. Van como fichas con
-//                  una regla ámbar al canto —la misma señal de "esto espera una
-//                  decisión" que usa el resto del panel— y lideran con la fecha
-//                  del próximo cobro, que es lo que va a pasar si nadie hace nada.
+//   Sin vincular — lo ACCIONABLE, y arriba. Son suscripciones que existen en
+//                  Mercado Pago y que el sistema no sabe de quién son: mientras
+//                  no tengan dueño, cada cobro que salga de ellas cae en la
+//                  bandeja sin conciliar en vez de convertirse en la cuota del
+//                  socio. Van como fichas con una regla ámbar al canto —la misma
+//                  señal de "esto espera una decisión" que usa el resto del
+//                  panel— y lideran con lo que va a pasar si nadie hace nada.
+//
+//                  La lista trae TODO lo que no está cancelado, no sólo las
+//                  `authorized`: es el mismo criterio que `orphanPreapprovals`
+//                  del cron de conciliación (`mp/reconcile.ts`, paso 4), que es
+//                  el número que /admin/salud le va a mostrar al operador. Si la
+//                  pantalla mirara menos que el contador, el tablero avisaría de
+//                  una huérfana que acá no se ve y no habría desde dónde
+//                  atenderla: una pausada no genera débitos, así que tampoco
+//                  aparece en la bandeja. La lista es un SUPERconjunto del
+//                  contador (las que cuelgan de una solicitud viva las recrea el
+//                  cron), y de ese lado el error es inofensivo.
 //   Vinculadas   — el REGISTRO, abajo y en tabla: se barre con la vista, no se
 //                  decide nada. Sale de la base, así que se sigue viendo aunque
 //                  Mercado Pago no conteste.
@@ -28,6 +39,7 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway, type MpPreapproval } from "@/lib/mp/gateway";
 import { suggestMember } from "@/lib/mp/link-suggest";
+import { isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
@@ -36,6 +48,19 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Suscripciones — SIGeV" };
 
 const BASE = "/admin/tesoreria/suscripciones";
+
+/** Qué va a pasar con esta suscripción si nadie hace nada.
+ *
+ *  Depende del estado, y por eso no es una fecha a secas: la lista trae todo lo
+ *  que no está cancelado, así que acá entran pausadas —no cobran hasta que el
+ *  vecino las reanude— y pendientes —el vecino todavía no autorizó—. Decirles
+ *  "cobra de nuevo el ..." sería afirmar un débito que no existe. */
+function whatHappensNext(p: MpPreapproval): string {
+  if (p.status === "paused") return "Pausada en Mercado Pago: no cobra hasta que el vecino la reanude";
+  if (p.status === "pending") return "El vecino todavía no autorizó el débito";
+  if (p.nextPaymentDate) return `Cobra de nuevo el ${formatDateAR(p.nextPaymentDate)}`;
+  return "Sin próximo cobro informado";
+}
 
 export default async function SuscripcionesPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -67,14 +92,18 @@ export default async function SuscripcionesPage(props: {
   // es lo mismo que "no hay ninguna".
   let remote: MpPreapproval[] | null = null;
   try {
-    remote = await mpGateway.searchPreapprovals({ status: "authorized" });
+    // Sin filtro de estado: filtramos acá con `isNotCancelled`, el mismo
+    // predicado con el que el cron cuenta las huérfanas. Pedirle `authorized` a
+    // MP dejaba afuera a las pausadas y a las pendientes, que sí cuentan como
+    // trabajo sin hacer (ver la cabecera).
+    remote = await mpGateway.searchPreapprovals();
   } catch (e) {
     console.error("[suscripciones] no se pudo listar en MP —", mpErrorLog("searchPreapprovals", {}, e));
   }
   // Todas las conocidas, no sólo las que tienen socio: una suscripción que
   // cuelga de una solicitud tampoco está "sin vincular".
   const known = new Set((await prisma.mpSubscription.findMany({ select: { preapprovalId: true } })).map((s) => s.preapprovalId));
-  const unlinked = (remote ?? []).filter((p) => !known.has(p.id));
+  const unlinked = (remote ?? []).filter((p) => !known.has(p.id) && isNotCancelled(p.status));
 
   return (
     <div className="space-y-8">
@@ -114,8 +143,8 @@ export default async function SuscripcionesPage(props: {
             Sin vincular
           </h2>
           <p className="max-w-prose text-sm text-muted-foreground">
-            Mercado Pago ya le cobra a estos vecinos todos los meses, pero el sistema no sabe de qué
-            socio es cada cobro. Hasta que se vinculen, cada débito cae en{" "}
+            Mercado Pago tiene estas suscripciones y el sistema no sabe de qué socio es cada una.
+            Hasta que se vinculen, cada débito que salga de ellas cae en{" "}
             <Link
               className={INLINE_LINK}
               href="/admin/tesoreria/sin-conciliar"
@@ -131,7 +160,10 @@ export default async function SuscripcionesPage(props: {
             la base; volvé a intentar en unos minutos para ver las que faltan.
           </FormMessage>
         ) : unlinked.length === 0 ? (
-          <EmptyState size="card" description="Todas las suscripciones activas de Mercado Pago están vinculadas a un socio." />
+          <EmptyState
+            size="card"
+            description="Todas las suscripciones de Mercado Pago tienen socio, salvo las canceladas: esas no se listan porque no vuelven a cobrar."
+          />
         ) : (
           <ul className="grid gap-3 md:grid-cols-2">
             {unlinked.map((p) => {
@@ -154,15 +186,22 @@ export default async function SuscripcionesPage(props: {
                           admin, y no viaja a ningún asiento ni a los logs. */}
                       <p className="truncate text-sm text-muted-foreground">{p.payerEmail ?? "sin email"}</p>
                     </div>
-                    <p className="shrink-0 font-mono text-xl tabular-nums">{p.amount !== null ? formatARS(p.amount) : "—"}</p>
+                    {/* El estado sólo se muestra cuando dice algo: una "Activa"
+                        en cada ficha es ruido —la sección ya se lee entera como
+                        trabajo pendiente— y le pelea el celeste al botón. Una
+                        pausada o una pendiente, en cambio, explican por qué esta
+                        ficha no habla de un cobro próximo. */}
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <p className="font-mono text-xl tabular-nums">{p.amount !== null ? formatARS(p.amount) : "—"}</p>
+                      {p.status !== "authorized" && (
+                        <Badge variant={subscriptionStatusBadgeVariant(p.status)}>{subscriptionStatusLabel(p.status)}</Badge>
+                      )}
+                    </div>
                   </div>
-                  {/* El próximo cobro primero y en el color del texto normal: es
-                      la consecuencia de no hacer nada. El alta y el id son
-                      respaldo y van apagados. */}
+                  {/* Lo que pasa si nadie hace nada, primero y en el color del
+                      texto normal. El alta y el id son respaldo y van apagados. */}
                   <p className="text-sm">
-                    {p.nextPaymentDate
-                      ? `Cobra de nuevo el ${formatDateAR(p.nextPaymentDate)}`
-                      : "Sin próximo cobro informado"}
+                    {whatHappensNext(p)}
                     <span className="text-muted-foreground">
                       {" · alta "}
                       {p.dateCreated ? formatDateAR(p.dateCreated) : "—"}

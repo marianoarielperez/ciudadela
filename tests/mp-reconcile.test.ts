@@ -96,6 +96,26 @@ describe("reconcile", () => {
     await d.r.run();
     expect(d.processor.applyPayment).not.toHaveBeenCalled();
   });
+  it("paso 3: una `pending` que sigue `pending` NO es deriva: es un alta en vuelo", async () => {
+    // Con el criterio anterior (`!== authorized`) cualquier noche con un wizard
+    // en curso reportaba deriva, y una solicitud vencida cuyo `cancelPreapproval`
+    // falló la reportaba TODAS sin que nada la apagara.
+    const d = deps({ subs: [{ ...liveSub("pre-1", 14), status: "pending" }], remote: { "pre-1": { status: "pending", amount: 6000, payerEmail: null, externalReference: null } } });
+    const s = await d.r.run();
+    expect(s.subscriptionsSynced).toBe(1);
+    expect(s.subscriptionsDrifted).toBe(0);
+  });
+  it("paso 3: una `pending` que pasó a `authorized` tampoco es deriva: es el alta que se completó", async () => {
+    const d = deps({ subs: [{ ...liveSub("pre-1", 14), status: "pending" }], remote: { "pre-1": { status: "authorized", amount: 6000, payerEmail: null, externalReference: null } } });
+    expect((await d.r.run()).subscriptionsDrifted).toBe(0);
+  });
+  it("paso 3: una `authorized` que MP pausó SÍ es deriva, y la noche siguiente ya no cuenta", async () => {
+    const pausada = { status: "paused", amount: 6000, payerEmail: null, externalReference: null };
+    expect((await deps({ subs: [liveSub("pre-1", 14)], remote: { "pre-1": pausada } }).r.run()).subscriptionsDrifted).toBe(1);
+    // Ya sincronizada: el estado local coincide con MP y el contador vuelve a cero.
+    const yaSincronizada = deps({ subs: [{ ...liveSub("pre-1", 14), status: "paused" }], remote: { "pre-1": pausada } });
+    expect((await yaSincronizada.r.run()).subscriptionsDrifted).toBe(0);
+  });
   it("paso 3: sincroniza estado y monto; cancelada en MP → subscriptionsDrifted", async () => {
     const d = deps({ subs: [liveSub("pre-1", 14)], remote: { "pre-1": { status: "cancelled", amount: 6000, payerEmail: null, externalReference: null } } });
     const s = await d.r.run();

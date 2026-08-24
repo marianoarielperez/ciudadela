@@ -25,11 +25,27 @@
 // ni otra: decide qué se puede AFIRMAR en pantalla sobre el débito de una
 // solicitud, y por eso es tri-estado (ver `lateEntryNotice`).
 
-/** Lista BLANCA: los estados con los que MP todavía puede cobrar. */
+/** Lista BLANCA: los estados de los que todavía puede salir un débito.
+ *
+ *  `authorized` es el obvio. `paused` está porque se reanuda y vuelve a cobrar.
+ *  `pending` NO está porque MP cobre —ahí el vecino todavía no autorizó nada—:
+ *  está por lo que no sabemos. Un `pending` guardado acá puede ya estar
+ *  `authorized` en MP y que el aviso se haya perdido, así que darlo por muerto
+ *  es dejar de buscarle los débitos. */
 export const CHARGEABLE_STATUSES: readonly string[] = ["authorized", "pending", "paused"];
 
 export function canStillCharge(status: string): boolean {
   return CHARGEABLE_STATUSES.includes(status);
+}
+
+/** Cuántas de estas suscripciones todavía pueden cobrar.
+ *
+ *  Existe como función y no como un `.filter(...).length` suelto en la pantalla
+ *  porque es una REGLA, y una regla se prueba por comportamiento: el vinculador
+ *  la usa para avisar "este socio ya tiene otra viva" antes de dejarle dos
+ *  débitos por mes al mismo vecino. */
+export function countChargeable(subs: ReadonlyArray<{ status: string }>): number {
+  return subs.filter((s) => canStillCharge(s.status)).length;
 }
 
 /** Lista NEGRA de UN valor: lo único que se puede afirmar como muerto. */

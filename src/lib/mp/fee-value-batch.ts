@@ -66,8 +66,12 @@ export type BatchRun = {
  *
  *  Es una tercera pregunta, distinta de las dos de `mp/subscription-status.ts`:
  *  no es "¿puede cobrar?" sino "¿a cuál tiene sentido empujarle un monto AHORA?".
- *  El costo conocido: una `paused` que se reanuda vuelve a cobrar el monto viejo
- *  y no aparece en ninguna lista.
+ *
+ *  El costo conocido es una VENTANA, no un agujero: una `paused` que se reanuda
+ *  vuelve a cobrar el monto viejo hasta que el cron de conciliación la
+ *  sincronice y le escriba `authorized` —desde esa corrida aparece acá y en
+ *  `amountDivergent`—. Ningún webhook sincroniza estados de preapproval, así que
+ *  la ventana es de hasta ~24 h (el cron corre a las 03:00).
  *
  *  El monto de referencia sale de la base (`MpSubscription.amount`), que el
  *  cron diario de conciliación refresca contra MP. Nunca se relee MP acá: son

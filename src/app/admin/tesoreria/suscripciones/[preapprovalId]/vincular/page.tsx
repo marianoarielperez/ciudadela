@@ -32,7 +32,7 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway, type MpPreapproval } from "@/lib/mp/gateway";
-import { canStillCharge } from "@/lib/mp/link-subscription";
+import { canStillCharge, countChargeable } from "@/lib/mp/subscription-status";
 import { makeUnmatchedInbox } from "@/lib/mp/unmatched";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
@@ -157,10 +157,10 @@ export default async function VincularSuscripcionPage(props: {
       ? formatARS(expected)
       : null;
   // Cuáles de las suscripciones que el socio YA tiene siguen pudiendo cobrar:
-  // vincularle una segunda le duplica el débito. Es `canStillCharge` y no una
-  // lista propia — la de acá se había quedado sin `paused`, que es exactamente
-  // la que se reanuda y vuelve a cobrar.
-  const otherLive = member?.mpSubscriptions.filter((s) => canStillCharge(s.status)).length ?? 0;
+  // vincularle una segunda le duplica el débito. La regla es `countChargeable`
+  // y no una lista propia — la de acá se había quedado sin `paused`, que es
+  // exactamente la que se reanuda y vuelve a cobrar.
+  const otherLive = countChargeable(member?.mpSubscriptions ?? []);
   const memberGone = memberId !== null && !member;
 
   return (

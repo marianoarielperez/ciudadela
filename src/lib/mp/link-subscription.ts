@@ -24,15 +24,11 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
 }
 
-/** Los estados en los que la suscripción TODAVÍA puede cobrar. Una `cancelled`
- *  no vuelve nunca; el paso 2 no filtra por estado a propósito (hay que poder
- *  vincular una `paused`), así que por URL directa se puede llegar a vincular
- *  una muerta y no hay que prometer un débito que no va a existir.
- *
- *  El predicado vive ahora en `mp/subscription-status.ts` (es el mismo que usan
- *  el cron de conciliación y el vinculador); se RE-EXPORTA desde acá porque la
- *  pantalla de vinculación ya lo importaba de este módulo. */
-export { canStillCharge };
+// `autoDebit` del resultado se marca con `canStillCharge`
+// (`mp/subscription-status.ts`), que es lista BLANCA: el paso 2 de la pantalla
+// no filtra por estado a propósito —hay que poder vincular una `paused`—, así
+// que por URL directa se puede llegar a vincular una muerta, y ahí no hay que
+// prometer un débito que no va a existir.
 
 type Deps = {
   db: Pick<PrismaClient, "mpSubscription" | "member" | "$transaction">;
