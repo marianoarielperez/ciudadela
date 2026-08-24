@@ -36,7 +36,9 @@ function form(n = "3", extra?: Record<string, string>) {
 }
 
 function loggedIn() {
-  mocks.member.mockResolvedValueOnce({ ok: true, userId: 42, memberId: 14, fullName: "Juan Pérez" });
+  mocks.member.mockResolvedValueOnce({
+    ok: true, userId: 42, memberId: 14, fullName: "Juan Pérez", suspension: null,
+  });
 }
 
 describe("startMemberPaymentAction", () => {

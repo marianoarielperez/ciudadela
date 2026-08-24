@@ -77,7 +77,9 @@ describe("requireMember", () => {
 
   it("accepts a member in good standing and returns the live card", async () => {
     const { run } = bind(session("3"));
-    expect(await run()).toEqual({ ok: true, userId: 3, memberId: 7, fullName: "Perez Ana" });
+    expect(await run()).toEqual({
+      ok: true, userId: 3, memberId: 7, fullName: "Perez Ana", suspension: null,
+    });
   });
 
   // El rol del token NO es la autorización: un admin al que le dieron de alta la
@@ -206,5 +208,50 @@ describe("requireMember — cuenta de acceso deshabilitada", () => {
 
   it("uses the same wording as the admin guard", async () => {
     expect(MEMBER_BLOCKED.disabled).toBe(ADMIN_BLOCKED.disabled);
+  });
+});
+
+describe("allowSuspended (M5: modo lectura del suspendido)", () => {
+  const session = () => async () => ({ user: { id: "1", authAt: Date.now() } });
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 7, fullName: "Socia Suspendida", status: "suspended" as const,
+    active: true, passwordChangedAt: null,
+    suspendedFrom: new Date("2026-08-01T12:00:00Z"), suspendedTo: null,
+    ...over,
+  });
+
+  it("blocks a suspended member by default (unchanged behavior)", async () => {
+    const rm = makeRequireMember(session(), async () => row());
+    const actor = await rm();
+    expect(actor).toMatchObject({ ok: false, reason: "suspended" });
+  });
+
+  it("lets a suspended member in with allowSuspended, carrying the dates", async () => {
+    const rm = makeRequireMember(session(), async () => row());
+    const actor = await rm({ allowSuspended: true });
+    expect(actor.ok).toBe(true);
+    if (actor.ok) {
+      expect(actor.suspension).toEqual({ from: new Date("2026-08-01T12:00:00Z"), to: null });
+    }
+  });
+
+  it("an active member carries suspension: null", async () => {
+    const rm = makeRequireMember(session(), async () =>
+      row({ status: "active", suspendedFrom: null }));
+    const actor = await rm({ allowSuspended: true });
+    expect(actor.ok).toBe(true);
+    if (actor.ok) expect(actor.suspension).toBeNull();
+  });
+
+  it("still blocks withdrawn even with allowSuspended", async () => {
+    const rm = makeRequireMember(session(), async () => row({ status: "withdrawn" }));
+    const actor = await rm({ allowSuspended: true });
+    expect(actor).toMatchObject({ ok: false, reason: "withdrawn" });
+  });
+
+  it("still blocks a disabled account even with allowSuspended", async () => {
+    const rm = makeRequireMember(session(), async () => row({ active: false }));
+    const actor = await rm({ allowSuspended: true });
+    expect(actor).toMatchObject({ ok: false, reason: "disabled" });
   });
 });
