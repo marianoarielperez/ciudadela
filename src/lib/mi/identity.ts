@@ -15,7 +15,7 @@ import {
 import { ACCRUING_CATEGORIES } from "@/lib/treasury/rules";
 
 export type ElectoralStatus =
-  | { eligible: true; arrearsMatter: boolean }
+  | { eligible: true }
   | { eligible: false; reason: "category" }
   | { eligible: false; reason: "suspended" }
   | { eligible: false; reason: "seniority"; daysMissing: number }
@@ -42,25 +42,23 @@ export function electoralStatusFor(input: {
     };
   }
   // "Sin mora" es requisito sólo de activos y colaboradores (REG-31).
-  const arrearsMatter = (ACCRUING_CATEGORIES as readonly MemberCategory[]).includes(input.category);
-  if (input.arrears > 0 && arrearsMatter) {
+  if (input.arrears > 0 && (ACCRUING_CATEGORIES as readonly MemberCategory[]).includes(input.category)) {
     return { eligible: false, reason: "arrears", arrears: input.arrears };
   }
-  return { eligible: true, arrearsMatter };
+  return { eligible: true };
 }
 
 /**
- * La frase de la credencial (es-AR, de cara al socio). El habilitado ve un
- * recordatorio de cuota SÓLO si su categoría es de las que devengan (activo,
- * colaborador): a un adherente, honorario o vitalicio la deuda no le quita
- * el voto (o no devenga cuota), y el recordatorio sería ruido — decisión del
- * cliente del 24/08/2026, para que la frase no suene a campaña permanente.
+ * La frase de la credencial (es-AR, de cara al socio). La del habilitado es
+ * UNA sola para todas las categorías y en condicional ("cuando haya") —
+ * decisión del cliente del 24/08/2026: nada de sonar a campaña permanente,
+ * y sin recordatorios de cuota que a un adherente (aporte voluntario) o a un
+ * vitalicio no le aplican. Quien pierda la habilitación por deuda lo va a
+ * leer en la rama `arrears`, que es donde el dato es cierto y accionable.
  */
 export function electoralSentence(s: ElectoralStatus): string {
   if (s.eligible) {
-    return s.arrearsMatter
-      ? "Cumplís con la antigüedad necesaria para votar cuando haya elecciones. Recordá mantener tu cuota social al día."
-      : "Cumplís con la antigüedad necesaria para votar cuando haya elecciones.";
+    return "Cumplís con la antigüedad necesaria para votar cuando haya elecciones.";
   }
   switch (s.reason) {
     case "category":
