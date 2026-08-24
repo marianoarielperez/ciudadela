@@ -240,12 +240,17 @@ describe("makeMailer", () => {
     });
   });
 
-  // Si el SMTP falla no se debe registrar un envío que nunca ocurrió.
-  it("does not record a Notification when the transport throws", async () => {
-    const created: unknown[] = [];
+  // Si el SMTP falla, lo que NO se registra es un envío que nunca ocurrió: la
+  // fila que queda es `failed` (registro del intento), nunca una `sent`.
+  it("never records a `sent` Notification when the transport throws", async () => {
+    const created: { status: string }[] = [];
     const mailer = makeMailer({
       transport: { send: async () => { throw new Error("smtp down"); } },
-      db: { notification: { create: async ({ data }: { data: unknown }) => { created.push(data); return data; } } } as never,
+      db: {
+        notification: {
+          create: async ({ data }: { data: { status: string } }) => { created.push(data); return data; },
+        },
+      } as never,
     });
     await expect(
       mailer.sendToMember({
@@ -254,6 +259,71 @@ describe("makeMailer", () => {
         summary: "restablecer contraseña",
       }),
     ).rejects.toThrow("smtp down");
-    expect(created).toHaveLength(0);
+    expect(created.map((c) => c.status)).toEqual(["failed"]);
+  });
+});
+
+describe("makeMailer: el fallo deja rastro", () => {
+  const message = { subject: "s", text: "t", html: "<p>t</p>" };
+
+  function mailerWith(sendImpl: () => Promise<{ messageId: string | null }>) {
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => args.data);
+    const mailer = makeMailer({ transport: { send: sendImpl }, db: { notification: { create } } as never });
+    return { mailer, create };
+  }
+
+  it("el envío exitoso sigue registrando `sent` (y ahora también el período)", async () => {
+    const { mailer, create } = mailerWith(async () => ({ messageId: "brevo-1" }));
+    await mailer.sendToMember({ memberId: 4, to: "a@b.com", type: "fee_reminder", message, summary: "s", period: "2026-09" });
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ memberId: 4, status: "sent", brevoMessageId: "brevo-1", period: "2026-09" }),
+    });
+  });
+
+  it("un SMTP caído deja una fila `failed` con el CÓDIGO y vuelve a lanzar", async () => {
+    const { mailer, create } = mailerWith(async () => {
+      throw Object.assign(new Error("connect ECONNREFUSED 1.2.3.4:587 a@b.com"), { code: "ECONNREFUSED" });
+    });
+    await expect(mailer.sendToMember({ memberId: 4, to: "a@b.com", type: "receipt", message, summary: "recibo 0001" }))
+      .rejects.toThrow();
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ memberId: 4, type: "receipt", status: "failed", error: "ECONNREFUSED", brevoMessageId: null }),
+    });
+    // El error de nodemailer trae la dirección en claro: al `error` va sólo el
+    // código, nunca el mensaje (docs/08, Ley 25.326).
+    const written = create.mock.calls[0][0].data as { error: string };
+    expect(written.error).not.toContain("@");
+  });
+
+  it("un bloqueo de EMAIL_ALLOWLIST NO es un fallo: no escribe fila (es el entorno funcionando)", async () => {
+    const { mailer, create } = mailerWith(async () => {
+      throw Object.assign(new Error("Envíos restringidos"), { code: "EMAIL_ALLOWLIST" });
+    });
+    await expect(mailer.sendToMember({ memberId: 4, to: "x@y.com", type: "receipt", message, summary: "s" }))
+      .rejects.toThrow();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("si la propia fila `failed` no se puede escribir, gana el error del envío", async () => {
+    const create = vi.fn(async () => { throw new Error("db down"); });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mailer = makeMailer({
+      transport: { send: async () => { throw Object.assign(new Error("smtp"), { code: "EAUTH" }); } },
+      db: { notification: { create } } as never,
+    });
+    await expect(mailer.sendToMember({ memberId: 1, to: "a@b.com", type: "generic", message, summary: "s" }))
+      .rejects.toThrow(/smtp/);
+    // Y el log del fallo del registro tampoco nombra la dirección.
+    expect(err.mock.calls.flat().join(" ")).not.toContain("@");
+    err.mockRestore();
+  });
+
+  it("un aviso a una solicitud también deja su `failed` colgando de la solicitud", async () => {
+    const { mailer, create } = mailerWith(async () => { throw Object.assign(new Error("x"), { code: "EENVELOPE" }); });
+    await expect(mailer.sendToApplication({ applicationId: 9, to: "a@b.com", type: "application_result", message, summary: "s" }))
+      .rejects.toThrow();
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ applicationId: 9, memberId: null, status: "failed", error: "EENVELOPE" }),
+    });
   });
 });

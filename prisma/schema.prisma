@@ -323,6 +323,9 @@ model Notification {
   boardTo        DateTime?          @map("board_to")
   payloadSummary String?            @map("payload_summary") @db.VarChar(300)
   // Código del error de envío cuando `status = failed` (4C). Nunca la dirección.
+  // Una fila `failed` registra un INTENTO, no una acreditación fehaciente
+  // (Art. 5° quater): el correo no salió. Las pantallas que listan
+  // notificaciones tienen que poder distinguirlas de una `sent`.
   error          String?            @db.VarChar(200)
   // Período (`YYYY-MM`) al que se refiere el aviso, cuando tiene uno. Hoy lo
   // escribe el recordatorio de vencimiento (4C): la dedupe "una vez por socio y

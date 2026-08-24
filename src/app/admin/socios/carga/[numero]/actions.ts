@@ -273,9 +273,10 @@ export async function sendVerificationAction(_prev: SendState, formData: FormDat
       memberId: member.id, to: target.email, type: target.kind, message, summary,
     });
   } catch (e) {
-    // `mailer.sendToMember` propaga la excepción del SMTP y NO registra la
-    // Notification: es deliberado, no se acredita un envío que no salió (el
-    // estatuto le da carácter fehaciente al domicilio electrónico). Pero una
+    // `mailer.sendToMember` propaga la excepción del SMTP y no acredita ningún
+    // envío: desde la 4C deja una Notification `failed` —el registro del
+    // INTENTO— pero nunca una `sent`, porque el estatuto le da carácter
+    // fehaciente al domicilio electrónico y ahí no salió nada. Pero una
     // excepción que sale de la action rompe el render y le deja al operador una
     // pantalla de error genérica en inglés. Acá la traducimos a un mensaje que
     // dice la verdad —no se envió— y dejamos la pantalla usable.

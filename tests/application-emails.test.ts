@@ -97,9 +97,12 @@ describe("mailer.sendToApplication", () => {
       payloadSummary: "resumen",
     });
   });
-  it("si el SMTP falla no acredita nada", async () => {
-    const transport = { send: vi.fn().mockRejectedValue(new Error("smtp")) };
-    const notification = { create: vi.fn() };
+  // Desde la 4C sí queda el rastro del INTENTO —una fila `failed`, que la
+  // pantalla de salud lista— pero sigue sin acreditarse ningún envío: `sent`
+  // es lo único que el estatuto toma por fehaciente, y ahí no salió nada.
+  it("si el SMTP falla no acredita nada: la fila es `failed`, nunca `sent`", async () => {
+    const transport = { send: vi.fn().mockRejectedValue(Object.assign(new Error("smtp"), { code: "ESOCKET" })) };
+    const notification = { create: vi.fn(async () => ({})) };
     const mailer = makeMailer({ transport, db: { notification } as never });
     await expect(
       mailer.sendToApplication({
@@ -107,6 +110,8 @@ describe("mailer.sendToApplication", () => {
         message: { subject: "s", text: "t", html: "h" }, summary: "x",
       }),
     ).rejects.toThrow();
-    expect(notification.create).not.toHaveBeenCalled();
+    expect(notification.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ applicationId: 55, status: "failed", error: "ESOCKET" }),
+    });
   });
 });
