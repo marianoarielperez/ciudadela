@@ -12,7 +12,13 @@ vi.mock("@/lib/auth/require-member", () => ({
 // mock de ARIDAD CERO — `npx vitest run` no lo nota (no tipa), pero
 // `npm run build` sí, y `updateMember(...a)` de más abajo rompe con TS2556.
 const updateMember = vi.fn(async (..._args: unknown[]) => ({
-  member: {}, revokedTokens: 0, accountEmailMove: null, accountEmailUpdated: false,
+  member: {}, revokedTokens: 0,
+  // Tipado explícito: sin esto TS infiere `accountEmailMove: null` como tipo
+  // literal desde este valor por default, y el `mockResolvedValueOnce` de
+  // changeEmailAction (que sí trae `{ from, to }`) no tipa en `npm run build`
+  // aunque `npx vitest run` no lo note (no tipa los tests).
+  accountEmailMove: null as { from: string; to: string } | null,
+  accountEmailUpdated: false,
 }));
 vi.mock("@/lib/members/write", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/members/write")>();
@@ -38,7 +44,7 @@ vi.mock("@/lib/members/account-email-notice", () => ({
   },
 }));
 
-import { updateAddressAction, updateContactAction } from "@/app/mi/datos/actions";
+import { changeEmailAction, updateAddressAction, updateContactAction } from "@/app/mi/datos/actions";
 
 const OK_ACTOR = { ok: true, userId: 9, memberId: 7, fullName: "Socia", suspension: null };
 const fd = (o: Record<string, string>) => {
@@ -88,5 +94,48 @@ describe("updateAddressAction", () => {
     const r = await updateAddressAction({}, fd({ streetId: "99" }));
     expect(r.error).toBeTruthy();
     expect(updateMember).not.toHaveBeenCalled();
+  });
+});
+
+describe("changeEmailAction", () => {
+  it("refuses the current address without writing", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.member.findUniqueOrThrow).mockResolvedValueOnce({ email: "Vieja@X.com" } as never);
+    const r = await changeEmailAction({}, fd({ email: "vieja@x.com" }));
+    expect(r.error).toBeTruthy();
+    expect(updateMember).not.toHaveBeenCalled();
+  });
+
+  it("writes declared + null verification and announces the move", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.member.findUniqueOrThrow)
+      .mockResolvedValueOnce({ email: "vieja@x.com" } as never) // before
+      .mockResolvedValueOnce({
+        id: 7, status: "active", email: "nueva@x.com", emailStatus: "declared", userId: 9,
+      } as never); // fresh, para announce
+    updateMember.mockResolvedValueOnce({
+      member: {}, revokedTokens: 0,
+      accountEmailMove: { from: "vieja@x.com", to: "nueva@x.com" }, accountEmailUpdated: true,
+    });
+    const r = await changeEmailAction({}, fd({ email: "Nueva@X.com" }));
+    expect(updateMember).toHaveBeenCalledWith(7, {
+      email: "nueva@x.com", emailStatus: "declared", emailVerifiedAt: null,
+    });
+    const { accountEmailNotice } = await import("@/lib/members/account-email-notice");
+    expect(vi.mocked(accountEmailNotice.announce)).toHaveBeenCalledWith(
+      expect.objectContaining({ previousEmail: "vieja@x.com", actorId: 9 }),
+    );
+    expect(r.done).toBe(true);
+    expect(r.warning).toBeUndefined();
+  });
+
+  it("surfaces a member-voiced conflict message", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    const { MemberEmailConflictError } = await import("@/lib/members/write");
+    vi.mocked(prisma.member.findUniqueOrThrow).mockResolvedValueOnce({ email: "vieja@x.com" } as never);
+    updateMember.mockRejectedValueOnce(new MemberEmailConflictError());
+    const r = await changeEmailAction({}, fd({ email: "deotro@x.com" }));
+    expect(r.error).toContain("en uso");
+    expect(r.error).not.toContain("socio"); // voz de socio, no de operador
   });
 });

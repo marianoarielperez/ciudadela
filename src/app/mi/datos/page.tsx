@@ -8,6 +8,7 @@ import { CATEGORY_LABELS, EMAIL_STATUS_LABELS, STATUS_LABELS } from "@/lib/membe
 import { streetLabel } from "@/app/(public)/asociate/wizard-shared";
 import { AddressForm } from "./address-form";
 import { ContactForm } from "./contact-form";
+import { EmailForm } from "./email-form";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Mis datos — Vecinal Ciudadela" };
@@ -130,7 +131,7 @@ export default async function MiDatosPage() {
             <Row label="Email" value={member.email} />
             <Row label="Estado" value={EMAIL_STATUS_LABELS[member.emailStatus]} />
           </dl>
-          {/* El formulario de cambio de email llega en la próxima tarea. */}
+          {canEdit && <EmailForm />}
         </CardContent>
       </Card>
     </div>
