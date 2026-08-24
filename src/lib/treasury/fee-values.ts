@@ -42,8 +42,10 @@ export function makeFeeValueReader(db: Db) {
      *  La comparación no va contra el instante sino contra el mediodía UTC del
      *  día argentino de `at` (`civilDayOf`), porque `validFrom` es una fecha
      *  civil guardada al mediodía UTC = 09:00 argentinas. Contra el instante
-     *  crudo, un valor que rige "desde hoy" no existiría hasta las 09:00 y el
-     *  cron de devengo de las 00:30 del día 1 abortaría sin valor de cuota. */
+     *  crudo, un valor que rige "desde hoy" no existiría hasta las 09:00: un cobro
+     *  de mostrador de la mañana abortaría por "no hay valor vigente" sobre un
+     *  valor que la Comisión ya fijó para ese día. (El cron de DEVENGO no llama
+     *  acá: la cuota no lleva monto, se valúa a valor vigente al momento del pago.) */
     async current(at: Date = new Date()): Promise<CurrentFeeValue | null> {
       const row = await db.feeValue.findFirst({
         where: { validFrom: { lte: civilDayOf(at) } },

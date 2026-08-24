@@ -53,8 +53,7 @@ export function currentPeriod(now: Date = new Date()): Period {
  *  Existe para comparar un instante de reloj contra una columna de fecha civil
  *  sin que la hora del día decida. El mediodía UTC son las 09:00 argentinas,
  *  así que un `validFrom <= new Date()` crudo deja al valor invisible entre las
- *  00:00 y las 08:59 del propio día en que empieza a regir: el cron de devengo
- *  (00:30 del día 1) abortaría por "no hay valor vigente" y el superadmin que
+ *  00:00 y las 08:59 del propio día en que empieza a regir: el superadmin que
  *  registra un valor "desde hoy" y recarga a la mañana leería que no rige
  *  ninguno, arriba de la fila que acaba de crear. Comparando contra el mediodía
  *  del día argentino, el valor rige el día entero.
@@ -64,6 +63,13 @@ export function currentPeriod(now: Date = new Date()): Period {
 export function civilDayOf(date: Date = new Date()): Date {
   const { year, month, day } = civilPartsOf(date);
   return civilDateUtc(year, month, day);
+}
+
+/** ¿El día civil ARGENTINO de `at` es el 1° del mes? Lo pregunta el cron de
+ *  devengo, que corre a las 00:30 y tiene que decidir con el calendario de acá:
+ *  a esa hora UTC ya está en el día siguiente desde las 21:00 de la víspera. */
+export function isFirstCivilDayOfMonth(at: Date = new Date()): boolean {
+  return civilDayOf(at).getUTCDate() === 1;
 }
 
 export function addMonths(p: Period, n: number): Period {

@@ -162,7 +162,7 @@ export function makeTreasuryService(deps: Deps) {
   // preguntar de dónde viene. NO toma el mutex — el mutex lo pone el método
   // público `registerPayment`, y `registerCashPayment` lo llama desde adentro
   // del suyo (no existe mutex reentrante: volver a tomarlo se bloquearía solo).
-  async function registerPaymentCore(input: RegisterPaymentInput): Promise<RegisterResult> {
+  async function registerPaymentCore(input: RegisterPaymentInput, retried = false): Promise<RegisterResult> {
     const { paidAt } = input;
     const amount = Math.round(input.amount * 100) / 100;
     if (!Number.isFinite(amount) || amount <= 0) throw new TreasuryError("El monto del pago tiene que ser mayor a cero.");
@@ -322,6 +322,20 @@ export function makeTreasuryService(deps: Deps) {
           select: { id: true },
         });
         if (winner) return { kind: "already_processed", paymentId: winner.id };
+      }
+      // Carrera con el cron de devengo (4C): entre el `findMany` de las cuotas y
+      // este INSERT, el cron creó el mismo período y el unique (memberId, period)
+      // mató la transacción entera. No es un fallo: la fila que faltaba ahora
+      // existe. Se recalcula la imputación desde cero —vuelve a leer las cuotas y
+      // a llamar a `allocate`— y se reintenta UNA vez. Sin esto, un pago que
+      // llegara a las 00:30 del día 1 terminaba en 500 y MP reintentaba un cobro
+      // que ya había hecho.
+      //
+      // Una sola vez a propósito: si el segundo intento también choca, el
+      // problema no es la carrera y hay que verlo, no reintentarlo en bucle.
+      if (!retried && input.memberId !== null && isUniqueViolation(e)) {
+        console.warn("[treasury] P2002 al imputar: se recalcula la imputación y se reintenta", input.memberId);
+        return registerPaymentCore(input, true);
       }
       throw e;
     }

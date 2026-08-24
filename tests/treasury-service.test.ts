@@ -680,6 +680,60 @@ describe("registerPayment (núcleo 4B)", () => {
     expect(data.memberName).toBe("Juana Pérez");
     expect(data.memberNumber).toBeNull();
   });
+
+  // Carrera con el cron de devengo (4C): el cron corre a las 00:30 del día 1 y
+  // un débito de MP puede caer en el mismo minuto. Si el cron escribe el mismo
+  // período entre el `findMany` del pago y su INSERT, el unique
+  // (member_id, period) mata la transacción entera con un P2002 que no es de
+  // `mpPaymentId`: antes se re-lanzaba y el webhook devolvía 500 sobre un cobro
+  // que MP ya había hecho.
+  it("tolera el P2002 de (memberId, period): recalcula la imputación y reintenta UNA vez", async () => {
+    const { db, mocks, state } = fakeDb({ member, fees: [] });
+    const real = mocks.$transaction.getMockImplementation()!;
+    let attempt = 0;
+    mocks.$transaction.mockImplementation(async (fn) => {
+      attempt++;
+      if (attempt === 1) {
+        // El devengo materializó 2026-09 mientras esta transacción corría.
+        state.fees.push({ id: 1, memberId: 1, period: "2026-09", status: "pending", origin: "accrual", paymentId: null });
+        throw Object.assign(new Error("Unique constraint failed"), {
+          code: "P2002", meta: { target: ["member_id", "period"] },
+        });
+      }
+      return real(fn);
+    });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, now: () => new Date("2026-10-01T03:30:00Z"),
+      renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    const r = await svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "801", actorId: null,
+    });
+    expect(r.kind).toBe("registered");
+    expect(mocks.$transaction).toHaveBeenCalledTimes(2);
+    // La prueba de que RECALCULÓ y no repitió el plan viejo: la segunda vuelta
+    // imputa la fila que ahora existe (UPDATE) en vez de volver a crearla.
+    expect(mocks.fee.createMany).not.toHaveBeenCalled();
+    expect(state.fees).toEqual([
+      expect.objectContaining({ period: "2026-09", status: "paid", paymentId: 1 }),
+    ]);
+    // El número se pidió una sola vez: el rollback del primer intento no gastó serie.
+    expect(state.seq).toBe(1);
+  });
+
+  it("no reintenta dos veces: el segundo P2002 se propaga", async () => {
+    const { db, mocks } = fakeDb({ member, fees: [] });
+    mocks.$transaction.mockImplementation(async () => {
+      throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    await expect(svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, actorId: null,
+    })).rejects.toThrow();
+    expect(mocks.$transaction).toHaveBeenCalledTimes(2);
+  });
 });
 
 // Reembolso o contracargo en Mercado Pago: el MISMO movimiento que la anulación
