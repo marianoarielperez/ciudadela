@@ -18,6 +18,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { canReadmit } from "@/lib/members/rules";
 import { requireOpenBook } from "@/lib/members/service";
+import { isUniqueViolation, uniqueViolationTarget } from "@/lib/treasury/unique-violation";
 import {
   type AccountEmailMove, MemberEmailConflictError, MemberWriteError,
   revokeStaleMemberTokens, sameAddress, syncAccountEmail,
@@ -43,12 +44,15 @@ export const RECORDABLE_STATUSES = ["approved_pending_minute", "pending_board"] 
 // Del error de Prisma sólo se usa el código y el target: el objeto trae la
 // consulta con los datos del solicitante en claro, y el log de PM2 no está
 // cubierto por los cuidados de docs/08 (Ley 25.326).
-function uniqueViolationTarget(e: unknown): string | null {
-  if (typeof e !== "object" || e === null || !("code" in e) || e.code !== "P2002") return null;
-  const meta = (e as { meta?: { target?: unknown } }).meta;
-  return JSON.stringify(meta?.target ?? "");
-}
-
+//
+// La lectura del target NO se escribe acá: hasta la 4C esta función devolvía
+// `JSON.stringify(meta.target ?? "")`, o sea `'""'` SIEMPRE, porque con
+// `@prisma/adapter-mariadb` `meta.target` no existe — el nombre del índice viaja
+// en `meta.driverAdapterError.cause.constraint.index`. El resultado no matcheaba
+// ni /dni/ ni /member_number/ y el operador leía el genérico "choca con un dato
+// ya registrado" en vez de "Ya existe un socio con el DNI…". El módulo de
+// tesorería ya lee las DOS formas y está fijado contra MariaDB real
+// (`tests/integration/unique-violation.test.ts`): se reusa, no se recopia.
 export function makeApplicationRecorder(db: PrismaClient) {
   return {
     async recordOne(input: {
@@ -238,9 +242,12 @@ export function makeApplicationRecorder(db: PrismaClient) {
         }
         // Los choques de índice único salen de Prisma en inglés y con la
         // consulta adentro. Acá se traducen a lo único que el operador puede
-        // hacer con ellos.
-        const target = uniqueViolationTarget(e);
-        if (target !== null) {
+        // hacer con ellos. Se pregunta por el CÓDIGO y no por el target: si el
+        // target no se puede leer, el P2002 igual tiene que terminar en el
+        // mensaje genérico y nunca en `e.message`, que lleva la consulta con los
+        // datos del solicitante.
+        if (isUniqueViolation(e)) {
+          const target = uniqueViolationTarget(e) ?? "";
           if (/dni/i.test(target)) {
             return {
               ok: false, applicationId,

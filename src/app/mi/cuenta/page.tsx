@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { requireMember } from "@/lib/auth/require-member";
-import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { hasRecentLinkPayment, readReturnOutcome } from "@/lib/mp/return-status";
 import { prisma } from "@/lib/prisma";
 import { buildPeriodGrid, fetchMemberAccount } from "@/lib/treasury/account";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { currentPeriod, type Period } from "@/lib/treasury/periods";
-import { allocate, categoryPaysFee, coverageFloor } from "@/lib/treasury/rules";
+import { currentPeriod } from "@/lib/treasury/periods";
+import { categoryPaysFee } from "@/lib/treasury/rules";
+import { upcomingPeriods } from "@/lib/treasury/upcoming";
 import { AccountSection } from "@/components/admin/account-section";
 import { EmptyState } from "@/components/admin/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,24 +15,6 @@ import { ReturnNotice } from "./return-notice";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Mi cuenta — Vecinal Ciudadela" };
-
-/** Los períodos que un pago de este socio iría CREANDO, en orden, desde su piso
- *  de cobertura. La pantalla los usa para nombrar a qué mes va el pago; el
- *  servicio llama a `allocate` con el MISMO piso al imputarlo, así que lo que se
- *  anuncia es lo que va a decir el recibo.
- *
- *  El reingreso entra por consulta aparte: `joinedAt` no se toca al reingresar
- *  (REG-11), así que la fecha sale del `Movement` de tipo `readmission` más
- *  nuevo. Sin ese término, a un ex socio que vuelve en noviembre la pantalla le
- *  ofrecería cubrir septiembre y octubre, meses en los que no fue socio. */
-function upcomingPeriods(existing: Period[], joinedAt: Date, readmittedAt: Date | null): Period[] {
-  return allocate({
-    pending: [],
-    existing,
-    n: MAX_LINK_FEES,
-    startAt: coverageFloor({ joinedAt, readmittedAt }),
-  }).toCreate;
-}
 
 export default async function MiCuentaPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;

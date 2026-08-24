@@ -21,34 +21,16 @@ import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatARS } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
-import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
 import { feeValueReader, NO_FEE_VALUE_MESSAGE } from "@/lib/treasury/fee-values";
-import { periodLabel, type Period } from "@/lib/treasury/periods";
-import { allocate, categoryPaysFee, coverageFloor } from "@/lib/treasury/rules";
+import { periodLabel } from "@/lib/treasury/periods";
+import { categoryPaysFee } from "@/lib/treasury/rules";
+import { upcomingPeriods } from "@/lib/treasury/upcoming";
 import { LinkForm } from "./link-form";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Link de pago — SIGeV" };
-
-/** Los períodos que un pago de este socio iría CREANDO, en orden, desde su piso
- *  de cobertura. La pantalla los usa para nombrar a qué mes va el pago; el
- *  servicio llama a `allocate` con el MISMO piso al imputarlo, así que lo que se
- *  anuncia es lo que va a decir el recibo.
- *
- *  El reingreso entra por consulta aparte: `joinedAt` no se toca al reingresar
- *  (REG-11), así que la fecha sale del `Movement` de tipo `readmission` más
- *  nuevo. Sin ese término, a un ex socio que vuelve en noviembre la pantalla le
- *  ofrecería cubrir septiembre y octubre, meses en los que no fue socio. */
-function upcomingPeriods(existing: Period[], joinedAt: Date, readmittedAt: Date | null): Period[] {
-  return allocate({
-    pending: [],
-    existing,
-    n: MAX_LINK_FEES,
-    startAt: coverageFloor({ joinedAt, readmittedAt }),
-  }).toCreate;
-}
 
 export default async function PaymentLinkPage(props: { params: Promise<{ id: string }> }) {
   const actor = await requireAdmin();
@@ -96,7 +78,7 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
         </div>
       </PageHeader>
 
-      {member.status === "withdrawn" && (
+      {member.status === "withdrawn" &&
         // Mismo criterio que la pantalla de efectivo: al cesante se le puede
         // cobrar la deuda que quedó (Art. 9 inc. c, REG-16), y el pago no lo
         // reincorpora. Lo que suma acá es la vuelta: su panel de socio está
@@ -104,15 +86,25 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
         // El recibo lo emite y lo manda el webhook: lo único que falta es
         // avisarle al operador que la VUELTA no la va a ver, no pedirle un
         // envío que ya ocurrió (salvo que no haya email al que mandarlo).
-        <FormMessage kind="warning" box as="div">
-          Está dado de baja. El pago salda la deuda y emite recibo, pero <strong>no</strong> lo
-          reincorpora — y como su panel de socio está cerrado, al volver de Mercado Pago no va a
-          ver la confirmación.{" "}
-          {hasEmail
-            ? "El recibo le llega igual por email."
-            : "Y como no tiene un email válido cargado, el recibo se lo hacés llegar vos desde Tesorería."}
-        </FormMessage>
-      )}
+        //
+        // Sin deuda no hay nada de eso que anunciar: prometerle un pago que
+        // "salda la deuda" a quien no tiene ninguna era mandarlo a generar un
+        // link que la action ahora rechaza.
+        (account.pendingCount === 0 ? (
+          <FormMessage kind="warning" box>
+            Está dado de baja y no tiene cuotas pendientes: no hay nada que cobrarle. Un cesante no
+            devenga cuotas (REG-16), así que tampoco puede pagar por adelantado.
+          </FormMessage>
+        ) : (
+          <FormMessage kind="warning" box as="div">
+            Está dado de baja. El pago salda la deuda y emite recibo, pero <strong>no</strong> lo
+            reincorpora — y como su panel de socio está cerrado, al volver de Mercado Pago no va a
+            ver la confirmación.{" "}
+            {hasEmail
+              ? "El recibo le llega igual por email."
+              : "Y como no tiene un email válido cargado, el recibo se lo hacés llegar vos desde Tesorería."}
+          </FormMessage>
+        ))}
 
       <Card>
         <CardHeader>
@@ -133,6 +125,13 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
             <EmptyState size="card" description="Esta categoría no paga cuota: no hay link que generar." />
           ) : feeValue === null || account.feeAmount === null ? (
             <FormMessage kind="error" box>{NO_FEE_VALUE_MESSAGE}</FormMessage>
+          ) : member.status === "withdrawn" && account.pendingCount === 0 ? (
+            // El servicio va a rechazar este cobro (`no_pending_withdrawn`) y la
+            // plata quedaría en la bandeja sin recibo: mejor no ofrecerlo.
+            <EmptyState
+              size="card"
+              description="No hay nada que cobrarle: está dado de baja y no le quedó ninguna cuota pendiente."
+            />
           ) : (
             <>
               <p className="text-sm text-muted-foreground">

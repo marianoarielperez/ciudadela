@@ -50,12 +50,30 @@ const WITHDRAWN_MEMBER = {
 
 type Row = Record<string, unknown>;
 
+/** Un P2002 con la forma REAL que devuelve `@prisma/adapter-mariadb`.
+ *
+ *  OJO: NO hay `meta.target` —eso es del motor clásico—. El nombre del índice
+ *  viaja en `meta.driverAdapterError.cause.constraint.index`, y está fijado
+ *  contra la base en `tests/integration/unique-violation.test.ts`. Este fake
+ *  decía `meta: { target: ["dni"] }` y daba verde afirmando un mensaje que en
+ *  producción no salía nunca: el operador leía el genérico. */
+function p2002(index: string | null) {
+  return Object.assign(new Error("Unique constraint failed"), {
+    code: "P2002",
+    meta: index === null ? {} : { driverAdapterError: { cause: { constraint: { index } } } },
+  });
+}
+
 type FakeConfig = {
   openBooks?: { id: number; number: number; status: string }[];
   member?: Row | null;
   // El DNI de Member es UNIQUE: una ficha vieja con ese documento hace que el
   // create explote con P2002, en inglés y en medio de un asiento societario.
-  failMemberCreateP2002?: boolean;
+  // El valor es el NOMBRE DEL ÍNDICE que reporta MariaDB, o `"unknown"` para el
+  // P2002 cuyo índice no se puede leer.
+  failMemberCreateP2002?: "members_dni_key" | "unknown";
+  /** Choque del `@@unique([bookId, memberNumber])` al tomar el número siguiente. */
+  failMembershipCreateP2002?: boolean;
   /** La cuenta de acceso vinculada a la ficha (`member.userId`). */
   account?: { id: number; email: string };
   /** Id de OTRA cuenta que ya tiene la dirección declarada en la solicitud. */
@@ -108,6 +126,7 @@ function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeC
     membership: {
       aggregate: async () => ({ _max: { memberNumber: 305 } }),
       create: async ({ data }: { data: Row }) => {
+        if (config.failMembershipCreateP2002) throw p2002("memberships_book_id_member_number_key");
         state.membershipCreates.push(data);
         return data;
       },
@@ -153,10 +172,7 @@ function makeFakeDb(application: Partial<typeof APPLICATION> = {}, config: FakeC
       },
       create: async ({ data }: { data: Row }) => {
         if (config.failMemberCreateP2002) {
-          throw Object.assign(new Error("Unique constraint failed on the fields: (`dni`)"), {
-            code: "P2002",
-            meta: { target: ["dni"] },
-          });
+          throw p2002(config.failMemberCreateP2002 === "unknown" ? null : config.failMemberCreateP2002);
         }
         state.memberCreates.push(data);
         return { id: 99, ...data };
@@ -265,7 +281,7 @@ describe("el asiento de un ALTA COMÚN", () => {
   });
 
   it("traduce el choque de DNI a un mensaje que dice qué hacer, y no deja nada escrito", async () => {
-    const { db, state } = makeFakeDb({}, { member: null, failMemberCreateP2002: true });
+    const { db, state } = makeFakeDb({}, { member: null, failMemberCreateP2002: "members_dni_key" });
     const result = await record(db);
 
     expect(result.ok).toBe(false);
@@ -274,6 +290,29 @@ describe("el asiento de un ALTA COMÚN", () => {
     expect(result.error).not.toMatch(/Unique constraint/);
     expect(state.membershipCreates).toHaveLength(0);
     expect(state.applicationUpdates).toHaveLength(0);
+  });
+
+  it("traduce el choque del número de socio a 'reintentá', que es lo único que se puede hacer", async () => {
+    const { db, state } = makeFakeDb({}, { member: null, failMembershipCreateP2002: true });
+    const result = await record(db);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toMatch(/Otro asiento tomó el número de socio/);
+    expect(state.applicationUpdates).toHaveLength(0);
+  });
+
+  it("un P2002 cuyo índice no se puede leer cae en el genérico, nunca en el error de Prisma", async () => {
+    // La consulta que Prisma mete en `e.message` lleva los datos del solicitante
+    // en claro (Ley 25.326, docs/08): si el target no se puede leer, el mensaje
+    // sigue siendo nuestro.
+    const { db } = makeFakeDb({}, { member: null, failMemberCreateP2002: "unknown" });
+    const result = await record(db);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toMatch(/choca con un dato ya registrado/);
+    expect(result.error).not.toMatch(/Unique constraint/);
   });
 
   it("rechaza el alta en castellano cuando no hay ningún libro abierto", async () => {

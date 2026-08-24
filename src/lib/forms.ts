@@ -1,7 +1,13 @@
 // FormData → zod bridge shared by all server actions.
 import type { z } from "zod";
 
-export type FormResult<T> = { ok: true; data: T } | { ok: false; error: string };
+export type FormResult<T> =
+  | { ok: true; data: T }
+  // `field` es ADITIVO: los llamadores que lo ignoran no cambian de
+  // comportamiento. Es sólo el DATO —qué campo falló—; llevar el foco al campo
+  // exige propagar el estado y pintar `aria-invalid` en cada pantalla, y eso
+  // queda fuera de la 4C (spec §2).
+  | { ok: false; error: string; /** Nombre del campo que falló, si el schema lo dice. */ field?: string };
 
 // Un input vacío del navegador llega como "" y no como ausente, así que hay que
 // traducirlo — pero no siempre al mismo valor:
@@ -41,7 +47,12 @@ export function parseForm<S extends z.ZodType>(schema: S, formData: FormData): F
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    return { ok: false, error: first?.message ?? "Datos inválidos" };
+    // El `path` de zod ya venía y se tiraba: un error de validación en un
+    // formulario largo decía el mensaje y no dónde, y el operador buscó la causa
+    // en el lugar equivocado (deuda del M3). Un issue de raíz (schema no-objeto)
+    // trae `path: []` y no se le inventa campo.
+    const field = typeof first?.path?.[0] === "string" ? first.path[0] : undefined;
+    return { ok: false, error: first?.message ?? "Datos inválidos", field };
   }
   return { ok: true, data: parsed.data };
 }

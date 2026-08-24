@@ -31,7 +31,7 @@ describe("parseForm", () => {
   // texto genérico en inglés de zod para "received undefined".
   it("uses the schema message for a blank required field", () => {
     const r = parseForm(schema, fd({ fullName: "   " }));
-    expect(r).toEqual({ ok: false, error: "Ingresá el nombre" });
+    expect(r).toEqual({ ok: false, error: "Ingresá el nombre", field: "fullName" });
   });
   it("treats a whitespace-only optional field as missing", () => {
     const r = parseForm(schema, fd({ fullName: "Perez Ana", email: "   " }));
@@ -39,6 +39,35 @@ describe("parseForm", () => {
   });
   it("propagates the schema message of an optional field that is filled in wrong", () => {
     const r = parseForm(schema, fd({ fullName: "Perez Ana", email: "nope" }));
-    expect(r).toEqual({ ok: false, error: "Email inválido" });
+    expect(r).toEqual({ ok: false, error: "Email inválido", field: "email" });
+  });
+  it("el error dice QUÉ campo falló, sin cambiar el mensaje", () => {
+    const s = z.object({
+      nombre: z.string().min(1, "Ingresá el nombre."),
+      email: z.string().email("El email no es válido."),
+    });
+    const r = parseForm(s, fd({ nombre: "Ana", email: "no-es-un-email" }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toBe("El email no es válido.");
+    expect(r.field).toBe("email");
+  });
+  it("un error de raíz (schema no-objeto) no inventa un campo", () => {
+    // El issue de zod viene con `path: []`: no hay campo que nombrar y no se
+    // fabrica uno a partir del índice.
+    const r = parseForm(z.string("Datos inválidos."), new FormData());
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.field).toBeUndefined();
+  });
+  it("sigue eligiendo el MISMO issue de siempre: el primero", () => {
+    // Cambiar cuál issue se elige cambiaría los textos que ve el usuario en los
+    // schemas multicampo, y hay tests que los afirman.
+    const s = z.object({ a: z.string().min(1, "Falta A."), b: z.string().min(1, "Falta B.") });
+    const r = parseForm(s, fd({ a: "", b: "" }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toBe("Falta A.");
+    expect(r.field).toBe("a");
   });
 });

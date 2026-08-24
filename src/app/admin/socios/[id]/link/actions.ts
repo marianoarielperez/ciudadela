@@ -47,9 +47,26 @@ export async function createPaymentLinkAction(_prev: LinkState, formData: FormDa
   if (!parsed.ok) return { error: parsed.error };
   const member = await prisma.member.findUnique({
     where: { id: parsed.data.memberId },
-    select: { id: true, category: true },
+    select: { id: true, category: true, status: true },
   });
   if (!member) return { error: "El socio no existe." };
+  // Un cesante no devenga (REG-16): lo único que se le puede cobrar es la deuda
+  // congelada al momento de la baja. Sin esta guarda el link se generaba igual,
+  // el vecino pagaba, `registerPayment` devolvía `no_pending_withdrawn` y la
+  // plata caía en la bandeja de sin conciliar sin recibo, esperando que alguien
+  // la resolviera a mano o la devolviera. Se chequea ACÁ y no sólo en la
+  // pantalla porque la pantalla se puede saltear escribiendo la URL.
+  if (member.status === "withdrawn") {
+    const pending = await prisma.fee.count({ where: { memberId: member.id, status: "pending" } });
+    if (pending === 0) {
+      return { error: "El socio está dado de baja y no tiene cuotas pendientes: no hay nada que cobrarle." };
+    }
+    if (parsed.data.n > pending) {
+      return {
+        error: `El socio está dado de baja: sólo se le puede cobrar la deuda que quedó (${pending} ${pending === 1 ? "cuota" : "cuotas"}).`,
+      };
+    }
+  }
 
   let r;
   try {

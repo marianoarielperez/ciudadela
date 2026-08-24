@@ -10,13 +10,16 @@ const mocks = vi.hoisted(() => ({
   sendToMember: vi.fn(),
   audit: vi.fn(async () => {}),
   findUnique: vi.fn(),
+  feeCount: vi.fn(),
   // Tipado explícito: sin él TS infiere la forma del rechazo y el
   // `mockResolvedValueOnce` del caso autorizado no compila.
   admin: vi.fn(async (): Promise<AdminActor> => (
     { ok: false, reason: "not_admin", error: "Necesitás permisos de administrador." }
   )),
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: { member: { findUnique: mocks.findUnique } } }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { member: { findUnique: mocks.findUnique }, fee: { count: mocks.feeCount } },
+}));
 vi.mock("@/lib/mp/payment-link", async () => {
   // El mapa de mensajes es real: si un mensaje cambia, el test que lo pinea
   // tiene que verlo.
@@ -72,7 +75,7 @@ describe("createPaymentLinkAction", () => {
 
   it("con admin devuelve el link y audita ids/cantidad/monto — SIN la URL", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "active" });
+    mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "active", status: "active" });
     mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 12000, unit: 6000, reference: "pago:14:2", expiresAt: EXPIRES });
     const r = await createPaymentLinkAction({}, createForm());
     expect(r).toEqual({
@@ -81,7 +84,7 @@ describe("createPaymentLinkAction", () => {
         seal: sealPaymentLink({ memberId: 14, n: 2, amount: 12000, url: MP_URL }),
       },
     });
-    expect(mocks.create).toHaveBeenCalledWith({ member: { id: 14, category: "active" }, n: 2 });
+    expect(mocks.create).toHaveBeenCalledWith({ member: { id: 14, category: "active", status: "active" }, n: 2 });
     expect(mocks.audit).toHaveBeenCalledWith({
       userId: 9, ip: "unknown",
       action: "payment_link_create", entity: "member", entityId: 14,
@@ -93,7 +96,7 @@ describe("createPaymentLinkAction", () => {
 
   it("si Mercado Pago tira, el error es en castellano y no se audita nada", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "active" });
+    mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "active", status: "active" });
     // El SDK de MP no lanza `Error`: lanza el cuerpo de la respuesta.
     mocks.create.mockRejectedValueOnce({ message: "invalid token", status: 401, cause: [{ code: "unauthorized", description: "bad token" }] });
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -105,7 +108,7 @@ describe("createPaymentLinkAction", () => {
 
   it("la categoría sin cuota se explica y no se audita un link que no existe", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "lifetime" });
+    mocks.findUnique.mockResolvedValueOnce({ id: 14, category: "lifetime", status: "active" });
     mocks.create.mockResolvedValueOnce({ ok: false, error: "category_without_fee" });
     const r = await createPaymentLinkAction({}, createForm());
     expect(r.error).toBe("Esta categoría no paga cuota: no hay nada que cobrar por link.");
@@ -132,6 +135,41 @@ describe("createPaymentLinkAction", () => {
     const r = await createPaymentLinkAction({}, createForm("61"));
     expect(r.error).toBe("Como máximo 60 cuotas.");
     expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  // Un cesante no devenga (REG-16): lo único que se le puede cobrar es la deuda
+  // que quedó congelada al darlo de baja. Sin la guarda el link se generaba
+  // igual, el vecino pagaba y la plata caía en la bandeja de sin conciliar.
+  it("un cesante SIN cuotas pendientes no puede recibir un link: la plata entraría y no habría a qué imputarla", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce({ id: 7, category: "active", status: "withdrawn" });
+    mocks.feeCount.mockResolvedValueOnce(0);
+    const r = await createPaymentLinkAction({}, createForm("1", "7"));
+    expect(r.error).toContain("dado de baja");
+    expect(mocks.create).not.toHaveBeenCalled(); // ni siquiera se le pide el link a MP
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("un cesante CON deuda puede recibir un link por lo que debe, y no por más", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 }).mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique
+      .mockResolvedValueOnce({ id: 7, category: "active", status: "withdrawn" })
+      .mockResolvedValueOnce({ id: 7, category: "active", status: "withdrawn" });
+    mocks.feeCount.mockResolvedValueOnce(2).mockResolvedValueOnce(2);
+    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 12000, unit: 6000, reference: "pago:7:2", expiresAt: EXPIRES });
+    // Tres cuotas para quien debe dos: el excedente no tendría a qué imputarse.
+    expect((await createPaymentLinkAction({}, createForm("3", "7"))).error).toContain("2");
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect((await createPaymentLinkAction({}, createForm("2", "7"))).error).toBeUndefined();
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("un socio vigente no paga la consulta de más: sólo se cuentan cuotas si está de baja", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce({ id: 7, category: "active", status: "active" });
+    mocks.create.mockResolvedValueOnce({ ok: true, initPoint: MP_URL, amount: 18000, unit: 6000, reference: "pago:7:3", expiresAt: EXPIRES });
+    await createPaymentLinkAction({}, createForm("3", "7"));
+    expect(mocks.feeCount).not.toHaveBeenCalled();
   });
 });
 
