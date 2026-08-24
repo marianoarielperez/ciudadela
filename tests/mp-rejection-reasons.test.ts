@@ -19,9 +19,9 @@ describe("rejectionReason", () => {
     expect(rejectionReason(null)).toContain("no pudimos identificar");
     expect(rejectionReason(null)).not.toContain("no nos informó");
   });
-  // Los códigos que MP devuelve seguido en el débito recurrente. Los que se
-  // pueden accionar (3DS, función crédito, tarjeta inactiva) son los que duelen
-  // si caen en el genérico: ahí había algo concreto que decirle al vecino.
+  // Los códigos que MP devuelve seguido en el débito recurrente. Los que dicen
+  // algo concreto (3DS, tipo de tarjeta no permitido, tarjeta inactiva) son los
+  // que duelen si caen en el genérico.
   it("los códigos frecuentes y accionables no caen en el genérico", () => {
     for (const code of [
       "cc_rejected_insufficient_amount", "cc_rejected_card_disabled", "cc_rejected_3ds_mandatory",
@@ -36,6 +36,26 @@ describe("rejectionReason", () => {
   // vecino se queda mirando el rechazo.
   it("la tarjeta inhabilitada nombra la salida: llamar al banco", () => {
     expect(rejectionReason("cc_rejected_card_disabled")).toContain("banco");
+  });
+  // `card_type_not_allowed` dice que el TIPO de tarjeta no está permitido, no
+  // que le falte "la función crédito": eso es el mismo invento que se corrigió
+  // en `card_disabled`, y encima dejaba al vecino sin salida.
+  it("el tipo de tarjeta no permitido no inventa 'crédito' y ofrece una salida", () => {
+    const r = rejectionReason("cc_rejected_card_type_not_allowed");
+    expect(r).not.toContain("crédito");
+    expect(r).toContain("otra");
+  });
+  // El challenge de 3DS se completa DURANTE el cobro. En un débito recurrente el
+  // socio no estaba delante de nada, así que "autorizala desde tu banco" lo
+  // manda a un lugar donde no puede resolver nada: ese cobro ya no se autoriza.
+  // Las salidas reales las nombra el párrafo siguiente del correo.
+  it("los dos 3DS cuentan qué pasó sin mandar al socio al banco", () => {
+    for (const code of ["cc_rejected_3ds_mandatory", "cc_rejected_3ds_challenge"]) {
+      const r = rejectionReason(code);
+      expect(r, code).toContain("verificación");
+      expect(r, code).not.toContain("autoriz");
+      expect(r, code).not.toContain("desde tu banco");
+    }
   });
   // El tope es del medio de pago DENTRO de Mercado Pago: decir "el límite de la
   // tarjeta" manda al vecino a llamar a un banco que no tiene nada que arreglar.

@@ -24,7 +24,11 @@ export const REJECTION_REASONS: Readonly<Record<string, string>> = {
   cc_rejected_bad_filled_security_code: "el código de seguridad de la tarjeta no es correcto",
   cc_rejected_bad_filled_other: "alguno de los datos de la tarjeta no es correcto",
   cc_rejected_card_error: "hubo un problema con la tarjeta",
-  cc_rejected_card_type_not_allowed: "la tarjeta no tiene habilitada la función crédito para este cobro",
+  // MP dice que el TIPO de tarjeta no está permitido para este cobro, que no es
+  // lo mismo que "no tiene habilitada la función crédito": puede ser una
+  // prepaga, una emitida en el exterior o una marca que el cobro no acepta.
+  // Afirmar "crédito" es el mismo invento que se corrigió en `card_disabled`.
+  cc_rejected_card_type_not_allowed: "ese tipo de tarjeta no está habilitado para este cobro, y hay que pagarlo con otra",
   cc_rejected_duplicated_payment: "figura como un pago repetido",
   // "Mercado Pago no autorizó el cobro" no puede ir tal cual: el texto se
   // interpola a mitad de frase (arranca en minúscula) y la oración ya nombra a
@@ -33,12 +37,16 @@ export const REJECTION_REASONS: Readonly<Record<string, string>> = {
   cc_rejected_max_attempts: "se superó la cantidad de intentos permitidos",
   cc_rejected_invalid_installments: "la tarjeta no admite este tipo de cobro",
   cc_rejected_blacklist: "el sistema de seguridad de Mercado Pago no autorizó el cobro",
-  // 3DS: la autenticación con el banco quedó sin completar. Es accionable por el
-  // socio —autorizarla desde la app o el SMS del banco— y viene creciendo en la
-  // Argentina, así que dejarla caer en el genérico es perder justo el caso en el
-  // que había algo concreto que decirle.
-  cc_rejected_3ds_mandatory: "el banco pidió una verificación extra que no se completó, y hay que autorizarla desde tu banco",
-  cc_rejected_3ds_challenge: "quedó pendiente la verificación con el banco, y hay que autorizarla desde tu banco",
+  // 3DS: la autenticación con el banco quedó sin completar. Viene creciendo en
+  // la Argentina, así que dejarla caer en el genérico es perder un caso
+  // frecuente. Pero NO se le dice "autorizala desde tu banco": el challenge de
+  // 3DS se completa DURANTE el cobro, y en un débito recurrente el socio no
+  // estaba delante de nada. Ese cobro ya no se puede autorizar después; lo que
+  // queda es rehacerlo, y esas salidas las nombra el párrafo siguiente del
+  // correo (revisar el medio de pago, la sede, un link). Acá sólo se cuenta qué
+  // pasó.
+  cc_rejected_3ds_mandatory: "el banco pidió una verificación extra que no llegó a completarse",
+  cc_rejected_3ds_challenge: "quedó pendiente una verificación con el banco que no llegó a completarse",
   cc_rejected_other_reason: "el banco rechazó el cobro",
   cc_rejected_time_out: "el banco no respondió a tiempo",
   // El tope es del medio de pago DENTRO de Mercado Pago, no del crédito de la

@@ -509,10 +509,17 @@ Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagast
  *  link de Checkout Pro rechazado (que no se reintenta ni existe más allá de sus
  *  72 h). Prometerle un reintento que no va a pasar es peor que no avisar.
  *
- *  Y el reintento va ACOTADO: MP reintenta el débito recurrente una cantidad
- *  limitada de veces y después suspende o cancela la suscripción. "Lo vuelve a
- *  intentar cuando el medio de pago esté disponible", sin techo, le decía al
- *  socio que podía no hacer nada. */
+ *  El reintento va ACOTADO —"unas pocas veces más"— porque sin techo le decía al
+ *  socio que podía no hacer nada. Pero NO se afirma qué pasa después: cuántas
+ *  veces reintenta MP el débito recurrente y si al final lo pausa o lo da de
+ *  baja es algo que este proyecto NO midió (`docs/06` §8 sólo dice que nada se
+ *  cancela solo). Contra Mercado Pago se mide antes de suponer, así que el
+ *  correo cierra el punto con lo único cierto: no conviene esperar. Queda para
+ *  la próxima batería de sandbox (`docs/11` Parte J).
+ *
+ *  Tampoco se le dice "volvé a autorizarlo": hoy el socio no tiene panel propio
+ *  —es del Módulo 5— y ninguna de las tres salidas que ofrece el párrafo
+ *  siguiente re-autoriza un débito. Sería una acción sin destino. */
 export function paymentRejectedEmail(opts: { name: string; amount: number; reason: string }): Rendered {
   const amount = formatARS(opts.amount);
   return {
@@ -521,12 +528,12 @@ export function paymentRejectedEmail(opts: { name: string; amount: number; reaso
 
 Mercado Pago intentó cobrar tu cuota social de ${amount} y no pudo: ${opts.reason}.
 
-Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta unas pocas veces más; si ninguno de esos intentos prospera, da de baja el débito y hay que volver a autorizarlo.
+Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta unas pocas veces más, pero no conviene esperar a que alguno prospere.
 
 Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pagar en la sede o pedirnos un link de pago respondiendo este mensaje.${SIGNATURE}`,
     html: layout("No pudimos cobrar tu cuota", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
 <p>Mercado Pago intentó cobrar tu cuota social de <strong>${esc(amount)}</strong> y no pudo: ${esc(opts.reason)}.</p>
-<p>Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta unas pocas veces más; si ninguno de esos intentos prospera, da de baja el débito y hay que volver a autorizarlo.</p>
+<p>Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta unas pocas veces más, pero no conviene esperar a que alguno prospere.</p>
 <p>Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pagar en la sede o pedirnos un link de pago respondiendo este mensaje.</p>`),
   };
 }

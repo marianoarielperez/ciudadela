@@ -607,7 +607,18 @@ describe("pago rechazado", () => {
     expect(d.mailerMock.sendToMember).not.toHaveBeenCalled();
     // Una suscripción viva de alguien que ya no es socio es justo lo que el
     // operador tiene que ver.
-    expect(auditOf(d)?.detail).toMatchObject({ memberId: 5, notified: false, outcome: "withdrawn" });
+    expect(auditOf(d)?.detail).toMatchObject({ memberId: 5, notified: false, outcome: "not_current" });
+  });
+
+  // El filtro está en POSITIVO (`active` o `suspended`), no `!== "withdrawn"`:
+  // un cuarto valor de `MemberStatus` tiene que quedar EXCLUIDO por omisión,
+  // como en devengo, recordatorio y deudores. Este caso no existe hoy en el
+  // enum; el test fija la dirección en la que falla.
+  it("un estado que todavía no existe NO recibe el aviso: el filtro falla cerrado", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: { ...socio, status: "expelled" } });
+    expect(await d.p.applyPayment(d.payment, "pre-1")).toBe("payment_rejected_traced");
+    expect(d.mailerMock.sendToMember).not.toHaveBeenCalled();
+    expect(auditOf(d)?.detail).toMatchObject({ memberId: 5, notified: false, outcome: "not_current" });
   });
 
   it("un socio suspendido SÍ recibe el aviso (sigue siendo socio y sigue debiendo)", async () => {
@@ -629,6 +640,43 @@ describe("pago rechazado", () => {
     expect(d.db.notification.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ memberId: 5, type: "payment_rejected", status: "sent", payloadSummary: { startsWith: rejectionSummaryPrefix("777") } }),
     }));
+  });
+
+  // La dedupe sola NO alcanza: consulta antes del envío y la fila `sent` se
+  // escribe DESPUÉS del SMTP. `payment.created` y `payment.updated` traen
+  // `externalEventId` distinto, así que la ruta no los serializa y los dos POST
+  // pueden solaparse dentro de esa ventana. Lo que la cierra es el mutex por id
+  // de pago. Este test simula la ventana: la fila `sent` aparece recién cuando
+  // el "SMTP" (dos ticks) terminó.
+  it("dos eventos del MISMO pago en paralelo mandan UN solo correo", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: socio });
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const sentRows: string[] = [];
+    d.db.notification.findFirst.mockImplementation(async (args: { where: { payloadSummary: { startsWith: string } } }) => {
+      await tick();
+      const prefix = args.where.payloadSummary.startsWith;
+      return sentRows.some((s) => s.startsWith(prefix)) ? { id: 1 } : null;
+    });
+    d.mailerMock.sendToMember.mockImplementation(async (input: { summary: string }) => {
+      await tick();
+      await tick();
+      sentRows.push(input.summary);
+      return { messageId: "m" };
+    });
+
+    const results = await Promise.all([
+      d.p.applyPayment(d.payment, "pre-1"),
+      d.p.applyPayment(d.payment, "pre-1"),
+    ]);
+
+    expect(results).toEqual(["payment_rejected_traced", "payment_rejected_traced"]);
+    expect(d.mailerMock.sendToMember).toHaveBeenCalledTimes(1);
+    // Y el segundo evento deja constancia de por qué no salió.
+    const outcomes = d.auditMock.mock.calls
+      .map((c) => (c[0] as { action: string; detail: { outcome: string } }))
+      .filter((e) => e.action === "payment_rejected")
+      .map((e) => e.detail.outcome);
+    expect(outcomes.sort()).toEqual(["duplicate", "sent"]);
   });
 
   it("el aviso lleva el id del pago en el resumen: sin eso no hay dedupe posible", async () => {

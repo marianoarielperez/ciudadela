@@ -8,7 +8,7 @@
 // la base caídas), y la ruta lo convierte en 500 para que MP reintente. Si una
 // regla de negocio lanzara, MP reintentaría con backoff PARA SIEMPRE un cobro
 // que ya hizo, y el vecino quedaría con la plata debitada y sin recibo.
-import type { MemberCategory, PrismaClient } from "@/generated/prisma/client";
+import type { MemberCategory, MemberStatus, PrismaClient } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { APPROVED_AFTER_EXPIRY_ACTION } from "@/lib/applications/query";
 import { audit, auditStrict } from "@/lib/audit";
@@ -87,13 +87,13 @@ export const WEBHOOK_RESULTS: Record<WebhookResult, true> = {
 
 /** Qué pasó con el aviso del rechazo. Va entero al asiento (`outcome`): el
  *  operador necesita distinguir "le avisamos" de "no tiene casilla", "rebota",
- *  "ya no es socio", "ya se lo habíamos avisado" y "el correo explotó" — son
- *  cinco llamadas telefónicas distintas, o ninguna. */
+ *  "ya no es socio vigente", "ya se lo habíamos avisado" y "el correo explotó" —
+ *  son cinco llamadas telefónicas distintas, o ninguna. */
 export type RejectionNotice =
   | "sent"
   | "no_member"
   | "member_missing"
-  | "withdrawn"
+  | "not_current"
   | "no_email"
   | "bounced"
   | "duplicate"
@@ -146,6 +146,12 @@ function isTreasuryError(e: unknown): boolean {
 // apliquen a la vez. El servicio tiene su propia barrera (unique + P2002), así
 // que esto es para que el segundo vea `already_processed` y no una carrera.
 const paymentMutex = createKeyedMutex();
+
+// Quién es "socio vigente" a los efectos de un aviso: el MISMO conjunto que
+// usan el devengo (`accrual.ts`), el recordatorio (`reminder.ts`) y la lista de
+// deudores (`debtors.ts`). Declarado en positivo a propósito — ver
+// `deliverRejection`.
+const NOTIFIABLE_MEMBER_STATUSES: readonly MemberStatus[] = ["active", "suspended"];
 
 // El contexto que resuelve el pago, más la categoría del socio del link: la
 // necesita el control de divergencia de monto y ya viene en la misma consulta,
@@ -337,14 +343,19 @@ export function makeWebhookProcessor(deps: Deps) {
       select: { id: true, fullName: true, email: true, emailStatus: true, status: true },
     });
     if (!member) return "member_missing";
-    // Un cesante NO recibe el aviso, con el mismo criterio que el devengo, el
-    // recordatorio y la lista de deudores (`status: { in: ["active",
+    // Sólo un socio VIGENTE recibe el aviso, con el mismo criterio que el
+    // devengo, el recordatorio y la lista de deudores (`status: { in: ["active",
     // "suspended"] }`). Para un ex socio el rechazo es el resultado DESEADO: el
     // correo lo invitaría a "revisar tu medio de pago" y a restaurar un débito
     // que la asociación debería haber cancelado al darlo de baja (Task 12).
     // El asiento sí queda: una suscripción viva de alguien que ya no es socio es
     // justo lo que el operador tiene que ver.
-    if (member.status === "withdrawn") return "withdrawn";
+    //
+    // En POSITIVO y no `!== "withdrawn"`: hoy da lo mismo porque `MemberStatus`
+    // tiene tres valores, pero un cuarto haría que el correo saliera por
+    // omisión, mientras los otros tres módulos lo excluirían. De los cuatro
+    // filtros, éste era el único que fallaba abierto.
+    if (!NOTIFIABLE_MEMBER_STATUSES.includes(member.status)) return "not_current";
     if (!member.email) return "no_email";
     // Mismo filtro que `receipt-email.ts`: a una casilla que rebota no se le
     // insiste, o Brevo termina castigando la reputación del dominio.
@@ -378,6 +389,10 @@ export function makeWebhookProcessor(deps: Deps) {
   //
   // Deduplica por ID DE PAGO y no por socio: MP reintenta el débito recurrente
   // con un id nuevo por intento, y ahí el segundo correo es legítimo.
+  //
+  // Esta consulta y la escritura de la fila `sent` son un check-then-act con el
+  // SMTP entero en el medio: por sí sola la dedupe NO alcanza. Lo que la cierra
+  // es que el llamador corre dentro de `paymentMutex` con la clave del pago.
   async function alreadyNoticed(memberId: number, mpPaymentId: string): Promise<boolean> {
     try {
       const prev = await deps.db.notification.findFirst({
@@ -612,14 +627,27 @@ export function makeWebhookProcessor(deps: Deps) {
     // Un rechazo se traza y se distingue del resto: no hay nada que aplicar,
     // pero el operador quiere poder ver que MP intentó cobrar y no pudo — y
     // desde la 4C el socio también se entera, con el motivo en castellano.
-    // Fuera del mutex a propósito: acá no se escribe plata, así que no hay dos
-    // caminos que serializar. El aviso duplicado no puede venir del cron
-    // —`searchPayments` pide `status=approved` y el paso 2 salta todo cobro que
-    // no esté `processed`, así que un rechazo nunca vuelve por la conciliación—
-    // pero SÍ de los dos eventos que MP manda del mismo pago: de eso se ocupa
-    // `alreadyNoticed`.
+    //
+    // DENTRO del mutex, con la misma clave que el cobro aprobado: un pago tiene
+    // un solo lock. Acá no se escribe plata, pero desde que el aviso existe SÍ
+    // hay dos caminos que serializar: `alreadyNoticed` CONSULTA y el mailer
+    // escribe la fila `sent` DESPUÉS del SMTP, o sea cientos de milisegundos más
+    // tarde. MP manda `payment.created` y `payment.updated` del MISMO pago con
+    // `externalEventId` distinto, así que la ruta no los junta ni los serializa:
+    // sin este lock los dos POST caen en esa ventana, los dos ven la dedupe en
+    // falso y al socio le llegan dos correos idénticos. (Duplicarlo desde el
+    // cron sigue siendo imposible: `searchPayments` pide `status=approved` y el
+    // paso 2 salta todo cobro que no esté `processed`.)
+    //
+    // El `.catch()` es la regla dura de este camino: el aviso —ni el lock que lo
+    // envuelve— puede cambiar el `WebhookResult`. `noticeRejection` no lanza
+    // (asienta adentro y ya atrapa todo), pero si algún día `run` fallara, ese
+    // fallo tampoco puede volverse un 500 que haga a MP reintentar un NO-cobro
+    // con backoff para siempre.
     if (p.status === "rejected") {
-      await noticeRejection(p, preapprovalId);
+      await paymentMutex.run(`mp:${p.id}`, () => noticeRejection(p, preapprovalId)).catch((e) => {
+        console.error("[mp-webhook] el aviso de rechazo no llegó a correr", p.id, "code:", codeOf(e));
+      });
       return "payment_rejected_traced";
     }
     if (p.status !== "approved") return "payment_ignored";

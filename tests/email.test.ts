@@ -339,15 +339,21 @@ describe("templates", () => {
     expect(m.text).not.toContain("_");
   });
 
-  // MP reintenta el débito recurrente una cantidad ACOTADA de veces y después
-  // suspende o cancela la suscripción. Un reintento sin techo le decía al socio
-  // que podía no hacer nada.
-  it("el aviso de rechazo acota el reintento en vez de prometerlo para siempre", () => {
+  // El reintento va ACOTADO —sin techo le decía al socio que podía no hacer
+  // nada— pero el correo NO afirma qué hace MP después: cuántas veces reintenta
+  // y si al final pausa o cancela la suscripción es algo que este proyecto no
+  // midió. "Da de baja el débito y hay que volver a autorizarlo" cambiaba una
+  // promesa por otra, y encima mandaba al socio a re-autorizar en un lugar que
+  // no existe hasta el Módulo 5.
+  it("el aviso de rechazo acota el reintento sin afirmar qué hace MP después", () => {
     const m = paymentRejectedEmail({ name: "Ana", amount: 6000, reason: rejectionReason(null) });
     for (const body of [m.text, m.html]) {
       expect(body).toContain("unas pocas veces");
-      expect(body).toContain("volver a autorizarlo");
+      expect(body).toContain("no conviene esperar");
       expect(body).not.toContain("cuando el medio de pago esté disponible");
+      // Nada sobre lo que no medimos, y ninguna acción sin destino.
+      expect(body).not.toContain("da de baja el débito");
+      expect(body).not.toContain("volver a autorizarlo");
     }
   });
 });
