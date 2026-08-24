@@ -11,7 +11,7 @@ describe("parseDebtorFilters", () => {
 
 describe("rankDebtors", () => {
   it("ordena por cuotas adeudadas desc y luego por número", () => {
-    const contactable = { lastPaidAt: null, phone: null, emailUsable: true } as const;
+    const contactable = { lastPaidAt: null, phone: null, emailUsable: true, address: null } as const;
     const rows = rankDebtors([
       { memberId: 1, memberNumber: 213, fullName: "Martinez", category: "active", status: "active", pendingCount: 4, debt: 24000, level: 4, ...contactable },
       { memberId: 2, memberNumber: 144, fullName: "Skardius", category: "active", status: "active", pendingCount: 23, debt: 138000, level: 4, ...contactable },
@@ -79,6 +79,32 @@ describe("fetchDebtors", () => {
     } as never;
     const rows = await fetchDebtors(db, {}, null);
     expect(rows[0]).toMatchObject({ emailUsable: false, phone: "297-4111111" });
+  });
+
+  it("arma el domicilio con la calle del catálogo, con el texto libre, o lo deja en null", async () => {
+    // Es la columna que habilita la visita, que para el vecino sin teléfono ni
+    // casilla es el único canal que queda. El formato no se inventa acá: sale de
+    // `memberAddress`, la misma función que arma el padrón exportable.
+    const db = {
+      fee: { groupBy: vi.fn(async () => [
+        { memberId: 1, _count: { _all: 2 } },
+        { memberId: 2, _count: { _all: 2 } },
+        { memberId: 3, _count: { _all: 2 } },
+      ]) },
+      member: { findMany: vi.fn(async () => [
+        // Socio del barrio: la calle sale del catálogo.
+        { id: 1, fullName: "A", category: "active", status: "active", memberships: [], payments: [], street: { name: "Pizarro, Francisco" }, streetText: null, streetNumber: "1250" },
+        // Socio de afuera: texto libre.
+        { id: 2, fullName: "B", category: "active", status: "active", memberships: [], payments: [], street: null, streetText: "Rivadavia", streetNumber: "870 B" },
+        // Ficha sin domicilio: `null`, no una cadena vacía — la hoja imprime un
+        // guión, que en papel se distingue de un error de impresión.
+        { id: 3, fullName: "C", category: "active", status: "active", memberships: [], payments: [], street: null, streetText: null, streetNumber: null },
+      ]) },
+    } as never;
+    const rows = await fetchDebtors(db, {}, null);
+    expect(rows.find((r) => r.memberId === 1)?.address).toBe("Pizarro, Francisco 1250");
+    expect(rows.find((r) => r.memberId === 2)?.address).toBe("Rivadavia 870 B");
+    expect(rows.find((r) => r.memberId === 3)?.address).toBeNull();
   });
 
   it("con nivel 4 solo devuelve candidatos a cesantía", async () => {

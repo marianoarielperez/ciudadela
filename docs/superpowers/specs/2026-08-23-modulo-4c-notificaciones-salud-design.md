@@ -150,9 +150,20 @@ esta decisión. No hay que enseñarles a distinguir períodos.
     es la herramienta manual que §7.3 dejó en manos del operador, no un barrido
     automático.
 - **Los sin email** (decisión ronda 1): la pantalla Deudores gana el botón
-  **"Lista para gestión manual"** — imprimible: nombre, N° de socio, deuda a valor
-  vigente, teléfono si hay. Sin email en la lista impresa no hay dato sensible
-  nuevo: es lo que Deudores ya muestra, en papel.
+  **"Lista para gestión manual"** — imprimible: nombre, N° de socio, categoría,
+  cuotas adeudadas, deuda a valor vigente y teléfono si hay.
+  **Enmienda del operador (24/08/2026)**: la hoja lleva además **domicilio (calle y
+  número)** y una **columna en blanco para anotar la gestión** a mano. El domicilio
+  porque la visita es uno de los tres canales previstos y para el vecino sin
+  teléfono ni email es el único que queda; la columna porque la hoja es la
+  herramienta de trabajo de la reunión y de todos modos se iba a anotar en el
+  margen. **Sigue sin llevar DNI ni dirección de email.** La hoja es un documento
+  con datos personales que sale del control de acceso del sistema: lo que lleva es
+  lo mínimo que habilita los tres canales, y nada más (Ley 25.326, `docs/08`).
+  Registrar la gestión *en el sistema* quedó explícitamente descartado.
+  **Formato: A4 apaisado** (`@page { size: A4 landscape }`) — decisión del
+  operador del 24/08/2026. Con ocho columnas, vertical las aprieta hasta volverlas
+  ilegibles, y una hoja que no se lee no habilita ninguna gestión.
 - Escala: hoy ~12 de los 35 devengantes tienen email. El tope de §7 aplica.
 
 ## §6. Resumen diario a la Comisión — `POST /api/cron/digest`

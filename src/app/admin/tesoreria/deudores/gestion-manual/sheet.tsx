@@ -2,20 +2,56 @@
 // en un test sin Prisma ni sesión (mismo recurso que `ExerciseStrip`).
 //
 // Qué lleva la hoja y por qué, que es la decisión de fondo (Ley 25.326, docs/08):
-// número y nombre para identificar al vecino en el Libro, categoría y cantidad de
-// cuotas para poder explicar el monto, la deuda para poder decirla, el teléfono
-// —que es el canal, y la razón de ser de la hoja— y la fecha del último pago, que
-// distingue al socio que se atrasó del que nunca pagó. NO lleva DNI ni email: el
-// DNI no hace falta para llamar y es el dato más sensible del padrón, y la casilla
-// no existe o rebota en todas estas filas por definición.
+// número y nombre para identificar al vecino en el Libro; domicilio y teléfono,
+// que son los dos canales —el domicilio entró por enmienda del operador del
+// 24/08/2026: la visita es el único canal que le queda al que no tiene ni
+// teléfono ni casilla—; cuántas cuotas debe y cuánto, que es lo que se dice en
+// la llamada; la fecha del último pago, que distingue al socio que se atrasó del
+// que nunca pagó; y una columna en blanco para anotar a mano cómo salió.
+//
+// NO lleva DNI ni email: el DNI no hace falta para llamar ni para tocar un
+// timbre y es el dato más sensible del padrón, y la casilla no existe o rebota
+// en todas estas filas por definición.
+//
+// Tampoco lleva categoría, que sí estaba en la primera versión de siete
+// columnas: es el único dato de la fila que se deduce de los otros dos
+// (`debtAmount` es lineal, así que deuda ÷ cuotas da el valor de la categoría),
+// y el ancho lo necesitan el nombre y la columna de gestión.
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatARS, formatDateAR } from "@/lib/format";
-import { CATEGORY_LABELS } from "@/lib/members/labels";
 import type { DebtorRow } from "@/lib/treasury/debtors";
 
 export type SheetFeeValue = { validFrom: Date } | null;
+
+// A4 apaisado (decisión del operador, spec §5): en vertical, ocho columnas
+// aprietan el nombre y el domicilio hasta volverlos ilegibles. La regla vive
+// acá y no en `globals.css` porque `@page` no se puede acotar por ruta: en la
+// hoja de estilos global daría vuelta el papel de TODO el panel.
+const PAGE_CSS = "@page { size: A4 landscape; margin: 12mm 10mm; }";
+
+// Los anchos se fijan a mano y no se dejan al azar: con `table-fixed` el
+// navegador reparte exactamente esto, y sobre los 277 mm útiles de un A4
+// apaisado con márgenes de 10 mm dan los milímetros de la tabla del reporte. El
+// nombre y la columna de gestión —la que se escribe a mano— se quedan con más
+// de un 40% de la hoja entre las dos.
+//
+// Las columnas mono (teléfono, deuda, fecha) son las que no pueden fallar:
+// vienen con `whitespace-nowrap` de `TableCell`, así que con `table-fixed` un
+// texto más ancho que su celda no envuelve — se derrama sobre la vecina. Están
+// dimensionadas contra el peor caso real del padrón: "$ 138.000,00" (el socio
+// con 23 cuotas impagas) mide ~23 mm a 9 pt, y su columna deja 28,5 mm netos.
+const W = {
+  number: "w-[5%]",
+  name: "w-[19%]",
+  address: "w-[17%]",
+  phone: "w-[10%]",
+  fees: "w-[6%]",
+  debt: "w-[11%]",
+  lastPaid: "w-[10%]",
+  notes: "w-[22%]",
+} as const;
 
 export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
   rows: DebtorRow[];
@@ -23,6 +59,9 @@ export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
   printedAt: Date;
 }) {
   const total = rows.reduce((acc, r) => acc + (r.debt ?? 0), 0);
+  // El que no tiene ni teléfono ni domicilio es el único que queda sin ningún
+  // canal: al que tiene domicilio se lo visita, y para eso está la columna.
+  const unreachable = rows.filter((r) => r.phone === null && r.address === null).length;
 
   if (rows.length === 0) {
     return (
@@ -45,56 +84,82 @@ export function ManualCollectionSheet({ rows, feeValue, printedAt }: {
       <p className="text-sm text-muted-foreground">
         {`${rows.length} ${rows.length === 1 ? "socio" : "socios"} para contactar`}
         {feeValue && ` · ${formatARS(total)} en total`}
-        {` · datos al ${formatDateAR(printedAt)}`}.
+        {` · datos al ${formatDateAR(printedAt)}`}. La última columna queda en blanco para anotar a
+        mano cómo salió la gestión.
       </p>
 
       {/* El contenedor de `Table` scrollea en pantalla; en papel no hay scroll,
           así que lo que sobresale se recorta. En la hoja se muestra entero. */}
       <div className="print:[&_[data-slot=table-container]]:overflow-visible">
-        <Table>
+        {/* En papel el relleno horizontal baja de 8 px a 4 px por lado: son
+            33 mm repartidos entre ocho columnas, y esos 33 mm son la diferencia
+            entre que la deuda entre en su celda o se derrame sobre la vecina. */}
+        <Table className="table-fixed print:text-[9pt] print:[&_td]:px-1 print:[&_th]:px-1">
           <TableHeader>
-            <TableRow>
-              <TableHead>N°</TableHead>
-              <TableHead>Socio</TableHead>
-              <TableHead>Categoría</TableHead>
-              <TableHead className="text-right">Cuotas</TableHead>
-              <TableHead className="text-right">Deuda</TableHead>
-              <TableHead>Teléfono</TableHead>
-              <TableHead>Último pago</TableHead>
+            {/* Los encabezados envuelven: `TableHead` viene con `whitespace-nowrap`
+                y "Último pago" no entra en su 10% sin partirse en dos líneas. */}
+            <TableRow className="[&_th]:whitespace-normal [&_th]:align-bottom">
+              <TableHead className={W.number}>N°</TableHead>
+              <TableHead className={W.name}>Socio</TableHead>
+              <TableHead className={W.address}>Domicilio</TableHead>
+              <TableHead className={W.phone}>Teléfono</TableHead>
+              <TableHead className={`${W.fees} text-right`}>Cuotas</TableHead>
+              <TableHead className={`${W.debt} text-right`}>Deuda</TableHead>
+              <TableHead className={W.lastPaid}>Último pago</TableHead>
+              {/* La línea vertical separa lo que el sistema sabe de lo que se
+                  escribe encima: de un vistazo se ve dónde empieza el trabajo. */}
+              <TableHead className={`${W.notes} border-l`}>Gestión</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
               // Una fila partida entre dos hojas deja el teléfono separado del
               // nombre: quien llama marcaría el número del vecino de arriba.
-              <TableRow key={r.memberId} className="break-inside-avoid">
-                <TableCell className="font-mono tabular-nums">{r.memberNumber ?? "—"}</TableCell>
-                <TableCell>{r.fullName}</TableCell>
-                <TableCell>{CATEGORY_LABELS[r.category]}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{r.pendingCount}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">
+              // `print:h-12` es el renglón para escribir a mano: en una tabla,
+              // `height` funciona como mínimo y la fila crece si el texto pide más.
+              <TableRow key={r.memberId} className="break-inside-avoid [&_td]:align-top print:h-12">
+                <TableCell className={`${W.number} font-mono tabular-nums`}>{r.memberNumber ?? "—"}</TableCell>
+                {/* El nombre y el domicilio envuelven en vez de recortarse: con
+                    `table-fixed`, `whitespace-nowrap` deja "Fernández Ordóñez,
+                    María" cortada a la mitad de la celda. */}
+                <TableCell className={`${W.name} whitespace-normal`}>{r.fullName}</TableCell>
+                {/* Sin domicilio ni teléfono queda un guión y no una celda
+                    vacía: en papel, una celda vacía se lee como un error de
+                    impresión. */}
+                <TableCell className={`${W.address} whitespace-normal`}>{r.address ?? "—"}</TableCell>
+                <TableCell className={`${W.phone} font-mono tabular-nums`}>{r.phone ?? "—"}</TableCell>
+                <TableCell className={`${W.fees} text-right font-mono tabular-nums`}>{r.pendingCount}</TableCell>
+                <TableCell className={`${W.debt} text-right font-mono tabular-nums`}>
                   {r.debt !== null ? formatARS(r.debt) : "—"}
                 </TableCell>
-                {/* Sin teléfono queda un guión y no una celda vacía: en papel,
-                    una celda vacía se lee como un error de impresión. */}
-                <TableCell className="font-mono tabular-nums">{r.phone ?? "—"}</TableCell>
-                <TableCell>{r.lastPaidAt ? formatDateAR(r.lastPaidAt) : "—"}</TableCell>
+                <TableCell className={`${W.lastPaid} font-mono tabular-nums`}>
+                  {r.lastPaidAt ? formatDateAR(r.lastPaidAt) : "—"}
+                </TableCell>
+                {/* En blanco a propósito: es el renglón donde se escribe "llamé
+                    12/9, paga el 20". La gestión NO se registra en el sistema
+                    (decisión del operador, dos veces). */}
+                <TableCell className={`${W.notes} border-l`} />
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
 
-      {/* El socio sin teléfono NO desaparece de la hoja: es el que hay que ir a
-          buscar por la cartelera o una visita, y la hoja tiene que decir que
-          existe en vez de dejarlo afuera en silencio. */}
-      {rows.some((r) => r.phone === null) && (
+      {/* El socio sin ningún canal NO desaparece de la hoja: es el que hay que
+          ir a buscar por la cartelera, y la hoja tiene que decir que existe en
+          vez de dejarlo afuera en silencio. */}
+      {unreachable > 0 && (
         <p className="text-sm text-muted-foreground">
-          {rows.filter((r) => r.phone === null).length === 1
-            ? "Un socio de la lista no tiene teléfono cargado: a ese hay que ubicarlo por la cartelera o una visita."
-            : `${rows.filter((r) => r.phone === null).length} socios de la lista no tienen teléfono cargado: a esos hay que ubicarlos por la cartelera o una visita.`}
+          {unreachable === 1
+            ? "Un socio de la lista no tiene teléfono ni domicilio cargado: a ese sólo se lo puede buscar por la cartelera."
+            : `${unreachable} socios de la lista no tienen teléfono ni domicilio cargado: a esos sólo se los puede buscar por la cartelera.`}
         </p>
       )}
+
+      {/* Último hijo a propósito: un `<style>` cuenta para el selector `* + *`
+          de `space-y-3`, y puesto primero correría todo lo demás un renglón
+          hacia abajo. Acá no empuja nada — no se pinta. */}
+      <style>{PAGE_CSS}</style>
     </div>
   );
 }

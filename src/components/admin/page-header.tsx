@@ -19,7 +19,10 @@ export function PageHeader({ title, breadcrumb, actions, children }: {
   return (
     <div className="space-y-2">
       {breadcrumb && breadcrumb.length > 0 && (
-        <nav aria-label="Ruta de navegación" className="text-sm text-muted-foreground">
+        // La miga no se imprime: es navegación, y en papel no hay a dónde
+        // volver. Vale para cualquier pantalla del panel que alguien mande a la
+        // impresora (hoy `solicitudes/resumen` y `deudores/gestion-manual`).
+        <nav aria-label="Ruta de navegación" className="text-sm text-muted-foreground print:hidden">
           <ol className="list-none p-0">
             {breadcrumb.map((crumb, i) => (
               <li key={`${crumb.label}-${i}`} className="inline">

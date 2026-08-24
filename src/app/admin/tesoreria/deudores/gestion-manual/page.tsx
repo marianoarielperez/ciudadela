@@ -7,11 +7,13 @@
 // pantalla, con el teléfono que la ficha ya tiene. El encabezado del módulo NO
 // se escribe acá arriba: lo pone el layout de Tesorería, y esta pantalla agrega
 // el suyo porque es una subruta con identidad propia.
+import { headers } from "next/headers";
 import Link from "next/link";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { PrintButton } from "@/components/admin/print-button";
 import { Button } from "@/components/ui/button";
+import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatDateAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
@@ -42,6 +44,28 @@ export default async function GestionManualPage() {
   const feeValue = await feeValueReader.current();
   // Sin filtros: la hoja es para la Comisión y tiene que traerlos a todos.
   const rows = (await fetchDebtors(prisma, {}, feeValue)).filter((r) => !r.emailUsable);
+
+  // Esta hoja es una lista de datos personales que SALE del sistema: nombres,
+  // domicilios, teléfonos y deudas de ~118 vecinos, y en papel no queda ningún
+  // control de acceso después (Ley 25.326, docs/08). Mismo criterio que la
+  // exportación del padrón (`api/admin/padron-export/route.ts`), que audita por
+  // exactamente el mismo motivo.
+  //
+  // Metadatos únicamente: quién la pidió, desde dónde y cuántas filas —NUNCA un
+  // nombre, un teléfono ni un domicilio de esas filas—. El asiento se escribe en
+  // cada carga de la pantalla (`force-dynamic`), que es lo más cerca que se puede
+  // estar de "se imprimió": el navegador no le avisa al servidor cuando el
+  // operador aprieta Imprimir, y a la hoja se la puede fotografiar sin imprimirla.
+  //
+  // Sólo X-Real-IP, igual que el resto del panel: Nginx la resuelve con el módulo
+  // realip y la sobrescribe, así que no se puede rotar por request.
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
+  await audit({
+    userId: actor.actorId,
+    action: "manual_collection_sheet",
+    detail: { rows: rows.length },
+    ip,
+  });
 
   return (
     <div className="space-y-4">

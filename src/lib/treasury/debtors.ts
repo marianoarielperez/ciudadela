@@ -6,6 +6,7 @@
 // ya no es socio no se puede "declarar cesante" otra vez. El suspendido SÍ
 // entra: la suspensión es disciplinaria, no eximición, y sigue devengando.
 import type { MemberCategory, MemberStatus, PrismaClient } from "@/generated/prisma/client";
+import { memberAddress } from "@/lib/members/export";
 import { arrearsLevel, debtAmount, type ArrearsLevel, type FeeValueAmounts } from "./rules";
 
 export type DebtorRow = {
@@ -26,6 +27,12 @@ export type DebtorRow = {
    *  (`receipt-email.ts:59`) y el recordatorio: hay email y no rebotó. El que NO
    *  la tiene es al que hay que llamar. */
   emailUsable: boolean;
+  /** Domicilio armado con `memberAddress`, la misma función que usa el padrón
+   *  exportable — calle del catálogo o texto libre, más la altura—, o `null` si
+   *  la ficha no tiene ninguno. Lo usa la hoja de gestión manual: la visita es
+   *  uno de los tres canales, y es el único que le queda al vecino que no tiene
+   *  ni teléfono ni email (enmienda del operador, 24/08/2026). */
+  address: string | null;
 };
 
 export type DebtorFilters = { level?: 2 | 4; q?: string };
@@ -73,6 +80,9 @@ export async function fetchDebtors(
       ...(f.q ? { OR: [{ fullName: { contains: f.q } }, { dni: { contains: f.q } }] } : {}),
     },
     include: {
+      // La calle del catálogo: `memberAddress` la prefiere sobre `streetText`,
+      // que es el texto libre de quien vive fuera del barrio.
+      street: true,
       memberships: { include: { book: true } },
       payments: {
         where: { status: "applied" },
@@ -98,6 +108,9 @@ export async function fetchDebtors(
       lastPaidAt: m.payments[0]?.paidAt ?? null,
       phone: m.phone,
       emailUsable: Boolean(m.email) && m.emailStatus !== "bounced",
+      // `memberAddress` devuelve "" cuando no hay ni calle ni altura; la fila
+      // lleva `null` para que la hoja imprima un guión y no una celda vacía.
+      address: memberAddress(m) || null,
     };
   });
   // Defensa en profundidad: se vuelve a aplicar el umbral sobre las filas ya
