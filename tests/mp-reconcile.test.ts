@@ -9,7 +9,7 @@ vi.mock("@/lib/mp/webhook-processor", async (importOriginal) => ({
 }));
 vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 vi.mock("@/lib/config", () => ({ configReader: {}, CONFIG_KEYS: { mpPlanActiveId: "mp_plan_active_id", mpPlanSharedId: "mp_plan_shared_id" } }));
-import { makeReconcile, RECONCILE_WINDOW_MS } from "@/lib/mp/reconcile";
+import { makeReconcile, RECONCILE_WINDOW_MS, SUBSCRIPTION_PACING_MS } from "@/lib/mp/reconcile";
 
 const NOW = new Date("2026-09-11T06:00:00Z");
 const pay = (id: string, over: Record<string, unknown> = {}) =>
@@ -62,8 +62,11 @@ function deps(over: Partial<{
   };
   const feeValues = { current: vi.fn(async () => ({ activeAmount: 6000, sharedAmount: 3000 })) };
   const config = { getString: vi.fn(async (k: string) => (k === "mp_plan_active_id" ? over.planIds?.active ?? null : over.planIds?.shared ?? null)) };
-  const r = makeReconcile({ db: db as never, gateway: gateway as never, processor, feeValues: feeValues as never, config, now: () => NOW });
-  return { r, db, gateway, processor, feeValues, config };
+  // La pausa entre suscripciones se INYECTA: los tests no duermen de verdad, y
+  // así se puede verificar que el espaciado existe (ver el caso dedicado).
+  const sleep = vi.fn<(ms: number) => Promise<void>>(async () => {});
+  const r = makeReconcile({ db: db as never, gateway: gateway as never, processor, feeValues: feeValues as never, config, now: () => NOW, sleep });
+  return { r, db, gateway, processor, feeValues, config, sleep };
 }
 
 const liveSub = (preapprovalId: string, memberId: number): Sub =>
@@ -363,5 +366,40 @@ describe("reconcile", () => {
     const s = await d.r.run();
     expect(s.errors).toHaveLength(50);
     expect(s.errorsOmitted).toBe(10);
+  });
+});
+
+// ── Espaciado entre suscripciones (hallazgo de producción, 24/08/2026) ───────
+// La primera corrida real terminó con tres pasos caídos por 429: el bucle
+// pedía `authorized_payments/search` + `preapproval` de cada suscripción sin
+// respirar y MP cortó por ráfaga. El reintento del gateway es la mitad del
+// arreglo; la otra mitad es no provocarlo.
+describe("reconcile — pausa entre suscripciones", () => {
+  const sub = (n: number) => liveSub(`pre-${n}`, n);
+
+  it("espera entre una suscripción y la siguiente, no antes de la primera", async () => {
+    const d = deps({ subs: [sub(1), sub(2), sub(3)] });
+    await d.r.run();
+    // Tres suscripciones, dos pausas: la primera arranca sin demora.
+    expect(d.sleep).toHaveBeenCalledTimes(2);
+    expect(d.sleep).toHaveBeenCalledWith(SUBSCRIPTION_PACING_MS);
+  });
+
+  it("con una sola suscripción no espera nada", async () => {
+    const d = deps({ subs: [sub(1)] });
+    await d.r.run();
+    expect(d.sleep).not.toHaveBeenCalled();
+  });
+
+  it("la pausa va INTERCALADA: no se agrupan todas al principio", async () => {
+    const order: string[] = [];
+    const d = deps({ subs: [sub(1), sub(2)] });
+    d.sleep.mockImplementation(async () => void order.push("sleep"));
+    d.gateway.getPreapproval.mockImplementation(async (id: string) => {
+      order.push(`sync:${id}`);
+      return { id, status: "authorized", amount: 6000, payerEmail: null, externalReference: null, reason: null, nextPaymentDate: null, dateCreated: null };
+    });
+    await d.r.run();
+    expect(order).toEqual(["sync:pre-1", "sleep", "sync:pre-2"]);
   });
 });

@@ -426,3 +426,94 @@ describe("createPreference", () => {
     expect(body.expiration_date_from).toBeUndefined();
   });
 });
+
+// ── Reintento ante 429 (hallazgo de producción, 24/08/2026) ──────────────────
+// La primera conciliación real terminó con tres pasos caídos por límite de
+// ráfaga: MP no rechazó nada, cortó por velocidad. Las LECTURAS se reintentan;
+// las escrituras NO, que un reintento ahí puede duplicar una suscripción.
+
+describe("reintento ante 429", () => {
+  const rateLimited = () => ({ message: "rate limited", error: "local_rate_limited", status: 429 });
+
+  it("getPlan: 429 → 429 → éxito, sin que el llamador se entere", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.planGet
+        .mockRejectedValueOnce(rateLimited())
+        .mockRejectedValueOnce(rateLimited())
+        .mockResolvedValueOnce({ id: "PLAN-1", reason: "SOCIO ACTIVO", auto_recurring: { transaction_amount: 6000 } });
+
+      const p = makeMpGateway().getPlan("PLAN-1");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(p).resolves.toMatchObject({ id: "PLAN-1", amount: 6000 });
+      expect(mocks.planGet).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // El 429 de las búsquedas no viene del SDK sino del `fetch` directo: el
+  // `Error` que lanza `searchAll` lleva el `status` colgado para que el helper
+  // de reintento lo reconozca. Sin eso el mensaje decía "respondió 429" y el
+  // status leído era `null`: no se reintentaba nunca.
+  it("searchAuthorizedPayments: el 429 del fetch directo también se reintenta", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.fetch
+        .mockResolvedValueOnce(new Response("slow down", { status: 429 }))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ paging: { total: 0 }, results: [] }), { status: 200 }),
+        );
+
+      const p = makeMpGateway().searchAuthorizedPayments("pre-1");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(p).resolves.toEqual([]);
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("un 500 no se reintenta: se propaga en el primer intento", async () => {
+    mocks.fetch.mockResolvedValue(new Response("nope", { status: 500 }));
+    await expect(makeMpGateway().searchPreapprovals()).rejects.toThrow(
+      "preapproval/search respondió 500",
+    );
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("y el 429 persistente termina propagándose con su status legible", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.fetch.mockResolvedValue(new Response("slow down", { status: 429 }));
+      const p = makeMpGateway().searchPayments({ since: new Date("2026-08-21T00:00:00Z") });
+      const caught = p.catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const e = (await caught) as { status?: number; message?: string };
+      expect(e.status).toBe(429);
+      expect(e.message).toContain("payments/search respondió 429");
+      expect(mocks.fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Una escritura reintentada puede cobrarle dos veces a un vecino o dejarle
+  // dos suscripciones vivas: acá el 429 se propaga y lo resuelve una persona.
+  it("createPreapproval NO se reintenta ante un 429", async () => {
+    mocks.create.mockRejectedValue(rateLimited());
+    await expect(
+      makeMpGateway().createPreapproval({
+        reason: "Cuota", amount: 6000, payerEmail: "v@x.com",
+        externalReference: "solicitud:7", backUrl: "https://vecinalciudadela.ar/x",
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelPreapproval tampoco se reintenta", async () => {
+    mocks.update.mockRejectedValue(rateLimited());
+    await expect(makeMpGateway().cancelPreapproval("pre-1")).rejects.toMatchObject({ status: 429 });
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+  });
+});

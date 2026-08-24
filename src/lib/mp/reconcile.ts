@@ -15,6 +15,17 @@ import { CHARGEABLE_STATUSES, isKnownDead } from "./subscription-status";
 import { cents, WEBHOOK_RESULTS, webhookProcessor, type WebhookResult } from "./webhook-processor";
 
 export const RECONCILE_WINDOW_MS = 72 * 60 * 60_000;
+/** Pausa entre una suscripción y la siguiente del paso 2/3.
+ *
+ *  EL PORQUÉ (primera corrida real, 24/08/2026): el bucle pedía
+ *  `authorized_payments/search` + `preapproval` de cada suscripción una atrás
+ *  de la otra y Mercado Pago cortó por LÍMITE DE RÁFAGA — tres pasos de la
+ *  corrida terminaron en `errors` con 429, incluido el único camino que
+ *  recupera un débito cuyo webhook no llegó. El gateway ya reintenta el 429
+ *  (`mp/retry.ts`); esto es la otra mitad: no provocarlo. Con el padrón actual
+ *  —decenas de suscripciones— agrega segundos a una corrida de las 03:00 que
+ *  no le rinde cuentas a nadie. */
+export const SUBSCRIPTION_PACING_MS = 250;
 /** Solicitudes por las que vale la pena conservar un preapproval huérfano. */
 const LIVE_APPLICATION_STATUSES = ["started", "pending_payment", "approved_pending_minute", "pending_board", "completed"];
 
@@ -120,10 +131,13 @@ type Deps = {
   feeValues: Pick<ReturnType<typeof makeFeeValueReader>, "current">;
   config: { getString(key: string): Promise<string | null> };
   now?: () => Date;
+  /** Inyectable para que los tests no duerman de verdad. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 export function makeReconcile(deps: Deps) {
   const now = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   return {
     async run(): Promise<ReconcileSummary> {
@@ -232,7 +246,11 @@ export function makeReconcile(deps: Deps) {
         feeValue = await deps.feeValues.current(t);
       } catch (e) { fail("feeValue", {}, e); }
 
-      for (const sub of subs) {
+      for (const [i, sub] of subs.entries()) {
+        // Respirar ENTRE suscripciones, no antes de la primera: la pausa existe
+        // para espaciar llamadas consecutivas, y demorar el arranque de la
+        // corrida no espacia nada.
+        if (i > 0) await sleep(SUBSCRIPTION_PACING_MS);
         if (sub.memberId !== null) {
           try {
             const charges = await deps.gateway.searchAuthorizedPayments(sub.preapprovalId);

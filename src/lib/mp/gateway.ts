@@ -4,6 +4,7 @@
 // no están en el SDK (o no paginan): van con fetch autenticado directo,
 // documentado acá y en la spec §3.
 import { MercadoPagoConfig, Payment, PreApproval, PreApprovalPlan, Preference } from "mercadopago";
+import { retrying } from "./retry";
 
 export type MpPaymentDetails = {
   id: string;
@@ -98,6 +99,16 @@ export type MpGateway = {
 
 const API = "https://api.mercadopago.com";
 const PAGE = 100;
+
+/** El fallo de una respuesta no-2xx de las llamadas por `fetch` directo.
+ *
+ *  El `status` va COLGADO del `Error` y no sólo dentro del texto: es lo que
+ *  `describeMpError` lee, y por lo tanto lo único que hace reconocible un 429
+ *  para el reintento. Con el mensaje solo, un `authorized_payments/search
+ *  respondió 429` se leía con `status=null` y nunca se reintentaba. */
+function httpFailure(label: string, status: number): Error {
+  return Object.assign(new Error(`${label} respondió ${status}`), { status });
+}
 
 /** MP manda ISO con offset argentino (`...-03:00`). El gateway es el ÚNICO
  *  lugar donde eso se convierte a `Date`: nadie más parsea strings de MP. */
@@ -248,7 +259,7 @@ export function makeMpGateway(): MpGateway {
       const res = await fetch(`${API}${path}?${qs}`, {
         headers: { Authorization: `Bearer ${accessToken()}` },
       });
-      if (!res.ok) throw new Error(`${label} respondió ${res.status}`);
+      if (!res.ok) throw httpFailure(label, res.status);
       const data = (await res.json()) as { paging?: { total?: number }; results?: T[] };
       const page = data.results ?? [];
       out.push(...page);
@@ -258,7 +269,7 @@ export function makeMpGateway(): MpGateway {
     }
   }
 
-  return {
+  const api: MpGateway = {
     async getPlan(planId) {
       const plan = await new PreApprovalPlan(mp()).get({ preApprovalPlanId: planId });
       const amount = plan.auto_recurring?.transaction_amount;
@@ -326,7 +337,7 @@ export function makeMpGateway(): MpGateway {
       const res = await fetch(`${API}/authorized_payments/${id}`, {
         headers: { Authorization: `Bearer ${accessToken()}` },
       });
-      if (!res.ok) throw new Error(`authorized_payments/${id} respondió ${res.status}`);
+      if (!res.ok) throw httpFailure(`authorized_payments/${id}`, res.status);
       return mapAuthorized((await res.json()) as RawAuthorized, id);
     },
     async searchPreapprovals(input) {
@@ -399,6 +410,26 @@ export function makeMpGateway(): MpGateway {
       if (!res.id || !res.init_point) throw new Error("MP no devolvió la preferencia creada.");
       return { id: res.id, initPoint: res.init_point };
     },
+  };
+
+  // Reintento ante 429 SÓLO en las LECTURAS (ver la cabecera de `retry.ts`). La
+  // conciliación de las 03:00 recorre todas las suscripciones seguidas y en
+  // producción MP le cortó tres pasos por límite de ráfaga. Las escrituras
+  // —`createPreapproval`, `cancelPreapproval`, `updatePreapprovalAmount`,
+  // `createPreference`— quedan AFUERA a propósito: reintentar ahí puede
+  // duplicar el efecto, y eso es plata de un vecino.
+  //
+  // Los métodos no usan `this` (todo sale de los closures `mp()` y
+  // `searchAll`), así que envolverlos acá no cambia nada más que el reintento.
+  return {
+    ...api,
+    getPlan: retrying(api.getPlan),
+    getPreapproval: retrying(api.getPreapproval),
+    getPayment: retrying(api.getPayment),
+    getAuthorizedPayment: retrying(api.getAuthorizedPayment),
+    searchPreapprovals: retrying(api.searchPreapprovals),
+    searchAuthorizedPayments: retrying(api.searchAuthorizedPayments),
+    searchPayments: retrying(api.searchPayments),
   };
 }
 
