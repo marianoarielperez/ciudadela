@@ -59,7 +59,12 @@ export async function cancelSubscriptionAction(_prev: State, formData: FormData)
   if (!sub) return { error: "Esa suscripción no está vinculada a ningún socio." };
   // Idempotente y sin red: volver a cancelar una cancelada no puede ganar nada y
   // el error de MP que devolvería no significaría nada.
-  if (isKnownDead(sub.status)) return { error: "Esa suscripción ya está cancelada." };
+  //
+  // Y NO es un error: el hecho —«ese débito está cancelado»— es el mismo que la
+  // página muestra en verde. Devolver una caja roja acá pintaba de dos colores
+  // una sola verdad. Se va a la lista con el mismo aviso que la cancelación que
+  // sí hizo algo; no se audita, porque no cambió nada.
+  if (isKnownDead(sub.status)) return redirect(`${BASE}?cancelada=${encodeURIComponent(preapprovalId)}`);
   if (!sub.member) return { error: "Esa suscripción no tiene socio: vinculala antes de cancelarla." };
   // REGLA: sólo el débito de quien dejó de ser socio. Es el caso en que la
   // asociación no tiene derecho a seguir cobrando. Al socio vigente se le corta
@@ -68,9 +73,30 @@ export async function cancelSubscriptionAction(_prev: State, formData: FormData)
     return { error: "Ese socio sigue vigente: el débito se cancela al registrar la baja, que es lo que queda asentado en el acta." };
   }
 
+  // El error se CAPTURA en vez de manejarse adentro del `catch`: entre la
+  // lectura de arriba y esta llamada puede haber pasado otra cosa, y lo primero
+  // que hay que hacer con un fallo es preguntarse si sigue siendo un fallo.
+  let mpError: unknown = null;
   try {
     await mpGateway.cancelPreapproval(preapprovalId);
   } catch (e) {
+    mpError = e;
+  }
+
+  if (mpError !== null) {
+    const e = mpError;
+    // CARRERA: dos operadores (o dos pestañas) pasan los dos el `isKnownDead` de
+    // arriba y los dos llaman a MP. El primero cancela; al segundo MP le
+    // contesta un 4xx sobre un débito que YA está cortado. Sin esta relectura, el
+    // perdedor se lleva una caja roja que le dice que vaya al panel de Mercado
+    // Pago a cancelar lo que ya no cobra, y queda un asiento
+    // `subscription_cancel_failed` que nunca fue un fallo.
+    const fresh = await prisma.mpSubscription.findUnique({
+      where: { preapprovalId }, select: { status: true },
+    });
+    if (fresh && isKnownDead(fresh.status)) {
+      return redirect(`${BASE}?cancelada=${encodeURIComponent(preapprovalId)}`);
+    }
     // El SDK de MP no lanza `Error`: `mpErrorLog` desarma el cuerpo y lo
     // enmascara (puede traer el `payer_email` del vecino).
     console.error(

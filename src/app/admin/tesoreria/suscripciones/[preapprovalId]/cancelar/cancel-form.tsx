@@ -13,25 +13,31 @@ import Link from "next/link";
 import { useActionState, useEffect, useRef } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
+import { type CancelEffect, cancelEffectSentence } from "@/lib/mp/cancel-effect";
 import { cancelSubscriptionAction } from "./actions";
 
 const BASE = "/admin/tesoreria/suscripciones";
 
+export type CancelSubscriptionView = {
+  /** Ya formateado en es-AR, o `null` si el espejo local no tiene monto. */
+  amountLabel: string | null;
+  /** Ya en minúscula: va dentro de una frase. */
+  statusLabel: string;
+  /** Qué se puede AFIRMAR que pasa al confirmar (`@/lib/mp/cancel-effect`).
+   *  Son CUATRO y no un booleano: `paused` hoy no cobra pero se reanuda, y un
+   *  estado que MP invente no se puede afirmar ni vivo ni muerto. En los cuatro
+   *  casos el botón se ofrece igual —MEDIDO contra la API el 24/08/2026: MP
+   *  acepta el salto a `cancelled` incluso desde `pending`—; lo que cambia es lo
+   *  que la pantalla dice. */
+  effect: CancelEffect;
+  /** Cuándo se sincronizó por última vez con MP, ya formateado. */
+  lastSyncLabel: string | null;
+};
+
 export function CancelForm({ preapprovalId, member, subscription }: {
   preapprovalId: string;
   member: { fullName: string; memberNumber: number | null };
-  subscription: {
-    /** Ya formateado en es-AR, o `null` si el espejo local no tiene monto. */
-    amountLabel: string | null;
-    /** Ya en minúscula: va dentro de una frase. */
-    statusLabel: string;
-    /** `false` cuando el espejo dice que el vecino todavía no autorizó nada
-     *  (`pending`). MEDIDO contra la API el 24/08/2026: MP acepta igual el salto
-     *  a `cancelled`, así que el botón se ofrece y la frase lo explica. */
-    authorized: boolean;
-    /** Cuándo se sincronizó por última vez con MP, ya formateado. */
-    lastSyncLabel: string | null;
-  };
+  subscription: CancelSubscriptionView;
 }) {
   const [state, formAction, pending] = useActionState(cancelSubscriptionAction, {});
   const groupRef = useRef<HTMLDivElement>(null);
@@ -59,20 +65,11 @@ export function CancelForm({ preapprovalId, member, subscription }: {
         <dl className="space-y-2 text-sm">
           <div className="grid gap-x-4 sm:grid-cols-[8rem_1fr]">
             <dt className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Al confirmar</dt>
-            <dd>
-              {subscription.authorized ? (
-                <>
-                  Mercado Pago deja de debitarle la cuota
-                  {subscription.amountLabel ? ` de ${subscription.amountLabel}` : ""} todos los meses.
-                </>
-              ) : (
-                <>
-                  {`Esta suscripción está ${subscription.statusLabel}: el vecino nunca autorizó el débito, así que `}
-                  no hay ningún cobro que cortar. Se cancela igual para que deje de figurar como pendiente
-                  de autorización.
-                </>
-              )}
-            </dd>
+            {/* Las cuatro frases viven en `@/lib/mp/cancel-effect`, con los
+                textos de la baja como precedente (`members/auto-debit.ts`): son
+                afirmaciones sobre el dinero de un vecino y se prueban sin
+                renderizar nada. */}
+            <dd>{cancelEffectSentence(subscription)}</dd>
           </div>
           <div className="grid gap-x-4 sm:grid-cols-[8rem_1fr]">
             <dt className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">De acá en más</dt>
@@ -86,7 +83,12 @@ export function CancelForm({ preapprovalId, member, subscription }: {
         <p className="text-xs text-muted-foreground">
           {`Estado según la última sincronización con Mercado Pago${
             subscription.lastSyncLabel ? ` (${subscription.lastSyncLabel})` : " (nunca sincronizada)"
-          }: ${subscription.statusLabel}. Se cancela igual: lo único que se puede afirmar muerto es una cancelada.`}
+          }: ${subscription.statusLabel}.`}
+          {/* "Se cancela igual" sólo tiene sentido sobre un estado del que se
+              podría dudar. Sobre una activa era una rareza: nadie duda de que
+              haya que cancelar la que está cobrando. */}
+          {subscription.effect !== "stops_charging" &&
+            " Se cancela igual: lo único que se puede afirmar muerto es una cancelada."}
         </p>
       </div>
 

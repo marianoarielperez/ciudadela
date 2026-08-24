@@ -53,6 +53,12 @@ export type AutoDebitView = {
   live: MpSubscriptionView[];
   /** Cuántas filas canceladas conoce el sistema para este socio. */
   cancelledCount: number;
+  /** Si el socio está dado de baja. Cambia UNA frase y no es cosmético: desde la
+   *  4C las filas de un EX socio llevan en Suscripciones el botón «Cancelar el
+   *  débito», y las de un socio vigente no —al vigente se le corta dándolo de
+   *  baja—. Mandar a los dos "al panel de Mercado Pago" era falso para el
+   *  primero. */
+  withdrawn: boolean;
 };
 
 /** La línea de débito automático de la Cuenta corriente. Son CUATRO estados y
@@ -84,7 +90,7 @@ export type AutoDebitView = {
  *  `role="none"` en los avisos: es el ESTADO de la ficha, no la respuesta a una
  *  acción. Un `alert` acá interrumpiría al lector de pantalla cada vez que se
  *  abre la pestaña. */
-function AutoDebitLine({ flagged, live, cancelledCount }: AutoDebitView) {
+function AutoDebitLine({ flagged, live, cancelledCount, withdrawn }: AutoDebitView) {
   if (live.length > 0) {
     // Más de una viva es plata real de más: dos mandatos de cobro son dos
     // débitos por mes. La pantalla las lista todas —afirmar "la suscripción" en
@@ -120,9 +126,22 @@ function AutoDebitLine({ flagged, live, cancelledCount }: AutoDebitView) {
         ))}
         {many && (
           <FormMessage kind="warning" box as="div" role="none">
-            Cada una de estas suscripciones es un mandato de cobro distinto: mientras sigan activas,
-            a este socio se le debita la cuota una vez por cada una. Dejá una sola y cancelá las
-            demás en el panel de Mercado Pago.
+            {"Cada una de estas suscripciones es un mandato de cobro distinto: mientras sigan " +
+              "activas, a este socio se le debita la cuota una vez por cada una. "}
+            {/* Dos salidas distintas, y de eso depende que la frase sea cierta:
+                un EX socio no tiene por qué seguir pagando ninguna, y desde la
+                4C sus filas llevan el botón «Cancelar el débito». Al vigente el
+                botón no lo alcanza (el corte va por la baja) y le queda el panel
+                de Mercado Pago. */}
+            {withdrawn ? (
+              <>
+                {"Este socio está dado de baja: no le corresponde ninguna. Cancelalas todas desde "}
+                <Link className={INLINE_LINK} href="/admin/tesoreria/suscripciones">Suscripciones</Link>
+                {", donde cada una de estas filas lleva el botón «Cancelar el débito»."}
+              </>
+            ) : (
+              "Dejá una sola y cancelá las demás en el panel de Mercado Pago."
+            )}
           </FormMessage>
         )}
       </div>

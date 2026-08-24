@@ -144,10 +144,14 @@ export function ArrearsForm({ minutes, selectableIds, children }: {
         </div>
       </div>
 
-      {/* Por qué el botón está bloqueado. `role="none"`: se lee al lado del
-          control que se acaba de tocar, no es la respuesta a un envío. */}
+      {/* Por qué el botón está bloqueado. `role="status"` y no `role="none"`:
+          esto NO es ayuda estática de un campo —que es para lo que
+          `FormMessage` reserva `none`— sino la reacción a tildar una casilla, y
+          explica un control que se acaba de apagar. Sin rol, el operador ciego
+          tilda, el botón muere y no se anuncia nada. Cortés (`status`) y no
+          `alert`: no interrumpe mientras se sigue tildando. */}
       {overCap && (
-        <FormMessage kind="warning" role="none">
+        <FormMessage kind="warning" role="status">
           {`Tenés ${effective.length} socios tildados y el lote acepta hasta ${ARREARS_BATCH_MAX} por vez. ` +
             "Destildá los que sobren y declaralos en una segunda tanda: cada baja cancela además el " +
             "débito automático en Mercado Pago y eso lleva su tiempo."}

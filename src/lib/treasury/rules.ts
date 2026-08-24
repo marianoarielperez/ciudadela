@@ -134,6 +134,17 @@ export const ARREARS_THRESHOLD = 4; // habilita la cesantía (REG-15)
  *  sigue cobrando. 25 × 1,2 s ≈ 30 s deja la mitad del presupuesto para la base
  *  y para una MP lenta.
  *
+ *  Dos cosas que este número NO garantiza, y conviene tenerlas escritas:
+ *
+ *   - **La cuenta es por SUSCRIPCIÓN, no por socio.** `withdraw-with-debits`
+ *     cancela TODAS las no canceladas de cada uno, y `mp_subscriptions.memberId`
+ *     es índice y no unique: un vecino puede tener dos vivas (la ficha tiene una
+ *     advertencia dedicada a eso). 25 socios pueden ser más de 25 llamadas.
+ *   - **El presupuesto real es ~2,4 s por llamada** (60 s ÷ 25), contra los
+ *     ~1,2 s medidos. O sea: el margen es de 2×, no infinito. Con MP a 3 s por
+ *     llamada, 25 llamadas son 75 s y el 504 vuelve. El tope hace el 504 mucho
+ *     menos probable; no lo hace imposible.
+ *
  *  El tope es de SELECCIÓN y no de tiempo a propósito: es verificable de un
  *  vistazo, se puede decir en pantalla antes de apretar el botón, y el operador
  *  no tiene que entender por qué el lote se cortó a la mitad. Y no aprieta a

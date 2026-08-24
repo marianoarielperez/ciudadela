@@ -738,3 +738,42 @@ los hechos de acá abajo. Todo lo que dice esta parte está **medido**, no supue
 > llegaran los avisos de suscripción. Eso **no es un límite del sandbox** —es la
 > consecuencia de que un preapproval no pueda llevar `notification_url`, y pasa
 > igual en producción—, así que vive en **J.3**, junto a su causa.
+
+### J.5 Cancelar un preapproval (fase 4C, 24/08/2026)
+
+Medido con la misma cuenta de prueba de la Parte J, verificando el dueño del
+token antes de la primera llamada (`GET /users/me` → `3630717510 /
+TESTUSER4538145150963760837`, nunca la real).
+
+- **MP acepta el salto `pending` → `cancelled`.** Era la pregunta abierta que
+  dejó anotada la fase 4C: una suscripción que el vecino **nunca autorizó** ¿se
+  puede cancelar, o hay que esperar a que caduque? Se puede:
+
+  ```
+  create: 201  status = pending
+  cancel: 200  786 ms  -> {"status":"cancelled"}
+  after : 200  status = cancelled
+  ```
+
+  Consecuencia de producto: la lista NEGRA de un solo valor (`isKnownDead`,
+  `src/lib/mp/subscription-status.ts`) alcanza también para este caso —el botón
+  «Cancelar el débito» se ofrece sobre una `pending` y funciona—, y la baja de un
+  socio con una `pending` **no** deja ninguna advertencia: la cancela bien.
+- **Cancelar es rápido**: 786 ms medidos, contra los ~1,2 s de una cancelación
+  dentro de una baja. Es el número del que sale el tope de 25 socios por lote de
+  cesantía (`ARREARS_BATCH_MAX`, `src/lib/treasury/rules.ts`).
+- **TRAMPA: el `payer_email` de un usuario de prueba se arma con el número del
+  NICKNAME, no con el user id.** Costó dos intentos y el mensaje de MP no dice
+  nada:
+
+  ```
+  nickname TESTUSER7256755581100616192
+        -> test_user_7256755581100616192@testuser.com   ✅ 201
+  user id 7256755581100616192 (u otro número)
+        -> 400 {"message":"User bad request"}  · sin `cause`, sin campo, sin pista
+  ```
+
+  El `payer_email` de un preapproval tiene que ser un usuario **real del sitio**
+  (Parte I §1), y en sandbox eso significa el comprador de prueba. Es el mismo
+  género de diagnóstico que la Parte I §9: leer el mensaje textual antes de
+  hipotetizar — salvo que acá el mensaje no alcanza y hay que saber esto.

@@ -183,7 +183,7 @@ describe("AccountSection: la línea de débito automático", () => {
   const OTHER = "1a2b3c4d5e6f47788990aabbccddeeff";
   const sub = (preapprovalId: string, status = "authorized") =>
     ({ preapprovalId, status, amount: 6000, linkedManually: true });
-  const live: AutoDebitView = { flagged: true, live: [sub(PREAPPROVAL)], cancelledCount: 0 };
+  const live: AutoDebitView = { flagged: true, live: [sub(PREAPPROVAL)], cancelledCount: 0, withdrawn: false };
 
   it("muestra estado, monto y origen, y el preapproval NUNCA entero", () => {
     const html = render(live);
@@ -205,13 +205,29 @@ describe("AccountSection: la línea de débito automático", () => {
     // `mp_subscriptions.memberId` es índice y no unique, y el vinculador rechaza
     // por `preapprovalId` repetido: dos preapprovals vivos son dos débitos por
     // mes, plata real de más, y la ficha los mostraba como uno solo.
-    const html = render({ flagged: false, live: [sub(PREAPPROVAL), sub(OTHER)], cancelledCount: 0 });
+    const html = render({ flagged: false, live: [sub(PREAPPROVAL), sub(OTHER)], cancelledCount: 0, withdrawn: false });
     expect(html).toContain("2 suscripciones vivas");
     expect(html).toContain(PREAPPROVAL.slice(0, 8));
     expect(html).toContain(OTHER.slice(0, 8));
     expect(html).toContain("una vez por cada una");
     expect(html).not.toContain(PREAPPROVAL);
     expect(html).not.toContain(OTHER);
+    // Al socio VIGENTE el botón de Suscripciones no lo alcanza —el corte va por
+    // la baja—, así que la salida sigue siendo el panel de Mercado Pago.
+    expect(html).toContain("panel de Mercado Pago");
+  });
+
+  // El mismo aviso, sobre un EX socio: desde la 4C sus filas llevan el botón
+  // «Cancelar el débito» en Suscripciones, así que mandarlo al panel de Mercado
+  // Pago era falso — y además le corresponden CERO, no una.
+  it("con dos vivas y el socio dado de baja, manda al botón y no al panel de MP", () => {
+    const html = render({
+      flagged: false, live: [sub(PREAPPROVAL), sub(OTHER)], cancelledCount: 0, withdrawn: true,
+    });
+    expect(html).toContain("Cancelar el débito");
+    expect(html).toContain("/admin/tesoreria/suscripciones");
+    expect(html).not.toContain("panel de Mercado Pago");
+    expect(html).not.toContain("Dejá una sola");
   });
 
   it("la suscripción CANCELADA no se cuenta como 'no hay ninguna vinculada'", () => {
@@ -219,7 +235,7 @@ describe("AccountSection: la línea de débito automático", () => {
     // escribe `cancelled` y nadie baja nunca `Member.autoDebit`. La caja ámbar
     // decía para siempre que no había ninguna suscripción vinculada y mandaba a
     // vincular lo que no hay que vincular.
-    const html = render({ flagged: true, live: [], cancelledCount: 1 });
+    const html = render({ flagged: true, live: [], cancelledCount: 1, withdrawn: false });
     expect(html).toContain("cancelado en Mercado Pago");
     expect(html).not.toContain("Vincular la suscripción");
     expect(html).not.toContain("Sin débito automático");
@@ -228,20 +244,20 @@ describe("AccountSection: la línea de débito automático", () => {
   });
 
   it("cancelada sin el flag del padrón no hace ruido con la discrepancia", () => {
-    const html = render({ flagged: false, live: [], cancelledCount: 1 });
+    const html = render({ flagged: false, live: [], cancelledCount: 1, withdrawn: false });
     expect(html).toContain("cancelado en Mercado Pago");
     expect(html).not.toContain("quedó viejo");
   });
 
   it("el flag del padrón sin NINGUNA fila avisa, en vez de decir 'sin débito automático'", () => {
-    const html = render({ flagged: true, live: [], cancelledCount: 0 });
+    const html = render({ flagged: true, live: [], cancelledCount: 0, withdrawn: false });
     expect(html).toContain("Sin conciliar");
     expect(html).toContain("Vincular la suscripción");
     expect(html).not.toContain("Sin débito automático");
   });
 
   it("sin ninguna de las dos señales ofrece el camino para vincular una", () => {
-    const html = render({ flagged: false, live: [], cancelledCount: 0 });
+    const html = render({ flagged: false, live: [], cancelledCount: 0, withdrawn: false });
     expect(html).toContain("Sin débito automático");
     expect(html).toContain("/admin/tesoreria/suscripciones");
   });

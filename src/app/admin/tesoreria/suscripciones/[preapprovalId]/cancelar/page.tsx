@@ -20,6 +20,7 @@ import { subscriptionStatusLabel } from "@/lib/admin/unmatched-labels";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatARS, formatDateAR } from "@/lib/format";
 import { STATUS_LABELS } from "@/lib/members/labels";
+import { cancelEffect } from "@/lib/mp/cancel-effect";
 import { isKnownDead } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
 import { CancelForm } from "./cancel-form";
@@ -110,7 +111,10 @@ export default async function CancelarSuscripcionPage(props: {
         subscription={{
           amountLabel: sub.amount !== null ? formatARS(Number(sub.amount)) : null,
           statusLabel: subscriptionStatusLabel(sub.status).toLowerCase(),
-          authorized: sub.status === "authorized",
+          // CUATRO desenlaces, no dos: `paused` no cobra hoy pero se reanuda, y
+          // un estado que MP invente no se puede afirmar muerto ni vivo. El
+          // booleano de antes los aplastaba todos contra "nunca se autorizó".
+          effect: cancelEffect(sub.status),
           lastSyncLabel: sub.lastSyncAt ? formatDateAR(sub.lastSyncAt) : null,
         }}
       />

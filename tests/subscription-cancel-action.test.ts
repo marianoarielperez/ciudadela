@@ -85,11 +85,47 @@ describe("cancelSubscriptionAction", () => {
   });
 
   // Idempotente y SIN red: volver a cancelar una cancelada no gana nada y el
-  // error que devolvería MP no significaría nada.
-  it("una suscripción ya cancelada no se vuelve a cancelar", async () => {
+  // error que devolvería MP no significaría nada. Y NO va en rojo: es el mismo
+  // hecho que la página muestra en verde, así que termina en el mismo aviso que
+  // la cancelación que sí hizo algo. Tampoco se audita: no cambió nada.
+  it("una suscripción ya cancelada no se vuelve a cancelar, y no se reporta como error", async () => {
     findUnique.mockResolvedValue(row({ status: "cancelled" }));
-    expect(await cancelSubscriptionAction({}, form())).toEqual({ error: "Esa suscripción ya está cancelada." });
+    expect(await cancelSubscriptionAction({}, form())).toBeUndefined();
     expect(cancelPreapproval).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith(`/admin/tesoreria/suscripciones?cancelada=${PRE}`);
+  });
+
+  // La CARRERA: dos operadores (o dos pestañas) pasan los dos la precondición y
+  // los dos llaman a MP. El primero cancela; al segundo MP le contesta un 4xx
+  // sobre un débito que ya está cortado. El perdedor no puede llevarse una caja
+  // roja que lo mande al panel de Mercado Pago a cancelar lo que ya no cobra, ni
+  // dejar un `subscription_cancel_failed` que nunca fue un fallo.
+  it("si otro la canceló primero, el 4xx de MP no se reporta como fallo", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    findUnique
+      .mockResolvedValueOnce(row())                       // la precondición, todavía viva
+      .mockResolvedValueOnce({ status: "cancelled" });    // la relectura, ya cancelada
+    cancelPreapproval.mockRejectedValue({ status: 400, message: "Preapproval cancelled", error: null, cause: [] });
+    const r = await cancelSubscriptionAction({}, form());
+    expect(r).toBeUndefined();
+    expect(audit).not.toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith(`/admin/tesoreria/suscripciones?cancelada=${PRE}`);
+    spy.mockRestore();
+  });
+
+  // El otro lado de la misma moneda: si la relectura la sigue viendo viva, el
+  // fallo es un fallo y se dice.
+  it("si la relectura la sigue viendo viva, el fallo de MP sí se reporta", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    findUnique
+      .mockResolvedValueOnce(row())
+      .mockResolvedValueOnce({ status: "authorized" });
+    cancelPreapproval.mockRejectedValue({ status: 500, message: "boom", error: null, cause: [] });
+    expect((await cancelSubscriptionAction({}, form())).error).toContain("http_500");
+    expect(vi.mocked(audit).mock.calls[0][0]).toMatchObject({ action: "subscription_cancel_failed" });
+    expect(redirect).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it("una suscripción que el sistema no conoce no llega a Mercado Pago", async () => {

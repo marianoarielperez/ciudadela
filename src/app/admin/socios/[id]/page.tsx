@@ -242,6 +242,7 @@ export default async function SocioPage(props: {
                     ...s, amount: s.amount === null ? null : Number(s.amount),
                   })),
                   cancelledCount: subscriptions.length - liveSubscriptions.length,
+                  withdrawn: member.status === "withdrawn",
                 }}
               />
             ),
