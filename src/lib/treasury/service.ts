@@ -11,6 +11,7 @@ import { formatReceiptNumber, nextReceiptSeq } from "./receipt-number";
 import { renderReceiptPdf, type ReceiptPdfData } from "./receipt-pdf";
 import { receiptRelativePath, writeReceiptPdf } from "./receipts-dir";
 import { allocate, cashConceptsFor, coverageFloor, feeAmountFor, revertFees, type CashConcept } from "./rules";
+import { isFeePeriodUniqueViolation, isUniqueViolation } from "./unique-violation";
 
 export class TreasuryError extends Error {
   constructor(message: string) {
@@ -67,13 +68,6 @@ export type RegisterResult =
 
 /** Tipos que imputan cuotas. `entry` no imputa (REG-14: cubre el mes de alta). */
 const FEE_TYPES: readonly PaymentType[] = ["debit", "link", "cash"];
-
-// Prisma lanza `PrismaClientKnownRequestError` con `code: "P2002"` en una
-// violación de unique. Se mira por forma y no por `instanceof` para que el
-// fake de los tests pueda producirlo sin importar la clase generada.
-function isUniqueViolation(e: unknown): boolean {
-  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
-}
 
 const MAX_FEES_PER_PAYMENT = 60;
 
@@ -333,7 +327,11 @@ export function makeTreasuryService(deps: Deps) {
       //
       // Una sola vez a propósito: si el segundo intento también choca, el
       // problema no es la carrera y hay que verlo, no reintentarlo en bucle.
-      if (!retried && input.memberId !== null && isUniqueViolation(e)) {
+      //
+      // Acotado a ESE unique y no a cualquier P2002: el otro unique que puede
+      // matar esta transacción es `mp_payment_id`, la barrera de idempotencia
+      // del dinero de Mercado Pago, y ése no se reintenta nunca.
+      if (!retried && input.memberId !== null && isFeePeriodUniqueViolation(e)) {
         console.warn("[treasury] P2002 al imputar: se recalcula la imputación y se reintenta", input.memberId);
         return registerPaymentCore(input, true);
       }

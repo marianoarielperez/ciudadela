@@ -7,6 +7,23 @@ type Fee = { id: number; memberId: number; period: string; status: string; origi
 type Row = Record<string, unknown> & { id: number };
 type FeeWhere = { memberId: number; period: { in: string[] }; paymentId?: number; status?: string };
 
+// Un P2002 con la forma que produce DE VERDAD el adapter de MariaDB de Prisma 7
+// (medido contra la base local, ver `tests/integration/unique-violation.test.ts`):
+// NO trae `meta.target` —eso es del motor clásico— sino el nombre del índice
+// adentro de `driverAdapterError`. El fake tiene que emitirlo así o los tests
+// prueban una forma que en producción no existe.
+function p2002(index: string): Error {
+  return Object.assign(new Error(`Duplicate entry for key '${index}'`), {
+    code: "P2002",
+    meta: {
+      driverAdapterError: {
+        name: "DriverAdapterError",
+        cause: { kind: "UniqueConstraintViolation", constraint: { index } },
+      },
+    },
+  });
+}
+
 function fakeDb(opts: {
   member: Record<string, unknown>;
   fees: Fee[];
@@ -76,6 +93,15 @@ function fakeDb(opts: {
         return { count };
       }),
       createMany: vi.fn(async (args: { data: Array<Omit<Fee, "id">> }) => {
+        // Unique de (member_id, period), como la base: si el cron de devengo
+        // materializó el período entre la foto que leyó el servicio y este
+        // INSERT, choca. Sin esto la carrera de la 4C sólo se podía simular
+        // pisando el `$transaction`, y el primer intento nunca entraba a correr.
+        for (const d of args.data) {
+          if (state.fees.some((f) => f.memberId === d.memberId && f.period === d.period)) {
+            throw p2002("fees_member_id_period_key");
+          }
+        }
         for (const d of args.data) state.fees.push({ id: state.fees.length + 1, ...d });
         return { count: args.data.length };
       }),
@@ -91,9 +117,7 @@ function fakeDb(opts: {
         // cobro tiene que chocar con P2002 y no crear una segunda fila.
         const mpId = args.data.mpPaymentId;
         if (mpId && state.payments.some((p) => p.mpPaymentId === mpId)) {
-          throw Object.assign(new Error("Unique constraint failed"), {
-            code: "P2002", meta: { target: ["mp_payment_id"] },
-          });
+          throw p2002("payments_mp_payment_id_key");
         }
         const p = { id: state.payments.length + 1, ...args.data };
         state.payments.push(p);
@@ -152,10 +176,30 @@ function fakeDb(opts: {
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
       state.beforeTransaction?.();
       state.beforeTransaction = null;
+      // Foto para revertir: una transacción que falla no deja NADA escrito. Sin
+      // esto el fake conservaba el pago del intento perdido, y la rama de
+      // idempotencia por `mpPaymentId` lo encontraba después como si fuera un
+      // ganador que nunca existió. Se toma DESPUÉS de `beforeTransaction`: esa
+      // escritura es de OTRO actor (el cron de devengo, otra transacción) y
+      // sobrevive al rollback, igual que en la base.
+      const snapshot = {
+        fees: state.fees.map((f) => ({ ...f })),
+        payments: state.payments.map((p) => ({ ...p })),
+        receipts: state.receipts.map((r) => ({ ...r })),
+        seq: state.seq,
+      };
       state.unmatchedUpdates.push("start");
-      const result = await fn(tx);
-      state.unmatchedUpdates.push("end");
-      return result;
+      try {
+        const result = await fn(tx);
+        state.unmatchedUpdates.push("end");
+        return result;
+      } catch (e) {
+        state.fees = snapshot.fees;
+        state.payments = snapshot.payments;
+        state.receipts = snapshot.receipts;
+        state.seq = snapshot.seq;
+        throw e;
+      }
     }),
   };
   // `db` va casteado para entrar donde se espera un PrismaClient; `mocks` es el
@@ -689,19 +733,13 @@ describe("registerPayment (núcleo 4B)", () => {
   // que MP ya había hecho.
   it("tolera el P2002 de (memberId, period): recalcula la imputación y reintenta UNA vez", async () => {
     const { db, mocks, state } = fakeDb({ member, fees: [] });
-    const real = mocks.$transaction.getMockImplementation()!;
-    let attempt = 0;
-    mocks.$transaction.mockImplementation(async (fn) => {
-      attempt++;
-      if (attempt === 1) {
-        // El devengo materializó 2026-09 mientras esta transacción corría.
-        state.fees.push({ id: 1, memberId: 1, period: "2026-09", status: "pending", origin: "accrual", paymentId: null });
-        throw Object.assign(new Error("Unique constraint failed"), {
-          code: "P2002", meta: { target: ["member_id", "period"] },
-        });
-      }
-      return real(fn);
-    });
+    // El devengo escribe 2026-09 DESPUÉS de que el pago leyó las cuotas (ese
+    // `findMany` corre fuera de la transacción) y ANTES de su INSERT. No se pisa
+    // el `$transaction`: el primer intento entra de verdad y muere en el
+    // `createMany`, que es de donde sale el P2002 real.
+    state.beforeTransaction = () => {
+      state.fees.push({ id: 1, memberId: 1, period: "2026-09", status: "pending", origin: "accrual", paymentId: null });
+    };
     const svc = makeTreasuryService({
       db: db as never, feeValues, now: () => new Date("2026-10-01T03:30:00Z"),
       renderPdf: async () => new Uint8Array(), writePdf: async () => {},
@@ -711,17 +749,64 @@ describe("registerPayment (núcleo 4B)", () => {
     });
     expect(r.kind).toBe("registered");
     expect(mocks.$transaction).toHaveBeenCalledTimes(2);
-    // La prueba de que RECALCULÓ y no repitió el plan viejo: la segunda vuelta
-    // imputa la fila que ahora existe (UPDATE) en vez de volver a crearla.
-    expect(mocks.fee.createMany).not.toHaveBeenCalled();
+    // La prueba de que RECALCULÓ y no repitió el plan viejo: el primer intento
+    // llamó a `createMany` (y chocó); la segunda vuelta imputa la fila que ahora
+    // existe con un UPDATE, así que no vuelve a llamarlo.
+    expect(mocks.fee.createMany).toHaveBeenCalledTimes(1);
     expect(state.fees).toEqual([
       expect.objectContaining({ period: "2026-09", status: "paid", paymentId: 1 }),
     ]);
-    // El número se pidió una sola vez: el rollback del primer intento no gastó serie.
+    // El primer intento corrió el callback de la transacción hasta el
+    // `createMany` y murió ANTES de `nextReceiptSeq`, y el fake ahora revierte
+    // lo que esa transacción había escrito: quedan un solo número, un solo
+    // recibo y un solo pago, no dos. Que el rollback de VERDAD no gaste número
+    // es lo que prueba `tests/integration/receipt-sequence.test.ts` contra
+    // MariaDB; acá se afirma que el reintento no duplica escrituras.
     expect(state.seq).toBe(1);
+    expect(state.receipts).toHaveLength(1);
+    expect(state.payments).toHaveLength(1);
   });
 
-  it("no reintenta dos veces: el segundo P2002 se propaga", async () => {
+  it("no reintenta dos veces: el segundo P2002 de período se propaga tal cual", async () => {
+    const { db, mocks } = fakeDb({ member, fees: [] });
+    mocks.$transaction.mockImplementation(async () => {
+      throw p2002("fees_member_id_period_key");
+    });
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    // Lo que se propaga es el P2002, no un TreasuryError de validación: sin
+    // afirmar el error concreto, cualquier throw daba verde.
+    await expect(svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, actorId: null,
+    })).rejects.toMatchObject({ code: "P2002" });
+    expect(mocks.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  // El reintento es la ÚNICA modificación al núcleo de plata de la fase 4C, y
+  // tiene que estar acotado al unique de período. `mp_payment_id` es la barrera
+  // de idempotencia del dinero de Mercado Pago: si su P2002 disparara el
+  // reintento, el segundo intento volvería a recorrer el camino de escritura de
+  // un cobro que ya está asentado.
+  it("un P2002 de mp_payment_id NO dispara el reintento: se propaga en el primer intento", async () => {
+    const { db, mocks } = fakeDb({ member, fees: [] });
+    mocks.$transaction.mockImplementation(async () => {
+      throw p2002("payments_mp_payment_id_key");
+    });
+    // Sin ganador en la tabla, así que la rama de idempotencia por `mpPaymentId`
+    // no lo atrapa y el error llega a la guarda del reintento.
+    const svc = makeTreasuryService({
+      db: db as never, feeValues, now, renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    await expect(svc.registerPayment({
+      memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, mpPaymentId: "802", actorId: null,
+    })).rejects.toMatchObject({ code: "P2002" });
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  // Un P2002 sin metadatos reconocibles tampoco reintenta: la guarda no puede
+  // asumir que "unique + socio" es la carrera del devengo.
+  it("un P2002 sin metadatos no dispara el reintento", async () => {
     const { db, mocks } = fakeDb({ member, fees: [] });
     mocks.$transaction.mockImplementation(async () => {
       throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
@@ -731,8 +816,8 @@ describe("registerPayment (núcleo 4B)", () => {
     });
     await expect(svc.registerPayment({
       memberId: 1, type: "debit", n: 1, amount: 3000, paidAt, actorId: null,
-    })).rejects.toThrow();
-    expect(mocks.$transaction).toHaveBeenCalledTimes(2);
+    })).rejects.toMatchObject({ code: "P2002" });
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
   });
 });
 

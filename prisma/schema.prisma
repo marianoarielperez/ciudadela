@@ -685,8 +685,11 @@ model Fee {
   @@unique([memberId, period])
   @@index([status])
   @@index([memberId, status])
-  // El cron de devengo pregunta "qué socios no tienen cuota del período X":
-  // el @@unique de arriba es left-most en member_id y no le sirve.
+  // Barrido por período sin socio ("qué cuotas de 2026-09 siguen impagas"):
+  // el @@unique de arriba es left-most en member_id y no le sirve. OJO: el cron
+  // de devengo NO usa este índice —lee las cuotas del lote de socios que va a
+  // procesar (`where: { memberId: { in: ids } }`, accrual.ts) y filtra en
+  // memoria—. Queda para el barrido de mora, que sí pregunta por período.
   @@index([period, status])
   @@map("fees")
 }
