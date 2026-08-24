@@ -53,7 +53,13 @@ function deps(over: Partial<{
     cancelPreapproval: vi.fn(async () => {}),
     getPlan: vi.fn(async (id: string) => ({ id, reason: "", amount: over.plans?.[id] ?? 6000 })),
   };
-  const processor = { applyPayment: vi.fn(async () => "debit_applied") };
+  // Tipado con los tres parámetros: sin eso no se puede mockear una
+  // implementación que consuma el presupuesto de correos.
+  const processor = {
+    applyPayment: vi.fn<(p: unknown, pre: string | null, opts?: { mailBudget?: { take(): boolean } }) => Promise<string>>(
+      async () => "debit_applied",
+    ),
+  };
   const feeValues = { current: vi.fn(async () => ({ activeAmount: 6000, sharedAmount: 3000 })) };
   const config = { getString: vi.fn(async (k: string) => (k === "mp_plan_active_id" ? over.planIds?.active ?? null : over.planIds?.shared ?? null)) };
   const r = makeReconcile({ db: db as never, gateway: gateway as never, processor, feeValues: feeValues as never, config, now: () => NOW });
@@ -71,7 +77,7 @@ describe("reconcile", () => {
     const s = await d.r.run();
     expect(d.gateway.searchPayments).toHaveBeenCalledWith({ since: new Date(NOW.getTime() - RECONCILE_WINDOW_MS) });
     expect(d.processor.applyPayment).toHaveBeenCalledTimes(1);
-    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), null);
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), null, { mailBudget: expect.anything() });
     expect(s.paymentsRecovered).toBe(1);
   });
   it("paso 2: cobros de cada suscripción viva sin Payment local → getPayment + applyPayment con el preapproval", async () => {
@@ -82,7 +88,7 @@ describe("reconcile", () => {
     const s = await d.r.run();
     expect(d.gateway.searchAuthorizedPayments).toHaveBeenCalledWith("pre-1");
     expect(d.gateway.getPayment).toHaveBeenCalledWith("777");
-    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1");
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1", { mailBudget: expect.anything() });
     expect(s.debitsRecovered).toBe(1);
   });
   it("paso 2 no repite un cobro que ya tiene Payment local", async () => {
@@ -170,7 +176,7 @@ describe("reconcile", () => {
     const d = deps({ inboxIds: ["777"], inboxStatus: { "777": "open" }, subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
     const s = await d.r.run();
     expect(d.gateway.getPayment).toHaveBeenCalledWith("777");
-    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1");
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "777" }), "pre-1", { mailBudget: expect.anything() });
     expect(s.debitsRecovered).toBe(1);
   });
 
@@ -287,6 +293,35 @@ describe("reconcile", () => {
     expect(s.errors).toEqual([expect.stringMatching(/^subscriptions: /)]);
     expect(s.paymentsRecovered).toBe(1);
     expect(s.orphanCreated).toBe(1);
+  });
+
+  it("con el tope alcanzado, los recibos que sobran se cuentan en `deferred`", async () => {
+    process.env.MAIL_BATCH_CAP = "1";
+    try {
+      // Dos débitos recuperables: el procesador consume el presupuesto en el
+      // primero y el segundo queda diferido. La plata se asienta en los dos —lo
+      // que el tope frena es el AVISO—, así que `debitsRecovered` sigue en 2.
+      const d = deps({ subs: [liveSub("pre-1", 14), liveSub("pre-2", 15)], authorized: [{ id: "a1", preapprovalId: "x", status: "processed", paymentId: "777" }] });
+      d.processor.applyPayment.mockImplementation(async (_p, _pre, opts) => {
+        opts?.mailBudget?.take();
+        return "debit_applied";
+      });
+      const s = await d.r.run();
+      expect(d.processor.applyPayment).toHaveBeenCalledTimes(2);
+      expect(s.debitsRecovered).toBe(2);
+      expect(s.deferred).toBe(1);
+    } finally {
+      delete process.env.MAIL_BATCH_CAP;
+    }
+  });
+
+  it("sin llegar al tope, `deferred` queda en cero", async () => {
+    const d = deps({ subs: [liveSub("pre-1", 14)], authorized: [{ id: "a1", preapprovalId: "pre-1", status: "processed", paymentId: "777" }] });
+    d.processor.applyPayment.mockImplementation(async (_p, _pre, opts) => {
+      opts?.mailBudget?.take();
+      return "debit_applied";
+    });
+    expect((await d.r.run()).deferred).toBe(0);
   });
 
   it("errors[] tiene tope y lo que se pasa se cuenta en errorsOmitted", async () => {

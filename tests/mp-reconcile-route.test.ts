@@ -12,7 +12,7 @@ vi.mock("@/lib/mp/reconcile", () => ({ reconcile: { run: mocks.run } }));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 import { POST } from "@/app/api/cron/reconcile/route";
 
-const summary = { paymentsRecovered: 1, paymentsInbox: 0, paymentsSkipped: 0, debitsRecovered: 0, debitsInbox: 0, debitsSkipped: 0, subscriptionsSynced: 2, subscriptionsDrifted: 0, orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0, amountDivergent: 0, planDivergent: 0, errors: [] as string[], errorsOmitted: 0 };
+const summary = { paymentsRecovered: 1, paymentsInbox: 0, paymentsSkipped: 0, debitsRecovered: 0, debitsInbox: 0, debitsSkipped: 0, subscriptionsSynced: 2, subscriptionsDrifted: 0, orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0, amountDivergent: 0, planDivergent: 0, deferred: 0, errors: [] as string[], errorsOmitted: 0 };
 const req = (auth?: string) => new Request("http://x/api/cron/reconcile", { method: "POST", headers: auth ? { authorization: auth } : {} });
 
 beforeEach(() => { vi.clearAllMocks(); process.env.CRON_SECRET = "s3cret"; mocks.run.mockResolvedValue(summary); });

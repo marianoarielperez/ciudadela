@@ -4,6 +4,7 @@
 // (`processor.applyPayment`), así el resultado es idéntico al del evento perdido.
 import type { PrismaClient } from "@/generated/prisma/client";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
+import { makeMailBudget, type MailBudget } from "@/lib/email/batch-cap";
 import { prisma } from "@/lib/prisma";
 import { feeValueReader, type makeFeeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
@@ -93,6 +94,11 @@ export type ReconcileSummary = {
   orphanPreapprovals: number;
   amountDivergent: number;
   planDivergent: number;
+  /** Recibos que la corrida NO mandó por el tope de envíos (`MAIL_BATCH_CAP`).
+   *  No se pierden: se reenvían desde la pantalla del recibo. Que el número esté
+   *  en el summary es la mitad del punto — un tope silencioso es peor que no
+   *  tener tope. */
+  deferred: number;
   /** `paso: causa` — sin datos personales, con tope `MAX_ERRORS`. */
   errors: string[];
   /** Errores que no entraron en `errors` por el tope. */
@@ -102,7 +108,13 @@ export type ReconcileSummary = {
 type Deps = {
   db: Pick<PrismaClient, "payment" | "mpUnmatchedPayment" | "mpSubscription" | "application">;
   gateway: Pick<MpGateway, "searchPayments" | "searchAuthorizedPayments" | "getPayment" | "getPreapproval" | "searchPreapprovals" | "cancelPreapproval" | "getPlan">;
-  processor: { applyPayment(payment: MpPaymentDetails, preapprovalId: string | null): Promise<string> };
+  processor: {
+    applyPayment(
+      payment: MpPaymentDetails,
+      preapprovalId: string | null,
+      opts?: { mailBudget?: MailBudget },
+    ): Promise<string>;
+  };
   feeValues: Pick<ReturnType<typeof makeFeeValueReader>, "current">;
   config: { getString(key: string): Promise<string | null> };
   now?: () => Date;
@@ -119,8 +131,13 @@ export function makeReconcile(deps: Deps) {
         debitsRecovered: 0, debitsInbox: 0, debitsSkipped: 0,
         subscriptionsSynced: 0, subscriptionsDrifted: 0,
         orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0,
-        amountDivergent: 0, planDivergent: 0, errors: [], errorsOmitted: 0,
+        amountDivergent: 0, planDivergent: 0, deferred: 0, errors: [], errorsOmitted: 0,
       };
+      // Un presupuesto POR CORRIDA: lo que exceda el tope queda para la
+      // siguiente (o para el botón "Reenviar" del recibo). Vive acá y no en el
+      // procesador porque el procesador es un singleton de proceso. Topea el
+      // AVISO, nunca la imputación: el cobro se asienta igual.
+      const mailBudget = makeMailBudget();
       // Al summary va el paso y LA CAUSA (status/code/message, ya enmascarados
       // por `describeMpError`). Los ids y el prefijo `mp:` van sólo al log
       // completo: repetirlos acá desplazaba la causa fuera del recorte y dejaba
@@ -179,7 +196,7 @@ export function makeReconcile(deps: Deps) {
         for (const p of payments) {
           try {
             if ((await hasLocal(p.id)) || (await inInbox(p.id))) continue;
-            count(await deps.processor.applyPayment(p, null), "payments");
+            count(await deps.processor.applyPayment(p, null, { mailBudget }), "payments");
           } catch (e) { fail("payments.apply", { mpPaymentId: p.id }, e); }
         }
       } catch (e) { fail("payments", {}, e); }
@@ -210,7 +227,7 @@ export function makeReconcile(deps: Deps) {
                 const paymentId = c.paymentId;
                 if ((await hasLocal(paymentId)) || (await resolvedInInbox(paymentId))) continue;
                 const p = await deps.gateway.getPayment(paymentId);
-                count(await deps.processor.applyPayment(p, sub.preapprovalId), "debits");
+                count(await deps.processor.applyPayment(p, sub.preapprovalId, { mailBudget }), "debits");
               } catch (e) { fail("debits.apply", { preapprovalId: sub.preapprovalId, mpPaymentId: c.paymentId }, e); }
             }
           } catch (e) { fail("debits", { preapprovalId: sub.preapprovalId }, e); }
@@ -283,6 +300,7 @@ export function makeReconcile(deps: Deps) {
         } catch (e) { fail("plans", {}, e); }
       }
 
+      s.deferred = mailBudget.deferred;
       return s;
     },
   };

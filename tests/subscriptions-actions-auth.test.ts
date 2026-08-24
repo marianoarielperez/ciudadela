@@ -19,6 +19,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 import { redirect } from "next/navigation";
 import { audit } from "@/lib/audit";
 import { SUPERADMIN_BLOCKED_MESSAGE } from "@/lib/auth/require-admin";
+import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 import { linkSubscriptionAction } from "@/app/admin/tesoreria/suscripciones/[preapprovalId]/vincular/actions";
 
 const PRE = "a69d4b7c9e65472bb46c0489897880af";
@@ -61,7 +62,7 @@ describe("linkSubscriptionAction", () => {
     const entry = vi.mocked(audit).mock.calls[0][0];
     expect(entry).toMatchObject({
       userId: 3, action: "subscription_linked", entity: "mp_subscription", entityId: PRE,
-      detail: { preapprovalId: PRE, memberId: 14, amount: 6000, status: "authorized", autoDebit: true, applied: [8], unapplied: 0, emailed: 1 },
+      detail: { preapprovalId: PRE, memberId: 14, amount: 6000, status: "authorized", autoDebit: true, applied: [8], unapplied: 0, emailed: 1, deferred: 0 },
     });
     // Ni el nombre del socio, ni el email del pagador, ni la descripción de la
     // suscripción: el asiento lleva ids, montos y estados (Ley 25.326).
@@ -69,8 +70,32 @@ describe("linkSubscriptionAction", () => {
     expect(serialized).not.toMatch(/@/);
     expect(serialized.toLowerCase()).not.toContain("perez");
     expect(redirect).toHaveBeenCalledWith(
-      `/admin/tesoreria/suscripciones?vinculada=${PRE}&aplicados=1&pendientes=0`,
+      `/admin/tesoreria/suscripciones?vinculada=${PRE}&aplicados=1&pendientes=0&diferidos=0`,
     );
+  });
+
+  // Vincular una suscripción vieja recupera de golpe todos los cobros
+  // históricos de UNA persona: el 23/08/2026 fueron 24 recibos en minutos.
+  it("con el tope alcanzado, los recibos que sobran no se mandan y el resultado lo dice", async () => {
+    process.env.MAIL_BATCH_CAP = "1";
+    try {
+      link.mockResolvedValue({
+        ok: true, applied: [{ paymentId: 8, receiptId: 9 }, { paymentId: 10, receiptId: 11 }, { paymentId: 12, receiptId: 13 }],
+        unapplied: 0, amount: 6000, status: "authorized", autoDebit: true,
+      });
+      await linkSubscriptionAction({}, form());
+      // El tope es de CORREOS: los tres cobros ya los aplicó el vinculador y el
+      // asiento los sigue listando enteros.
+      expect(sendReceiptEmail).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(audit).mock.calls[0][0]).toMatchObject({
+        detail: expect.objectContaining({ applied: [8, 10, 12], emailed: 1, deferred: 2 }),
+      });
+      expect(redirect).toHaveBeenCalledWith(
+        `/admin/tesoreria/suscripciones?vinculada=${PRE}&aplicados=3&pendientes=0&diferidos=2`,
+      );
+    } finally {
+      delete process.env.MAIL_BATCH_CAP;
+    }
   });
 
   it("un rechazo del vinculador se muestra tal cual y no se asienta nada", async () => {

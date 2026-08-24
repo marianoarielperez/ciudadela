@@ -47,6 +47,9 @@ export default async function SuscripcionesPage(props: {
   const justLinked = one(sp.vinculada) !== undefined;
   const appliedCount = Number(one(sp.aplicados) ?? 0);
   const stillPending = Number(one(sp.pendientes) ?? 0);
+  // Recibos que la vinculación no mandó por el tope de correos por lote. No se
+  // pierden —están emitidos— pero si la pantalla no lo dice, nadie los manda.
+  const deferredMails = Number(one(sp.diferidos) ?? 0);
 
   const [linked, feeValue, members] = await Promise.all([
     prisma.mpSubscription.findMany({
@@ -88,6 +91,17 @@ export default async function SuscripcionesPage(props: {
                 href="/admin/tesoreria/sin-conciliar"
               >
                 {`${stillPending} ${stillPending === 1 ? "quedó" : "quedaron"} sin aplicar en la bandeja.`}
+              </Link>
+            </>
+          )}
+          {deferredMails > 0 && (
+            <>
+              {" "}
+              <Link
+                className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                href="/admin/tesoreria/recibos"
+              >
+                {`${deferredMails} ${deferredMails === 1 ? "recibo quedó" : "recibos quedaron"} sin enviar por el tope de correos: mandalos desde Recibos.`}
               </Link>
             </>
           )}

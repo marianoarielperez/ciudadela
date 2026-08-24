@@ -18,6 +18,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
+import { makeMailBudget } from "@/lib/email/batch-cap";
 import { parseForm } from "@/lib/forms";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { subscriptionLinker } from "@/lib/mp/link-subscription";
@@ -65,8 +66,16 @@ export async function linkSubscriptionAction(_prev: State, formData: FormData): 
 
   // El aviso del recibo es best-effort, como en el webhook: la plata ya está
   // asentada y el recibo se puede reenviar desde su pantalla.
+  //
+  // Con techo: vincular una suscripción vieja puede recuperar decenas de cobros
+  // históricos de una sola persona (el 23/08/2026 fueron 24 recibos a un mismo
+  // socio en minutos). Lo que excede el tope NO se pierde: queda sin enviar y la
+  // pantalla lo dice, para que el operador los mande desde Recibos. El tope es
+  // de CORREOS: los cobros ya los aplicó `link()`, antes de este bucle.
+  const mailBudget = makeMailBudget();
   let emailed = 0;
   for (const a of result.applied) {
+    if (!mailBudget.take()) continue;
     try {
       if ((await sendReceiptEmail(a.receiptId)).sent) emailed++;
     } catch (e) {
@@ -82,13 +91,13 @@ export async function linkSubscriptionAction(_prev: State, formData: FormData): 
     userId: actor.actorId, action: "subscription_linked", entity: "mp_subscription", entityId: preapprovalId,
     detail: {
       preapprovalId, memberId, amount: result.amount, status: result.status, autoDebit: result.autoDebit,
-      applied: result.applied.map((a) => a.paymentId), unapplied: result.unapplied, emailed,
+      applied: result.applied.map((a) => a.paymentId), unapplied: result.unapplied, emailed, deferred: mailBudget.deferred,
     },
     ip,
   });
   // Fuera del try: `redirect` señaliza con una excepción y un catch se la comería.
   redirect(
     `/admin/tesoreria/suscripciones?vinculada=${encodeURIComponent(preapprovalId)}` +
-      `&aplicados=${result.applied.length}&pendientes=${result.unapplied}`,
+      `&aplicados=${result.applied.length}&pendientes=${result.unapplied}&diferidos=${mailBudget.deferred}`,
   );
 }

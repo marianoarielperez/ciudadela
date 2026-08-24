@@ -13,6 +13,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { APPROVED_AFTER_EXPIRY_ACTION } from "@/lib/applications/query";
 import { audit, auditStrict } from "@/lib/audit";
 import { mailer } from "@/lib/email";
+import { UNLIMITED_MAIL_BUDGET, type MailBudget } from "@/lib/email/batch-cap";
 import { applicationAcceptedEmail } from "@/lib/email/templates";
 import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { safeMessage } from "@/lib/log-safe";
@@ -217,7 +218,11 @@ export function makeWebhookProcessor(deps: Deps) {
     }
   }
 
-  async function emailReceipt(receiptId: number): Promise<string> {
+  async function emailReceipt(receiptId: number, budget: MailBudget): Promise<string> {
+    // El tope se consulta ANTES de leer el PDF: diferir tiene que ser barato.
+    // Un recibo diferido no se pierde — se manda desde su propia pantalla con
+    // "Reenviar por email", que es el reintento por entidad del proyecto.
+    if (!budget.take()) return "deferred";
     try {
       const r = await deps.sendReceiptEmail(receiptId);
       return r.sent ? "sent" : r.reason;
@@ -233,6 +238,7 @@ export function makeWebhookProcessor(deps: Deps) {
     p: MpPaymentDetails,
     d: Extract<Decision, { kind: "debit" | "link" }>,
     ctx: LoadedContext,
+    budget: MailBudget,
   ): Promise<WebhookResult> {
     const n = d.kind === "debit" ? 1 : d.n;
     const preapprovalId = d.kind === "debit" ? d.preapprovalId : null;
@@ -250,7 +256,7 @@ export function makeWebhookProcessor(deps: Deps) {
     // Un cesante sin cuotas pendientes no devenga: el cobro existe y no hay a
     // qué imputarlo. A la bandeja, nunca a un error (MP ya cobró).
     if (r.kind === "no_pending_withdrawn") return toInbox(p, preapprovalId, "withdrawn_no_pending");
-    const emailed = await emailReceipt(r.receiptId);
+    const emailed = await emailReceipt(r.receiptId, budget);
     await deps.audit({
       action: "payment_applied", entity: "payment", entityId: r.paymentId,
       detail: { paymentId: r.paymentId, memberId: d.memberId, type: d.kind, amount: r.amount, mpPaymentId: p.id, receiptId: r.receiptId, emailed },
@@ -288,7 +294,7 @@ export function makeWebhookProcessor(deps: Deps) {
   // socio cuando el acta ya pasó. Va al `Payment` para que el cobro se vea en
   // la cuenta corriente (ver la nota de `registerOrTrace`, abajo).
   async function applyEntry(
-    p: MpPaymentDetails, applicationId: number, preapprovalId: string | null, memberId: number | null,
+    p: MpPaymentDetails, applicationId: number, preapprovalId: string | null, memberId: number | null, budget: MailBudget,
   ): Promise<WebhookResult> {
     // UPDATE condicional por estado = idempotencia de la transición (M3). Dos
     // updates y no uno con `in`: el segundo afirma, sin leer antes y sin carrera
@@ -369,7 +375,7 @@ export function makeWebhookProcessor(deps: Deps) {
       // (conciliación, reenvío de MP) la aplicaría como CUOTA.
       recorded = await toInbox(p, preapprovalId, "treasury_rejected");
     } else if (r.kind === "registered") {
-      const emailed = await emailReceipt(r.receiptId);
+      const emailed = await emailReceipt(r.receiptId, budget);
       await deps.audit({ action: "payment_applied", entity: "payment", entityId: r.paymentId,
         detail: { paymentId: r.paymentId, applicationId, memberId, type: "entry", amount: r.amount, mpPaymentId: p.id, receiptId: r.receiptId, emailed } });
       recorded = "entry_payment_recovered";
@@ -410,7 +416,14 @@ export function makeWebhookProcessor(deps: Deps) {
     return revived ? "application_approved_after_expiry" : "application_approved";
   }
 
-  async function applyPayment(p: MpPaymentDetails, preapprovalId: string | null): Promise<WebhookResult> {
+  async function applyPayment(
+    p: MpPaymentDetails,
+    preapprovalId: string | null,
+    opts?: { mailBudget?: MailBudget },
+  ): Promise<WebhookResult> {
+    // Sin presupuesto explícito, el camino de UN cobro: el webhook manda su
+    // recibo siempre. El tope es para los lotes, y lo abre quien los corre.
+    const budget = opts?.mailBudget ?? UNLIMITED_MAIL_BUDGET;
     if (p.status === "refunded" || p.status === "charged_back") {
       let r: Awaited<ReturnType<TreasuryService["refundPayment"]>>;
       try {
@@ -443,10 +456,10 @@ export function makeWebhookProcessor(deps: Deps) {
           await closeInboxRow(p.id, decision.paymentId);
           return "already_processed";
         case "debit":
-        case "link": return applyToMember(p, decision, ctx);
+        case "link": return applyToMember(p, decision, ctx, budget);
         // `ctx.application` nunca es null cuando la decisión es `entry` (las dos
         // ramas que la devuelven lo exigen), pero el tipo no lo sabe.
-        case "entry": return applyEntry(p, decision.applicationId, preapprovalId, ctx.application?.memberId ?? null);
+        case "entry": return applyEntry(p, decision.applicationId, preapprovalId, ctx.application?.memberId ?? null, budget);
         case "unmatched": return toInbox(p, preapprovalId, decision.reason);
       }
     });

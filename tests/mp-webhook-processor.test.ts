@@ -453,6 +453,47 @@ describe("contratos de las revisiones anteriores", () => {
   });
 });
 
+// Tope de envíos por corrida (spec 4C §7.3). El presupuesto se INYECTA por
+// llamada: el procesador es un singleton de proceso y un contador propio dejaría
+// mudo al webhook después de los primeros 50 correos desde el restart de PM2.
+describe("presupuesto de correos", () => {
+  it("sin presupuesto, el webhook manda el recibo como siempre", async () => {
+    // El camino de un solo cobro no puede quedar limitado por un tope pensado
+    // para lotes: `applyPayment` sin `opts` usa el presupuesto ilimitado.
+    const d = deps({ subscription: { memberId: 14, applicationId: null } });
+    await expect(d.p.applyPayment(d.payment, "pre-1")).resolves.toBe("debit_applied");
+    expect(d.sendReceiptEmail).toHaveBeenCalledWith(2);
+  });
+
+  it("con el presupuesto agotado, el recibo se difiere y el cobro se asienta igual", async () => {
+    const d = deps({ subscription: { memberId: 14, applicationId: null } });
+    const spent = { take: () => false, deferred: 1 };
+    await expect(d.p.applyPayment(d.payment, "pre-1", { mailBudget: spent })).resolves.toBe("debit_applied");
+    // Lo que el tope frena es el AVISO, nunca la imputación.
+    expect(d.treasury.registerPayment).toHaveBeenCalled();
+    expect(d.sendReceiptEmail).not.toHaveBeenCalled();
+    expect(d.auditMock).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.objectContaining({ emailed: "deferred" }),
+    }));
+  });
+
+  it("el ingreso también respeta el tope, y la solicitud se acepta igual", async () => {
+    // El otro camino que emite recibo: si el tope frenara la transición, un
+    // vecino quedaría pagado y sin alta.
+    const d = deps({
+      payment: { externalReference: "solicitud:9" },
+      application: { id: 9, status: "pending_payment", fullName: "Juan", email: "j@x.com", mpPaymentIdEntry: null, memberId: null },
+    });
+    const spent = { take: () => false, deferred: 0 };
+    await expect(d.p.applyPayment(d.payment, null, { mailBudget: spent })).resolves.toBe("application_approved");
+    expect(d.treasury.registerPayment).toHaveBeenCalled();
+    expect(d.sendReceiptEmail).not.toHaveBeenCalled();
+    expect(d.auditMock).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.objectContaining({ emailed: "deferred" }),
+    }));
+  });
+});
+
 // El `result` se persiste en `WebhookEvent.result`, que es VarChar(64). La
 // lista NO se copia acá: `WEBHOOK_RESULTS` es un `Record<WebhookResult, true>`,
 // así que el compilador obliga a declarar cada result nuevo ahí y este test lo
