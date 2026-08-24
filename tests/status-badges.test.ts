@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  activityBadgeVariant, applicationStatusBadgeVariant, arrearsBadgeVariant, feeStatusBadgeVariant,
-  memberStatusBadgeVariant, newsStatusBadgeVariant, receiptBadgeVariant, unmatchedStatusBadgeVariant,
+  activityBadgeVariant, applicationStatusBadgeVariant, arrearsBadgeVariant, backupStateBadgeVariant,
+  cronStateBadgeVariant, feeStatusBadgeVariant, memberStatusBadgeVariant, newsStatusBadgeVariant,
+  pendingReceiptBadgeVariant, receiptBadgeVariant, unmatchedStatusBadgeVariant, type BadgeVariant,
 } from "@/lib/admin/status-badges";
 import { UNMATCHED_STATUS_LABELS } from "@/lib/admin/unmatched-labels";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
@@ -104,5 +105,49 @@ describe("unmatchedStatusBadgeVariant", () => {
     expect(labels).toHaveLength(4);
     expect(new Set(labels).size).toBe(4);
     expect(UNMATCHED_STATUS_LABELS.other_income).toBe("Ingreso no societario");
+  });
+});
+
+// Las variantes que el componente Badge sabe pintar. Un estado nuevo que caiga
+// en una variante inventada se ve como texto suelto y nadie lo nota.
+const VARIANTS: BadgeVariant[] = ["default", "secondary", "destructive", "outline", "ghost", "success", "link"];
+
+describe("cronStateBadgeVariant", () => {
+  // Rojo significa "algo se rompió", y por eso no lo usan ni "stale" ni "never":
+  // un devengo que todavía no corrió, o un resumen sin novedades hace días, no
+  // son un fallo. Si el tablero arranca en rojo por diseño, el operador aprende
+  // a no mirarlo.
+  it("sólo lo que se rompió va en rojo", () => {
+    expect(cronStateBadgeVariant("hung")).toBe("destructive");
+    expect(cronStateBadgeVariant("errors")).toBe("destructive");
+    expect(cronStateBadgeVariant("stale")).toBe("secondary");
+    expect(cronStateBadgeVariant("never")).toBe("secondary");
+  });
+  it("'ok' es el único verde y ningún estado sale del catálogo de variantes", () => {
+    const states = ["ok", "errors", "stale", "hung", "never"] as const;
+    expect(states.filter((s) => cronStateBadgeVariant(s) === "success")).toEqual(["ok"]);
+    for (const s of states) expect(VARIANTS).toContain(cronStateBadgeVariant(s));
+  });
+});
+
+describe("backupStateBadgeVariant", () => {
+  it("'fresh' es el único verde, y 'sin configurar' no acusa un backup roto", () => {
+    const states = ["fresh", "stale", "missing", "unconfigured"] as const;
+    expect(states.filter((s) => backupStateBadgeVariant(s) === "success")).toEqual(["fresh"]);
+    expect(backupStateBadgeVariant("missing")).toBe("destructive");
+    expect(backupStateBadgeVariant("unconfigured")).toBe("outline");
+    for (const s of states) expect(VARIANTS).toContain(backupStateBadgeVariant(s));
+  });
+});
+
+describe("pendingReceiptBadgeVariant", () => {
+  it("los dos que piden una acción se ven de lejos, y el que ya salió no", () => {
+    expect(pendingReceiptBadgeVariant("failed")).toBe("destructive");
+    expect(pendingReceiptBadgeVariant("deferred")).toBe("default");
+    expect(pendingReceiptBadgeVariant("no_email")).toBe("secondary");
+    expect(pendingReceiptBadgeVariant("sent")).toBe("outline");
+    for (const s of ["deferred", "failed", "no_email", "sent"] as const) {
+      expect(VARIANTS).toContain(pendingReceiptBadgeVariant(s));
+    }
   });
 });

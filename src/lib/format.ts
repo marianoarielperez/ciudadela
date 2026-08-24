@@ -22,6 +22,20 @@ export function formatDateTimeAR(date: Date): string {
   return `${formatDateAR(date)} a las ${time}`
 }
 
+// "hace 3 horas". Recibe el `now` en vez de leer el reloj: es la regla del
+// proyecto para todo lo que se testea (mismo criterio que `currentPeriod(now)`).
+// Sin plurales irregulares y sin librería: son cuatro tramos.
+export function formatRelativeAgo(from: Date, now: Date): string {
+  const seconds = Math.max(0, Math.round((now.getTime() - from.getTime()) / 1000))
+  if (seconds < 60) return "recién"
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `hace ${minutes} ${minutes === 1 ? "minuto" : "minutos"}`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `hace ${hours} ${hours === 1 ? "hora" : "horas"}`
+  const days = Math.floor(hours / 24)
+  return `hace ${days} ${days === 1 ? "día" : "días"}`
+}
+
 // Tamaño de archivo legible en es-AR (coma decimal). Base 1024, como reporta el
 // sistema operativo: el operador compara este número con el que ve en su
 // carpeta. Sin decimales en kB (nadie necesita "1,4 kB") y uno solo en MB.

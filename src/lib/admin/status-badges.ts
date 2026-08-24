@@ -2,6 +2,8 @@
 // divergieron: un suspendido se veía "secondary" en el padrón y "outline" en su
 // propia ficha. El del padrón era el más expresivo: queda como canónico.
 import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, UnmatchedStatus } from "@/generated/prisma/client";
+import type { CronState, PendingReceiptState } from "@/lib/admin/health";
+import type { BackupState } from "@/lib/admin/health-backup";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "success" | "link";
@@ -71,6 +73,34 @@ export function unmatchedStatusBadgeVariant(status: UnmatchedStatus): BadgeVaria
   if (status === "dismissed") return "secondary";
   if (status === "other_income") return "success";
   return "outline"; // matched
+}
+
+// La salud se lee de un vistazo y por PESO, no sólo por color: lo que exige
+// acción va con relleno; lo sano, con borde fino.
+export function cronStateBadgeVariant(state: CronState): BadgeVariant {
+  if (state === "hung" || state === "errors") return "destructive";
+  // "stale" y "never" no son un error: son una ausencia. Gris con relleno —se ve
+  // de lejos— pero no rojo, que en este tablero significa "algo se rompió".
+  if (state === "stale" || state === "never") return "secondary";
+  return "success";
+}
+
+export function backupStateBadgeVariant(state: BackupState): BadgeVariant {
+  if (state === "missing") return "destructive";
+  if (state === "stale") return "secondary";
+  // "sin configurar" es una pregunta abierta sobre el entorno, no una alarma:
+  // borde fino. Acusar un backup roto que nunca se instaló es peor que callarse.
+  if (state === "unconfigured") return "outline";
+  return "success";
+}
+
+// Los recibos sin sellar: sólo el diferido y el fallido piden una acción del
+// operador, y son los únicos dos que se ven de lejos.
+export function pendingReceiptBadgeVariant(state: PendingReceiptState): BadgeVariant {
+  if (state === "failed") return "destructive";
+  if (state === "deferred") return "default";
+  if (state === "no_email") return "secondary";
+  return "outline"; // sent: salió; lo que falta es el sello
 }
 
 // El catálogo de estados es de Mercado Pago (string, no enum). Sólo tres se
