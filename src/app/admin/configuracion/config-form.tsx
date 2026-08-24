@@ -41,6 +41,7 @@ export function ConfigForm({
     privacyConsentText: string;
     mpPlanActiveId: string;
     mpPlanSharedId: string;
+    digestRecipients: string;
   };
 }) {
   const [state, formAction, pending] = useActionState(updateConfigAction, {});
@@ -52,6 +53,7 @@ export function ConfigForm({
     privacyConsentText: initial.privacyConsentText,
     mpPlanActiveId: initial.mpPlanActiveId,
     mpPlanSharedId: initial.mpPlanSharedId,
+    digestRecipients: initial.digestRecipients,
   });
 
   return (
@@ -120,6 +122,19 @@ export function ConfigForm({
           maxLength={64}
           placeholder="2c93808491…"
           hint="Opcional, igual que el anterior; es el plan compartido por las dos categorías."
+        />
+      </Section>
+      {/* Tercera sección, y la primera que NO mira al sitio público: acá se
+          configura a quién le habla el sistema puertas adentro. El título lo
+          dice para que nadie busque estos destinatarios entre los datos de
+          contacto que ve el vecino. */}
+      <Section title="Avisos internos">
+        <TextField
+          label="Destinatarios del resumen diario"
+          field={field("digestRecipients")}
+          maxLength={500}
+          placeholder="comision@vecinalciudadela.ar, tesoreria@vecinalciudadela.ar"
+          hint="Direcciones separadas por comas. Reciben todas las mañanas las novedades del día anterior: pagos, altas, cobros sin conciliar, avisos que no salieron y tareas automáticas con problemas. Un día sin novedades no genera correo. Vacío, el resumen no se envía a nadie."
         />
       </Section>
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}

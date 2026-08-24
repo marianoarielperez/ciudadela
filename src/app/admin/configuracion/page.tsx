@@ -46,6 +46,7 @@ export default async function ConfigPage(props: {
     privacyConsentText,
     mpPlanActiveId,
     mpPlanSharedId,
+    digestRecipients,
   ] = await Promise.all([
     configReader.getBool(CONFIG_KEYS.asociateActivo),
     configReader.getString(CONFIG_KEYS.contactPhone),
@@ -54,6 +55,7 @@ export default async function ConfigPage(props: {
     configReader.getString(CONFIG_KEYS.privacyConsentText),
     configReader.getString(CONFIG_KEYS.mpPlanActiveId),
     configReader.getString(CONFIG_KEYS.mpPlanSharedId),
+    configReader.getString(CONFIG_KEYS.digestRecipients),
   ]);
 
   // Valor de cuota (M4): el vigente para mostrar, el historial para la lista y
@@ -105,6 +107,7 @@ export default async function ConfigPage(props: {
           privacyConsentText: privacyConsentText ?? "",
           mpPlanActiveId: mpPlanActiveId ?? "",
           mpPlanSharedId: mpPlanSharedId ?? "",
+          digestRecipients: digestRecipients ?? "",
         }}
       />
 

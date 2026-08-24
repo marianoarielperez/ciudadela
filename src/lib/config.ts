@@ -14,6 +14,10 @@ export const CONFIG_KEYS = {
   privacyConsentText: "privacy_consent_text",
   mpPlanActiveId: "mp_plan_active_id",
   mpPlanSharedId: "mp_plan_shared_id",
+  /** Destinatarios del resumen diario a la Comisión (4C §6). CSV. Editable
+   *  desde /admin/configuracion: cambiar quién lo recibe no puede exigir un
+   *  deploy ni un reinicio de PM2. */
+  digestRecipients: "digest_recipients",
 } as const;
 
 type Db = Pick<PrismaClient, "configuration">;
@@ -70,3 +74,20 @@ export const getLegalTexts = unstable_cache(
   ["config-legal"],
   { tags: [CACHE_TAGS.config] },
 );
+
+/** CSV → direcciones normalizadas, sin repetidos y sin las que ni siquiera
+ *  parecen una dirección. Vacío significa "nadie": el resumen no sale y eso es
+ *  preferible a fallar a una casilla inventada. La validación fina (formato) la
+ *  hace el schema de la pantalla; acá el criterio es defensivo porque el valor
+ *  puede haber quedado escrito por SQL. */
+export function parseRecipients(csv: string | null | undefined): string[] {
+  if (!csv) return [];
+  return [
+    ...new Set(
+      csv
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.includes("@") && s.length >= 5),
+    ),
+  ];
+}

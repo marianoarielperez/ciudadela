@@ -50,7 +50,8 @@ const form = (entries: Record<string, string>) => {
 };
 
 // Lo que el formulario manda cuando el superadmin prende el botón y carga los
-// dos contactos, los dos textos legales y los dos ids de plan de MP.
+// dos contactos, los dos textos legales, los dos ids de plan de MP y los
+// destinatarios del resumen diario a la Comisión.
 const filled = {
   asociateActivo: "on",
   contactPhone: "297 4 123456",
@@ -59,6 +60,7 @@ const filled = {
   privacyConsentText: "Consentimiento Ley 25.326\n\nSegundo párrafo.",
   mpPlanActiveId: "2c9380849abcd0001",
   mpPlanSharedId: "2c9380849abcd0002",
+  digestRecipients: "comision@vecinal.ar",
 };
 
 // Cuántas claves escribe un guardado completo partiendo de una base vacía.
@@ -74,6 +76,7 @@ const storedFilled: Record<string, unknown> = {
   [CONFIG_KEYS.privacyConsentText]: filled.privacyConsentText,
   [CONFIG_KEYS.mpPlanActiveId]: filled.mpPlanActiveId,
   [CONFIG_KEYS.mpPlanSharedId]: filled.mpPlanSharedId,
+  [CONFIG_KEYS.digestRecipients]: filled.digestRecipients,
 };
 
 /** Fija lo que hay guardado hoy, por clave. Una clave ausente del mapa devuelve
@@ -289,6 +292,43 @@ describe("updateConfigAction", () => {
     expect((await updateConfigAction({}, form({ ...filled, mpPlanSharedId: largo }))).error).toBe(
       "El id de plan no puede superar los 64 caracteres.",
     );
+    expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
+  });
+
+  // Resumen diario a la Comisión (4C §6): quién lo recibe se cambia acá, sin
+  // deploy ni reinicio de PM2 — el cron lee la clave en cada corrida.
+  it("guarda los destinatarios del resumen diario", async () => {
+    prismaMock.configuration.findUnique.mockResolvedValue(null);
+    await updateConfigAction({}, form({ ...filled, digestRecipients: "comision@vecinal.ar, tesoreria@vecinal.ar" }));
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { key: CONFIG_KEYS.digestRecipients },
+      create: expect.objectContaining({ value: "comision@vecinal.ar, tesoreria@vecinal.ar" }),
+    }));
+  });
+
+  it("una dirección mal escrita no se guarda: el resumen iría a la nada y nadie se enteraría", async () => {
+    prismaMock.configuration.findUnique.mockResolvedValue(null);
+    const r = await updateConfigAction({}, form({ ...filled, digestRecipients: "comision@, otra" }));
+    expect(r.error).toContain("no es válida");
+    expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
+  });
+
+  // Vaciar el campo es la forma de APAGAR el resumen, y tiene que ser posible:
+  // el sistema arranca sin la clave cargada y ese es un estado válido.
+  it("vaciar los destinatarios apaga el resumen y no es un error", async () => {
+    stored({ [CONFIG_KEYS.digestRecipients]: "comision@vecinal.ar" });
+    const r = await updateConfigAction({}, form({ ...filled, digestRecipients: "" }));
+    expect(r).toBeUndefined();
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { key: CONFIG_KEYS.digestRecipients },
+      update: { value: "", updatedBy: 3 },
+    }));
+  });
+
+  it("rechaza una lista de destinatarios de más de 500 caracteres en castellano", async () => {
+    const largo = `${"a".repeat(490)}@ejemplo.com`;
+    const r = await updateConfigAction({}, form({ ...filled, digestRecipients: largo }));
+    expect(r.error).toBe("La lista de destinatarios no puede superar los 500 caracteres.");
     expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
   });
 

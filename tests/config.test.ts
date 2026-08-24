@@ -22,7 +22,7 @@ vi.mock("@/lib/prisma", () => ({
 // reemplaza por la función tal cual, igual que en tests/config-actions.test.ts.
 vi.mock("next/cache", () => ({ unstable_cache: (fn: unknown) => fn }));
 
-import { CONFIG_KEYS, getLegalTexts, makeConfigReader } from "@/lib/config";
+import { CONFIG_KEYS, getLegalTexts, makeConfigReader, parseRecipients } from "@/lib/config";
 
 type Row = { key: string; value: unknown } | null;
 
@@ -96,5 +96,23 @@ describe("getLegalTexts", () => {
   it("devuelve null por cada texto que falta o está vacío", async () => {
     rows[CONFIG_KEYS.termsText] = "   ";
     expect(await getLegalTexts()).toEqual({ terms: null, privacyConsent: null });
+  });
+});
+
+// Destinatarios del resumen diario a la Comisión (4C §6). El valor lo escribe el
+// superadmin desde /admin/configuracion, pero el lector es DEFENSIVO a propósito:
+// la clave puede haber quedado escrita por SQL a mano, y una dirección basura no
+// puede tumbar el cron de la mañana.
+describe("parseRecipients", () => {
+  it("CSV → direcciones normalizadas, sin repetir y sin vacíos", () => {
+    expect(parseRecipients(" A@B.com , a@b.com ,, c@d.org ")).toEqual(["a@b.com", "c@d.org"]);
+  });
+  it("null, vacío o basura sin arroba → nadie (el resumen simplemente no sale)", () => {
+    expect(parseRecipients(null)).toEqual([]);
+    expect(parseRecipients("")).toEqual([]);
+    expect(parseRecipients("comision")).toEqual([]);
+  });
+  it("la clave está en el catálogo", () => {
+    expect(CONFIG_KEYS.digestRecipients).toBe("digest_recipients");
   });
 });

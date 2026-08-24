@@ -1,7 +1,8 @@
 "use server";
 // Pantalla de Configuración: los parámetros que el panel expone al sitio
-// público. Hoy son siete —el flag, los dos contactos, los dos textos legales del
-// wizard ASOCIATE y los dos ids de plan de Mercado Pago— y el que importa es
+// público. Hoy son ocho —el flag, los dos contactos, los dos textos legales del
+// wizard ASOCIATE, los dos ids de plan de Mercado Pago y los destinatarios del
+// resumen diario a la Comisión (4C)— y el que importa es
 // `asociate_activo`: es la llave que
 // abre y cierra el alta de socios de cara al vecino (docs/05:129).
 //
@@ -77,6 +78,20 @@ const schema = z.object({
     .string("Id de plan inválido.")
     .max(64, "El id de plan no puede superar los 64 caracteres.")
     .optional(),
+  // Destinatarios del resumen diario a la Comisión (4C §6). CSV, y por eso no
+  // alcanza `z.email()`. La validación es acá y no en el cron: el cron descarta
+  // en silencio lo que no parece una dirección —tiene que correr igual— así que
+  // el único momento en que alguien puede enterarse de un dedazo es al guardar.
+  // Un renglón vacío entre comas se tolera (el superadmin separa con ", " y
+  // deja una coma colgada); una dirección mal escrita, no.
+  digestRecipients: z
+    .string("Destinatarios del resumen inválidos.")
+    .max(500, "La lista de destinatarios no puede superar los 500 caracteres.")
+    .refine(
+      (v) => v.split(",").every((s) => s.trim() === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim())),
+      "Alguna de las direcciones del resumen diario no es válida. Separalas con comas.",
+    )
+    .optional(),
 });
 
 type ActionState = { error?: string };
@@ -103,6 +118,7 @@ export async function updateConfigAction(
     [CONFIG_KEYS.privacyConsentText, parsed.data.privacyConsentText ?? ""],
     [CONFIG_KEYS.mpPlanActiveId, parsed.data.mpPlanActiveId ?? ""],
     [CONFIG_KEYS.mpPlanSharedId, parsed.data.mpPlanSharedId ?? ""],
+    [CONFIG_KEYS.digestRecipients, parsed.data.digestRecipients ?? ""],
   ];
   const ip = await clientIp();
 

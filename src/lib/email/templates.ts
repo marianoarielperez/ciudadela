@@ -1,9 +1,13 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
+import type { PaymentType } from "@/generated/prisma/client";
 import { formatARS, formatDateTimeAR } from "@/lib/format";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
-// Módulo puro (sin Prisma): importarlo acá no arrastra el cliente a la plantilla.
+// Los dos son módulos puros (sin Prisma): importarlos acá no arrastra el cliente
+// a la plantilla. `PAYMENT_TYPE_LABELS` es EL mapa del proyecto — pantalla, PDF
+// y este correo tienen que llamar "Débito automático" a lo mismo.
+import { PAYMENT_TYPE_LABELS } from "@/lib/treasury/labels";
 import { periodLabel } from "@/lib/treasury/periods";
 
 type Rendered = { subject: string; text: string; html: string };
@@ -376,6 +380,50 @@ ${leadHtml}
 ${arrearsHtml}
 <p>Podés pagarla en la sede, por débito automático o pidiéndonos un link de pago por Mercado Pago: respondé este mensaje y te lo mandamos.</p>
 <p>Si ya pagaste, ignorá este correo.</p>`),
+  };
+}
+
+/** Resumen diario a la Comisión (4C §6). Agregados y nada más: cantidades,
+ *  totales y qué se rompió. Ninguna dirección de tercero, ningún id de mandato,
+ *  ningún DNI — es un correo que va a varias casillas y lo puede reenviar
+ *  cualquiera (Ley 25.326).
+ *
+ *  Sólo entra el renglón que tiene algo: un resumen con cinco ceros y un uno
+ *  esconde el uno. Y el correo entero no sale si no hay ningún renglón — esa
+ *  decisión no vive acá sino en `hasNews` (`@/lib/admin/digest`), porque la ruta
+ *  la necesita ANTES de abrir la corrida. */
+export function boardDigestEmail(d: {
+  label: string;
+  payments: Array<{ type: string; count: number; total: number }>;
+  paymentsCount: number; paymentsTotal: number;
+  applications: number; inboxNew: number; notificationsFailed: number;
+  cronFailures: Array<{ job: string }>; webhookErrors: number;
+}): Rendered {
+  const lines: string[] = [];
+  const html: string[] = [];
+  const add = (text: string) => { lines.push(`· ${text}`); html.push(`<li>${esc(text)}</li>`); };
+
+  if (d.paymentsCount > 0) {
+    const detail = d.payments
+      .map((p) => `${PAYMENT_TYPE_LABELS[p.type as PaymentType] ?? p.type}: ${p.count} (${formatARS(p.total)})`)
+      .join(" · ");
+    add(`Pagos registrados: ${d.paymentsCount} por ${formatARS(d.paymentsTotal)} — ${detail}`);
+  }
+  if (d.applications > 0) add(`Solicitudes de alta iniciadas en el sitio: ${d.applications}`);
+  if (d.inboxNew > 0) add(`Cobros que quedaron sin conciliar: ${d.inboxNew}`);
+  if (d.notificationsFailed > 0) add(`Avisos por email que no salieron: ${d.notificationsFailed}`);
+  if (d.webhookErrors > 0) add(`Notificaciones de Mercado Pago con error: ${d.webhookErrors}`);
+  if (d.cronFailures.length > 0) add(`Tareas automáticas con problemas: ${d.cronFailures.map((c) => c.job).join(", ")}`);
+
+  return {
+    subject: `Resumen del ${d.label} — Vecinal Ciudadela`,
+    text: `Novedades del ${d.label}:
+
+${lines.join("\n")}
+
+El detalle completo está en el panel: Salud, Tesorería y Solicitudes.${SIGNATURE}`,
+    html: layout(`Novedades del ${d.label}`, `<ul>${html.join("\n")}</ul>
+<p>El detalle completo está en el panel: Salud, Tesorería y Solicitudes.</p>`),
   };
 }
 

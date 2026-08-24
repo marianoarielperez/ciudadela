@@ -5,6 +5,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { makeMailer } from "@/lib/email";
 import {
+  boardDigestEmail,
   feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
   passwordResetEmail, paymentLinkEmail, portalInvite, receiptEmail, verificationEmail,
 } from "@/lib/email/templates";
@@ -231,6 +232,49 @@ describe("templates", () => {
     const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: null, arrears: 0, debt: null });
     expect(m.text).not.toContain("$");
     expect(m.text).toContain("septiembre");
+  });
+
+  it("el resumen sólo lista los renglones que tienen algo", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [{ type: "cash", count: 2, total: 9000 }],
+      paymentsCount: 2, paymentsTotal: 9000, applications: 0, inboxNew: 1,
+      notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+    });
+    expect(m.subject).toContain("14/09/2026");
+    expect(m.text).toContain("9.000");
+    expect(m.text).toContain("sin conciliar");
+    expect(m.text).not.toContain("Solicitudes de alta");
+    // Agregados, nunca nombres ni direcciones.
+    expect(m.text).not.toContain("@");
+  });
+
+  // El medio de pago se dice con EL mapa del proyecto, no con el valor crudo del
+  // enum: la Comisión lee "Débito automático", igual que en la pantalla de
+  // recibos y en el PDF.
+  it("el resumen nombra los medios de pago como el resto del sistema", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026",
+      payments: [{ type: "debit", count: 1, total: 6000 }, { type: "link", count: 1, total: 6000 }],
+      paymentsCount: 2, paymentsTotal: 12000, applications: 0, inboxNew: 0,
+      notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+    });
+    expect(m.text).toContain("Débito automático");
+    expect(m.text).toContain("Link de pago");
+    expect(m.text).not.toContain("debit");
+  });
+
+  it("las tareas automáticas con problemas se nombran por su job, sin el mensaje de error", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
+      applications: 0, inboxNew: 0, notificationsFailed: 2,
+      cronFailures: [{ job: "reconcile" }, { job: "reminder" }], webhookErrors: 3,
+    });
+    expect(m.text).toContain("Avisos por email que no salieron: 2");
+    expect(m.text).toContain("Notificaciones de Mercado Pago con error: 3");
+    expect(m.text).toContain("Tareas automáticas con problemas: reconcile, reminder");
+    expect(m.text).not.toContain("Pagos registrados");
+    // El HTML dice lo mismo que el texto: un cliente sin HTML no se pierde nada.
+    for (const needle of ["Avisos por email", "reconcile, reminder"]) expect(m.html).toContain(needle);
   });
 });
 
