@@ -3,26 +3,34 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // real: sin este mock el módulo se cae al evaluarse si no hay DATABASE_URL
 // (misma regla que `treasury-accrual.test.ts` — mockear ANTES de importar).
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import { makeReminderCron } from "@/lib/treasury/reminder";
 
 const LAST_DAY = new Date("2026-09-30T13:00:00Z"); // 10:00 AR del 30/09
 const MID_MONTH = new Date("2026-09-15T13:00:00Z");
 
-type M = { id: number; fullName: string; email: string | null; emailStatus: string; category: string };
+type M = {
+  id: number; fullName: string; email: string | null; emailStatus: string; category: string; joinedAt: Date;
+};
+// Socia del padrón: alta vieja, así que su piso de cobertura es el del import
+// (septiembre de 2026) y el aviso de septiembre le corresponde.
 const socio = (over: Partial<M> = {}): M => ({
-  id: 1, fullName: "Ana Gómez", email: "ana@example.com", emailStatus: "verified", category: "active", ...over,
+  id: 1, fullName: "Ana Gómez", email: "ana@example.com", emailStatus: "verified", category: "active",
+  joinedAt: new Date("2019-03-10T12:00:00Z"), ...over,
 });
 
 function build(members: M[], opts?: {
   paidThisMonth?: number[];
   notified?: number[];
   pending?: Array<{ memberId: number; _count: { _all: number } }>;
+  readmissions?: Array<{ memberId: number; _max: { date: Date | null } }>;
   send?: ReturnType<typeof vi.fn>;
   now?: Date;
 }) {
   const send = opts?.send ?? vi.fn(async () => ({ messageId: "id" }));
   const db = {
     member: { findMany: vi.fn(async () => members) },
+    movement: { groupBy: vi.fn(async () => opts?.readmissions ?? []) },
     fee: {
       findMany: vi.fn(async () => (opts?.paidThisMonth ?? []).map((memberId) => ({ memberId }))),
       groupBy: vi.fn(async () => opts?.pending ?? []),
@@ -86,6 +94,7 @@ describe("reminder cron", () => {
     });
     const db = {
       member: { findMany: vi.fn(async () => [socio()]) },
+      movement: { groupBy: vi.fn(async () => []) },
       fee: { findMany: vi.fn(async () => []), groupBy: vi.fn(async () => []) },
       notification: {
         findMany: vi.fn(async ({ where }: { where: { type: string; period: string } }) =>
@@ -141,6 +150,80 @@ describe("reminder cron", () => {
     expect(s.sent).toBe(1);
     expect(s.deferred).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  // El piso de cobertura: el MISMO que aplica el devengo. La cuota de ingreso
+  // cubre el mes del alta (REG-14), así que el mes en curso todavía no le
+  // corresponde a quien entró este mes — y su pago de ingreso ni siquiera deja
+  // una `Fee`, así que el filtro de "ya pagó" no lo salva.
+  it("al que ingresó este mes NO se le reclama este mes", async () => {
+    const { cron, send } = build([socio({ joinedAt: new Date("2026-09-25T12:00:00Z") })]);
+    const s = await cron.run();
+    expect(s.candidates).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("al que REINGRESÓ este mes tampoco (el reingreso sale del Movement, no de joinedAt)", async () => {
+    const { cron, send } = build([socio()], {
+      readmissions: [{ memberId: 1, _max: { date: new Date("2026-09-05T12:00:00Z") } }],
+    });
+    const s = await cron.run();
+    expect(s.candidates).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("el socio viejo del padrón sí lo recibe, aunque en el mismo lote entre un alta de este mes", async () => {
+    const { cron, send } = build([
+      socio({ id: 1 }),
+      socio({ id: 2, email: "beto@example.com", joinedAt: new Date("2026-09-25T12:00:00Z") }),
+    ]);
+    const s = await cron.run();
+    expect(s.candidates).toBe(1);
+    expect(s.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].memberId).toBe(1);
+  });
+
+  it("`exempt` cuenta como cubierto: no se reclama la cuota eximida", async () => {
+    const { cron, db } = build([socio()]);
+    await cron.run();
+    expect(db.fee.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ period: "2026-09", status: { in: ["paid", "exempt"] } }),
+    }));
+  });
+
+  it("las atrasadas excluyen el mes en curso: no se nombra dos veces la misma cuota", async () => {
+    const { cron, db } = build([socio()]);
+    await cron.run();
+    expect(db.fee.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: "pending", period: { lt: "2026-09" } }),
+    }));
+  });
+
+  // En producción `EMAIL_ALLOWLIST` sigue definida hasta el checklist de
+  // lanzamiento: si el bloqueo contara como error, la corrida del 30 devolvería
+  // 207 y /admin/salud mostraría el job en rojo todos los meses (spec §7.2).
+  it("un bloqueo de la allowlist se cuenta aparte y NO ensucia la corrida", async () => {
+    const send = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("bloqueado"), { code: ALLOWLIST_BLOCK_CODE }))
+      .mockResolvedValueOnce({ messageId: "id" });
+    const { cron } = build([socio({ id: 1 }), socio({ id: 2, email: "beto@example.com" })], { send });
+    const s = await cron.run();
+    expect(s.allowlistBlocked).toBe(1);
+    expect(s.sent).toBe(1);
+    expect(s.errors).toEqual([]);
+  });
+
+  it("el bloqueado devuelve su lugar al presupuesto: no difiere a quien sí está en la lista", async () => {
+    process.env.MAIL_BATCH_CAP = "1";
+    const send = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("bloqueado"), { code: ALLOWLIST_BLOCK_CODE }))
+      .mockResolvedValueOnce({ messageId: "id" });
+    const { cron } = build([socio({ id: 1 }), socio({ id: 2, email: "beto@example.com" })], { send });
+    const s = await cron.run();
+    expect(s.allowlistBlocked).toBe(1);
+    expect(s.sent).toBe(1);
+    expect(s.deferred).toBe(0);
   });
 
   it("un envío que falla no frena a los demás y su CÓDIGO queda en errors[]", async () => {

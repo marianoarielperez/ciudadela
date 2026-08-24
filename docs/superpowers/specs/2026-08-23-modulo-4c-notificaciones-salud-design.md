@@ -105,9 +105,18 @@ esta decisión. No hay que enseñarles a distinguir períodos.
   **Enmienda avalada**: corre a diario (10:00) y actúa **el último día civil del
   mes** — no "el 30", que en febrero no existe y ese mes nunca avisaría.
 - **Destinatarios**: socios devengantes (`active`/`collaborator`, vigentes) que
-  **no** tienen la cuota del mes en curso paga (no existe `Fee(M, paid)`), con
-  email utilizable. Texto: "tu cuota de septiembre vence mañana"; si además
-  arrastra `pending`, se agrega la deuda total a valor vigente.
+  **no** tienen la cuota del mes en curso cubierta (no existe `Fee(M, paid|exempt)`),
+  con email utilizable. Texto: "tu cuota de septiembre vence mañana"; si además
+  arrastra `pending` de períodos **anteriores**, se agrega la deuda total a valor
+  vigente.
+- **Corrección del 24/08/2026 — el piso de cobertura manda, igual que en el
+  devengo.** Los dos criterios de arriba no alcanzan: el que ingresó (o reingresó)
+  este mes **no** tiene `Fee(M)` de ninguna clase —su cuota de ingreso cubre el mes
+  del alta (REG-14) y cuelga de la solicitud, no de una cuota— así que caía como
+  candidato y recibía un reclamo por el mes que acababa de pagar. El cron aplica el
+  MISMO `coverageFloor` que `periodsToAccrue` (`rules.ts`), con `readmittedAt`
+  traído en lote desde el `Movement` de tipo `readmission` (REG-11: no se deriva de
+  `joinedAt`): **si `coverageFloor(m) > período en curso`, no es candidato.**
 - **Idempotencia persistida**: una fila `Notification` tipo `fee_reminder` (el
   enum ya lo reservó: `schema.prisma:157`) por socio y período; si existe, no se
   reenvía. La marca es en base, no en memoria: sobrevive al restart de PM2.
@@ -161,11 +170,32 @@ Decisión: **no** se agrega barrido automático —un reenvío masivo es exactam
 que el tope vino a evitar, y el diferido es raro (ocurrió una vez, con los 24
 recibos del 23/08)—. En su lugar, **`/admin/salud` (§8) lista los recibos sin
 enviar con su botón de reenvío**, y el operador decide. El socio, mientras tanto,
-tiene el recibo disponible en `/mi/cuenta` desde el momento en que se emite. Para
-el recordatorio de vencimiento (§5) la frase original **sí** es cierta: su dedupe
-es por fila de `Notification`, así que lo diferido entra en la corrida siguiente. Motivo documentado: el 23/08 un solo socio recibió
-24 recibos de golpe; con 160 socios y sin allowlist, un backlog son cientos de
-correos en minutos contra la cuota de Brevo.
+tiene el recibo disponible en `/mi/cuenta` desde el momento en que se emite.
+Motivo documentado: el 23/08 un solo socio recibió 24 recibos de golpe; con 160
+socios y sin allowlist, un backlog son cientos de correos en minutos contra la
+cuota de Brevo.
+
+**Segunda corrección (24/08/2026, sobre la anterior).** La enmienda de arriba
+sostenía que para el **recordatorio de vencimiento** (§5) la frase original sí era
+cierta —"lo diferido entra en la corrida siguiente"—. **También es falsa.** El cron
+sólo actúa el ÚLTIMO día civil del mes (`willAct()`), así que la corrida siguiente
+es dentro de ~30 días y para entonces `currentPeriod` ya cambió: el socio diferido
+**nunca** recibe el aviso de ese mes. Y como diferir no es un error, la corrida
+devuelve 200 / `ok: true`.
+
+Decisión: **tampoco** se agrega barrido —mismo argumento, y hoy no se dispara: son
+~12 devengantes con casilla contra un tope de 50—. Lo que queda es la señal:
+`deferred: N` en el summary, visible en `/admin/salud`. Si algún día ese contador
+deja de ser cero, la salida es subir el tope o repartir el aviso en días, no
+reintentar en masa.
+
+**Tercera precisión (24/08/2026): la allowlist no cuenta como error tampoco acá.**
+§7.2 vale para el summary del cron, no sólo para la fila `Notification`: el
+recordatorio cuenta los bloqueos en `allowlistBlocked` y los deja fuera de
+`errors[]`. Si no, con `EMAIL_ALLOWLIST` puesta —que es el estado de producción
+hasta el checklist de lanzamiento— la corrida del día 30 devolvería 207,
+`CronRun.ok = false` y /admin/salud mostraría el job en rojo por diseño, todos los
+meses.
 
 **7.4 — `payment_rejected` avisa al socio.** Hoy el webhook corta en
 `webhook-processor.ts:435` sin avisar a nadie y descarta el `statusDetail`. Cambia
