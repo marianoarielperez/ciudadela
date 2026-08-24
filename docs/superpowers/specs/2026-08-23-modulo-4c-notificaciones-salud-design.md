@@ -120,6 +120,35 @@ esta decisión. No hay que enseñarles a distinguir períodos.
 - **Idempotencia persistida**: una fila `Notification` tipo `fee_reminder` (el
   enum ya lo reservó: `schema.prisma:157`) por socio y período; si existe, no se
   reenvía. La marca es en base, no en memoria: sobrevive al restart de PM2.
+- **Enmienda del operador (24/08/2026) — escotilla `?force=1`, y el correo dice la
+  verdad cuando llega tarde.** La ventana del recordatorio es de UN día: si el 30 el
+  VPS está caído —o el operador se entera el 1° a la mañana—, ese mes **nadie**
+  recibe el aviso y no hay nada que hacer. El endpoint acepta ahora **`?force=1`**
+  detrás del mismo `CRON_SECRET`, con la MISMA forma que la del devengo (§4): misma
+  allowlist de valores (`1`/`true`, cualquier otra cosa es **400** con cuerpo claro,
+  no un silencio ni un 500), `forced` en el summary y en el asiento, y una corrida
+  forzada **sí** escribe su `CronRun` —una que no actúa, sigue sin escribirlo—.
+  - **Qué período avisa una corrida forzada**: el que vence hoy, o el último que YA
+    venció (`reminderPeriodFor`, armado con los helpers de `periods.ts`). El último
+    día del mes es el mes en curso —la corrida automática no cambia en NADA—;
+    cualquier otro día es el mes anterior. Forzada el 1° de octubre, el aviso que
+    falta es el de **septiembre**: nombrar octubre sería reclamar una cuota que
+    recién vence dentro de un mes.
+  - **Dos variantes del mismo correo.** Corriendo el último día del mes: el texto de
+    siempre, "tu cuota de septiembre vence mañana". Corriendo después de que el
+    período venció: "tu cuota social de septiembre de $ … **venció y quedó
+    impaga**". El aviso sigue sirviendo —el socio se entera igual— y deja de mentir
+    sobre la fecha. Cambia el asunto y la primera frase; la deuda arrastrada, las
+    tres formas de pagar y la salida "si ya pagaste" son las mismas.
+  - **La variante la elige el calendario, no el parámetro**: se compara el período
+    avisado contra el mes civil argentino de la corrida. Un `force` el mismo último
+    día del mes es un re-disparo dentro de la ventana y manda el texto normal.
+  - **La dedupe no cambia**: sigue siendo la fila `Notification(memberId,
+    fee_reminder, period)`. Al que ya recibió el aviso de septiembre no se lo repite
+    ninguna corrida forzada. Corolario útil: los que quedaron `deferred` por el tope
+    (§7.3) **no** tienen fila, así que un `force` al día siguiente sí los alcanza —
+    es la herramienta manual que §7.3 dejó en manos del operador, no un barrido
+    automático.
 - **Los sin email** (decisión ronda 1): la pantalla Deudores gana el botón
   **"Lista para gestión manual"** — imprimible: nombre, N° de socio, deuda a valor
   vigente, teléfono si hay. Sin email en la lista impresa no hay dato sensible
@@ -188,6 +217,12 @@ Decisión: **tampoco** se agrega barrido —mismo argumento, y hoy no se dispara
 `deferred: N` en el summary, visible en `/admin/salud`. Si algún día ese contador
 deja de ser cero, la salida es subir el tope o repartir el aviso en días, no
 reintentar en masa.
+
+**Precisión posterior (24/08/2026, escotilla de §5).** "Nunca" pasó a ser "no solo":
+el barrido automático sigue sin existir, pero con `?force=1` el operador puede
+re-disparar el aviso al día siguiente y ahí los diferidos —que no dejaron fila de
+`Notification`— sí lo reciben, con el texto de cuota vencida. Es una decisión suya
+frente al contador, que es exactamente lo que esta corrección pedía.
 
 **Tercera precisión (24/08/2026): la allowlist no cuenta como error tampoco acá.**
 §7.2 vale para el summary del cron, no sólo para la fila `Notification`: el

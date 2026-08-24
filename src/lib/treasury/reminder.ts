@@ -8,6 +8,12 @@
 // pueda pagar, no para reprocharle. El aviso de mora (`arrears_alert`) sigue
 // existiendo en el enum y no se usa todavía.
 //
+// Escotilla de re-disparo (enmienda del operador, 24/08/2026): la ruta acepta
+// `?force=1` y ahí la corrida cae en un día que NO es el último del mes. Dos
+// consecuencias, las dos resueltas por `reminderPeriodFor`: qué período se avisa
+// (el que vence hoy, o el último que YA venció) y con qué texto (el correo dice
+// "vence mañana" sólo cuando es verdad).
+//
 // La dedupe es una FILA, no una variable: PM2 se reinicia y una línea duplicada
 // en el crontab dispara dos corridas (docs/10:595-598). Y excluye las `failed`,
 // que registran un intento que no salió.
@@ -18,11 +24,27 @@ import { feeReminderEmail } from "@/lib/email/templates";
 import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import { prisma } from "@/lib/prisma";
 import { feeValueReader, type makeFeeValueReader } from "@/lib/treasury/fee-values";
-import { comparePeriods, currentPeriod, isLastCivilDayOfMonth, type Period } from "./periods";
+import { addMonths, comparePeriods, currentPeriod, isLastCivilDayOfMonth, type Period } from "./periods";
 import { ACCRUING_CATEGORIES, coverageFloor, debtAmount, feeAmountFor } from "./rules";
 
 const MAX_ERRORS = 50;
 const ERROR_MAX = 240;
+
+/** El período que el aviso NOMBRA, armado siempre con los helpers de calendario
+ *  (nunca un `${y}-${m}` a mano: viaja a una columna `Char(7)` que no valida).
+ *
+ *  - El ÚLTIMO día civil del mes —el caso normal, el único al que llega la
+ *    corrida automática— es el mes en curso: vence mañana.
+ *  - Cualquier otro día sólo se alcanza forzado (`?force=1`), y ahí el mes en
+ *    curso todavía no vence: lo que hay para avisar es el último período que YA
+ *    venció, o sea el mes anterior. Es el caso que motivó la escotilla: si el 30
+ *    el VPS estaba caído y el operador re-dispara el 1° a la mañana, el aviso que
+ *    falta es el de SEPTIEMBRE, no el de octubre —octubre recién vence dentro de
+ *    un mes y nombrarlo sería un reclamo por una cuota que no venció—. */
+export function reminderPeriodFor(at: Date): Period {
+  const p = currentPeriod(at);
+  return isLastCivilDayOfMonth(at) ? p : addMonths(p, -1);
+}
 
 // Sólo el código: el error de nodemailer trae la dirección en claro y este
 // summary va a `CronRun.summary` y al asiento de auditoría (docs/08).
@@ -33,7 +55,11 @@ function codeOf(e: unknown): string {
 
 export type ReminderSummary = {
   period: Period;
-  /** Devengantes vigentes a los que el mes en curso YA les corresponde
+  /** El período avisado YA venció al momento de la corrida: el correo dice
+   *  "venció y quedó impaga" en lugar de "vence mañana". Sólo puede ser `true`
+   *  en una corrida forzada un día posterior al último del mes. */
+  expired: boolean;
+  /** Devengantes vigentes a los que el período avisado YA les corresponde
    *  (`coverageFloor` ≤ período) y que no lo tienen cubierto. */
   candidates: number;
   sent: number;
@@ -70,11 +96,14 @@ export function makeReminderCron(deps: Deps) {
 
     async run(): Promise<ReminderSummary> {
       const at = now();
-      // El período sale de `currentPeriod` y no de un armado a mano: es "YYYY-MM"
-      // válido por construcción, y viaja a una columna Char(7) que no valida nada.
-      const period = currentPeriod(at);
+      const period = reminderPeriodFor(at);
+      // Qué texto sale lo decide el CALENDARIO, no el parámetro: se compara el
+      // período avisado contra el mes civil argentino de la corrida. Un `force`
+      // el mismo último día del mes manda el texto normal, porque ese día la
+      // cuota efectivamente vence mañana.
+      const expired = comparePeriods(period, currentPeriod(at)) < 0;
       const s: ReminderSummary = {
-        period, candidates: 0, sent: 0, alreadyNotified: 0, noEmail: 0,
+        period, expired, candidates: 0, sent: 0, alreadyNotified: 0, noEmail: 0,
         allowlistBlocked: 0, deferred: 0, errors: [], errorsOmitted: 0,
       };
       const fail = (ref: string, e: unknown) => {
@@ -98,7 +127,9 @@ export function makeReminderCron(deps: Deps) {
         // Bajo el modelo de dos niveles, la cuota del mes en curso sólo tiene
         // fila si alguien la cubrió (el devengo la materializa el 01 del mes que
         // viene). O sea: "no existe `Fee(M, paid|exempt)`" es exactamente "no
-        // tiene cubierto el mes en curso". `exempt` entra porque hoy no lo
+        // tiene cubierto ese mes" — y sigue valiendo para un período ya vencido,
+        // donde el devengo SÍ dejó la fila: ahí la impaga es `pending`, que
+        // tampoco entra acá. `exempt` entra porque hoy no lo
         // escribe ningún camino pero las pantallas ya lo renderizan: el día que
         // exista, al eximido no se le puede reclamar la cuota.
         deps.db.fee.findMany({
@@ -109,7 +140,7 @@ export function makeReminderCron(deps: Deps) {
           where: { memberId: { in: ids }, type: "fee_reminder", period, status: { not: "failed" } },
           select: { memberId: true },
         }),
-        // ATRASADAS son las de períodos ANTERIORES al corriente. Con `status:
+        // ATRASADAS son las de períodos ANTERIORES al avisado. Con `status:
         // "pending"` a secas se colaba la del mes en curso —la deja `revertFees`
         // al anular un recibo del mes— y el correo nombraba dos veces la misma
         // cuota: "vence mañana" y, abajo, "1 cuota atrasada".
@@ -165,6 +196,7 @@ export function makeReminderCron(deps: Deps) {
               amount: feeValue ? feeAmountFor(m.category, feeValue) : null,
               arrears,
               debt: feeValue ? debtAmount(arrears, m.category, feeValue) : null,
+              expired,
             }),
             summary: `recordatorio de vencimiento ${period}`,
           });

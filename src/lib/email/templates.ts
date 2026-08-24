@@ -323,12 +323,33 @@ ${button(opts.url, "Retomar y completar el pago")}
  *  de pago: el link de Checkout Pro vence a las 72 h y lo emite un operador
  *  desde la ficha, así que meterlo acá sería prometer un camino que este correo
  *  no puede sostener. Se nombran las tres salidas reales: la sede, el débito
- *  automático y pedir un link. */
+ *  automático y pedir un link.
+ *
+ *  `expired` es la segunda variante (enmienda del operador, 24/08/2026): cuando
+ *  el cron se re-dispara a mano DESPUÉS del vencimiento —el 30 el VPS estaba
+ *  caído y el operador fuerza la corrida el 1°—, "vence mañana" ya es mentira.
+ *  El aviso sigue sirviendo, así que sale igual, diciendo lo que pasó de verdad:
+ *  la cuota venció y quedó impaga. Cambia sólo el asunto y la primera frase; el
+ *  resto del correo (deuda arrastrada, cómo pagar, la salida "si ya pagaste") es
+ *  el mismo, y en ninguna de las dos variantes se reclama nada que el socio no
+ *  deba. Quién elige la variante es el cron, comparando el período avisado
+ *  contra el día civil argentino de la corrida — nunca esta plantilla. */
 export function feeReminderEmail(opts: {
   name: string; period: string; amount: number | null; arrears: number; debt: number | null;
+  expired?: boolean;
 }): Rendered {
   const month = periodLabel(opts.period);
   const importe = opts.amount === null ? "" : ` de ${formatARS(opts.amount)}`;
+  const headline = opts.expired
+    ? `Tu cuota de ${month} venció y quedó impaga`
+    : `Tu cuota de ${month} vence mañana`;
+  const lead = opts.expired
+    ? `Te avisamos que tu cuota social de ${month}${importe} venció y quedó impaga.`
+    : `Te recordamos que tu cuota social de ${month}${importe} vence mañana.`;
+  const importeHtml = opts.amount === null ? "" : ` de <strong>${esc(formatARS(opts.amount))}</strong>`;
+  const leadHtml = opts.expired
+    ? `<p>Te avisamos que tu <strong>cuota social de ${esc(month)}</strong>${importeHtml} venció y quedó impaga.</p>`
+    : `<p>Te recordamos que tu <strong>cuota social de ${esc(month)}</strong>${importeHtml} vence mañana.</p>`;
   const arrearsText =
     opts.arrears > 0
       ? `\n\nAdemás tenés ${opts.arrears} ${opts.arrears === 1 ? "cuota atrasada" : "cuotas atrasadas"}${
@@ -342,16 +363,16 @@ export function feeReminderEmail(opts: {
         }.</p>`
       : "";
   return {
-    subject: `Tu cuota de ${month} vence mañana — Vecinal Ciudadela`,
+    subject: `${headline} — Vecinal Ciudadela`,
     text: `Hola ${opts.name}:
 
-Te recordamos que tu cuota social de ${month}${importe} vence mañana.${arrearsText}
+${lead}${arrearsText}
 
 Podés pagarla en la sede, por débito automático o pidiéndonos un link de pago por Mercado Pago: respondé este mensaje y te lo mandamos.
 
 Si ya pagaste, ignorá este correo.${SIGNATURE}`,
-    html: layout(`Tu cuota de ${month} vence mañana`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
-<p>Te recordamos que tu <strong>cuota social de ${esc(month)}</strong>${opts.amount === null ? "" : ` de <strong>${esc(formatARS(opts.amount))}</strong>`} vence mañana.</p>
+    html: layout(headline, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+${leadHtml}
 ${arrearsHtml}
 <p>Podés pagarla en la sede, por débito automático o pidiéndonos un link de pago por Mercado Pago: respondé este mensaje y te lo mandamos.</p>
 <p>Si ya pagaste, ignorá este correo.</p>`),

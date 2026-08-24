@@ -13,11 +13,11 @@ vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 import { POST } from "@/app/api/cron/reminder/route";
 
 const summary = {
-  period: "2026-09", candidates: 12, sent: 10, alreadyNotified: 0, noEmail: 2, deferred: 0,
-  errors: [] as string[], errorsOmitted: 0,
+  period: "2026-09", expired: false, candidates: 12, sent: 10, alreadyNotified: 0, noEmail: 2,
+  allowlistBlocked: 0, deferred: 0, errors: [] as string[], errorsOmitted: 0,
 };
-const req = (auth?: string) =>
-  new Request("http://x/api/cron/reminder", { method: "POST", headers: auth ? { authorization: auth } : {} });
+const req = (auth?: string, query = "") =>
+  new Request(`http://x/api/cron/reminder${query}`, { method: "POST", headers: auth ? { authorization: auth } : {} });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,10 +48,10 @@ describe("POST /api/cron/reminder", () => {
     expect(mocks.create).toHaveBeenCalledWith({ data: { job: "reminder", startedAt: expect.any(Date) } });
     expect(mocks.update).toHaveBeenCalledWith({
       where: { id: BigInt(11) },
-      data: { finishedAt: expect.any(Date), ok: true, summary },
+      data: { finishedAt: expect.any(Date), ok: true, summary: { ...summary, forced: false } },
     });
     expect(mocks.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "reminder_cron", entity: "cron", detail: summary }),
+      expect.objectContaining({ action: "reminder_cron", entity: "cron", detail: { ...summary, forced: false } }),
     );
   });
   it("con errores → 207 y ok:false", async () => {
@@ -65,5 +65,54 @@ describe("POST /api/cron/reminder", () => {
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ ok: false, error: expect.stringContaining("db down") }),
     }));
+  });
+});
+
+// Escotilla de re-disparo (enmienda del operador, 24/08/2026): la MISMA forma
+// que la del devengo, para que los dos endpoints se lean igual.
+describe("POST /api/cron/reminder — escotilla de re-disparo", () => {
+  it("sin force el comportamiento no cambia: el día 15 sigue sin actuar ni escribir CronRun", async () => {
+    mocks.willAct.mockReturnValue(false);
+    const res = await POST(req("Bearer s3cret"));
+    expect(await res.json()).toEqual({ skipped: "not_last_day" });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("con force=1 un día que no es el último → actúa igual y deja CronRun", async () => {
+    mocks.willAct.mockReturnValue(false);
+    const res = await POST(req("Bearer s3cret", "?force=1"));
+    expect(res.status).toBe(200);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("la corrida forzada se distingue de la automática en el summary y en el asiento", async () => {
+    mocks.willAct.mockReturnValue(false);
+    const res = await POST(req("Bearer s3cret", "?force=true"));
+    expect(await res.json()).toEqual({ ...summary, forced: true });
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ summary: { ...summary, forced: true } }),
+    }));
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.objectContaining({ forced: true, period: "2026-09" }) }),
+    );
+  });
+
+  it("la escotilla no pide una segunda barrera: sin bearer, force=1 sigue siendo 401", async () => {
+    expect((await POST(req("Bearer nope", "?force=1"))).status).toBe(401);
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("force con un valor que no es 1/true → 400 con cuerpo claro, no un silencio ni un 500", async () => {
+    mocks.willAct.mockReturnValue(false);
+    for (const raw of ["0", "false", "si", ""]) {
+      vi.clearAllMocks();
+      const res = await POST(req("Bearer s3cret", `?force=${raw}`));
+      expect(res.status, raw).toBe(400);
+      expect((await res.json()).error, raw).toBe("bad_force");
+      expect(mocks.create, raw).not.toHaveBeenCalled();
+      expect(mocks.run, raw).not.toHaveBeenCalled();
+    }
   });
 });

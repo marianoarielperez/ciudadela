@@ -201,6 +201,32 @@ describe("templates", () => {
       expect(body).toContain("18.000");
     }
   });
+  // La segunda variante (enmienda del operador, 24/08/2026): el cron re-disparado
+  // el 1° avisa por una cuota que ya venció, y "vence mañana" ahí es mentira.
+  it("corrido después del vencimiento, el correo dice que la cuota venció y quedó impaga", () => {
+    const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: 6000, arrears: 0, debt: 0, expired: true });
+    expect(m.subject).toBe("Tu cuota de septiembre 2026 venció y quedó impaga — Vecinal Ciudadela");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("venció y quedó impaga");
+      expect(body).not.toContain("vence mañana");
+      // Lo demás no cambia: el mes, el importe, cómo pagar y la salida.
+      expect(body).toContain("septiembre");
+      expect(body).toContain("6.000");
+      expect(body).toContain("Si ya pagaste");
+      expect(body).not.toContain("atrasada");
+    }
+  });
+  it("la variante vencida arrastra la deuda anterior igual que la normal", () => {
+    const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: 6000, arrears: 3, debt: 18000, expired: true });
+    expect(m.text).toContain("venció y quedó impaga");
+    expect(m.text).toContain("3 cuotas atrasadas");
+    expect(m.text).toContain("18.000");
+  });
+  it("sin `expired` el correo es el de siempre: vence mañana", () => {
+    const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: 6000, arrears: 0, debt: 0 });
+    expect(m.subject).toBe("Tu cuota de septiembre 2026 vence mañana — Vecinal Ciudadela");
+    for (const body of [m.text, m.html]) expect(body).toContain("vence mañana");
+  });
   it("sin valor de cuota vigente no inventa un importe", () => {
     const m = feeReminderEmail({ name: "Ana", period: "2026-09", amount: null, arrears: 0, debt: null });
     expect(m.text).not.toContain("$");
