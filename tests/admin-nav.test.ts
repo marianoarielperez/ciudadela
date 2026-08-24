@@ -38,8 +38,21 @@ describe("navForRoles", () => {
     const hrefs = navForRoles(["superadmin", "admin"]).flatMap((g) => g.items.map((i) => i.href));
     expect(hrefs).toEqual([
       "/admin", "/admin/solicitudes", "/admin/socios", "/admin/tesoreria", "/admin/actas",
-      "/admin/noticias", "/admin/actividades", "/admin/configuracion",
+      "/admin/noticias", "/admin/actividades", "/admin/salud", "/admin/configuracion",
     ]);
+  });
+
+  it("Salud vive en Sistema, va antes de Configuración y es sólo para superadmin", () => {
+    // El orden dentro del grupo no es cosmético: Salud es la pantalla que se
+    // abre cuando algo anda mal y Configuración la que se abre cuando hay que
+    // cambiar algo.
+    const sistema = ADMIN_NAV.find((g) => g.label === "Sistema")!;
+    const salud = sistema.items.find((i) => i.href === "/admin/salud")!;
+    expect(salud).toMatchObject({ label: "Salud", icon: "activity", superadminOnly: true });
+    expect(sistema.items.map((i) => i.href)).toEqual(["/admin/salud", "/admin/configuracion"]);
+    expect(
+      navForRoles(["admin"]).some((g) => g.items.some((i) => i.href === "/admin/salud")),
+    ).toBe(false);
   });
 
   it("does not mutate ADMIN_NAV", () => {
@@ -60,6 +73,7 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive("/admin/socios/143", "/admin/socios")).toBe(true);
     expect(isNavItemActive("/admin/socios/carga/45", "/admin/socios")).toBe(true);
     expect(isNavItemActive("/admin/socios/143/baja", "/admin/socios")).toBe(true);
+    expect(isNavItemActive("/admin/salud", "/admin/salud")).toBe(true);
   });
 
   it("does not match sibling prefixes", () => {

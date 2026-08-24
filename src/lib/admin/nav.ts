@@ -4,7 +4,8 @@
 import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
-  | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings";
+  | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings"
+  | "activity";
 
 export type AdminNavItem = {
   href: string;
@@ -43,6 +44,10 @@ export const ADMIN_NAV: AdminNavGroup[] = [
   {
     label: "Sistema",
     items: [
+      // Salud va primero: es la pantalla que se abre cuando algo anda mal, y
+      // Configuración es la que se abre cuando hay que cambiar algo. Lo urgente
+      // arriba.
+      { href: "/admin/salud", label: "Salud", icon: "activity", superadminOnly: true },
       { href: "/admin/configuracion", label: "Configuración", icon: "settings", superadminOnly: true },
     ],
   },

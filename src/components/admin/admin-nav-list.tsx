@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  CalendarDays, Home, Inbox, Newspaper, ScrollText, Settings, Users, Wallet,
+  Activity, CalendarDays, Home, Inbox, Newspaper, ScrollText, Settings, Users, Wallet,
 } from "lucide-react";
 
 import { isNavItemActive, type AdminNavGroup, type AdminNavIcon } from "@/lib/admin/nav";
@@ -19,6 +19,7 @@ const ICONS: Record<AdminNavIcon, typeof Home> = {
   "scroll-text": ScrollText,
   newspaper: Newspaper,
   "calendar-days": CalendarDays,
+  activity: Activity,
   settings: Settings,
 };
 

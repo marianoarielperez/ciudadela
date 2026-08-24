@@ -63,6 +63,14 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
     label: "Sistema",
     cards: [
       {
+        // `title` idéntico al `label` de la nav: lo verifica dashboard-cards.test.ts.
+        title: "Salud",
+        description: "Tareas automáticas, backup, Mercado Pago y avisos que no salieron.",
+        href: "/admin/salud",
+        cta: "Ver el estado",
+        superadminOnly: true,
+      },
+      {
         title: "Configuración",
         description: "Parámetros del sistema.",
         href: "/admin/configuracion",
