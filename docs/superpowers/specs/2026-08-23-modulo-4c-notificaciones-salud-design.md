@@ -284,6 +284,7 @@ está duplicada en `applications/route.ts:17-23` y `reconcile/route.ts:13-17`),
 | 6 | Cesantía sólo activos y colaboradores (REG-15) |
 | 7 | Padrón electoral completo, con morosos listados para purga (CCyC: hasta 1 h antes) |
 | 8 | Entran todas las deudas heredadas recomendadas |
+| 9 | Un socio suspendido NO vota: el padrón electoral lo excluye (decisión del 23/08/2026, cierra la pregunta abierta del plan) |
 
 ## §14. Criterios de aceptación
 
