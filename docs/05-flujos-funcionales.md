@@ -420,23 +420,52 @@ La pestaña de cuenta corriente muestra:
 ## 7. Panel de socio (`/mi`)
 
 Login email + contraseña (Auth.js). Recupero por email.
-- **Mis datos**: ver todo, editar teléfono/email/domicilio (cambio de email exige
-  re-verificación; cambio de domicilio queda marcado "pendiente de constatación"
-  para la CD).
-- **Mi cuenta** (`/mi/cuenta`, implementada en la fase 4A, **solo lectura**): la
-  misma sección que ve el admin en la ficha —resumen, cinta de períodos y libro de
-  pagos— con el tratamiento cambiado ("Debés", no "Debe") y sin los botones de
-  cobro. El adherente lee "Tu aporte es voluntario", no "estás al día". Los recibos
-  se descargan por `/api/mi/recibos/[id]`: pedir uno ajeno devuelve **404**, no 403,
-  y con el mismo cuerpo que un id inexistente.
-  La página se autoriza a sí misma: el layout de `/mi` corre en paralelo y no la
-  protege.
+
+Desde la **fase 5A** (24/08/2026) el panel tiene shell propio: pestañas por URL
+—Inicio, Mi cuenta, Mis datos, Estatuto— con skip link y foco al `<main>`, config
+declarativa en `src/lib/mi/nav.ts` (mismo patrón que la lateral del admin) y
+fronteras `error.tsx`/`not-found.tsx` propias. El **Inicio** abre con la
+credencial de socio —franja con la foto aérea del barrio, número de socio del
+libro abierto, categoría, antigüedad y estado electoral REG-31 (reutiliza la
+lógica del padrón electoral de la fase 4C)— seguida del estado de cuenta y los
+accesos a las demás secciones.
+
+- **Mis datos** (`/mi/datos`, implementada en la fase 5A): el socio ve su ficha
+  completa y edita teléfono, domicilio y email. El domicilio nuevo queda
+  "pendiente de constatación" (columna `Member.addressPendingReview`) hasta que
+  el admin lo marca constatado desde la ficha; el email pasa a `declarado` y
+  dispara la re-verificación REG-08 por el mismo circuito
+  `ActionToken`/`/verificar/[token]` del resto del sistema.
+- **Mi cuenta** (`/mi/cuenta`, implementada en la fase 4A, restyleada en la 5A,
+  **solo lectura**): la misma sección que ve el admin en la ficha —resumen y
+  libro de pagos— con el tratamiento cambiado ("Debés", no "Debe") y sin los
+  botones de cobro. El adherente lee "Tu aporte es voluntario", no "estás al
+  día". Los recibos se descargan por `/api/mi/recibos/[id]`: pedir uno ajeno
+  devuelve **404**, no 403, con el mismo cuerpo que un id inexistente. La página
+  se autoriza a sí misma: el layout de `/mi` corre en paralelo y no la protege.
+  **Enmienda (fase 5A, 24/08/2026):** se sacaron los chips de filtro por año que
+  estaban previstos para la cinta de períodos y el libro de pagos —
+  `AccountSection`, el componente que esta pantalla comparte con la ficha de
+  tesorería del admin, arma los links a recibo desde la lista completa de pagos,
+  y filtrarla por año dejaba celdas pagadas sin link. Detalle técnico en la spec
+  del Módulo 5, §3.3.
+- **Estatuto** (`/mi/estatuto` + `GET /api/mi/estatuto`, implementada en la fase
+  5A): el PDF (`datos/estatuto.pdf`) servido detrás de autenticación, movido
+  desde el sitio público el 19/08/2026.
 - **Pagar**: si hay pendientes, botón que genera el link de Checkout Pro por los
   períodos seleccionados. Si es adherente sin débito: botón "hacer un aporte
-  voluntario" y/o "adherir al débito automático".
-- **Solicitar baja** (REG-19): formulario con motivo opcional → texto de renuncia
-  generado y timestampeado → aviso de que la CD debe aceptarla → estado visible.
-- Suspendidos: panel en solo-lectura con aviso de la suspensión.
+  voluntario" y/o "adherir al débito automático" — **queda para la fase 5B**.
+- **Solicitar baja** (REG-19) y **solicitar cambio de categoría** (REG-07):
+  formulario con motivo opcional → texto formal generado y timestampeado →
+  aviso de que la CD debe aceptarla → estado visible en una bandeja propia —
+  **queda para la fase 5B**.
+- **Suspendidos**: desde la fase 5A, el suspendido ve su panel completo, su
+  cuenta y sus recibos, y **puede pagar** sus cuotas pendientes — saldar deuda lo
+  acerca a la rehabilitación. Un banner permanente (`FormMessage kind="warning"`)
+  muestra desde/hasta de la suspensión. Ninguna otra acción del panel está
+  disponible mientras dure (adherir o cancelar débito, editar datos, solicitar
+  baja o cambio de categoría); el cesante sigue totalmente bloqueado, como
+  siempre. Ver la aclaración de implementación en `docs/02` REG-20.
 
 ## 8. REEMPADRONATE (wizard público, Art. 9° bis)
 

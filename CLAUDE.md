@@ -355,7 +355,13 @@ webhook que aplica, Checkout Pro, bandeja sin conciliar, ingresos no societarios
 vinculación de suscripciones, conciliación diaria, lote REG-34) y **4C** (crons de
 devengo / recordatorio / resumen, `Notification.failed` con reenvío, aviso del
 débito rechazado, `/admin/salud`, padrón electoral y la cancelación del débito de MP
-al dar de baja). Sigue el **Módulo 5** (panel de socio). Ver `docs/07`.
+al dar de baja). Del **Módulo 5** (panel de socio) está cerrada la **fase 5A**
+(24/08/2026): shell propio de `/mi` con pestañas por URL, credencial de socio en
+el Inicio, `/mi/datos` editable (teléfono, domicilio, email) y estatuto en PDF
+autenticado, con el socio suspendido en modo "ver + pagar" (ve su cuenta y sus
+recibos, puede pagar, nada más). Sigue la **fase 5B**: débito automático
+autogestionado (adherir y cancelar desde `/mi/debito`), y las solicitudes de baja
+(REG-19) y de cambio de categoría con su bandeja en el panel admin. Ver `docs/07`.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab
