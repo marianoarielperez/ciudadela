@@ -215,6 +215,18 @@ describe("buildElectoralRoll", () => {
     expect(roll.enabled.map((r) => r.memberNumber)).toEqual([12, 88]);
   });
 
+  it("dos homónimos AMBOS sin número desempatan por id, no por el orden de la consulta", async () => {
+    // Es el caso que el desempate por número no cerraba: `0 - 0 = 0` devolvía
+    // al orden de la consulta y a la estabilidad del `sort`. Y cae justo en el
+    // bloque de adelante, donde la anomalía se acumula. Se corre dos veces con
+    // las filas al revés: la hoja tiene que salir igual.
+    const sin = (id: number) => m({ id, fullName: "Pérez, Juan", memberships: [] });
+    const a = await buildElectoralRoll(fakeDb([sin(9), sin(4)]) as never, AT, VALUE);
+    const b = await buildElectoralRoll(fakeDb([sin(4), sin(9)]) as never, AT, VALUE);
+    expect(a.enabled.map((r) => r.memberId)).toEqual([4, 9]);
+    expect(b.enabled.map((r) => r.memberId)).toEqual([4, 9]);
+  });
+
   it("el bloque a purgar y el CSV salen en el MISMO orden alfabético", async () => {
     // El orden vale para los DOS bloques, y el CSV no es otro documento: es la
     // hoja en otro formato, y quien lo abre al lado de la impresión tiene que

@@ -189,6 +189,22 @@ describe("ElectoralRollSheet — qué sale impreso", () => {
     expect(html).toContain("—");
   });
 
+  it("la nota del socio sin número sale SÓLO cuando hay alguno", () => {
+    // Fuera de la ventana de un re-empadronamiento no hay ninguno, y la Junta
+    // Electoral es un cuerpo de vecinos leyendo un papel: una frase que
+    // describe una fila que no está los manda a buscarla por toda la hoja.
+    const conNumero = sheet(roll({ enabled: [row()] }));
+    expect(conNumero).toContain("orden alfabético por apellido");
+    expect(conNumero).not.toContain("figura primero");
+
+    const sinNumero = sheet(roll({ enabled: [row({ memberNumber: null })] }));
+    expect(sinNumero).toContain("figura primero");
+
+    // También cuando el sin número cae en el bloque de purga.
+    const enPurga = sheet(roll({ toPurge: [row({ memberNumber: null, arrears: 2, debt: 12000 })] }));
+    expect(enPurga).toContain("figura primero");
+  });
+
   it("un bloque vacío no renderiza un thead sin filas", () => {
     const html = sheet(roll());
 

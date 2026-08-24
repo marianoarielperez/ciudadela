@@ -21,6 +21,7 @@ import { PAYMENT_LINK_ERRORS, paymentLinks } from "@/lib/mp/payment-link";
 import { isPaymentLinkSealValid, sealPaymentLink } from "@/lib/mp/payment-link-seal";
 import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { prisma } from "@/lib/prisma";
+import { countPendingFees } from "@/lib/treasury/account";
 
 export type LinkState = {
   error?: string;
@@ -57,7 +58,11 @@ export async function createPaymentLinkAction(_prev: LinkState, formData: FormDa
   // la resolviera a mano o la devolviera. Se chequea ACÁ y no sólo en la
   // pantalla porque la pantalla se puede saltear escribiendo la URL.
   if (member.status === "withdrawn") {
-    const pending = await prisma.fee.count({ where: { memberId: member.id, status: "pending" } });
+    // `countPendingFees` y no un `count` propio: la pantalla decide con
+    // `fetchMemberAccount().pendingCount` y ésta con esto, y las dos cuentas
+    // TIENEN que dar lo mismo — si divergen, el `EmptyState` ofrece un link que
+    // el servidor rechaza, o al revés. Una sola definición de "cuántas debe".
+    const pending = await countPendingFees(prisma, member.id);
     if (pending === 0) {
       return { error: "El socio está dado de baja y no tiene cuotas pendientes: no hay nada que cobrarle." };
     }

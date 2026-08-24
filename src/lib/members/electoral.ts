@@ -95,17 +95,22 @@ export type ElectoralRoll = {
  *  panel (`activities/rules.ts`).
  *
  *  Desempate por número de socio: dos vecinos homónimos existen, y sin desempate
- *  su orden relativo cambiaría entre dos impresiones del mismo padrón. */
+ *  su orden relativo cambiaría entre dos impresiones del mismo padrón. El `id`
+ *  cierra el desempate: dos homónimos que ADEMÁS estén los dos sin número —el
+ *  bloque de adelante, justo donde la anomalía se acumula— daban `0 - 0 = 0` y
+ *  su orden volvía a depender de cómo los devolvió la consulta. El `id` es único
+ *  y estable, así que la comparación es un orden total. */
 export function compareForRoll(
-  a: { memberNumber: number | null; fullName: string },
-  b: { memberNumber: number | null; fullName: string },
+  a: { id: number; memberNumber: number | null; fullName: string },
+  b: { id: number; memberNumber: number | null; fullName: string },
 ): number {
   if ((a.memberNumber === null) !== (b.memberNumber === null)) {
     return a.memberNumber === null ? -1 : 1;
   }
   return (
     a.fullName.localeCompare(b.fullName, "es-AR") ||
-    (a.memberNumber ?? 0) - (b.memberNumber ?? 0)
+    (a.memberNumber ?? 0) - (b.memberNumber ?? 0) ||
+    a.id - b.id
   );
 }
 

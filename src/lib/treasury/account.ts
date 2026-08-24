@@ -83,6 +83,13 @@ export async function fetchMemberAccount(
   };
 }
 
+/** "Cuántas cuotas debe", para el que necesita SÓLO ese número y no la cuenta
+ *  corriente entera (las server actions que validan un cobro). Tiene que dar lo
+ *  mismo que `fetchMemberAccount().pendingCount`, que sale del `findMany`
+ *  filtrado de arriba: es la misma pregunta hecha dos veces —una por la pantalla
+ *  y otra por la action que la respalda— y si divergen, la pantalla ofrece algo
+ *  que el servidor rechaza. Por eso está acá, al lado de la otra, y no copiada
+ *  en cada llamador. */
 export async function countPendingFees(db: Pick<PrismaClient, "fee">, memberId: number): Promise<number> {
   return db.fee.count({ where: { memberId, status: "pending" } });
 }

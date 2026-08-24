@@ -132,6 +132,8 @@ export function ElectoralRollSheet({ roll, valued, pastDate, generatedAt }: {
   pastDate: boolean;
   generatedAt: Date;
 }) {
+  // Los dos bloques: el socio sin número puede caer en cualquiera de ellos.
+  const hasUnnumbered = [...roll.enabled, ...roll.toPurge].some((r) => r.memberNumber === null);
   return (
     <div className="space-y-6">
       {/* La cabecera del documento, y sólo en papel: en pantalla estos datos ya
@@ -149,10 +151,12 @@ export function ElectoralRollSheet({ roll, valued, pastDate, generatedAt }: {
         {/* El orden se dice EN PAPEL: el que toma lista busca por apellido y
             tiene que saber que la hoja lo acompaña. El socio sin número va
             primero, fuera del orden, y eso también hay que avisarlo o se lee
-            como un error de la hoja. */}
+            como un error de la hoja — pero SÓLO si hay alguno. Fuera de la
+            ventana de un re-empadronamiento son cero filas, y anunciar una fila
+            que no está manda a la Junta a buscarla por toda la hoja. */}
         <p className="text-[9pt]">
-          Ambos bloques en orden alfabético por apellido. El socio sin número de socio asentado
-          figura primero, antes del orden.
+          Ambos bloques en orden alfabético por apellido.
+          {hasUnnumbered && " El socio sin número de socio asentado figura primero, antes del orden."}
         </p>
       </div>
 
