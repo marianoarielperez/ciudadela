@@ -491,3 +491,37 @@ Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagast
 <p>Cuando el pago se acredite te llega el recibo por este mismo medio. Si ya pagaste o tenés dudas, respondé este mensaje o acercate a la sede.</p>`),
   };
 }
+
+/** Débito rechazado (4C §7.4). Lo dispara el webhook cuando MP intentó cobrar y
+ *  no pudo.
+ *
+ *  El tono importa: el socio no hizo nada mal y el sistema no le está
+ *  reclamando una deuda —la cuota puede no estar vencida todavía, y puede
+ *  haberla pagado en la sede el mismo día—. Por eso el correo no afirma NADA
+ *  sobre el estado de su cuenta: sólo cuenta el intento fallido, para que
+ *  arregle el medio de pago antes de que se le acumule, y le nombra las salidas.
+ *
+ *  El motivo viene traducido por `rejectionReason`: el `status_detail` crudo de
+ *  MP no se muestra nunca.
+ *
+ *  "Cobrar" y no "debitar", y el reintento va en condicional: la misma plantilla
+ *  cubre el débito automático de la suscripción (que MP reintenta solo) y un
+ *  link de Checkout Pro rechazado (que no se reintenta ni existe más allá de sus
+ *  72 h). Prometerle un reintento que no va a pasar es peor que no avisar. */
+export function paymentRejectedEmail(opts: { name: string; amount: number; reason: string }): Rendered {
+  const amount = formatARS(opts.amount);
+  return {
+    subject: "No pudimos cobrar tu cuota — Vecinal Ciudadela",
+    text: `Hola ${opts.name}:
+
+Mercado Pago intentó cobrar tu cuota social de ${amount} y no pudo: ${opts.reason}.
+
+Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta cuando el medio de pago esté disponible.
+
+Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pagar en la sede o pedirnos un link de pago respondiendo este mensaje.${SIGNATURE}`,
+    html: layout("No pudimos cobrar tu cuota", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>Mercado Pago intentó cobrar tu cuota social de <strong>${esc(amount)}</strong> y no pudo: ${esc(opts.reason)}.</p>
+<p>Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta cuando el medio de pago esté disponible.</p>
+<p>Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pagar en la sede o pedirnos un link de pago respondiendo este mensaje.</p>`),
+  };
+}

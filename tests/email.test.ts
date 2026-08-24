@@ -7,9 +7,10 @@ import { makeMailer } from "@/lib/email";
 import {
   boardDigestEmail,
   feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
-  passwordResetEmail, paymentLinkEmail, portalInvite, receiptEmail, verificationEmail,
+  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite, receiptEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
+import { rejectionReason } from "@/lib/mp/rejection-reasons";
 import { getTransport, makeAllowlistTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
@@ -315,6 +316,27 @@ describe("templates", () => {
     });
     expect(m.text).toContain("Cobros que entraron sin conciliar: 2");
     expect(m.text).not.toContain("quedaron");
+  });
+
+  it("el aviso de rechazo no reclama nada y no muestra el código de MP", () => {
+    const m = paymentRejectedEmail({ name: "Ana", amount: 6000, reason: rejectionReason("cc_rejected_card_disabled") });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Ana");
+      expect(body).toContain("6.000");
+      expect(body).toContain("tarjeta");
+      expect(body).not.toContain("cc_rejected");
+      expect(body).not.toContain("deuda");
+    }
+  });
+
+  // El correo lo dispara TAMBIÉN un link de Checkout Pro rechazado, que no se
+  // reintenta: prometer un reintento en indicativo sería mentirle al socio.
+  it("el aviso de rechazo no promete un reintento que puede no existir", () => {
+    const m = paymentRejectedEmail({ name: "Ana", amount: 6000, reason: rejectionReason(null) });
+    expect(m.text).toContain("Si el cobro era tu débito automático");
+    expect(m.text).toContain("pagar en la sede");
+    // Y el genérico tampoco filtra el código crudo.
+    expect(m.text).not.toContain("_");
   });
 });
 

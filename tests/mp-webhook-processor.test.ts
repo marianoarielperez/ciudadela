@@ -13,14 +13,17 @@ import { makeMailBudget } from "@/lib/email/batch-cap";
 import { UNMATCHED_REASONS } from "@/lib/mp/unmatched";
 import { makeWebhookProcessor, WEBHOOK_RESULTS } from "@/lib/mp/webhook-processor";
 
-type PaymentOver = Partial<{ status: string; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null; subscriptionId: string | null }>;
+type PaymentOver = Partial<{ status: string; statusDetail: string | null; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null; subscriptionId: string | null }>;
 
 function deps(over: {
   payment?: PaymentOver;
   subscription?: { memberId: number | null; applicationId: number | null } | null;
   subscriptionByRef?: { memberId: number | null } | null;
   application?: { id: number; status: string; fullName: string; email: string; mpPaymentIdEntry: string | null; memberId: number | null } | null;
-  member?: { id: number; category: string } | null;
+  // El mismo `member.findUnique` sirve a dos consultas con `select` distintos:
+  // la del socio del link (id + categoría) y la del aviso de rechazo (nombre,
+  // casilla y estado de la casilla).
+  member?: { id: number; category?: string; fullName?: string; email?: string | null; emailStatus?: string } | null;
   existingPayment?: { id: number } | null;
 } = {}) {
   const paidAt = new Date("2026-09-10T11:15:30Z");
@@ -56,7 +59,10 @@ function deps(over: {
   };
   const unmatched = { record: vi.fn().mockResolvedValue("recorded") };
   const feeValues = { current: vi.fn().mockResolvedValue({ activeAmount: 6000, sharedAmount: 3000 }) };
-  const mailerMock = { sendToApplication: vi.fn().mockResolvedValue({ messageId: "m" }) };
+  const mailerMock = {
+    sendToApplication: vi.fn().mockResolvedValue({ messageId: "m" }),
+    sendToMember: vi.fn().mockResolvedValue({ messageId: "m" }),
+  };
   const sendReceiptEmail = vi.fn().mockResolvedValue({ sent: true });
   // Tipadas con su parámetro (como en el resto de la suite): sin eso
   // `mock.calls` es una tupla vacía y no se puede inspeccionar el asiento.
@@ -531,5 +537,93 @@ describe("todos los results entran en la columna", () => {
     for (const reason of UNMATCHED_REASONS) {
       expect(WEBHOOK_RESULTS).toHaveProperty("unmatched_" + reason);
     }
+  });
+});
+
+// Hasta la 4C el rechazo moría en `webhook_events.result`, una tabla que ninguna
+// pantalla muestra: MP intentaba cobrar, no podía, y el vecino se enteraba
+// cuando alguien le reclamaba la cuota meses después (spec 4C §7.4).
+describe("pago rechazado", () => {
+  const rejected = { status: "rejected", statusDetail: "cc_rejected_insufficient_amount", dateApproved: null } as const;
+  const socio = { id: 5, fullName: "Ana", email: "ana@b.com", emailStatus: "verified" };
+
+  it("le avisa al socio de la suscripción y devuelve el mismo result de siempre", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: socio });
+    expect(await d.p.applyPayment(d.payment, "pre-1")).toBe("payment_rejected_traced");
+    expect(d.mailerMock.sendToMember).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: 5, to: "ana@b.com", type: "payment_rejected",
+    }));
+    const msg = d.mailerMock.sendToMember.mock.calls[0][0].message;
+    expect(msg.text).toContain("fondos");
+    // Nunca el código crudo de MP en el cuerpo.
+    expect(msg.text).not.toContain("cc_rejected");
+  });
+
+  it("el socio del link de pago también se entera", async () => {
+    const d = deps({ payment: { ...rejected, externalReference: "pago:5:2" }, subscription: null, member: socio });
+    expect(await d.p.applyPayment(d.payment, null)).toBe("payment_rejected_traced");
+    expect(d.mailerMock.sendToMember).toHaveBeenCalledWith(expect.objectContaining({ memberId: 5 }));
+    // Con referencia de link no hace falta preguntar por la suscripción.
+    expect(d.db.mpSubscription.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("sin socio atribuible no manda nada y no rompe", async () => {
+    const d = deps({ payment: { ...rejected, externalReference: null }, subscription: null });
+    expect(await d.p.applyPayment(d.payment, null)).toBe("payment_rejected_traced");
+    expect(d.mailerMock.sendToMember).not.toHaveBeenCalled();
+    expect(d.db.member.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("una casilla que rebota no recibe el aviso", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: { ...socio, emailStatus: "bounced" } });
+    await d.p.applyPayment(d.payment, "pre-1");
+    expect(d.mailerMock.sendToMember).not.toHaveBeenCalled();
+    // Y el asiento deja constancia de que no se avisó.
+    const entry = d.auditMock.mock.calls.find((c) => (c[0] as { action: string }).action === "payment_rejected")?.[0] as { detail: Record<string, unknown> };
+    expect(entry.detail).toMatchObject({ memberId: 5, notified: false });
+  });
+
+  it("un socio sin casilla cargada tampoco, y el asiento lo dice", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: { ...socio, email: null } });
+    expect(await d.p.applyPayment(d.payment, "pre-1")).toBe("payment_rejected_traced");
+    expect(d.mailerMock.sendToMember).not.toHaveBeenCalled();
+    const entry = d.auditMock.mock.calls.find((c) => (c[0] as { action: string }).action === "payment_rejected")?.[0] as { detail: Record<string, unknown> };
+    expect(entry.detail).toMatchObject({ notified: false });
+  });
+
+  it("si el aviso explota, el rechazo NO se vuelve un 500: MP reintentaría el cobro para siempre", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: socio });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    d.mailerMock.sendToMember.mockRejectedValue(Object.assign(new Error("smtp"), { code: "EAUTH" }));
+    expect(await d.p.applyPayment(d.payment, "pre-1")).toBe("payment_rejected_traced");
+    // Al log va el CÓDIGO, nunca la casilla (docs/08, Ley 25.326).
+    const logged = err.mock.calls.flat().join(" ");
+    expect(logged).toContain("EAUTH");
+    expect(logged).not.toContain("@");
+    err.mockRestore();
+  });
+
+  it("si la BASE se cae buscando al socio, tampoco se vuelve un 500", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: socio });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    d.db.member.findUnique.mockRejectedValue(Object.assign(new Error("db"), { code: "P1001" }));
+    expect(await d.p.applyPayment(d.payment, "pre-1")).toBe("payment_rejected_traced");
+    err.mockRestore();
+  });
+
+  it("el asiento lleva el status_detail y NUNCA el payerEmail", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: socio });
+    await d.p.applyPayment(d.payment, "pre-1");
+    const entry = d.auditMock.mock.calls.find((c) => (c[0] as { action: string }).action === "payment_rejected")?.[0] as { detail: Record<string, unknown> };
+    expect(entry.detail).toMatchObject({ statusDetail: "cc_rejected_insufficient_amount", memberId: 5, notified: true });
+    expect(JSON.stringify(entry.detail)).not.toContain("@");
+  });
+
+  it("nada de esto aplica un cobro: un rechazo no es plata", async () => {
+    const d = deps({ payment: rejected, subscription: { memberId: 5, applicationId: null }, member: socio });
+    await d.p.applyPayment(d.payment, "pre-1");
+    expect(d.treasury.registerPayment).not.toHaveBeenCalled();
+    expect(d.unmatched.record).not.toHaveBeenCalled();
+    expect(d.sendReceiptEmail).not.toHaveBeenCalled();
   });
 });
