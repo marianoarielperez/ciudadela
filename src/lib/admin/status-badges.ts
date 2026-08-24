@@ -87,18 +87,20 @@ export function cronStateBadgeVariant(state: CronState): BadgeVariant {
 
 export function backupStateBadgeVariant(state: BackupState): BadgeVariant {
   if (state === "missing") return "destructive";
-  if (state === "stale") return "secondary";
+  // "no lo puedo leer" NO es "no corrió": lo que está roto son los permisos del
+  // panel, no el backup. Gris con relleno, nunca rojo.
+  if (state === "stale" || state === "unreadable") return "secondary";
   // "sin configurar" es una pregunta abierta sobre el entorno, no una alarma:
   // borde fino. Acusar un backup roto que nunca se instaló es peor que callarse.
   if (state === "unconfigured") return "outline";
   return "success";
 }
 
-// Los recibos sin sellar: sólo el diferido y el fallido piden una acción del
-// operador, y son los únicos dos que se ven de lejos.
+// Los recibos sin sellar: sólo el fallido y el que nunca se intentó piden una
+// acción del operador, y son los únicos dos que se ven de lejos.
 export function pendingReceiptBadgeVariant(state: PendingReceiptState): BadgeVariant {
   if (state === "failed") return "destructive";
-  if (state === "deferred") return "default";
+  if (state === "not_attempted") return "default";
   if (state === "no_email") return "secondary";
   return "outline"; // sent: salió; lo que falta es el sello
 }

@@ -1,4 +1,4 @@
-// "¿Esta suscripción sigue viva?" — las DOS semánticas que de verdad existen
+// "¿Esta suscripción sigue viva?" — las TRES semánticas que de verdad existen
 // (spec 4C §10). Antes había cinco definiciones repartidas y dos de ellas
 // producían daño observable: la del reconcile no incluía `pending` (una
 // suscripción que autorizó sin webhook nunca se sincronizaba ni se le buscaban
@@ -17,6 +17,13 @@
 //                     estado desconocido cuenta como débito posible: no saber es
 //                     peor que avisar de más (el argumento original vive en
 //                     `members/auto-debit.ts:44-49`).
+//   isCharging      — UN valor. "¿De acá está saliendo plata AHORA?" Es la más
+//                     angosta de las tres y la usa /admin/salud: para un socio
+//                     VIGENTE, cualquier estado que no sea `authorized` —incluida
+//                     una `paused` que se reanuda, o una `cancelled` que el
+//                     vecino canceló desde su app— significa que este mes no
+//                     entra la cuota. `canStillCharge` no sirve para esa
+//                     pregunta: contesta "puede volver a cobrar", no "cobra".
 //
 // El lote REG-34 (`fee-value-batch.ts`) usa `authorized` a secas y NO importa
 // ninguna de las dos: es una tercera pregunta —"¿a cuál tiene sentido empujarle
@@ -55,4 +62,11 @@ export function isKnownDead(status: string): boolean {
 
 export function isNotCancelled(status: string): boolean {
   return !isKnownDead(status);
+}
+
+/** El ÚNICO estado del que sale plata hoy. Angosto a propósito: lo usa el
+ *  tablero de salud para preguntar "¿este socio vigente está pagando?", y ahí
+ *  `paused` y `pending` son tan "no entra la cuota" como `cancelled`. */
+export function isCharging(status: string): boolean {
+  return status === "authorized";
 }

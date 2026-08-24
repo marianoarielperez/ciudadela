@@ -43,8 +43,11 @@ export async function POST(req: Request) {
   try {
     const summary = await digestCron.send(data);
     // `recipients: 0` NO es un fallo: sin la clave cargada no hay a quién
-    // mandarle, y la corrida cierra en verde. Lo que pinta de rojo es un envío
-    // que se INTENTÓ y no salió.
+    // mandarle, y la corrida cierra en verde. Tampoco lo es un bloqueo por
+    // `EMAIL_ALLOWLIST`, que `send()` cuenta aparte en `allowlistBlocked`: con la
+    // lista puesta —el estado de producción hasta el checklist de lanzamiento—
+    // esto cerraría en rojo todas las noches con novedades. Lo que pinta de rojo
+    // es un envío que se INTENTÓ contra la red y no salió.
     const ok = summary.failed === 0;
     await prisma.cronRun.update({ where: { id: run.id }, data: { finishedAt: new Date(), ok, summary } });
     // Sin datos personales: el día, los contadores y los CÓDIGOS de los fallos

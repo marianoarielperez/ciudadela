@@ -10,7 +10,7 @@
 import { readFile as fsReadFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export type BackupState = "fresh" | "stale" | "missing" | "unconfigured";
+export type BackupState = "fresh" | "stale" | "missing" | "unreadable" | "unconfigured";
 export type BackupHealth = { state: BackupState; lastOkAt: Date | null };
 
 /** El backup corre a las 04:00 (`scripts/backup.sh:3`). 26 h en vez de 24 le dan
@@ -22,16 +22,25 @@ export async function readBackupHealth(
   opts?: { dir?: string; readFile?: (path: string) => Promise<string> },
 ): Promise<BackupHealth> {
   const dir = opts && "dir" in opts ? opts.dir : process.env.BACKUP_DIR;
-  // Los TRES estados se distinguen a propósito: "no configurado" (nadie definió
-  // BACKUP_DIR), "no está el archivo" (el backup nunca corrió, o la ruta apunta
-  // mal) y "viejo" (corría y se cortó). Un `Date | null` pelado los confunde, y
+  // Los CUATRO estados se distinguen a propósito: "no configurado" (nadie
+  // definió BACKUP_DIR), "no está el archivo" (el backup nunca corrió, o la ruta
+  // apunta mal), "no se puede leer" (permisos: el problema es de la pantalla) y
+  // "viejo" (corría y se cortó). Un `Date | null` pelado los confunde, y
   // significan cosas muy distintas para el que tiene que arreglarlo.
   if (!dir) return { state: "unconfigured", lastOkAt: null };
   const read = opts?.readFile ?? ((p: string) => fsReadFile(p, "utf8"));
   let raw: string;
   try {
     raw = await read(join(dir, "LAST_OK"));
-  } catch {
+  } catch (e) {
+    // Un `catch` pelado convertía "no puedo leerlo" en "nunca corrió", y
+    // `missing` se pinta ROJO. `EACCES` sobre `/var/sigev/backups` es lo
+    // esperable cuando el backup lo escribe root y el panel corre como otro
+    // usuario: ahí lo roto son los permisos de la PANTALLA, no el backup, y
+    // acusar un backup caído que anda perfecto es la clase de rojo que entrena
+    // al operador a no mirar el tablero.
+    const code = (e as { code?: unknown } | null)?.code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") return { state: "unreadable", lastOkAt: null };
     return { state: "missing", lastOkAt: null };
   }
   const lastOkAt = new Date(raw.trim());

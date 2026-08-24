@@ -132,10 +132,12 @@ describe("cronStateBadgeVariant", () => {
 
 describe("backupStateBadgeVariant", () => {
   it("'fresh' es el único verde, y 'sin configurar' no acusa un backup roto", () => {
-    const states = ["fresh", "stale", "missing", "unconfigured"] as const;
+    const states = ["fresh", "stale", "missing", "unreadable", "unconfigured"] as const;
     expect(states.filter((s) => backupStateBadgeVariant(s) === "success")).toEqual(["fresh"]);
     expect(backupStateBadgeVariant("missing")).toBe("destructive");
     expect(backupStateBadgeVariant("unconfigured")).toBe("outline");
+    // Un backup que no se puede LEER no es un backup roto: gris, nunca rojo.
+    expect(backupStateBadgeVariant("unreadable")).toBe("secondary");
     for (const s of states) expect(VARIANTS).toContain(backupStateBadgeVariant(s));
   });
 });
@@ -143,10 +145,10 @@ describe("backupStateBadgeVariant", () => {
 describe("pendingReceiptBadgeVariant", () => {
   it("los dos que piden una acción se ven de lejos, y el que ya salió no", () => {
     expect(pendingReceiptBadgeVariant("failed")).toBe("destructive");
-    expect(pendingReceiptBadgeVariant("deferred")).toBe("default");
+    expect(pendingReceiptBadgeVariant("not_attempted")).toBe("default");
     expect(pendingReceiptBadgeVariant("no_email")).toBe("secondary");
     expect(pendingReceiptBadgeVariant("sent")).toBe("outline");
-    for (const s of ["deferred", "failed", "no_email", "sent"] as const) {
+    for (const s of ["not_attempted", "failed", "no_email", "sent"] as const) {
       expect(VARIANTS).toContain(pendingReceiptBadgeVariant(s));
     }
   });

@@ -23,6 +23,7 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { CONFIG_KEYS, configReader, parseRecipients } from "@/lib/config";
 import { mailer } from "@/lib/email";
+import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import { boardDigestEmail } from "@/lib/email/templates";
 import { formatDateAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
@@ -81,7 +82,12 @@ export function hasNews(d: DigestData): boolean {
 }
 
 export type DigestSendSummary = {
-  day: string; recipients: number; sent: number; failed: number; errors: string[];
+  day: string; recipients: number; sent: number;
+  /** Bloqueados por `EMAIL_ALLOWLIST`. NO son `failed`: ver el catch de
+   *  `send()`. Contarlos aparte es lo que evita que la pantalla de salud arranque
+   *  en rojo mientras la lista siga puesta. */
+  allowlistBlocked: number;
+  failed: number; errors: string[];
 };
 
 type Deps = {
@@ -145,7 +151,9 @@ export function makeDigestCron(deps: Deps) {
 
     async send(data: DigestData): Promise<DigestSendSummary> {
       const to = parseRecipients(await deps.config.getString(CONFIG_KEYS.digestRecipients));
-      const s: DigestSendSummary = { day: data.label, recipients: to.length, sent: 0, failed: 0, errors: [] };
+      const s: DigestSendSummary = {
+        day: data.label, recipients: to.length, sent: 0, allowlistBlocked: 0, failed: 0, errors: [],
+      };
       // Sin destinatarios cargados no hay a quién mandarle, y eso NO es un fallo
       // técnico: la corrida cierra en verde con `sent: 0`. Es el estado del día
       // que se lanza el sistema, antes de que el superadmin cargue la clave.
@@ -161,6 +169,15 @@ export function makeDigestCron(deps: Deps) {
           });
           s.sent++;
         } catch (e) {
+          // El bloqueo de la allowlist NO es un fallo de envío (mismo criterio
+          // que `treasury/reminder.ts:210` y `email/index.ts:61`). Sin esta
+          // rama, el día que el superadmin cargue las direcciones de la Comisión
+          // —con la lista todavía puesta, que es el estado de producción hasta
+          // el checklist de lanzamiento— la primera noche con novedades cerraría
+          // la corrida en `ok: false` y /admin/salud arrancaría en rojo por
+          // diseño: un rojo que no se apaga hasta que se borre la variable, y
+          // que además queda pegado hasta la próxima corrida con novedades.
+          if (codeOf(e) === ALLOWLIST_BLOCK_CODE) { s.allowlistBlocked++; continue; }
           s.failed++;
           // El CÓDIGO, nunca la dirección: este summary va a `CronRun.summary` y
           // al asiento de auditoría (docs/08).

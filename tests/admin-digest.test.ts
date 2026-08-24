@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 // ejercita acá es la factory, con dobles inyectados.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { hasNews, makeDigestCron, previousCivilDayRangeUtc, type DigestData } from "@/lib/admin/digest";
+import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 
 const NOW = new Date("2026-09-15T10:30:00Z"); // 07:30 AR del 15/09
 
@@ -136,5 +137,18 @@ describe("digest cron", () => {
     expect(s.errors).toEqual(["EAUTH"]);
     // Nunca la dirección de un tercero, ni siquiera en el summary del cron.
     expect(s.errors[0]).not.toContain("@");
+  });
+
+  it("el bloqueo por EMAIL_ALLOWLIST NO es un fallo: se cuenta aparte y la corrida cierra en verde", async () => {
+    // Con la lista puesta —el estado de producción hasta el checklist de
+    // lanzamiento—, contarlo como `failed` dejaba `CronRun.ok = false` y
+    // /admin/salud en rojo desde la primera noche con novedades, sin nada que
+    // apagara el rojo salvo borrar la variable.
+    const send = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("bloqueado"), { code: ALLOWLIST_BLOCK_CODE }))
+      .mockResolvedValueOnce({ messageId: "id" });
+    const { cron } = build({ applications: 1, recipients: "a@b.com, c@d.com", send });
+    const s = await cron.send(await cron.collect());
+    expect(s).toMatchObject({ sent: 1, allowlistBlocked: 1, failed: 0, errors: [] });
   });
 });

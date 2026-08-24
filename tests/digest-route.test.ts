@@ -25,7 +25,7 @@ const quiet: DigestData = {
   applications: 0, inboxNew: 0, notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
 };
 const busy: DigestData = { ...quiet, applications: 2, paymentsCount: 1, paymentsTotal: 6000 };
-const summary = { day: "14/09/2026", recipients: 2, sent: 2, failed: 0, errors: [] as string[] };
+const summary = { day: "14/09/2026", recipients: 2, sent: 2, allowlistBlocked: 0, failed: 0, errors: [] as string[] };
 
 const req = (auth?: string) =>
   new Request("http://x/api/cron/digest", { method: "POST", headers: auth ? { authorization: auth } : {} });
@@ -79,7 +79,7 @@ describe("POST /api/cron/digest", () => {
   // Sin destinatarios cargados no hay a quién avisarle, y eso no es un fallo: la
   // corrida cierra en verde. Es el estado del sistema recién lanzado.
   it("sin destinatarios cargados → 200 y ok:true, con sent en cero", async () => {
-    mocks.send.mockResolvedValue({ day: "14/09/2026", recipients: 0, sent: 0, failed: 0, errors: [] });
+    mocks.send.mockResolvedValue({ day: "14/09/2026", recipients: 0, sent: 0, allowlistBlocked: 0, failed: 0, errors: [] });
     const res = await POST(req("Bearer s3cret"));
     expect(res.status).toBe(200);
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
@@ -88,10 +88,22 @@ describe("POST /api/cron/digest", () => {
   });
 
   it("un destinatario que falló → 207 y ok:false", async () => {
-    mocks.send.mockResolvedValue({ day: "14/09/2026", recipients: 2, sent: 1, failed: 1, errors: ["EAUTH"] });
+    mocks.send.mockResolvedValue({ day: "14/09/2026", recipients: 2, sent: 1, allowlistBlocked: 0, failed: 1, errors: ["EAUTH"] });
     expect((await POST(req("Bearer s3cret"))).status).toBe(207);
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ ok: false }),
+    }));
+  });
+
+  // Con `EMAIL_ALLOWLIST` puesta —producción, hasta el checklist de
+  // lanzamiento— ésta es la corrida NORMAL de todas las noches con novedades.
+  // Si cerrara en `ok: false`, /admin/salud nacería en rojo y el operador
+  // aprendería a no mirarla.
+  it("todos los destinatarios bloqueados por la allowlist → 200 y ok:true", async () => {
+    mocks.send.mockResolvedValue({ day: "14/09/2026", recipients: 2, sent: 0, allowlistBlocked: 2, failed: 0, errors: [] });
+    expect((await POST(req("Bearer s3cret"))).status).toBe(200);
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ ok: true }),
     }));
   });
 
