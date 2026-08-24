@@ -317,6 +317,11 @@ model Notification {
   type           NotificationType
   via            NotificationVia
   status         NotificationStatus
+  // En una fila `sent` es la fecha del envío; en una `failed` es la fecha del
+  // INTENTO —el correo no salió— y la columna se sigue llamando "enviado el"
+  // porque cambiarle el nombre pedía una migración que no justifica. Las
+  // pantallas que ordenan por esta columna mezclan las dos cosas a propósito:
+  // el orden es cronológico, y el `status` es el que dice qué pasó.
   sentAt         DateTime           @default(now()) @map("sent_at")
   brevoMessageId String?            @map("brevo_message_id") @db.VarChar(128)
   boardFrom      DateTime?          @map("board_from")

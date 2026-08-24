@@ -9,7 +9,7 @@ import {
   paymentLinkEmail, portalInvite, receiptEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
-import { getTransport, type MailMessage } from "@/lib/email/transport";
+import { getTransport, makeAllowlistTransport, type MailMessage } from "@/lib/email/transport";
 
 describe("templates", () => {
   // 26/08/2026 15:40 hora argentina (UTC-3). Los tests corren con TZ=UTC, así
@@ -316,6 +316,36 @@ describe("makeMailer: el fallo deja rastro", () => {
     // Y el log del fallo del registro tampoco nombra la dirección.
     expect(err.mock.calls.flat().join(" ")).not.toContain("@");
     err.mockRestore();
+  });
+
+  // COSTURA: los dos tests de arriba usan un transporte de mentira que lanza el
+  // código a mano, así que ninguno prueba que el mailer y la allowlist REAL se
+  // entiendan. Si alguien envuelve o mueve ese error, los dos siguen en verde y
+  // en producción —donde la allowlist bloquea a casi todos— una sola corrida de
+  // devengo dejaría ~160 filas `failed` y /admin/salud nacería inservible.
+  it("costura: el mailer con el transporte REAL de la allowlist no escribe fila al bloquear", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const inner = vi.fn(async () => ({ messageId: "no-debería-llegar" }));
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => args.data);
+    const mailer = makeMailer({
+      transport: makeAllowlistTransport({ send: inner }, new Set(["permitido@b.com"])),
+      db: { notification: { create } } as never,
+    });
+
+    await expect(
+      mailer.sendToMember({ memberId: 4, to: "bloqueado@y.com", type: "fee_reminder", message, summary: "s" }),
+    ).rejects.toThrow(/EMAIL_ALLOWLIST/);
+    expect(inner).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    // Y el aviso del bloqueo no nombra la casilla (docs/08, Ley 25.326).
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("@");
+
+    // La otra mitad de la costura: una dirección listada sí pasa y sí acredita.
+    await mailer.sendToMember({ memberId: 4, to: "Permitido@B.com", type: "fee_reminder", message, summary: "s" });
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: "sent" }) });
+    warn.mockRestore();
   });
 
   it("un aviso a una solicitud también deja su `failed` colgando de la solicitud", async () => {

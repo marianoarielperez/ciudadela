@@ -9,7 +9,7 @@
 // notificaciones tienen que distinguir las dos cosas.
 import type { NotificationType, PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getTransport, type MailMessage, type MailTransport } from "./transport";
+import { ALLOWLIST_BLOCK_CODE, getTransport, type MailMessage, type MailTransport } from "./transport";
 
 type MailerDeps = { transport: MailTransport; db: Pick<PrismaClient, "notification"> };
 
@@ -23,10 +23,11 @@ function failureCode(e: unknown): string {
   return typeof name === "string" && name !== "" ? name.slice(0, 200) : "unknown";
 }
 
-/** El bloqueo del entorno de prueba NO es un fallo de envío: es la guarda
- *  funcionando (`transport.ts`). Si escribiera `failed`, el piloto con
- *  `EMAIL_ALLOWLIST` puesta llenaría la pantalla de salud de rojo por diseño. */
-const ALLOWLIST_CODE = "EMAIL_ALLOWLIST";
+// El bloqueo del entorno de prueba NO es un fallo de envío: es la guarda
+// funcionando (`transport.ts`). Si escribiera `failed`, el piloto con
+// `EMAIL_ALLOWLIST` puesta llenaría la pantalla de salud de rojo por diseño.
+// El código se IMPORTA de `transport.ts` —una sola fuente del literal— y un
+// test de costura arma el mailer con el transporte real de la allowlist.
 
 export function makeMailer(deps: MailerDeps) {
   async function send(input: {
@@ -57,7 +58,7 @@ export function makeMailer(deps: MailerDeps) {
       // comentario del modelo y en la pantalla, que las separa—. Lo que no se
       // podía seguir sosteniendo es que el hueco no quedara en ningún lado: hoy
       // el rastro muere en el log de PM2, que rota a los 7 días.
-      if (failureCode(e) !== ALLOWLIST_CODE) {
+      if (failureCode(e) !== ALLOWLIST_BLOCK_CODE) {
         try {
           await deps.db.notification.create({
             data: { ...row, status: "failed", brevoMessageId: null, error: failureCode(e) },

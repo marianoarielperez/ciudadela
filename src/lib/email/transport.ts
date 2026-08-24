@@ -57,6 +57,14 @@ export function parseAllowlist(csv: string | undefined): Set<string> | null {
   return items.length > 0 ? new Set(items) : null;
 }
 
+/** `code` del error que lanza el bloqueo. Es la ÚNICA fuente del literal: el
+ *  mailer (`./index.ts`) lo importa de acá para decidir que ese fallo no escribe
+ *  una fila `failed`. Repetir la cadena de los dos lados dejaba pasar que una
+ *  capa intermedia envolviera el error con los dos tests en verde, y en
+ *  producción —donde la allowlist bloquea a casi todos— cada corrida de devengo
+ *  dejaría ~160 filas rojas en /admin/salud. */
+export const ALLOWLIST_BLOCK_CODE = "EMAIL_ALLOWLIST";
+
 export function makeAllowlistTransport(inner: MailTransport, allowlist: Set<string>): MailTransport {
   return {
     async send(msg) {
@@ -66,7 +74,7 @@ export function makeAllowlistTransport(inner: MailTransport, allowlist: Set<stri
         // no se puede distinguir "bloqueado por este entorno" de "SMTP caído".
         throw Object.assign(
           new Error("Envíos de email restringidos en este entorno (EMAIL_ALLOWLIST)."),
-          { code: "EMAIL_ALLOWLIST" },
+          { code: ALLOWLIST_BLOCK_CODE },
         );
       }
       return inner.send(msg);

@@ -110,6 +110,9 @@ describe("mailer.sendToApplication", () => {
         message: { subject: "s", text: "t", html: "h" }, summary: "x",
       }),
     ).rejects.toThrow();
+    // `toHaveBeenCalledWith` matchea ALGUNA llamada: sin el `Times(1)` el test
+    // no verificaría el "nunca `sent`" que promete su nombre.
+    expect(notification.create).toHaveBeenCalledTimes(1);
     expect(notification.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ applicationId: 55, status: "failed", error: "ESOCKET" }),
     });
