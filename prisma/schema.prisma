@@ -83,6 +83,10 @@ model AuditLog {
 
   @@index([userId])
   @@index([entity, entityId])
+  // /admin/salud lee asientos por ACCIÓN (`link_amount_mismatch`,
+  // `webhook_rejected_signature`, los `*_send_failed`). Sin este índice esa
+  // consulta es un full scan sobre la tabla que más crece del sistema.
+  @@index([action])
   @@map("audit_log")
 }
 
@@ -320,8 +324,22 @@ model Notification {
   payloadSummary String?            @map("payload_summary") @db.VarChar(300)
   // Código del error de envío cuando `status = failed` (4C). Nunca la dirección.
   error          String?            @db.VarChar(200)
+  // Período (`YYYY-MM`) al que se refiere el aviso, cuando tiene uno. Hoy lo
+  // escribe el recordatorio de vencimiento (4C): la dedupe "una vez por socio y
+  // por mes" tiene que sobrevivir al restart de PM2, así que la marca es esta
+  // fila y no una variable en memoria (docs/03: un solo proceso, pero el
+  // proceso se reinicia).
+  period         String?            @db.Char(7)
 
   @@index([memberId])
+  // La bandeja de "avisos que no salieron" de /admin/salud es exactamente la
+  // consulta que el índice por socio no cubre.
+  @@index([status])
+  // La dedupe del recordatorio: "¿este socio ya tuvo su aviso de 2026-09?".
+  // Deliberadamente NO es `@@unique`: con `failed` escribiéndose desde la 4C,
+  // un unique haría que un intento fallido bloqueara para siempre el reintento
+  // de ese período.
+  @@index([type, period])
   @@map("notifications")
 }
 
@@ -576,6 +594,9 @@ model WebhookEvent {
   error           String?       @db.VarChar(500)
 
   @@unique([origin, externalEventId])
+  // "¿MP nos sigue avisando?" es un MAX(received_at), y "¿qué entró y no se
+  // pudo procesar?" un filtro por origen. Las dos son full scan hoy.
+  @@index([origin, receivedAt])
   @@map("webhook_events")
 }
 
