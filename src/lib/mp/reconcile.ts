@@ -11,11 +11,10 @@ import { feeAmountFor } from "@/lib/treasury/rules";
 import { describeMpError, mpErrorLog } from "./error-log";
 import { mpGateway, type MpGateway, type MpPaymentDetails } from "./gateway";
 import { parseApplicationReference } from "./references";
+import { CHARGEABLE_STATUSES, isKnownDead } from "./subscription-status";
 import { cents, WEBHOOK_RESULTS, webhookProcessor, type WebhookResult } from "./webhook-processor";
 
 export const RECONCILE_WINDOW_MS = 72 * 60 * 60_000;
-/** Estados de MP con los que una suscripción puede seguir cobrando. */
-const LIVE_STATUSES = ["authorized", "paused"];
 /** Solicitudes por las que vale la pena conservar un preapproval huérfano. */
 const LIVE_APPLICATION_STATUSES = ["started", "pending_payment", "approved_pending_minute", "pending_board", "completed"];
 
@@ -209,10 +208,14 @@ export function makeReconcile(deps: Deps) {
       } catch (e) { fail("payments", {}, e); }
 
       // ── 2 y 3. Por cada suscripción viva: cobros perdidos + estado ──────────
+      // "Viva" acá es `canStillCharge`: la pregunta es de dónde puede salir
+      // plata. Incluye `pending`, que antes quedaba afuera — una suscripción
+      // que autorizó y cuyo webhook no llegó nunca se sincronizaba y nadie le
+      // buscaba los débitos perdidos.
       let subs: Array<{ preapprovalId: string; memberId: number | null; member: { category: "active" | "adherent" | "collaborator" | "cadet" | "honorary" | "lifetime" } | null }> = [];
       try {
         subs = await deps.db.mpSubscription.findMany({
-          where: { status: { in: LIVE_STATUSES } },
+          where: { status: { in: [...CHARGEABLE_STATUSES] } },
           select: { preapprovalId: true, memberId: true, member: { select: { category: true } } },
         });
       } catch (e) { fail("subscriptions", {}, e); }
@@ -265,6 +268,12 @@ export function makeReconcile(deps: Deps) {
         for (const pre of remote) {
           try {
             if (await deps.db.mpSubscription.findUnique({ where: { preapprovalId: pre.id }, select: { preapprovalId: true } })) continue;
+            // Una cancelada no es una huérfana que haya que atender: no cobra
+            // nunca más. Antes se contaban igual y el número no podía bajar —en
+            // producción daba 3 desde siempre—, así que /admin/salud iba a nacer
+            // con una alarma que ninguna acción apaga. Una alarma que no se apaga
+            // entrena al operador a ignorar el tablero entero.
+            if (isKnownDead(pre.status)) continue;
             const applicationId = parseApplicationReference(pre.externalReference);
             if (applicationId === null) { s.orphanPreapprovals++; continue; }
             // El `memberId` de la solicitud no es opcional acá: sin él la fila

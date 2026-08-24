@@ -121,6 +121,19 @@ describe("reconcile", () => {
     expect(d.gateway.cancelPreapproval).toHaveBeenCalledWith("p-exp");
     expect(s).toMatchObject({ orphanCreated: 1, orphanCancelled: 1, orphanPreapprovals: 2 });
   });
+  it("una huérfana CANCELADA no se cuenta: la alarma tiene que poder apagarse", async () => {
+    const d = deps({ preapprovals: [{ id: "pre-cancelada", status: "cancelled", externalReference: null, amount: null, payerEmail: null }] });
+    const s = await d.r.run();
+    expect(s.orphanPreapprovals).toBe(0);
+    expect(d.gateway.cancelPreapproval).not.toHaveBeenCalled();
+  });
+  it("las `pending` también se sincronizan: sin esto, una que autorizó sin webhook queda muerta para siempre", async () => {
+    const d = deps();
+    await d.r.run();
+    expect(d.db.mpSubscription.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: { in: ["authorized", "pending", "paused"] } },
+    }));
+  });
   it("paso 5: divergencia de monto contra feeAmountFor y de planes contra fee_values", async () => {
     const d = deps({ subs: [liveSub("pre-1", 14)], remote: { "pre-1": { status: "authorized", amount: 5000, payerEmail: null, externalReference: null } },
       planIds: { active: "plan-a", shared: "plan-s" }, plans: { "plan-a": 6000, "plan-s": 2500 } });

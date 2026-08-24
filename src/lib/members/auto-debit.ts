@@ -47,6 +47,9 @@
 // negra de un solo valor y cualquier estado desconocido cuenta como débito
 // posible — el mismo criterio, invertido, que `lateEntryNotice` en
 // applications/query.ts, donde no saber es peor que avisar.
+// El predicado vive ahora en `mp/subscription-status.ts`; el argumento, acá.
+
+import { isNotCancelled } from "@/lib/mp/subscription-status";
 
 /** Cuál de las dos señales de débito automático hay, si hay alguna. */
 export type AutoDebitSignal =
@@ -73,7 +76,7 @@ export function autoDebitSignal(input: {
    *  de una: una cancelada y una viva, si el débito se rehízo). */
   subscriptionStatuses: string[];
 }): AutoDebitSignal {
-  if (input.subscriptionStatuses.some((s) => s !== "cancelled")) return "subscription";
+  if (input.subscriptionStatuses.some(isNotCancelled)) return "subscription";
   return input.autoDebit ? "flag_only" : "none";
 }
 

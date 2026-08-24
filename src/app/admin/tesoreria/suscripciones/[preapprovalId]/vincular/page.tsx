@@ -50,10 +50,6 @@ const BASE = "/admin/tesoreria/suscripciones";
  *  Sin esto, el segmento de la URL llegaría entero a la API de Mercado Pago. */
 const ID_RE = /^[a-z0-9-]{1,64}$/;
 
-/** Los estados en los que una suscripción SIGUE cobrando. Se usan para avisar
- *  que el socio ya tiene otra viva: vincularle una segunda le duplica el débito. */
-const LIVE_STATUSES = ["authorized", "pending"];
-
 export default async function VincularSuscripcionPage(props: {
   params: Promise<{ preapprovalId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -160,7 +156,11 @@ export default async function VincularSuscripcionPage(props: {
     expected !== null && remote?.amount != null && Math.abs(remote.amount - expected) >= 0.01
       ? formatARS(expected)
       : null;
-  const otherLive = member?.mpSubscriptions.filter((s) => LIVE_STATUSES.includes(s.status)).length ?? 0;
+  // Cuáles de las suscripciones que el socio YA tiene siguen pudiendo cobrar:
+  // vincularle una segunda le duplica el débito. Es `canStillCharge` y no una
+  // lista propia — la de acá se había quedado sin `paused`, que es exactamente
+  // la que se reanuda y vuelve a cobrar.
+  const otherLive = member?.mpSubscriptions.filter((s) => canStillCharge(s.status)).length ?? 0;
   const memberGone = memberId !== null && !member;
 
   return (

@@ -14,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { treasuryService, type TreasuryService } from "@/lib/treasury/service";
 import { mpErrorLog } from "./error-log";
 import { mpGateway, type MpGateway } from "./gateway";
+import { canStillCharge } from "./subscription-status";
 import { makeUnmatchedInbox } from "./unmatched";
 
 /** El `preapprovalId` es UNIQUE: dos operadores vinculando la misma suscripción
@@ -26,12 +27,12 @@ function isUniqueViolation(e: unknown): boolean {
 /** Los estados en los que la suscripción TODAVÍA puede cobrar. Una `cancelled`
  *  no vuelve nunca; el paso 2 no filtra por estado a propósito (hay que poder
  *  vincular una `paused`), así que por URL directa se puede llegar a vincular
- *  una muerta y no hay que prometer un débito que no va a existir. */
-const CHARGEABLE_STATUSES = new Set(["authorized", "pending", "paused"]);
-
-export function canStillCharge(status: string): boolean {
-  return CHARGEABLE_STATUSES.has(status);
-}
+ *  una muerta y no hay que prometer un débito que no va a existir.
+ *
+ *  El predicado vive ahora en `mp/subscription-status.ts` (es el mismo que usan
+ *  el cron de conciliación y el vinculador); se RE-EXPORTA desde acá porque la
+ *  pantalla de vinculación ya lo importaba de este módulo. */
+export { canStillCharge };
 
 type Deps = {
   db: Pick<PrismaClient, "mpSubscription" | "member" | "$transaction">;

@@ -8,6 +8,7 @@ import {
   NOTIFICATION_STATUS_LABELS, NOTIFICATION_TYPE_LABELS, REASON_LABELS, STATUS_LABELS,
 } from "@/lib/members/labels";
 import { verificationTarget } from "@/lib/members/card-edit";
+import { isNotCancelled } from "@/lib/mp/subscription-status";
 import { arrearsBadgeVariant, memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { buildPeriodGrid, fetchMemberAccount } from "@/lib/treasury/account";
 import { feeValueReader } from "@/lib/treasury/fee-values";
@@ -80,7 +81,11 @@ export default async function SocioPage(props: { params: Promise<{ id: string }>
     }),
   ]);
   if (!member) notFound();
-  const liveSubscriptions = subscriptions.filter((s) => s.status !== "cancelled");
+  // Lista NEGRA (`isNotCancelled`), no lista blanca: acá la pregunta no es si va
+  // a cobrar sino si se puede AFIRMAR que no hay débito, y un estado que MP
+  // invente mañana tiene que seguir apareciendo. El argumento entero está en
+  // `members/auto-debit.ts`.
+  const liveSubscriptions = subscriptions.filter((s) => isNotCancelled(s.status));
 
   // La cuenta corriente se carga siempre: la mora es un dato de encabezado
   // (el badge) y no solo del panel de la pestaña.

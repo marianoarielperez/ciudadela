@@ -64,6 +64,11 @@ export type BatchRun = {
  *  Sólo las `authorized`: una pausada o cancelada no va a cobrar, y empujarle
  *  un monto a MP es una llamada que puede fallar sin que nadie gane nada.
  *
+ *  Es una tercera pregunta, distinta de las dos de `mp/subscription-status.ts`:
+ *  no es "¿puede cobrar?" sino "¿a cuál tiene sentido empujarle un monto AHORA?".
+ *  El costo conocido: una `paused` que se reanuda vuelve a cobrar el monto viejo
+ *  y no aparece en ninguna lista.
+ *
  *  El monto de referencia sale de la base (`MpSubscription.amount`), que el
  *  cron diario de conciliación refresca contra MP. Nunca se relee MP acá: son
  *  N llamadas para pintar una pantalla, y el lote recalcula igual antes de
