@@ -15,7 +15,7 @@ import {
 import { ACCRUING_CATEGORIES } from "@/lib/treasury/rules";
 
 export type ElectoralStatus =
-  | { eligible: true }
+  | { eligible: true; arrearsMatter: boolean }
   | { eligible: false; reason: "category" }
   | { eligible: false; reason: "suspended" }
   | { eligible: false; reason: "seniority"; daysMissing: number }
@@ -42,15 +42,26 @@ export function electoralStatusFor(input: {
     };
   }
   // "Sin mora" es requisito sólo de activos y colaboradores (REG-31).
-  if (input.arrears > 0 && (ACCRUING_CATEGORIES as readonly MemberCategory[]).includes(input.category)) {
+  const arrearsMatter = (ACCRUING_CATEGORIES as readonly MemberCategory[]).includes(input.category);
+  if (input.arrears > 0 && arrearsMatter) {
     return { eligible: false, reason: "arrears", arrears: input.arrears };
   }
-  return { eligible: true };
+  return { eligible: true, arrearsMatter };
 }
 
-/** La frase de la credencial (es-AR, de cara al socio). */
+/**
+ * La frase de la credencial (es-AR, de cara al socio). El habilitado ve un
+ * recordatorio de cuota SÓLO si su categoría es de las que devengan (activo,
+ * colaborador): a un adherente, honorario o vitalicio la deuda no le quita
+ * el voto (o no devenga cuota), y el recordatorio sería ruido — decisión del
+ * cliente del 24/08/2026, para que la frase no suene a campaña permanente.
+ */
 export function electoralSentence(s: ElectoralStatus): string {
-  if (s.eligible) return "Habilitado para votar en las elecciones de la vecinal.";
+  if (s.eligible) {
+    return s.arrearsMatter
+      ? "Cumplís con los requisitos para votar cuando haya elecciones. Recordá mantener tu cuota social al día."
+      : "Cumplís con los requisitos para votar cuando haya elecciones.";
+  }
   switch (s.reason) {
     case "category":
       return "Tu categoría no participa de las elecciones de la vecinal.";

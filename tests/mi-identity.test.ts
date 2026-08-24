@@ -9,7 +9,9 @@ const base = { status: "active" as const, joinedAt: oldEnough, arrears: 0, at };
 
 describe("electoralStatusFor", () => {
   it("an old active member without arrears is eligible", () => {
-    expect(electoralStatusFor({ ...base, category: "active" })).toEqual({ eligible: true });
+    expect(electoralStatusFor({ ...base, category: "active" })).toEqual({
+      eligible: true, arrearsMatter: true,
+    });
   });
 
   it("a cadet is out by category", () => {
@@ -31,10 +33,10 @@ describe("electoralStatusFor", () => {
 
   it("honorary and lifetime skip the seniority floor (REG-30)", () => {
     expect(electoralStatusFor({ ...base, category: "honorary", joinedAt: recent })).toEqual({
-      eligible: true,
+      eligible: true, arrearsMatter: false,
     });
     expect(electoralStatusFor({ ...base, category: "lifetime", joinedAt: recent })).toEqual({
-      eligible: true,
+      eligible: true, arrearsMatter: false,
     });
   });
 
@@ -47,17 +49,64 @@ describe("electoralStatusFor", () => {
     });
     // El aporte del adherente es voluntario: su deuda no le quita el voto.
     expect(electoralStatusFor({ ...base, category: "adherent", arrears: 5 })).toEqual({
-      eligible: true,
+      eligible: true, arrearsMatter: false,
     });
   });
 });
 
 describe("electoralSentence", () => {
   it("has a sentence for every state", () => {
-    expect(electoralSentence({ eligible: true })).toContain("Habilitado");
+    expect(electoralSentence({ eligible: true, arrearsMatter: false })).toContain(
+      "Cumplís con los requisitos para votar cuando haya elecciones.",
+    );
     expect(electoralSentence({ eligible: false, reason: "seniority", daysMissing: 10 })).toContain("10");
     expect(electoralSentence({ eligible: false, reason: "arrears", arrears: 3 })).toContain("al día");
     expect(electoralSentence({ eligible: false, reason: "category" })).toContain("categoría");
     expect(electoralSentence({ eligible: false, reason: "suspended" })).toContain("suspensión");
+  });
+
+  it("adds the fee reminder only for accruing categories (active, collaborator)", () => {
+    expect(electoralSentence({ eligible: true, arrearsMatter: true })).toBe(
+      "Cumplís con los requisitos para votar cuando haya elecciones. Recordá mantener tu cuota social al día.",
+    );
+  });
+
+  it("skips the fee reminder for non-accruing categories (adherent, honorary, lifetime)", () => {
+    expect(electoralSentence({ eligible: true, arrearsMatter: false })).toBe(
+      "Cumplís con los requisitos para votar cuando haya elecciones.",
+    );
+  });
+
+  it("an eligible active member gets the reminder via electoralStatusFor", () => {
+    const s = electoralStatusFor({
+      category: "active",
+      status: "active",
+      joinedAt: oldEnough,
+      arrears: 0,
+      at,
+    });
+    expect(electoralSentence(s)).toContain("Recordá mantener tu cuota social al día.");
+  });
+
+  it("an eligible adherent does NOT get the reminder via electoralStatusFor", () => {
+    const s = electoralStatusFor({
+      category: "adherent",
+      status: "active",
+      joinedAt: oldEnough,
+      arrears: 0,
+      at,
+    });
+    expect(electoralSentence(s)).not.toContain("Recordá mantener tu cuota social al día.");
+  });
+
+  it("an eligible lifetime member does NOT get the reminder via electoralStatusFor", () => {
+    const s = electoralStatusFor({
+      category: "lifetime",
+      status: "active",
+      joinedAt: oldEnough,
+      arrears: 0,
+      at,
+    });
+    expect(electoralSentence(s)).not.toContain("Recordá mantener tu cuota social al día.");
   });
 });
