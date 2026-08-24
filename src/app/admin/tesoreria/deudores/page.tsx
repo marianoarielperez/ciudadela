@@ -155,6 +155,22 @@ export default async function DeudoresPage(props: {
         <Button type="submit" variant="secondary">Filtrar</Button>
       </form>
 
+      {/* Sólo si hay a quién llamar: la hoja no se ofrece cuando el recordatorio
+          por email ya alcanza a todos los deudores de la lista. */}
+      {rows.some((r) => !r.emailUsable) && (
+        <p className="text-sm">
+          <Link
+            className="font-medium text-primary underline underline-offset-2 outline-hidden hover:no-underline focus-visible:ring-2 focus-visible:ring-ring"
+            href={`${BASE}/gestion-manual`}
+          >
+            Lista para gestión manual
+          </Link>{" "}
+          <span className="text-muted-foreground">
+            — los deudores sin email, para llamar o visitar (imprimible).
+          </span>
+        </p>
+      )}
+
       {!feeValue && (
         <FormMessage kind="warning" box>
           No hay un valor de cuota vigente: la deuda en pesos no se puede calcular. Registralo en

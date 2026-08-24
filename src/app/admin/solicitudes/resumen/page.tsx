@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { PrintButton } from "./print-button";
+import { PrintButton } from "@/components/admin/print-button";
 
 export const dynamic = "force-dynamic";
 

@@ -19,6 +19,13 @@ export type DebtorRow = {
   debt: number | null;
   level: ArrearsLevel;
   lastPaidAt: Date | null;
+  /** Teléfono de la ficha: lo usa la lista imprimible de gestión manual, que es
+   *  el canal de los socios sin email (hoy, 23 de los 35 devengantes). */
+  phone: string | null;
+  /** Si tiene casilla utilizable — mismo criterio que el recibo
+   *  (`receipt-email.ts:59`) y el recordatorio: hay email y no rebotó. El que NO
+   *  la tiene es al que hay que llamar. */
+  emailUsable: boolean;
 };
 
 export type DebtorFilters = { level?: 2 | 4; q?: string };
@@ -89,6 +96,8 @@ export async function fetchDebtors(
       debt: feeValue ? debtAmount(pendingCount, m.category, feeValue) : null,
       level: arrearsLevel(pendingCount),
       lastPaidAt: m.payments[0]?.paidAt ?? null,
+      phone: m.phone,
+      emailUsable: Boolean(m.email) && m.emailStatus !== "bounced",
     };
   });
   // Defensa en profundidad: se vuelve a aplicar el umbral sobre las filas ya
