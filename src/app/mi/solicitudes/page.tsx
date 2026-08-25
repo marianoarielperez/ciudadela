@@ -5,12 +5,13 @@
 // (REG-20) — la pantalla no es la única barrera.
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
+import { RequestTypeIcon } from "@/components/admin/request-type-icon";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatDateTimeAR } from "@/lib/format";
 import {
-  REQUEST_STATUS_BADGE_VARIANT, REQUEST_STATUS_LABELS, REQUEST_TYPE_ICONS, REQUEST_TYPE_LABELS,
+  REQUEST_STATUS_BADGE_VARIANT, REQUEST_STATUS_LABELS, REQUEST_TYPE_LABELS,
 } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { CancelRequestForm, CategoryRequestForm, WithdrawalRequestForm } from "./request-forms";
@@ -50,7 +51,6 @@ export default async function MiSolicitudesPage() {
       ) : (
         <div className="space-y-3">
           {requests.map((request) => {
-            const Icon = REQUEST_TYPE_ICONS[request.type];
             return (
               <Card key={request.id}>
                 <CardHeader>
@@ -59,7 +59,7 @@ export default async function MiSolicitudesPage() {
                     className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
                   >
                     <span className="flex items-center gap-2">
-                      <Icon className="size-4 text-primary" aria-hidden />
+                      <RequestTypeIcon type={request.type} className="size-4 text-primary" />
                       {REQUEST_TYPE_LABELS[request.type]}
                     </span>
                     <Badge variant={REQUEST_STATUS_BADGE_VARIANT[request.status]}>

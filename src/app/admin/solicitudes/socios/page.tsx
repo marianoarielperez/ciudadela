@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { PaginationNav } from "@/components/admin/pagination-nav";
+import { RequestTypeIcon } from "@/components/admin/request-type-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,7 +27,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatDateTimeAR } from "@/lib/format";
 import {
   CATEGORY_LABELS, REQUEST_STATUS_BADGE_VARIANT, REQUEST_STATUS_LABELS,
-  REQUEST_TYPE_ICONS, REQUEST_TYPE_LABELS, STATUS_LABELS,
+  REQUEST_TYPE_LABELS, STATUS_LABELS,
 } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
@@ -186,7 +187,6 @@ function applyHref(request: RequestRow): string {
 }
 
 function RequestCard({ request, resolved }: { request: RequestRow; resolved: boolean }) {
-  const Icon = REQUEST_TYPE_ICONS[request.type];
   const number = request.member.memberships.find((m) => m.book.status === "open")?.memberNumber;
 
   return (
@@ -194,7 +194,7 @@ function RequestCard({ request, resolved }: { request: RequestRow; resolved: boo
       <CardHeader>
         <CardTitle as="h2" className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <span className="flex items-center gap-2">
-            <Icon className="size-4 text-primary" aria-hidden />
+            <RequestTypeIcon type={request.type} className="size-4 text-primary" />
             {REQUEST_TYPE_LABELS[request.type]}
           </span>
           <Badge variant={REQUEST_STATUS_BADGE_VARIANT[request.status]}>
