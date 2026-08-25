@@ -958,3 +958,15 @@ misma cuenta de prueba y mismo túnel de siempre. Como todo lo de esta parte:
 bajó solo. La re-adhesión quedó bloqueada por la regla anti-duplicación mensual:
 "Ya abonaste una cuota este mes. Podés adherirte desde el 01/09/2026" (capturas
 del operador). La pantalla post-cancelación dice "Ese débito ya está cancelado".
+
+- **Tercer circuito (mismo día): el push de monto al recategorizar, medido.** Un
+  adherente se adhirió (preapproval nacido cobrando **$3.000**, primer débito
+  aplicado por webhook, recibo `2026-00010`), pidió el pase a activo desde su
+  panel, y la aceptación con acta empujó el monto **antes** de escribir lo
+  local: MP quedó cobrando **$6.000** (`preapproval 5d5ff26…`, verificado por
+  API), el espejo local sincronizado y el asiento con
+  `{subscriptionUpdated: true, amount: 6000, requestId}`. Es el CA-5B-4 del
+  Módulo 5, medido y no supuesto. En la misma corrida se vio la idempotencia
+  del webhook trabajando: las notificaciones duplicadas de
+  `subscription_authorized_payment` respondieron `already_processed` sin tocar
+  nada.
