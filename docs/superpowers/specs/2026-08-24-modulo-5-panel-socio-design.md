@@ -296,6 +296,20 @@ La regla vive como **función pura** `src/lib/members/debit-adhesion.ts`:
 
 ### 7.2 Lado admin — bandeja "Solicitudes de socios"
 
+> **Enmienda (24/08/2026, a la noche — decisión del operador tras cuatro rondas):**
+> esta sección ya no nace como ítem nuevo de la navegación. `/admin/solicitudes`
+> pasa a ser una **sección unificada con pestañas por URL** (patrón Tesorería):
+> **Altas** (la bandeja del wizard, misma URL — se rediseña entera con el lenguaje
+> de la 5A, separando cola de trabajo de historial, con tarjetas, barra de asiento
+> fija y visor de DNI embebido en el detalle; la lógica —actions, actas, emails—
+> queda INTACTA) y **De socios** (`/admin/solicitudes/socios`, esta bandeja).
+> Contadores de pendientes en las pestañas y en la tarjeta del tablero. El chip
+> "Revisar domicilio" (ítem 8 abierto de docs/07) se absorbe en el rediseño.
+> El canal de aviso a la CD es la pestaña con contador + el tablero: el resumen
+> diario NO se toca (hoy no cubre `member_requests`). Detalle operativo en el
+> plan de la fase, Tasks 6-8. Lo que sigue de esta sección vale como semántica
+> de la bandeja; la ruta y el chrome son los de la enmienda.
+
 - Ítem nuevo en el grupo **Gestión** de `src/lib/admin/nav.ts` (+ tarjeta en
   `dashboard-cards.ts`; el test de sincronía existente lo cubre). `requireAdmin`
   (no superadmin). Ruta: `/admin/socios/solicitudes`.
