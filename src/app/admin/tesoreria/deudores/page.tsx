@@ -25,16 +25,12 @@ import { fetchDebtors, parseDebtorFilters } from "@/lib/treasury/debtors";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { ACCRUING_CATEGORIES, ARREARS_THRESHOLD, type ArrearsLevel } from "@/lib/treasury/rules";
 import { ArrearsForm } from "./arrears-form";
+import { SELECT_CLASS } from "@/lib/admin/field-styles";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Deudores — SIGeV" };
 
 const BASE = "/admin/tesoreria/deudores";
-
-// Tokens del shell y no `border` pelado: en modo oscuro un select sin
-// `border-input` ni fondo propio se ve plano contra la página.
-const SELECT_CLASS =
-  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 // El umbral que muestra el badge, no la cantidad de cuotas (eso va en su propia
 // columna). Las claves son las que devuelve `arrearsLevel`.

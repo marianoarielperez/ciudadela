@@ -1,7 +1,9 @@
 // Bandeja de Altas (el wizard web): la pestaña "Altas" de la sección
 // Solicitudes. Dos vistas por querystring —Pendientes (default) e
 // Historial— con el mismo conmutador de `tesoreria/sin-conciliar/page.tsx`.
-// El encabezado y las pestañas los pone `layout.tsx`; acá sólo el contenido.
+// Las pestañas las pone `layout.tsx`; el encabezado (`PageHeader`, con su
+// único <h1> de la pantalla) lo pone ACÁ — el layout dejó de ponerlo
+// (arreglo 1 de la revisión de la tarea 6: eran dos <h1> por pantalla).
 //
 // Pendientes es una COLA de trabajo, no una tabla paginada: las tres
 // bandejas vivas (`pending_payment`, `approved_pending_minute`,
@@ -26,11 +28,13 @@ import { RECORDABLE_STATUSES } from "@/lib/applications/record";
 import { categoryAllowedForResidence } from "@/lib/applications/wizard";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS } from "@/lib/members/labels";
 import { applicationStatusBadgeVariant } from "@/lib/admin/status-badges";
+import { SELECT_CLASS } from "@/lib/admin/field-styles";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { pageHref } from "@/lib/admin/pagination";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
+import { PageHeader } from "@/components/admin/page-header";
 import { PaginationNav } from "@/components/admin/pagination-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,11 +51,6 @@ const BASE = "/admin/solicitudes";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-
-// Tokens del shell y no `border` pelado (copiado de `tesoreria/deudores/page.tsx`):
-// en modo oscuro un select sin `border-input` ni fondo propio se ve plano.
-const SELECT_CLASS =
-  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 const SEGMENT_BASE =
   "inline-flex min-h-11 items-center rounded-md px-4 text-sm font-medium outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring";
@@ -118,13 +117,25 @@ export default async function SolicitudesPage(props: { searchParams: Promise<Sea
   // y `requireAdmin` resuelve contra la fila viva de User — el layout mira el
   // token, que puede estar hasta 8 h desactualizado tras una degradación.
   const actor = await requireAdmin();
-  if (!actor.ok) return <FormMessage kind="error" box>{actor.error}</FormMessage>;
+  if (!actor.ok) {
+    // El layout ya no pone un encabezado propio (arreglo de la revisión de la
+    // tarea 6: dos <h1> por pantalla, uno del layout y otro de acá), así que
+    // esta pantalla tiene que poner el suyo también en la rama bloqueada —
+    // mismo patrón que ya usan el detalle y el resumen.
+    return (
+      <div className="space-y-4">
+        <PageHeader title="Solicitudes" />
+        <FormMessage kind="error" box>{actor.error}</FormMessage>
+      </div>
+    );
+  }
 
   const sp = await props.searchParams;
   const historial = one(sp.vista) === "historial";
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Solicitudes" />
       <nav aria-label="Vista de la bandeja de Altas" className="flex w-fit gap-1 rounded-lg bg-muted p-1">
         <Link
           href={BASE}
@@ -210,6 +221,11 @@ async function PendientesView({ sp }: { sp: SearchParams }) {
           </CardHeader>
           <CardContent className="space-y-2">
             <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              {/* La tabla vieja tenía columna "N°"; sin ella acá, el mensaje de
+                  éxito parcial ("Solicitud N° {id}") y la miga del detalle
+                  ("Solicitud #{id}") nombraban un número que no figuraba en
+                  ninguna parte de la pantalla. */}
+              <span>N° {app.id}</span>
               <span>DNI {app.dni}</span>
               <span>{CATEGORY_LABELS[app.requestedCategory]}</span>
               <span>Débito {app.wantsDebit ? "Sí" : "No"}</span>
@@ -272,29 +288,52 @@ async function PendientesView({ sp }: { sp: SearchParams }) {
         </FormMessage>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          {queue.length} {queue.length === 1 ? "solicitud" : "solicitudes"} en la cola
-        </p>
-        <Button asChild variant="outline">
-          <Link href="/admin/solicitudes/resumen">Resumen para acta</Link>
-        </Button>
-      </div>
-
       {queue.length === 0 ? (
-        <EmptyState description="No hay solicitudes pendientes. Las nuevas aparecen acá solas." />
+        <>
+          <QueueCountRow count={0} />
+          <EmptyState description="No hay solicitudes pendientes. Las nuevas aparecen acá solas." />
+        </>
       ) : selectableIds.length > 0 ? (
+        // El contador y el "Seleccionar todas" viven ACÁ adentro y no en esta
+        // función: la casilla necesita el estado de selección, que sólo existe
+        // dentro de `ApplicationCards` (client component). Ver el comentario
+        // de `queueCount` ahí — es la misma fila que `QueueCountRow`, con la
+        // casilla de más.
         <ApplicationCards
           action={recordApplicationsAction}
           minutes={minutes}
           selectableIds={selectableIds}
+          queueCount={queue.length}
           filters=""
         >
           {cards}
         </ApplicationCards>
       ) : (
-        cards
+        <>
+          <QueueCountRow count={queue.length} />
+          {cards}
+        </>
       )}
+    </div>
+  );
+}
+
+// La fila del contador + "Resumen para acta", para las dos ramas que NO
+// montan `ApplicationCards` (cola vacía, o sin ninguna solicitud asentable).
+// Cuando SÍ hay algo que tildar, `ApplicationCards` renderiza su propia
+// versión de esta misma fila con el checkbox "Seleccionar todas" agregado
+// (ver el arreglo 2 de la revisión de la tarea 6): no se puede compartir un
+// componente server acá porque esa casilla necesita el estado de selección,
+// que vive del lado del cliente.
+function QueueCountRow({ count }: { count: number }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-sm text-muted-foreground">
+        {count} {count === 1 ? "solicitud" : "solicitudes"} en la cola
+      </p>
+      <Button asChild variant="outline">
+        <Link href="/admin/solicitudes/resumen">Resumen para acta</Link>
+      </Button>
     </div>
   );
 }
@@ -364,6 +403,7 @@ async function HistorialView({ sp }: { sp: SearchParams }) {
                     <Link className={cn(INLINE_LINK, "font-medium")} href={`/admin/solicitudes/${app.id}`}>
                       {app.fullName}
                     </Link>
+                    <span className="text-sm text-muted-foreground">N° {app.id}</span>
                     <span className="text-sm text-muted-foreground">DNI {app.dni}</span>
                   </span>
                   <span className="flex items-center gap-3">

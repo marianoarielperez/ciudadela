@@ -3,7 +3,7 @@
 // Component, con los checkboxes `name="ids"` ya renderizados) y le pone arriba
 // el selector de acta y el botón.
 //
-// Misma mecánica que `RecordForm` en solicitudes, y por las mismas razones: la
+// Misma mecánica que `ApplicationCards` en solicitudes, y por las mismas razones: la
 // selección se sigue desde el `onChange` del <form> —las filas vienen del
 // servidor y no pueden llevar manejadores, pero los eventos de React burbujean—
 // y se re-afirma con `useFormResetSync`, porque React 19 resetea el formulario

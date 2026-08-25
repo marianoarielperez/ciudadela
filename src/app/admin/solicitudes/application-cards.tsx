@@ -41,6 +41,11 @@ export function ApplicationCards(props: {
    *  paginación en la cola, así que no hace falta distinguir "de esta
    *  página"). */
   selectableIds: number[];
+  /** Tamaño TOTAL de la cola (asentables + no asentables), sólo para la fila
+   *  del contador que este componente pone arriba de las tarjetas — ver
+   *  `QueueCountRow` en `page.tsx`, que es la misma fila para las ramas que
+   *  no llegan a montar este formulario. */
+  queueCount: number;
   /** Querystring de los filtros vigentes, para volver a la misma vista. La
    *  cola de Pendientes no tiene filtros propios, así que llega vacía; se
    *  mantiene el campo por si el día de mañana los tiene. */
@@ -70,7 +75,14 @@ export function ApplicationCards(props: {
   };
 
   const failures = state.failures ?? [];
-  const barVisible = effective.length > 0;
+  // Arreglo 3 (revisión tarea 6): la barra tiene que quedar MONTADA mientras
+  // haya algo asentable en la cola, no sólo mientras haya algo tildado. Antes
+  // desmontaba en cuanto se destildaba la última tarjeta, y con ella se perdía
+  // el `MinutePicker` — y el borrador de "Acta nueva" (tipo, número, fecha,
+  // descripción) que el operador haya tipeado. El botón de asentar es el que
+  // se deshabilita cuando no hay nada tildado.
+  const barMountable = props.selectableIds.length > 0;
+  const allSelected = all.length > 0 && all.every((id) => effective.includes(id));
 
   return (
     <form ref={formRef} action={formAction} onChange={onChange} className="space-y-4">
@@ -106,14 +118,41 @@ export function ApplicationCards(props: {
         </FormMessage>
       )}
 
+      {/* Arreglo 2 (revisión tarea 6): misma fila que `QueueCountRow` en
+          `page.tsx` —el contador y "Resumen para acta"—, con el "Seleccionar
+          todas" del viejo `record-form.tsx` de vuelta al lado. Va ACÁ y no
+          en la barra de asentar de más abajo, que sólo aparece con algo ya
+          tildado: la casilla necesita poder tildar la PRIMERA. Y va acá y no
+          en `page.tsx` porque el estado de selección (`selected`) vive sólo
+          en este client component — pasarlo para arriba duplicaría estado. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+          <span>
+            {props.queueCount} {props.queueCount === 1 ? "solicitud" : "solicitudes"} en la cola
+          </span>
+          <label className="flex min-h-11 items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={allSelected}
+              onChange={() => setSelected(allSelected ? [] : all)}
+            />
+            Seleccionar todas las asentables
+          </label>
+        </p>
+        <Button asChild variant="outline">
+          <Link href="/admin/solicitudes/resumen">Resumen para acta</Link>
+        </Button>
+      </div>
+
       {/* Padding extra cuando la barra está visible: aunque `sticky` no tapa el
           final REAL de la lista (reserva su propio lugar en el flujo), sí se
           superpone a las tarjetas de más arriba mientras se hace scroll —
           mismo efecto visual que pedía el brief para el `fixed` — así que el
           margen de seguridad se mantiene igual. */}
-      <div className={barVisible ? "pb-4" : undefined}>{props.children}</div>
+      <div className={barMountable ? "pb-4" : undefined}>{props.children}</div>
 
-      {barVisible && (
+      {barMountable && (
         <div
           className="sticky bottom-0 z-40 -mx-4 border-t bg-background/95 p-3 shadow-[0_-4px_16px_rgb(0_0_0_/_0.08)] backdrop-blur lg:-mx-6"
         >
@@ -124,7 +163,11 @@ export function ApplicationCards(props: {
             <div className="min-w-64 grow">
               <MinutePicker minutes={props.minutes} />
             </div>
-            <Button type="submit" disabled={pending} className="min-h-11">
+            {/* Arreglo 3: el botón se deshabilita sin nada tildado, pero la
+                barra —y el `MinutePicker` de adentro, con su borrador de "Acta
+                nueva"— se queda montada mientras haya algo ASENTABLE en la
+                cola. */}
+            <Button type="submit" disabled={pending || effective.length === 0} className="min-h-11">
               {pending ? "Asentando…" : "Asentar en acta"}
             </Button>
           </div>
