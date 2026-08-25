@@ -79,6 +79,24 @@ describe("createWithdrawalRequestAction", () => {
     expect(r.error).toContain("500");
     expect(create).not.toHaveBeenCalled();
   });
+
+  // Ley 25.326: el asiento lleva ids y flags, nunca el texto que escribió el
+  // socio. Un cambio que agregara el motivo al detail para "depurar mejor"
+  // tiene que romper este test.
+  it("audits with ids and flags only, never the socio's message text", async () => {
+    const { audit } = await import("@/lib/audit");
+    const r = await createWithdrawalRequestAction({}, fd({ message: "me mudo a otra ciudad" }));
+    expect(r.done).toBe(true);
+    expect(vi.mocked(audit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "member_request_create",
+        entityId: 7,
+        detail: expect.objectContaining({ type: "withdrawal", requestId: 55 }),
+      }),
+    );
+    const [call] = vi.mocked(audit).mock.calls;
+    expect(JSON.stringify(call[0])).not.toContain("me mudo a otra ciudad");
+  });
 });
 
 describe("createCategoryRequestAction", () => {
@@ -106,8 +124,11 @@ describe("createCategoryRequestAction", () => {
   });
 
   it("rejects a category outside REQUESTABLE_CATEGORIES without touching the service", async () => {
+    // El mensaje EXACTO en castellano, no un truthy: si el schema se
+    // desconectara, el vecino vería el texto en inglés de zod y un
+    // `toBeTruthy()` seguiría en verde.
     const r = await createCategoryRequestAction({}, fd({ requestedCategory: "cadet" }));
-    expect(r.error).toBeTruthy();
+    expect(r.error).toBe("Elegí la categoría nueva.");
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -115,6 +136,24 @@ describe("createCategoryRequestAction", () => {
     create.mockResolvedValueOnce({ ok: false, error: "Hay elecciones en curso." });
     const r = await createCategoryRequestAction({}, fd({ requestedCategory: "active" }));
     expect(r.error).toBe("Hay elecciones en curso.");
+  });
+
+  it("audits with ids and flags only, never the socio's message text", async () => {
+    const { audit } = await import("@/lib/audit");
+    const r = await createCategoryRequestAction(
+      {},
+      fd({ requestedCategory: "adherent", message: "porque cambié de laburo" }),
+    );
+    expect(r.done).toBe(true);
+    expect(vi.mocked(audit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "member_request_create",
+        entityId: 7,
+        detail: expect.objectContaining({ type: "category_change", requestId: 55 }),
+      }),
+    );
+    const [call] = vi.mocked(audit).mock.calls;
+    expect(JSON.stringify(call[0])).not.toContain("porque cambié de laburo");
   });
 });
 
@@ -141,5 +180,18 @@ describe("cancelRequestAction", () => {
     cancel.mockResolvedValueOnce({ ok: false, error: "La solicitud ya fue resuelta o no existe." });
     const r = await cancelRequestAction({}, fd({ requestId: "55" }));
     expect(r.error).toBe("La solicitud ya fue resuelta o no existe.");
+  });
+
+  it("audits with ids and flags only", async () => {
+    const { audit } = await import("@/lib/audit");
+    const r = await cancelRequestAction({}, fd({ requestId: "55" }));
+    expect(r.done).toBe(true);
+    expect(vi.mocked(audit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "member_request_cancel",
+        entityId: 7,
+        detail: expect.objectContaining({ requestId: 55 }),
+      }),
+    );
   });
 });

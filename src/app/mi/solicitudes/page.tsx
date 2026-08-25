@@ -107,8 +107,13 @@ export default async function MiSolicitudesPage() {
 
       {canAct && (
         <div className="space-y-4">
-          <WithdrawalRequestForm />
-          <CategoryRequestForm currentCategory={member.category} />
+          <WithdrawalRequestForm
+            hasPending={requests.some((r) => r.type === "withdrawal" && r.status === "pending")}
+          />
+          <CategoryRequestForm
+            currentCategory={member.category}
+            hasPending={requests.some((r) => r.type === "category_change" && r.status === "pending")}
+          />
         </div>
       )}
     </div>
