@@ -8,7 +8,7 @@ import { unstable_cache } from "next/cache";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { CACHE_TAGS } from "@/lib/cache-tags";
-import type { ActivitySlot } from "@/lib/activities/rules";
+import type { ActivitySlot, RoomKey } from "@/lib/activities/rules";
 
 type Db = Pick<PrismaClient, "activity">;
 
@@ -19,7 +19,7 @@ function toSlot(a: {
   return {
     id: a.id,
     name: a.name,
-    room: a.room as "historic" | "glass",
+    room: a.room as RoomKey,
     // El JSON viene de la base: si quedó nulo o con otra forma, la grilla se
     // dibuja vacía en vez de romper el render del calendario público.
     weekdays: Array.isArray(a.weekdays) ? (a.weekdays as number[]) : [],

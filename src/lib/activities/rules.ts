@@ -9,12 +9,17 @@ export const WEEKDAYS: Array<[number, string]> = [
   [5, "Viernes"], [6, "Sábado"],
 ];
 
-export const ROOM_LABELS: Record<"historic" | "glass", string> = SITE.rooms;
+export type RoomKey = keyof typeof SITE.rooms;
+
+// El orden acá es el orden estable de desempate visual (grilla y agenda).
+export const ROOM_KEYS = Object.keys(SITE.rooms) as RoomKey[];
+
+export const ROOM_LABELS: Record<RoomKey, string> = SITE.rooms;
 
 export type ActivitySlot = {
   id: number;
   name: string;
-  room: "historic" | "glass";
+  room: RoomKey;
   weekdays: number[];
   startTime: string;
   endTime: string;
@@ -66,7 +71,10 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
     number,
     Array<{ id: number; name: string; startTime: string; endTime: string }>
   >;
-  const grid = { historic: empty(), glass: empty() };
+  const grid = Object.fromEntries(ROOM_KEYS.map((k) => [k, empty()])) as Record<
+    RoomKey,
+    ReturnType<typeof empty>
+  >;
   for (const a of activities) {
     if (!a.active) continue;
     // `new Set` porque un `weekdays` con el día repetido ([2,2]) pintaría la
@@ -88,7 +96,7 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
       grid[a.room][d].push({ id: a.id, name: a.name, startTime: a.startTime, endTime: a.endTime });
     }
   }
-  for (const room of ["historic", "glass"] as const) {
+  for (const room of ROOM_KEYS) {
     for (const [d] of WEEKDAYS) {
       grid[room][d].sort((x, y) => (timeToMinutes(x.startTime) ?? 0) - (timeToMinutes(y.startTime) ?? 0));
     }
@@ -99,7 +107,7 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
 export type AgendaEntry = {
   id: number;
   name: string;
-  room: "historic" | "glass";
+  room: RoomKey;
   startTime: string;
   endTime: string;
 };
@@ -119,10 +127,10 @@ export function buildDailyAgenda(
   return WEEKDAYS.map(([day, label]) => ({
     day,
     label,
-    entries: (["historic", "glass"] as const)
+    entries: ROOM_KEYS
       .flatMap((room) => grid[room][day].map((a) => ({ ...a, room })))
-      // Desempate por nombre: al mezclar los dos salones, dos actividades que
-      // arrancan a la misma hora quedarían en orden de salón, que no es un
+      // Desempate por nombre: al mezclar los espacios, dos actividades que
+      // arrancan a la misma hora quedarían en orden de espacio, que no es un
       // orden que el lector pueda anticipar.
       .sort(
         (x, y) =>

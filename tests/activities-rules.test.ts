@@ -4,6 +4,7 @@ import {
   buildWeeklyGrid,
   findOverlap,
   parseWeekdays,
+  ROOM_KEYS,
   ROOM_LABELS,
   timeToMinutes,
   WEEKDAYS,
@@ -77,6 +78,17 @@ describe("buildWeeklyGrid", () => {
     expect(Object.keys(grid.glass).map(Number)).toEqual([1, 2, 3, 4, 5, 6]);
     // Los salones no comparten arrays: empujar en uno no debe verse en el otro.
     expect(grid.glass[1]).toEqual([]);
+  });
+
+  it("arma la grilla para los cuatro espacios, con arrays independientes", () => {
+    const grid = buildWeeklyGrid([
+      slot({ id: 5, name: "Cocina para todos", room: "kitchen", weekdays: [2] }),
+      slot({ id: 6, name: "Apoyo escolar", room: "classroom", weekdays: [2] }),
+    ]);
+    expect(grid.kitchen[2].map((a) => a.name)).toEqual(["Cocina para todos"]);
+    expect(grid.classroom[2].map((a) => a.name)).toEqual(["Apoyo escolar"]);
+    expect(grid.historic[2]).toEqual([]);
+    expect(grid.glass[2]).toEqual([]);
   });
 
   it("ignora días fuera de 1-6 en lugar de inventar columnas", () => {
@@ -176,6 +188,17 @@ describe("buildDailyAgenda", () => {
     const agenda = buildDailyAgenda([slot({ room: "glass" })]);
     expect(ROOM_LABELS[agenda[0].entries[0].room]).toBe(SITE.rooms.glass);
   });
+
+  it("mezcla los cuatro espacios en el mismo día", () => {
+    const agenda = buildDailyAgenda([
+      slot({ id: 7, name: "Cocina para todos", room: "kitchen", weekdays: [1], startTime: "10:00", endTime: "11:00" }),
+      slot({ id: 8, name: "Apoyo escolar", room: "classroom", weekdays: [1], startTime: "08:00", endTime: "09:00" }),
+    ]);
+    expect(agenda[0].entries.map((e) => [e.name, e.room])).toEqual([
+      ["Apoyo escolar", "classroom"],
+      ["Cocina para todos", "kitchen"],
+    ]);
+  });
 });
 
 // Cobertura extra sobre el borde de la regla, que es lo que el revisor mira.
@@ -208,6 +231,17 @@ describe("etiquetas visibles", () => {
   it("ROOM_LABELS sale de SITE.rooms, no de strings repetidos", () => {
     expect(ROOM_LABELS).toEqual(SITE.rooms);
     expect(ROOM_LABELS.historic).toBe(SITE.rooms.historic);
+  });
+
+  it("ROOM_LABELS cubre los cuatro espacios desde SITE.rooms", () => {
+    expect(ROOM_LABELS).toEqual(SITE.rooms);
+    expect(ROOM_LABELS.kitchen).toBe("Cocina");
+    expect(ROOM_LABELS.classroom).toBe("Aulas");
+  });
+
+  it("ROOM_KEYS es el orden estable de los espacios y coincide con SITE.rooms", () => {
+    expect(ROOM_KEYS).toEqual(["historic", "glass", "kitchen", "classroom"]);
+    expect(ROOM_KEYS).toEqual(Object.keys(SITE.rooms));
   });
 
   it("WEEKDAYS va de lunes a sábado con nombres es-AR", () => {

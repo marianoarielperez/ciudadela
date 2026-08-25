@@ -97,6 +97,15 @@ describe("createActivityAction", () => {
     });
   });
 
+  // Los dos espacios que sumó el cliente: si el enum de zod no los acepta, el
+  // formulario los ofrece y la action los rechaza con "Elegí el espacio.".
+  it.each(["kitchen", "classroom"] as const)("acepta el espacio %s y lo persiste", async (room) => {
+    await createActivityAction({}, form({ ...base, room }));
+    expect(prismaMock.activity.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ room }) }),
+    );
+  });
+
   it("busca los candidatos a solape SOLO del año que se está cargando", async () => {
     await createActivityAction({}, form(base));
     expect(prismaMock.activity.findMany).toHaveBeenCalledWith(
@@ -205,9 +214,9 @@ describe("createActivityAction", () => {
     expect(prismaMock.activity.create).not.toHaveBeenCalled();
   });
 
-  it("rechaza un salón que no existe", async () => {
+  it("rechaza un espacio que no existe", async () => {
     const result = await createActivityAction({}, form({ ...base, room: "quincho" }));
-    expect(result.error).toBe("Elegí el salón.");
+    expect(result.error).toBe("Elegí el espacio.");
     expect(prismaMock.activity.create).not.toHaveBeenCalled();
   });
 

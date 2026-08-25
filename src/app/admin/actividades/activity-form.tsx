@@ -12,7 +12,7 @@ import { useActionState } from "react";
 import { createActivityAction, deleteActivityAction, updateActivityAction } from "./actions";
 import { useSyncedForm, SelectField, TextField } from "@/components/admin/synced-fields";
 import { FormMessage } from "@/components/admin/form-message";
-import { ROOM_LABELS, WEEKDAYS, type ActivitySlot } from "@/lib/activities/rules";
+import { ROOM_KEYS, ROOM_LABELS, WEEKDAYS, type ActivitySlot } from "@/lib/activities/rules";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 
@@ -64,12 +64,9 @@ export function ActivityForm(
         placeholder="Ej.: Gimnasia mujeres"
       />
       <SelectField
-        label="Salón"
+        label="Espacio"
         field={field("room")}
-        options={[
-          ["historic", ROOM_LABELS.historic],
-          ["glass", ROOM_LABELS.glass],
-        ]}
+        options={ROOM_KEYS.map((k) => [k, ROOM_LABELS[k]] as [string, string])}
       />
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">Días de la semana</legend>

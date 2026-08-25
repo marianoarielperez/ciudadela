@@ -31,7 +31,7 @@ export default async function AdminActivitiesPage(props: {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Actividades de los salones"
+        title="Actividades de la sede"
         actions={
           <Button asChild>
             <Link href="/admin/actividades/nueva">Nueva actividad</Link>
@@ -77,7 +77,7 @@ export default async function AdminActivitiesPage(props: {
           <TableHeader>
             <TableRow>
               <TableHead>Actividad</TableHead>
-              <TableHead>Salón</TableHead>
+              <TableHead>Espacio</TableHead>
               <TableHead>Días</TableHead>
               <TableHead>Horario</TableHead>
               <TableHead>Año</TableHead>

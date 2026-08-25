@@ -18,6 +18,12 @@ export type DashboardCard = {
 
 export type DashboardGroup = { label: string; cards: DashboardCard[] };
 
+// "Salón Histórico, Salón Vidriado, Cocina y Aulas". Sin Intl.ListFormat, por el
+// mismo motivo que la página pública de actividades: no depender de qué ICU trae
+// el runtime del VPS.
+const ROOM_NAMES = Object.values(SITE.rooms);
+const ROOM_LIST = `${ROOM_NAMES.slice(0, -1).join(", ")} y ${ROOM_NAMES.at(-1)}`;
+
 // Mismo orden de grupos que la lateral (src/lib/admin/nav.ts).
 export const DASHBOARD_GROUPS: DashboardGroup[] = [
   {
@@ -51,9 +57,11 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
       {
         title: "Actividades",
         // Los nombres salen de SITE.rooms, que es de donde también sale el selector
-        // del formulario y la grilla pública: si alguna vez se renombra un salón, se
-        // renombra en un solo lugar y esta tarjeta no queda mintiendo.
-        description: `Calendario del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`,
+        // del formulario y la grilla pública: si alguna vez se renombra o se suma un
+        // espacio, se hace en un solo lugar y esta tarjeta no queda mintiendo. Por eso
+        // la lista se DERIVA y no se escribe: antes nombraba a los dos salones y quedó
+        // desactualizada el día que aparecieron la cocina y las aulas.
+        description: `Calendario semanal de la sede: ${ROOM_LIST}.`,
         href: "/admin/actividades",
         cta: "Ver el calendario",
       },

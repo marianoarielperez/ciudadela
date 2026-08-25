@@ -1,5 +1,5 @@
 "use server";
-// ABM del calendario de actividades de los salones. Igual que el de noticias,
+// ABM del calendario de actividades de la sede. Igual que el de noticias,
 // cada action de este archivo es un endpoint HTTP público: Next NO despacha una
 // server action por su URL sino por el id del encabezado `Next-Action` contra un
 // manifiesto global del build, así que ni el proxy (matcher `/admin/:path*`) ni
@@ -45,7 +45,7 @@ const activitySchema = z.object({
     .string("Ingresá el nombre de la actividad.")
     .min(1, "Ingresá el nombre de la actividad.")
     .max(120, "El nombre no puede superar los 120 caracteres."),
-  room: z.enum(["historic", "glass"], { error: "Elegí el salón." }),
+  room: z.enum(["historic", "glass", "kitchen", "classroom"], { error: "Elegí el espacio." }),
   startTime: z
     .string("Hora de inicio inválida.")
     .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Hora de inicio inválida."),
