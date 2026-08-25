@@ -20,6 +20,7 @@ export function EmailForm() {
         type="email"
         maxLength={191}
         hint="Va a ser tu dirección de ingreso al panel. Te mandamos un correo para verificarla."
+        className="h-12"
       />
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       {state.done && <FormMessage kind="success">{state.message}</FormMessage>}

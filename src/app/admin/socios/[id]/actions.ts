@@ -335,10 +335,11 @@ export async function confirmAddressAction(formData: FormData): Promise<void> {
   if (!actor.ok) return;
   const memberId = Number(formData.get("memberId"));
   if (!Number.isInteger(memberId) || memberId <= 0) return;
-  await prisma.member.update({
-    where: { id: memberId },
-    data: { addressPendingReview: false },
-  });
+  try {
+    await prisma.member.update({ where: { id: memberId }, data: { addressPendingReview: false } });
+  } catch {
+    return; // ficha inexistente: solo un POST fabricado llega acá
+  }
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actor.actorId,
