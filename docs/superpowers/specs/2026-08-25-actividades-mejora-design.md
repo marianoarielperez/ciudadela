@@ -10,11 +10,27 @@ amplía sin tocar su arquitectura (server component + `unstable_cache` por tag +
 server actions auditadas).
 
 Disparador adicional: 3 actividades de prueba cargadas en producción desaparecieron.
-La auditoría de código concluyó que **no hay bug ni borrado en la aplicación**; la
-hipótesis dominante es el rearmado de la base del 22/08/2026 (`docs/10` §4.2), que
-hace `DROP DATABASE` y no rescata `activities` ni `news`, y cuyo checklist post-rearmado
-tampoco las cuenta. El diagnóstico definitivo es el bloque SQL del Anexo A (lo corre
-Mariano en el VPS). Decisión: las 3 actividades se recargan a mano; no se restaura backup.
+La auditoría de código concluyó que **no hay bug ni borrado en la aplicación**, y el
+diagnóstico corrido en el VPS el 25/08/2026 (Anexo A) lo **confirmó**: fue el rearmado
+de la base del 22/08/2026 (`docs/10` §4.2), que hace `DROP DATABASE` y no rescata
+`activities` ni `news`, y cuyo checklist post-rearmado tampoco las cuenta.
+
+Evidencia medida, las tres consistentes entre sí:
+
+- `_prisma_migrations`: `20260817200230_init_module_0` tiene `started_at`
+  **2026-08-22 21:44:58**, igual que las seis migraciones siguientes dentro del mismo
+  segundo — la firma de una base creada de cero y migrada de una sola corrida.
+- `audit_log`: el asiento más viejo es **2026-08-22 21:45:27**, treinta segundos
+  posterior. La auditoría previa se fue con la base, así que la ausencia de
+  `activity_create` de las pruebas no prueba nada por sí sola — y un `activity_delete`
+  tampoco habría sobrevivido.
+- `activities`: las 4 filas recargadas el 25/08 tienen `id` 1 a 4. La tabla nunca tuvo
+  filas en esta encarnación; si las viejas hubieran existido acá y se hubieran borrado,
+  el `AUTO_INCREMENT` habría arrancado más arriba.
+- `news` también estaba vacía antes del 25/08, que es la corroboración cruzada esperada
+  (misma migración, mismo destino).
+
+Decisión: las actividades se recargaron a mano (ya hechas); no se restaura backup.
 
 ## Alcance
 
