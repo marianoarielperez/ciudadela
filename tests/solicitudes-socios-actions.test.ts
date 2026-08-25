@@ -23,6 +23,16 @@ vi.mock("@/lib/members/member-requests/service", () => ({
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("next/headers", () => ({ headers: async () => ({ get: () => "1.2.3.4" }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// `notifyRequestDecided` real importa `@/lib/email` → `@/lib/prisma`, que
+// explota sin `DATABASE_URL` (mismo motivo que el resto de los tests de
+// costura del proyecto mockean el mailer). Acá sólo se prueba que la action
+// la llama con lo que corresponde — el envío en sí lo prueba
+// `member-requests-notify.test.ts` (la plantilla) y el mailer real, `email.test.ts`.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- la firma existe para tipar, no para leerse
+const notifyRequestDecided = vi.fn(async (..._args: unknown[]): Promise<void> => {});
+vi.mock("@/lib/members/member-requests/notify", () => ({
+  notifyRequestDecided: (...a: unknown[]) => notifyRequestDecided(...a),
+}));
 
 import { rejectRequestAction } from "@/app/admin/solicitudes/socios/actions";
 
@@ -37,6 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   reject.mockResolvedValue({ ok: true, memberId: 7, type: "withdrawal" });
   requireAdmin.mockResolvedValue(OK_ACTOR);
+  notifyRequestDecided.mockResolvedValue(undefined);
 });
 
 describe("rejectRequestAction", () => {
@@ -84,5 +95,19 @@ describe("rejectRequestAction", () => {
     );
     const [call] = vi.mocked(audit).mock.calls;
     expect(JSON.stringify(call[0])).not.toContain("no corresponde por REG-19");
+  });
+
+  // Task 9: el rechazo avisa al socio, best-effort, DESPUÉS de auditar.
+  it("notifies the member of the rejection with the note, and never on failure", async () => {
+    const r = await rejectRequestAction({}, fd({ requestId: "55", note: "no corresponde por REG-19" }));
+    expect(r.done).toBe(true);
+    expect(notifyRequestDecided).toHaveBeenCalledWith({
+      memberId: 7, type: "withdrawal", accepted: false, note: "no corresponde por REG-19",
+    });
+
+    notifyRequestDecided.mockClear();
+    reject.mockResolvedValueOnce({ ok: false, error: "La solicitud ya fue resuelta o no existe." });
+    await rejectRequestAction({}, fd({ requestId: "55" }));
+    expect(notifyRequestDecided).not.toHaveBeenCalled();
   });
 });

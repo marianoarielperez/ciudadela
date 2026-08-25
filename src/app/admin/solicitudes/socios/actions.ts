@@ -12,6 +12,7 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
+import { notifyRequestDecided } from "@/lib/members/member-requests/notify";
 import { memberRequests } from "@/lib/members/member-requests/service";
 
 export type RejectState = { error?: string; done?: boolean };
@@ -50,13 +51,13 @@ export async function rejectRequestAction(_prev: RejectState, formData: FormData
     ip,
   });
 
-  // TODO(Task 9): avisar al socio del rechazo, best-effort, después de que el
-  // asiento de auditoría ya quedó escrito —igual que el resto de los envíos
-  // del proyecto no bloquean la escritura principal—:
-  //   await notifyRequestDecided({
-  //     memberId: result.memberId, type: result.type,
-  //     accepted: false, note: parsed.data.note,
-  //   });
+  // Best-effort, después de que el asiento de auditoría ya quedó escrito
+  // —igual que el resto de los envíos del proyecto, nunca bloquea la
+  // escritura principal—: `notifyRequestDecided` traga cualquier error propio.
+  await notifyRequestDecided({
+    memberId: result.memberId, type: result.type,
+    accepted: false, note: parsed.data.note,
+  });
 
   revalidatePath(SOCIOS_REQUESTS_PATH);
   return { done: true };

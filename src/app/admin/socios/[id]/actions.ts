@@ -34,6 +34,8 @@ import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
 import { civilDateUtc } from "@/lib/dates";
 import { electionsOngoing, memberService } from "@/lib/members/service";
+import { memberRequests } from "@/lib/members/member-requests/service";
+import { notifyRequestDecided } from "@/lib/members/member-requests/notify";
 import { withdrawWithDebits, type DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
@@ -160,21 +162,58 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
     {
       reason: z.enum(REASONS, { error: "Elegí el motivo de la baja." }),
       detail: z.string().max(300, "El detalle no puede superar los 300 caracteres").optional(),
+      // M5B Task 9: opcional y sólo lo manda el camino "Aplicar" de la bandeja
+      // de solicitudes (hidden field precargado por `[accion]/page.tsx`). Un
+      // operador que entra por el camino de siempre nunca lo manda, así que
+      // `data.requestId` queda `undefined` y el comportamiento es idéntico al
+      // de hoy.
+      requestId: z.coerce.number().int().positive().optional(),
     },
     {
-      guard: (member) => canWithdraw(member),
+      guard: async (member, data) => {
+        const status = canWithdraw(member);
+        if (!status.ok) return status;
+        if (data.requestId) {
+          const req = await prisma.memberRequest.findUnique({ where: { id: data.requestId as number } });
+          if (!req || req.status !== "pending" || req.memberId !== member.id || req.type !== "withdrawal") {
+            return { ok: false, error: "La solicitud no corresponde a esta operación. Volvé a la bandeja." };
+          }
+        }
+        return { ok: true };
+      },
       // `withdrawWithDebits` y no `memberService.withdraw`: dejar de ser socio
       // tiene que cortar el débito automático por el camino que sea (REG-16 no
       // devenga más, así que un débito vivo le cobra a alguien que ya no es
       // socio). La cancelación corre DESPUÉS del commit.
-      run: ({ memberId, minuteId, actorId }, _member, data) =>
-        withdrawWithDebits.withdraw({
+      run: async ({ memberId, minuteId, actorId }, _member, data) => {
+        const result = await withdrawWithDebits.withdraw({
           memberId, minuteId, actorId,
           reason: data.reason as WithdrawalReason,
           detail: data.detail as string | undefined,
-        }),
+        });
+        // La baja YA commiteó: lo que sigue es piggyback sobre un acto que ya
+        // pasó, y por eso NINGUNA de las dos líneas puede tumbar el redirect
+        // de éxito. `markAccepted` va en su propio try —un hipo de la base acá
+        // no puede convertir una baja exitosa en una pantalla de error—, y
+        // `notifyRequestDecided` ya es best-effort por dentro (nunca tira).
+        if (data.requestId) {
+          const requestId = data.requestId as number;
+          try {
+            await memberRequests.markAccepted({ requestId, memberId, decidedById: actorId, type: "withdrawal" });
+          } catch (e) {
+            console.error("[solicitudes] markAccepted falló después de la baja —", {
+              requestId, memberId, error: messageOf(e),
+            });
+          }
+          await notifyRequestDecided({ memberId, type: "withdrawal", accepted: true });
+        }
+        return result;
+      },
       auditAction: "member_withdraw",
-      detail: (_m, data) => ({ reason: data.reason }),
+      detail: (_m, data) => ({
+        reason: data.reason,
+        ...(data.requestId ? { requestId: data.requestId } : {}),
+      }),
       // Los preapprovalIds SÍ van al asiento: `cancelFailed: true` sin decir QUÉ
       // cancelar no le sirve a nadie, y el asiento es donde el operador va a
       // buscar el id para reintentar en el panel de MP. Es un id de MP, no un
@@ -194,19 +233,57 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
 export async function changeCategoryAction(_p: State, formData: FormData): Promise<State> {
   return runAction(
     formData,
-    { newCategory: z.enum(CATEGORIES, { error: "Elegí la nueva categoría." }) },
     {
-      guard: async (member, data) =>
-        canChangeCategory(
+      newCategory: z.enum(CATEGORIES, { error: "Elegí la nueva categoría." }),
+      // M5B Task 9: mismo criterio que `withdrawAction` — opcional, sólo lo
+      // manda el camino "Aplicar" de la bandeja, y ausente deja el camino de
+      // siempre byte-idéntico.
+      requestId: z.coerce.number().int().positive().optional(),
+    },
+    {
+      guard: async (member, data) => {
+        const status = canChangeCategory(
           member, data.newCategory as MemberCategory, await electionsOngoing(prisma),
           await prisma.fee.count({ where: { memberId: member.id, status: "pending" } }),
-        ),
-      run: ({ memberId, minuteId, actorId }, _member, data) =>
-        memberService.changeCategory({
+        );
+        if (!status.ok) return status;
+        if (data.requestId) {
+          const req = await prisma.memberRequest.findUnique({ where: { id: data.requestId as number } });
+          if (
+            !req || req.status !== "pending" || req.memberId !== member.id ||
+            req.type !== "category_change" || req.requestedCategory !== data.newCategory
+          ) {
+            return { ok: false, error: "La solicitud no corresponde a esta operación. Volvé a la bandeja." };
+          }
+        }
+        return { ok: true };
+      },
+      run: async ({ memberId, minuteId, actorId }, _member, data) => {
+        const result = await memberService.changeCategory({
           memberId, minuteId, actorId, newCategory: data.newCategory as MemberCategory,
-        }),
+        });
+        // Mismo criterio que `withdrawAction`: el cambio YA commiteó, así que
+        // ni el `markAccepted` ni el aviso pueden tumbar el redirect de éxito.
+        if (data.requestId) {
+          const requestId = data.requestId as number;
+          try {
+            await memberRequests.markAccepted({
+              requestId, memberId, decidedById: actorId, type: "category_change",
+            });
+          } catch (e) {
+            console.error("[solicitudes] markAccepted falló después del cambio de categoría —", {
+              requestId, memberId, error: messageOf(e),
+            });
+          }
+          await notifyRequestDecided({ memberId, type: "category_change", accepted: true });
+        }
+        return result;
+      },
       auditAction: "member_category_change",
-      detail: (member, data) => ({ from: member.category, to: data.newCategory }),
+      detail: (member, data) => ({
+        from: member.category, to: data.newCategory,
+        ...(data.requestId ? { requestId: data.requestId } : {}),
+      }),
     },
   );
 }

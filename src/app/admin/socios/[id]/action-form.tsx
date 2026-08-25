@@ -40,6 +40,11 @@ export function ActionForm(props: {
   minutes: MinuteOption[];
   submitLabel: string;
   fields?: Field[];
+  // M5B Task 9: campos ocultos fijos además de `memberId` — hoy sólo el
+  // `requestId` de la solicitud que este envío va a marcar aceptada. Mínimo a
+  // propósito: no entra al estado de `values` ni a `initialValues`, así que no
+  // le suma nada al reset de React 19 que ya maneja `useFormResetSync`.
+  hidden?: Record<string, string | number>;
 }) {
   const fields = props.fields ?? [];
   const [state, formAction, pending] = useActionState(props.action, {});
@@ -54,6 +59,9 @@ export function ActionForm(props: {
   return (
     <form ref={formRef} action={formAction} className="max-w-lg space-y-4">
       <input type="hidden" name="memberId" value={props.memberId} />
+      {props.hidden && Object.entries(props.hidden).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
       {fields.map((f) => (
         <div key={f.name} className="space-y-1">
           <Label htmlFor={f.name}>{f.label}</Label>
