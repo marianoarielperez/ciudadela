@@ -109,9 +109,15 @@ POST https://api.mercadopago.com/preapproval
   la fase 4B sale del **valor vigente de `fee_values`** (`feeValueReader.current()`),
   no de Mercado Pago. Si no hay valor vigente, el alta **corta antes** de llamar a
   MP y antes de escribir nada local.
-- `external_reference` = `solicitud:{id}` (luego, para suscripciones de socios
-  existentes: `socio:{id}`). **Obligatorio** en las suscripciones sin plan, y es
-  lo que el webhook usa para encontrar la solicitud.
+- `external_reference` = `solicitud:{id}` en el alta del wizard, y es lo que el
+  webhook usa para encontrar la solicitud. **Obligatorio** en las suscripciones
+  sin plan. El formato `socio:{id}`, reservado desde la fase 4B, está **en uso
+  desde el 25/08/2026**: lo escribe la adhesión al débito desde el panel del
+  socio (`/mi/debito`, fase 5B). Ojo con lo que significa: los cobros de esas
+  suscripciones **NO se resuelven por la referencia** —la fila local nace con su
+  `memberId` y la regla 3 de `resolve.ts` los imputa por la suscripción, sin
+  tocar esa tabla—; la referencia está para que el **operador** reconozca de
+  quién es la suscripción cuando la mira en el panel de MP.
 - `payer_email` = email declarado. Ojo: es el que declaró en el formulario, no
   necesariamente el de la cuenta de MP con la que se loguea en el checkout.
 - `back_url` = retorno al wizard (`/asociate/retomar/{token}`).

@@ -76,14 +76,17 @@ describe("AUTO_DEBIT_WARNINGS", () => {
   // DESTINO de cada aviso —lo único que el operador tiene que poder hacer
   // después de leerlo— y el TIEMPO VERBAL, que es lo que distingue un hecho
   // verificado de una suposición del Excel de 2026.
-  it("la baja promete la cancelación y nombra la salida; la categoría, el lote de Valores", () => {
+  it("la baja promete la cancelación y nombra la salida; la categoría, el empuje en el mismo envío", () => {
     // Desde la 4C la baja SÍ cancela (`withdrawWithDebits`), así que el texto ya
     // no puede decir "el sistema NO la cancela". Lo que sigue siendo cierto es
     // que puede fallar, y ahí queda la cancelación a mano: el destino que el
     // texto tiene que nombrar es Suscripciones, que es donde se reintenta.
     expect(AUTO_DEBIT_WARNINGS.baja.subscription).toMatch(/el sistema la va a cancelar/);
     expect(AUTO_DEBIT_WARNINGS.baja.subscription).toMatch(/Suscripciones/);
-    expect(AUTO_DEBIT_WARNINGS.categoria.subscription).toMatch(/Valores de cuota/);
+    // Desde la Task 10 (revisión) el monto se empuja SOLO en el mismo envío del
+    // cambio de categoría — el texto ya no puede mandar a correr un lote a mano.
+    expect(AUTO_DEBIT_WARNINGS.categoria.subscription).toMatch(/en el mismo envío/);
+    expect(AUTO_DEBIT_WARNINGS.categoria.subscription).not.toMatch(/Aplicar valor vigente/);
     // Y los cuatro nombran Mercado Pago, que es de dónde sale el cobro.
     for (const bySignal of Object.values(AUTO_DEBIT_WARNINGS)) {
       for (const text of Object.values(bySignal)) expect(text).toContain("Mercado Pago");

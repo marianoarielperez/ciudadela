@@ -435,6 +435,8 @@ concreto.
 Reparto tras cerrar la fase 4B (23/08/2026): **1, 3, 4 y 5 están cerrados**;
 **2 sigue en la 4C** (junto con el resto de las notificaciones); **6 quedó sin
 efecto**; **7 está cerrado**; **8 queda abierto** y sin fase asignada.
+*(Actualización del 25/08/2026: el 8 se cerró en la fase 5B — el chip "Revisar
+domicilio" de la bandeja de Altas, ver abajo.)*
 
 1. ~~**La conciliación debe barrer preapprovals sin fila local.**~~ **Cerrado en la
    fase 4B**: es el paso 4 de `/api/cron/reconcile` (`orphanPreapprovals`,
@@ -464,17 +466,21 @@ efecto**; **7 está cerrado**; **8 queda abierto** y sin fase asignada.
    recategorización resuelve el plan nuevo ANTES de tocar MP y, si no está
    configurado, corta con un error en pantalla sin llamar a la API ni escribir
    nada.
-8. **Una solicitud que llegó con la categoría equivocada y que nadie toca** no
+8. ~~**Una solicitud que llegó con la categoría equivocada y que nadie toca** no
    queda marcada en ningún lado: `residenceMismatch` solo se computa al
-   recategorizar. Candidato a señal de la bandeja o del resumen.
+   recategorizar. Candidato a señal de la bandeja o del resumen.~~ **Cerrado
+   en la fase 5B (Tarea 6)**: `src/lib/applications/query.ts` computa
+   `residenceMismatch` para cada fila con el mismo criterio EXACTO que
+   `recategorizeApplicationAction`, y la bandeja de Altas lo muestra como el
+   chip "Revisar domicilio".
 
-## Módulo 5 — Panel de socio
+## Módulo 5 — Panel de socio — **COMPLETO** (25/08/2026)
 
-Se ejecuta en dos fases, como el Módulo 4: **5A** (shell, rediseño y lectura, sin
-Mercado Pago) y **5B** (débito automático autogestionado y solicitudes,
-transaccional). El diseño completo de las dos fases, con las decisiones del
-operador y las enmiendas a `docs/02` y `docs/05`, está en
-`docs/superpowers/specs/2026-08-24-modulo-5-panel-socio-design.md`.
+Se ejecutó en dos fases, como el Módulo 4: **5A** (shell, rediseño y lectura, sin
+Mercado Pago, cerrada el 24/08/2026) y **5B** (débito automático autogestionado y
+solicitudes, transaccional, cerrada el 25/08/2026). El diseño completo de las dos
+fases, con las decisiones del operador y las enmiendas a `docs/02` y `docs/05`,
+está en `docs/superpowers/specs/2026-08-24-modulo-5-panel-socio-design.md`.
 
 ### Fase 5A — Shell, rediseño y lectura — **CERRADA** (24/08/2026)
 
@@ -520,28 +526,98 @@ Doce commits, 2346 tests, build y lint limpios.
    documentos quedaron alineados con una aclaración de implementación en
    REG-20.
 
-### Fase 5B — Débito automático y solicitudes — pendiente
+### Fase 5B — Débito automático y solicitudes — **CERRADA** (25/08/2026)
 
-Queda por hacer: adherirse y cancelar el débito automático desde `/mi/debito`
-(con la regla anti-duplicación mensual: quien pagó una cuota en el mes calendario
-en curso no puede adherirse hasta el mes siguiente); solicitud de baja (REG-19) y
-solicitud de cambio de categoría (REG-07) desde `/mi/solicitudes`, con una
-bandeja nueva "Solicitudes de socios" en el grupo Gestión del panel admin; y, al
-aceptar una recategorización de un socio con débito vivo, la actualización del
-monto en Mercado Pago **en el acto**, antes de escribir el cambio local (si MP
-falla, la acción se corta entera).
+Migración `20260825000751_member_requests`, **estrictamente aditiva**: la tabla
+`member_requests` con sus tres FKs y el `ALTER` aditivo del enum de
+`notifications.type` (verificado: agrega valores sin reordenar los existentes —
+MariaDB remapea por string, no por índice). Apta para `migrate deploy` sobre la
+base con socios reales.
 
-CA: un socio real de prueba paga 2 cuotas atrasadas por link en sandbox y las ve
-aplicadas con sus recibos — ya verificado en la fase 4B (Checkout Pro desde
-`/mi/cuenta`, pago real de $12.000); una solicitud de baja llega a la bandeja
-admin, se acepta con acta y el socio queda `baja` con motivo `renuncia` — CA-5B-3
-de la spec, pendiente de la 5B.
+**Qué quedó andando** (14 tareas):
+
+- Los inputs del panel de socio a **48px** (la herencia de accesibilidad de la 5A
+  que faltaba en `/mi/datos`).
+- **`member_requests`** con reglas puras testeadas aparte y servicio con **mutex
+  por socio**: la invariante "una pendiente por tipo" se sostiene con el conteo
+  **dentro** de la transacción, bajo la clave `request:{memberId}`.
+- **`/mi/solicitudes`**: el socio presenta su baja (REG-19) o su cambio de
+  categoría (REG-07), ve el estado de cada solicitud y retira las pendientes.
+- **Sección `/admin/solicitudes` unificada**: pestañas Altas | De socios con
+  contadores, cola Pendientes / Historial, tarjetas, barra de asiento **sticky**
+  (misma action de asiento de siempre), chip **"Revisar domicilio"** (cierra el
+  ítem 8 de los insumos del M3, arriba) y el detalle de alta reordenado con el
+  **visor de DNI embebido**.
+- **Aceptación precargada**: el flujo con acta existente ganó un `requestId`
+  opcional; al asentar, la solicitud queda `accepted` con su `movementId` y al
+  socio le llega el aviso (`request_accepted` / `request_rejected`). Una
+  solicitud de **renuncia no puede asentarse con otro motivo** (ver enmiendas).
+- **Recategorizar con débito vivo empuja el monto a MP EN EL ACTO**: MP primero,
+  lo local después, **corte total si MP falla** — y elige la suscripción que de
+  verdad cobra (`isCharging` antes que `canStillCharge`).
+- La referencia **`socio:{id}`**, reservada desde la 4B, quedó **estrenada**
+  (`docs/06` §2), junto con el **veredicto puro de adhesión**
+  (`src/lib/members/debit-adhesion.ts`), compartido por pantalla y action.
+- **`src/lib/members/member-debit.ts`**: adherir / preview / syncStatus /
+  cancelar. La fila local nace con su `memberId` y los cobros entran por la
+  **regla 3 de `resolve.ts` sin tocarla**.
+- **`/mi/debito`** + `/mi/debito/cancelar` (la frase de efecto en **segunda
+  persona** vía `cancelEffectSentenceForMember`, agregado aditivo), la pestaña
+  condicionada por categoría y la tarjeta en el Inicio.
+
+**El núcleo de dinero quedó intacto**: cero modificaciones en `treasury/*`,
+`resolve.ts`, `webhook-processor.ts` y `gateway.ts`; en `mp/` sólo dos agregados
+aditivos (`references.ts`, `cancel-effect.ts`). Los tests de integración del
+dinero (`receipt-sequence`, `mp-apply-concurrency`, `unique-violation`) pasan
+sin ninguna modificación — era la regla transversal de la spec, y se cumplió por
+construcción, no por retoque de aserciones.
+
+Suite al cerrar: **172 archivos / 2512 tests** (desde los 2346 del cierre de la
+5A), lint y build limpios. Los tres archivos de integración contra MariaDB real
+siguen salteándose sin `DATABASE_URL_TEST`, como desde la 4C.
+
+**Estado de los CA** (spec §12), con la batería de sandbox del 25/08/2026 — la
+evidencia completa, con números de operación y los hechos medidos nuevos, está
+en `docs/11` **J.6**:
+
+| # | Criterio | Estado |
+|---|---|---|
+| CA-5B-1 | Un socio existente se adhiere en sandbox; el débito entra solo como cuota común, con recibo, nunca como `entry` | ✅ **por los DOS caminos**. Rodrigo (298): el webhook no llegó (solapa productiva vacía, ver J.6) y la **conciliación lo recuperó en su primera corrida** (`debitsRecovered: 1` → Payment `type: debit`, cuota 2026-09, recibo **2026-00008**). Roberto (535), ya con el panel bien configurado: **webhook directo** (`subscription_authorized_payment` → `debit_applied`, recibo **2026-00009**). Ninguno de los dos fue jamás `entry` |
+| CA-5B-2 | El botón de adherir se bloquea con motivo y fecha si hay pago del mes, y vuelve a bloquearse tras adherirse | ✅ **en vivo**: cancelación desde la pantalla del socio → MP aceptó → webhook `subscription_preapproval` → espejo sincronizado → `autoDebit` bajó solo; la re-adhesión quedó bloqueada con "Ya abonaste una cuota este mes. Podés adherirte desde el 01/09/2026" (capturas del operador) |
+| CA-5B-3 | Una solicitud de baja recorre el circuito entero hasta "baja por renuncia" con acta, queda `accepted` con `movementId` y el socio recibe el aviso | ✅ verificado el 25/08 con el circuito completo baja → bandeja → acta → notificación (socio de prueba restaurado al terminar) |
+| CA-5B-4 | Aceptar un cambio de categoría con débito vivo actualiza MP antes de escribir lo local; si MP falla, no se escribe nada | ✅ **medido en sandbox** (25/08/2026, tercer circuito): la adhesión de un adherente nació cobrando $3.000 en MP; al aceptar con acta su solicitud de pase a activo, `updatePreapprovalAmount` dejó el preapproval `5d5ff26…` cobrando **$6.000** (verificado por API), con el espejo local sincronizado y el asiento `{subscriptionUpdated: true, amount: 6000, requestId}`. Además el orden queda fijado por aserción (MP primero, corte total, sin-suscripción, espejo) |
+| — | Regla transversal: los tests de integración del dinero pasan sin modificación | ✅ (arriba) |
+
+**Enmiendas y decisiones que dejó la fase:**
+
+1. **La bandeja de solicitudes se unificó** (24/08/2026, aprobada por el operador
+   tras cuatro rondas de diseño): en lugar de una sección nueva "Solicitudes de
+   socios" junto a la de Altas, `/admin/solicitudes` pasó a ser UNA sección con
+   pestañas Altas | De socios. Fue un rediseño de **presentación**: las actions
+   de altas, las actas, `record.ts` y los emails quedaron intactos, y la suite
+   de `applications` pasó sin tocar una aserción (spec enmendada en §7.2).
+2. **Una solicitud de renuncia no puede asentarse con otro motivo.** Hallazgo de
+   la revisión de la Tarea 9: aplicarla con motivo "expulsión" dejaba al socio
+   con `reentryBlocked` de por vida mientras la solicitud decía "aceptada" y el
+   correo le informaba que le concedieron su renuncia — el Libro decía una cosa
+   y el aviso otra.
+3. **El panel de socio pasó a `max-w-3xl` y la pestaña se etiqueta "Débito"** a
+   secas: con seis pestañas, el `max-w-2xl` de la 5A desbordaba en escritorio
+   ("Estatuto" cortado). Reportado por el operador el 25/08 (spec §13).
+4. **El aviso del débito al socio depende de las DOS solapas de webhooks del
+   panel de MP** (hecho medido del sandbox, `docs/11` J.6): costó dos adhesiones
+   descubrir que el token de una aplicación de cuenta de prueba dispara por
+   "Modo productivo".
 
 Ideas incorporadas durante el desarrollo del Módulo 1: que el socio vea cuántas
 cuotas debe (cerrado en la 4A, `/mi/cuenta`); que pueda solicitar cambio de
-categoría solo si no tiene deuda de tesorería (REG-07, queda para la 5B). Del
+categoría solo si no tiene deuda de tesorería (REG-07, **cerrado en la 5B**:
+es una de las cuatro guardas de las reglas puras de `member_requests`). Del
 Módulo 2: publicar el estatuto como PDF dentro del panel del socio (movido desde
 el Módulo 2 el 19/08/2026; fuente: `datos/estatuto.docx`; **cerrado en la 5A**).
+El CA original del módulo "un socio paga 2 cuotas atrasadas por link en sandbox"
+ya había quedado verificado en la fase 4B (Checkout Pro desde `/mi/cuenta`,
+pago real de $12.000); el del circuito de baja es el CA-5B-3 de arriba.
 
 ## Módulo 6 — Re-empadronamiento y cierre de libro
 Wizard público (DNI+apellido enmascarado, rate limit), activación con validaciones

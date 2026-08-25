@@ -47,3 +47,21 @@ export function parsePaymentLinkReference(ref: string | null | undefined): { mem
   if (memberId <= 0 || n < 1 || n > MAX_LINK_FEES) return null;
   return { memberId, n };
 }
+
+/** Preapproval que SIGeV crea para un SOCIO existente desde su panel (M5B).
+ *  El formato estaba reservado desde la 4B (docs/06 §2). Los cobros NO se
+ *  resuelven por esta referencia —la fila local nace con memberId y la regla 3
+ *  de resolve.ts ("la suscripción manda") los imputa sola—: la referencia es
+ *  para el operador que mira MP o la bandeja, no para la imputación. */
+export const MEMBER_SUBSCRIPTION_REF = /^socio:(\d+)$/;
+
+export function memberSubscriptionReference(memberId: number): string {
+  if (!Number.isInteger(memberId) || memberId <= 0) throw new Error("memberId inválido");
+  return `socio:${memberId}`;
+}
+
+export function parseMemberSubscriptionReference(ref: string | null | undefined): number | null {
+  const m = ref?.match(MEMBER_SUBSCRIPTION_REF);
+  const id = m ? Number(m[1]) : null;
+  return id && id > 0 ? id : null;
+}

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { changesFeeAmount } from "@/lib/applications/decision";
 import { categoryAllowedForResidence } from "@/lib/applications/wizard";
+import { SELECT_CLASS } from "@/lib/admin/field-styles";
 import type { MemberCategory } from "@/generated/prisma/client";
 
 type State = { error?: string };
@@ -74,9 +75,7 @@ export function DecisionForms(props: {
               id="newCategory"
               name="newCategory"
               required
-              // Tokens del shell y no `border` pelado: en modo oscuro un select
-              // sin `border-input` ni fondo propio se ve plano contra la Card.
-              className="h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              className={SELECT_CLASS}
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >

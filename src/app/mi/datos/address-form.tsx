@@ -24,13 +24,18 @@ export function AddressForm(props: {
   });
   return (
     <form ref={formRef} action={formAction} className="space-y-3">
-      <StreetAutocomplete
-        streets={props.streets}
-        defaultStreetId={props.streetId}
-        defaultStreetText={props.streetText}
-      />
-      <TextField label="Altura" field={field("streetNumber")} inputMode="numeric" maxLength={10} />
-      <TextField label="Barrio" field={field("neighborhood")} maxLength={60} />
+      {/* El autocompletado es del panel admin (32px, mouse); acá se opera con el
+          pulgar. Las variantes arbitrarias suben input y opciones a 48px sin
+          tocar el componente compartido. */}
+      <div className="[&_input]:h-12 [&_input]:text-base [&_li>button]:min-h-12">
+        <StreetAutocomplete
+          streets={props.streets}
+          defaultStreetId={props.streetId}
+          defaultStreetText={props.streetText}
+        />
+      </div>
+      <TextField label="Altura" field={field("streetNumber")} inputMode="numeric" maxLength={10} className="h-12" />
+      <TextField label="Barrio" field={field("neighborhood")} maxLength={60} className="h-12" />
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       {state.done && <FormMessage kind="warning">{state.message}</FormMessage>}
       <Button className="min-h-12" disabled={pending}>

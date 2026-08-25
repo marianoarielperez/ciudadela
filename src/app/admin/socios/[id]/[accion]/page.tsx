@@ -25,12 +25,27 @@ import { ActionForm, type Field } from "../action-form";
 import {
   changeCategoryAction, endSuspensionAction, readmitAction, suspendAction, withdrawAction,
 } from "../actions";
-import type { Member, MemberCategory } from "@/generated/prisma/client";
+import type { Member, MemberCategory, MemberRequestType } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
 
 const SLUGS = ["baja", "categoria", "suspension", "reingreso"] as const;
 type Slug = (typeof SLUGS)[number];
+
+// M5B Task 9: qué tipo de `MemberRequest` precarga cada slug. Suspensión y
+// reingreso no tienen solicitud de socio equivalente —no existen en
+// `MemberRequestType`— y quedan fuera del mapa a propósito: sin entrada, la
+// precarga simplemente no aplica y esos dos flujos quedan como hoy.
+const REQUEST_TYPE_FOR_SLUG: Partial<Record<Slug, MemberRequestType>> = {
+  baja: "withdrawal",
+  categoria: "category_change",
+};
+
+/** La solicitud pendiente que este envío del formulario va a marcar aceptada,
+ *  si `?solicitud=` trae un id válido. Precarga por `initial` de `screenFor`
+ *  y viaja como hidden `requestId` en `ActionForm` — nunca se confía en el
+ *  string crudo del querystring más allá de esta validación. */
+type AppliedRequest = { id: number; text: string; createdAt: Date; requestedCategory: MemberCategory | null };
 
 type Screen = {
   title: string;
@@ -62,6 +77,7 @@ type Debt = { pendingCount: number; amount: number | null };
 
 function screenFor(
   slug: Slug, member: Member, elections: boolean, autoDebit: AutoDebitSignal, debt: Debt,
+  appliedRequest: AppliedRequest | null,
 ): Screen {
   switch (slug) {
     case "baja":
@@ -80,7 +96,13 @@ function screenFor(
         action: withdrawAction,
         submitLabel: "Registrar baja",
         fields: [
-          { kind: "select", name: "reason", label: "Motivo (catálogo REG-18)", options: Object.entries(REASON_LABELS) },
+          {
+            kind: "select", name: "reason", label: "Motivo (catálogo REG-18)",
+            options: Object.entries(REASON_LABELS),
+            // Toda solicitud de baja es por renuncia (REG-19): no hay otro
+            // tipo que el socio pueda pedir desde su panel.
+            initial: appliedRequest ? "resignation" : undefined,
+          },
           DETAIL_FIELD,
         ],
       };
@@ -101,7 +123,10 @@ function screenFor(
         warning: autoDebit === "none" ? undefined : AUTO_DEBIT_WARNINGS.categoria[autoDebit],
         action: changeCategoryAction,
         submitLabel: "Cambiar categoría",
-        fields: [{ kind: "select", name: "newCategory", label: "Nueva categoría", options }],
+        fields: [{
+          kind: "select", name: "newCategory", label: "Nueva categoría", options,
+          initial: appliedRequest?.requestedCategory ?? undefined,
+        }],
       };
     }
 
@@ -162,7 +187,10 @@ function screenFor(
   }
 }
 
-export default async function AccionPage(props: { params: Promise<{ id: string; accion: string }> }) {
+export default async function AccionPage(props: {
+  params: Promise<{ id: string; accion: string }>;
+  searchParams: Promise<{ solicitud?: string }>;
+}) {
   const { id, accion } = await props.params;
   if (!SLUGS.includes(accion as Slug)) notFound();
   // Mismo criterio que la ficha: con "abc" o "1e9" Number() da NaN y Prisma
@@ -194,7 +222,25 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
     autoDebit: member.autoDebit,
     subscriptionStatuses: subscriptions.map((s) => s.status),
   });
-  const screen = screenFor(accion as Slug, member, elections, autoDebit, debt);
+
+  // M5B Task 9: precarga desde la bandeja de solicitudes ("Aplicar" en
+  // `/admin/solicitudes/socios` linkea acá con `?solicitud={id}`). Se valida
+  // contra la base — pendiente, del socio de la URL y del tipo que corresponde
+  // a este slug — y no contra lo que diga el querystring: si no matchea, se
+  // ignora en silencio y la pantalla queda como si no hubiera `?solicitud=`.
+  // La action revalida todo esto igual antes de asentar nada.
+  const requestType = REQUEST_TYPE_FOR_SLUG[accion as Slug];
+  const sp = await props.searchParams;
+  const solicitudId = Number(sp.solicitud);
+  let appliedRequest: AppliedRequest | null = null;
+  if (requestType && Number.isInteger(solicitudId) && solicitudId > 0) {
+    appliedRequest = await prisma.memberRequest.findFirst({
+      where: { id: solicitudId, memberId: member.id, status: "pending", type: requestType },
+      select: { id: true, text: true, createdAt: true, requestedCategory: true },
+    });
+  }
+
+  const screen = screenFor(accion as Slug, member, elections, autoDebit, debt, appliedRequest);
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -219,13 +265,21 @@ export default async function AccionPage(props: { params: Promise<{ id: string; 
           </Button>
         </div>
       ) : (
-        <ActionForm
-          action={screen.action}
-          memberId={member.id}
-          minutes={minutes}
-          submitLabel={screen.submitLabel}
-          fields={screen.fields}
-        />
+        <>
+          {appliedRequest && (
+            <FormMessage kind="neutral" box className="whitespace-pre-line">
+              {`Estás aplicando la solicitud N° ${appliedRequest.id} del ${formatDateAR(appliedRequest.createdAt)}: ${appliedRequest.text}`}
+            </FormMessage>
+          )}
+          <ActionForm
+            action={screen.action}
+            memberId={member.id}
+            minutes={minutes}
+            submitLabel={screen.submitLabel}
+            fields={screen.fields}
+            hidden={appliedRequest ? { requestId: appliedRequest.id } : undefined}
+          />
+        </>
       )}
     </div>
   );

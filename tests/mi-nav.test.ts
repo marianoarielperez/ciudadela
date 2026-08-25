@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMiTabActive, MI_TABS } from "@/lib/mi/nav";
+import { isMiTabActive, MI_TABS, miTabsFor } from "@/lib/mi/nav";
 
 describe("MI_TABS", () => {
   it("has unique hrefs, all under /mi", () => {
@@ -10,6 +10,33 @@ describe("MI_TABS", () => {
 
   it("starts at Inicio (/mi)", () => {
     expect(MI_TABS[0]).toMatchObject({ href: "/mi", label: "Inicio" });
+  });
+
+  it("includes Solicitudes between Mis datos and Estatuto", () => {
+    const hrefs = MI_TABS.map((t) => t.href);
+    expect(hrefs.indexOf("/mi/solicitudes")).toBeGreaterThan(hrefs.indexOf("/mi/datos"));
+    expect(hrefs.indexOf("/mi/solicitudes")).toBeLessThan(hrefs.indexOf("/mi/estatuto"));
+  });
+
+  it("includes Débito automático between Mi cuenta and Mis datos, marked paysFeeOnly", () => {
+    const hrefs = MI_TABS.map((t) => t.href);
+    expect(hrefs.indexOf("/mi/debito")).toBeGreaterThan(hrefs.indexOf("/mi/cuenta"));
+    expect(hrefs.indexOf("/mi/debito")).toBeLessThan(hrefs.indexOf("/mi/datos"));
+    expect(MI_TABS.find((t) => t.href === "/mi/debito")).toMatchObject({ paysFeeOnly: true });
+  });
+});
+
+describe("miTabsFor", () => {
+  it("hides /mi/debito for a category that does not pay a fee (e.g. vitalicio)", () => {
+    const hrefs = miTabsFor(false).map((t) => t.href);
+    expect(hrefs).not.toContain("/mi/debito");
+    // El resto del padrón de pestañas sigue intacto.
+    expect(hrefs).toEqual(MI_TABS.filter((t) => !t.paysFeeOnly).map((t) => t.href));
+  });
+
+  it("shows /mi/debito for a category that pays a fee (e.g. activo)", () => {
+    const hrefs = miTabsFor(true).map((t) => t.href);
+    expect(hrefs).toEqual(MI_TABS.map((t) => t.href));
   });
 });
 

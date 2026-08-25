@@ -39,6 +39,7 @@ model User {
   unmatchedResolved  MpUnmatchedPayment[] @relation("UnmatchedResolvedBy")
   incomesRegistered  OtherIncome[]        @relation("OtherIncomeRegisteredBy")
   incomesVoided      OtherIncome[]        @relation("OtherIncomeVoidedBy")
+  decidedRequests    MemberRequest[]      @relation("MemberRequestDecider")
 
   @@map("users")
 }
@@ -135,6 +136,18 @@ enum MovementType {
   book_migration
 }
 
+enum MemberRequestType {
+  withdrawal
+  category_change
+}
+
+enum MemberRequestStatus {
+  pending
+  accepted
+  rejected
+  cancelled
+}
+
 enum MinuteType {
   board
   assembly
@@ -162,6 +175,8 @@ enum NotificationType {
   arrears_alert
   receipt
   payment_rejected
+  request_accepted
+  request_rejected
   board_digest
   generic
 }
@@ -224,6 +239,7 @@ model Member {
   mpSubscriptions  MpSubscription[]
   fees             Fee[]
   payments         Payment[]
+  memberRequests   MemberRequest[]
 
   @@index([fullName])
   @@index([status, category])
@@ -292,9 +308,38 @@ model Movement {
   createdById      Int?              @map("created_by_id")
   createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt        DateTime          @default(now()) @map("created_at")
+  memberRequests   MemberRequest[]
 
   @@index([memberId])
   @@map("movements")
+}
+
+// Solicitudes que el socio presenta desde su panel (M5B): baja (REG-19) y
+// cambio de categoría (REG-07). La CD las decide con acta desde la bandeja;
+// `text` conserva el escrito de la renuncia con su timestamp, que es lo que
+// REG-19 exige que quede. "Una pendiente por tipo por socio" se garantiza en
+// la transacción de creación (MariaDB no tiene unique parcial).
+model MemberRequest {
+  id                Int                  @id @default(autoincrement())
+  memberId          Int                  @map("member_id")
+  member            Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  type              MemberRequestType
+  status            MemberRequestStatus  @default(pending)
+  requestedCategory MemberCategory?      @map("requested_category")
+  message           String?              @db.VarChar(500)
+  text              String               @db.VarChar(2000)
+  createdAt         DateTime             @default(now()) @map("created_at")
+  decidedAt         DateTime?            @map("decided_at")
+  decidedById       Int?                 @map("decided_by_id")
+  decidedBy         User?                @relation("MemberRequestDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decisionNote      String?              @map("decision_note") @db.VarChar(500)
+  cancelledAt       DateTime?            @map("cancelled_at")
+  movementId        Int?                 @map("movement_id")
+  movement          Movement?            @relation(fields: [movementId], references: [id], onDelete: SetNull)
+
+  @@index([memberId, status])
+  @@index([status, type])
+  @@map("member_requests")
 }
 
 model Street {

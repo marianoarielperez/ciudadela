@@ -13,7 +13,25 @@ vi.mock("@/lib/prisma", () => ({
     member: { findUnique: vi.fn() },
     fee: { count: vi.fn(async () => 0) },
     minute: { findUnique: vi.fn(async () => ({ id: 5 })) },
+    memberRequest: { findUnique: vi.fn() },
   },
+}));
+
+// M5B Task 9 (revisión): `markAccepted` y `notifyRequestDecided` sólo se tocan
+// cuando el formulario trae `requestId` (el camino "Aplicar" de la bandeja de
+// solicitudes) — ver el bloque `describe("el camino de la bandeja de
+// solicitudes (requestId)"` más abajo. El resto de este archivo nunca manda
+// `requestId`, así que estos dobles quedan sin llamar y no cambian nada de lo
+// que ya prueba el archivo.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- la firma existe para tipar, no para leerse
+const markAccepted = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("@/lib/members/member-requests/service", () => ({
+  memberRequests: { markAccepted: (...a: unknown[]) => markAccepted(...a) },
+}));
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- la firma existe para tipar, no para leerse
+const notifyRequestDecided = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("@/lib/members/member-requests/notify", () => ({
+  notifyRequestDecided: (...a: unknown[]) => notifyRequestDecided(...a),
 }));
 
 vi.mock("next/headers", () => ({
@@ -59,6 +77,7 @@ const db = prisma as unknown as {
   member: { findUnique: MockedFn };
   fee: { count: MockedFn };
   minute: { findUnique: MockedFn };
+  memberRequest: { findUnique: MockedFn };
 };
 
 const WITHDRAWN = {
@@ -194,5 +213,56 @@ describe("withdrawAction", () => {
     expect(r?.error).toBeTruthy();
     expect(withdrawWithDebits.withdraw).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
+  });
+
+  // ── El camino de la bandeja de solicitudes (requestId) ────────────────────
+  //
+  // Revisión de Task 9: el `<select>` de motivo del formulario de baja viene
+  // precargado en "renuncia" pero NO fijo. Sin esta guarda, un operador que
+  // aplica desde la bandeja podía cambiarlo a expulsión o cesantía por mora y
+  // asentar la baja con otro motivo mientras la solicitud quedaba `accepted`
+  // y el correo le decía al socio que se le concedió la renuncia.
+  describe("el camino de la bandeja de solicitudes (requestId)", () => {
+    const PENDING_WITHDRAWAL_REQUEST = { id: 55, memberId: 12, status: "pending", type: "withdrawal" };
+
+    beforeEach(() => {
+      db.memberRequest.findUnique.mockResolvedValue(PENDING_WITHDRAWAL_REQUEST);
+    });
+
+    it("rechaza asentar otro motivo que no sea renuncia, sin tocar Mercado Pago ni la solicitud", async () => {
+      const r = await withdrawAction({}, withdrawForm({ requestId: "55", reason: "expulsion" }));
+      expect(r?.error).toContain("renuncia");
+      expect(withdrawWithDebits.withdraw).not.toHaveBeenCalled();
+      expect(markAccepted).not.toHaveBeenCalled();
+      expect(notifyRequestDecided).not.toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
+    });
+
+    it("con reason=resignation: da la baja, marca la solicitud aceptada y avisa al socio", async () => {
+      await withdrawAction({}, withdrawForm({ requestId: "55" }));
+      expect(withdrawWithDebits.withdraw).toHaveBeenCalledWith(
+        expect.objectContaining({ memberId: 12, reason: "resignation" }),
+      );
+      expect(markAccepted).toHaveBeenCalledWith({
+        requestId: 55, memberId: 12, decidedById: 7, type: "withdrawal",
+      });
+      expect(notifyRequestDecided).toHaveBeenCalledWith({ memberId: 12, type: "withdrawal", accepted: true });
+      expect(redirect).toHaveBeenCalledWith("/admin/socios/12");
+    });
+
+    it("si markAccepted falla, la baja sale igual (ya commiteó) y el aviso no se manda", async () => {
+      markAccepted.mockRejectedValueOnce(new Error("db hiccup"));
+      const r = await withdrawAction({}, withdrawForm({ requestId: "55" }));
+      expect(r?.error).toBeUndefined();
+      expect(redirect).toHaveBeenCalledWith("/admin/socios/12");
+      expect(notifyRequestDecided).not.toHaveBeenCalled();
+    });
+
+    it("una solicitud que no está pendiente rechaza antes de tocar Mercado Pago", async () => {
+      db.memberRequest.findUnique.mockResolvedValueOnce({ ...PENDING_WITHDRAWAL_REQUEST, status: "accepted" });
+      const r = await withdrawAction({}, withdrawForm({ requestId: "55" }));
+      expect(r?.error).toBeTruthy();
+      expect(withdrawWithDebits.withdraw).not.toHaveBeenCalled();
+    });
   });
 });

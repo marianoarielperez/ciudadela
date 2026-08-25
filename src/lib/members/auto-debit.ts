@@ -1,27 +1,37 @@
 // El aviso que le dice al operador que la baja o el cambio de categoría que está
 // por registrar NO toca el débito automático del socio en Mercado Pago.
 //
-// El hecho que lo justifica: `changeCategoryAction` (admin/socios/[id]/actions.ts)
-// escribe la ficha, el acta y la auditoría, y nada más — a un recategorizado se
-// le sigue cobrando el monto viejo hasta que alguien corra el lote REG-34
-// (/admin/tesoreria/valores). La baja era igual hasta la 4C y ya no lo es:
-// `withdrawAction` pasa por `withdrawWithDebits` y cancela la suscripción
-// después del commit. Pero cancela lo que el sistema CONOCE y puede fallar sin
-// deshacer la baja, así que el aviso sigue haciendo falta: dice qué va a pasar y
-// qué queda por hacer si no pasa. Es plata real de un vecino: la pantalla tiene
-// que decirlo antes, no el socio tres meses después.
+// El hecho que lo justifica: ninguna de las dos acciones deja el mandato de
+// cobro de Mercado Pago intacto de forma segura y silenciosa. Desde la Task 10
+// (5B) `changeCategoryAction` (admin/socios/[id]/actions.ts) le empuja el monto
+// nuevo a MP EN EL MISMO envío —antes de escribir la ficha, el acta y la
+// auditoría— y si MP lo rechaza el cambio de categoría no se registra: no hace
+// falta correr nada a mano DESPUÉS. Pero eso sólo alcanza a lo que el cableado
+// puede calcular (hay suscripción viva, hay valor de cuota, la categoría nueva
+// paga cuota): la Comisión sigue necesitando saber cuándo NO alcanza. La baja
+// era distinta hasta la 4C y ya no lo es: `withdrawAction` pasa por
+// `withdrawWithDebits` y cancela la suscripción después del commit. Pero
+// cancela lo que el sistema CONOCE y puede fallar sin deshacer la baja, así que
+// el aviso sigue haciendo falta: dice qué va a pasar y qué queda por hacer si
+// no pasa. Es plata real de un vecino: la pantalla tiene que decirlo antes, no
+// el socio tres meses después.
 //
 // QUÉ SE MIRA, y por qué las dos señales
 // --------------------------------------
 // Ninguna de las dos alcanza sola:
 //
-//  - `Member.autoDebit` se escribe desde TRES lugares, no uno: el padrón
+//  - `Member.autoDebit` se escribe desde CUATRO lugares, no tres: el padrón
 //    importado (`padron/mapping.ts`, fichas viejas cuyo débito se gestionó a
 //    mano en el panel de MP antes de que existiera este sistema), el alta web y
-//    el reingreso (`applications/record.ts`, con `app.wantsDebit`) y la
-//    vinculación manual (`mp/link-subscription.ts`). Ninguno lo BAJA nunca. Por
-//    eso el flag solo dice "en algún momento hubo intención de débito" y NO de
-//    dónde salió: los textos de abajo no pueden atribuirle una procedencia.
+//    el reingreso (`applications/record.ts`, con `app.wantsDebit`), la
+//    vinculación manual (`mp/link-subscription.ts`) y la adhesión
+//    autogestionada del socio (`members/member-debit.ts`, Task 12 de 5B). Los
+//    primeros tres solo lo SUBEN. El cuarto es distinto: la adhesión lo sube
+//    igual que los otros, pero la cancelación lo BAJA —solo si no le queda al
+//    socio otra suscripción cobrable (`cancel`, mismo archivo)—. Por eso el
+//    flag ya no dice solamente "en algún momento hubo intención de débito":
+//    los textos de abajo siguen sin poder atribuirle una procedencia, pero
+//    ahora un `false` también puede significar que el socio canceló.
 //  - `MpSubscription` con `memberId` es la suscripción que el sistema conoce:
 //    la creó el Módulo 3 al asociarse el vecino, o la vinculó un admin. Una
 //    ficha nueva tiene fila y puede tener el flag en `false` (nadie lo edita al
@@ -82,15 +92,17 @@ export function autoDebitSignal(input: {
 
 /** El texto es distinto por acción porque lo que hay que hacer es distinto: en
  *  la baja hay que CANCELAR el débito —y eso sigue siendo a mano en el panel de
- *  Mercado Pago—; en el cambio de categoría, empujarle el monto nuevo, que
- *  desde el Módulo 4 se hace desde acá con el lote REG-34. Decir "gestionalo" a
- *  secas deja al operador adivinando.
+ *  Mercado Pago—; en el cambio de categoría, desde la Task 10 (5B) el sistema
+ *  ya le empuja el monto nuevo SOLO, en el mismo envío que registra el cambio.
+ *  Decir "gestionalo" a secas deja al operador adivinando.
  *
  *  Y es distinto por SEÑAL (`autoDebitSignal`): con la fila local delante se
  *  afirma, con el flag del padrón a secas se pregunta. El destino también
- *  cambia: el lote REG-34 no alcanza una suscripción que el sistema no conoce
- *  (`listDivergent` sólo mira filas propias), así que mandar ahí a un socio con
- *  flag solo sería mandarlo a una lista donde nunca va a aparecer.
+ *  cambia: el cableado automático (y el lote REG-34, que sigue siendo la red
+ *  para lo que ese cableado no alcanza) no llegan a una suscripción que el
+ *  sistema no conoce (los dos miran `mp_subscriptions` por `memberId`), así que
+ *  mandar a un socio con flag solo al panel de Mercado Pago es la única salida
+ *  real que le queda.
  *
  *  CADA AFIRMACIÓN DE ESTOS TEXTOS SALE DE CÓDIGO, no de lo que el sistema
  *  debería hacer. Si alguno de estos caminos cambia, el texto cambia con él:
@@ -128,17 +140,23 @@ export function autoDebitSignal(input: {
  *     dos casos, y nunca el motivo.
  *
  *  `categoria`
- *   - `memberService.changeCategory` sólo escribe `Member.category` y el
- *     `Movement`: no toca MP.
- *   - El lote REG-34 (`listDivergent`, mp/fee-value-batch.ts) calcula el monto
- *     esperado con `feeAmountFor(member.category, valor vigente)`, o sea contra
- *     la categoría que el socio tiene AHORA: un recategorizado aparece
- *     divergente en /admin/tesoreria/valores y el lote le empuja el monto nuevo.
- *   - Tres huecos que el lote NO cubre y por eso están en los textos: sólo mira
- *     suscripciones `authorized` con socio vinculado; saltea las categorías sin
- *     cuota (`feeAmountFor` devuelve null para honorario, vitalicio y cadete),
- *     donde lo que corresponde no es un monto nuevo sino cancelar; y no sabe
- *     nada de un débito que no tiene fila local. */
+ *   - Desde la Task 10 (5B), `changeCategoryAction`
+ *     (`src/app/admin/socios/[id]/actions.ts`) empuja el monto a Mercado Pago
+ *     EN EL MISMO envío, ANTES de escribir el cambio local
+ *     (`subscriptionAmountPlan`, `members/subscription-amount.ts`): si MP lo
+ *     rechaza, el cambio de categoría no se registra (corte total, mismo
+ *     criterio que el resto de las actions). `memberService.changeCategory`
+ *     sigue sin tocar MP por su cuenta — es la action la que orquesta el push.
+ *   - El lote REG-34 (`listDivergent`, mp/fee-value-batch.ts) sigue siendo la
+ *     RED para lo que ese cableado no alcanza a la primera: una suscripción
+ *     cuyo espejo local quedó desincronizado porque MP aceptó el monto pero la
+ *     escritura del espejo falló, o un socio recategorizado cuando MP todavía
+ *     no había avisado la fila.
+ *   - Un hueco que ni el cableado ni el lote cubren, y por eso sigue en el
+ *     texto: las categorías sin cuota (`feeAmountFor` devuelve null para
+ *     honorario, vitalicio y cadete). Ahí no hay monto que empujar — lo que
+ *     corresponde es CANCELAR la suscripción, y esa es una decisión humana que
+ *     ningún cableado dispara solo. */
 export const AUTO_DEBIT_WARNINGS = {
   baja: {
     subscription:
@@ -160,17 +178,18 @@ export const AUTO_DEBIT_WARNINGS = {
   },
   categoria: {
     subscription:
-      "Este socio tiene una suscripción de débito automático viva en Mercado Pago. El monto NO se " +
-      "ajusta solo: después de registrar el cambio, un superadmin tiene que correr «Aplicar valor " +
-      "vigente» en Tesorería → Valores de cuota para empujarle a Mercado Pago la cuota de la " +
-      "categoría nueva. Ese lote sólo alcanza a las suscripciones activas y vinculadas a un socio: " +
-      "si la categoría nueva no paga cuota (honorario, vitalicio, cadete), no hay monto que empujar " +
-      "y el débito hay que cancelarlo a mano en el panel de Mercado Pago.",
+      "Este socio tiene una suscripción de débito automático viva en Mercado Pago. Al registrar el " +
+      "cambio de categoría el sistema le empuja el monto de la cuota nueva a Mercado Pago en el " +
+      "mismo envío, antes de guardar nada: si Mercado Pago no acepta el monto nuevo, el cambio de " +
+      "categoría no se registra y podés reintentarlo. Si la categoría nueva no paga cuota (honorario, " +
+      "vitalicio, cadete), no hay monto que empujar y el débito hay que cancelarlo a mano en el " +
+      "panel de Mercado Pago: eso el sistema no lo hace solo.",
     flag_only:
       "La ficha de este socio dice que tiene débito automático, pero el sistema no conoce ninguna " +
-      "suscripción viva suya en Mercado Pago: ese dato quedó viejo. El lote «Aplicar " +
-      "valor vigente» de Tesorería → Valores de cuota no lo alcanza, porque sólo toca suscripciones " +
-      "que el sistema conoce. Si ese débito todavía existe, va a seguir cobrando el monto viejo: " +
-      "buscalo en el panel de Mercado Pago y ajustalo o cancelalo ahí.",
+      "suscripción viva suya en Mercado Pago: ese dato quedó viejo. El empuje automático al " +
+      "registrar el cambio no lo alcanza, y el lote «Aplicar valor vigente» de Tesorería → Valores " +
+      "de cuota tampoco: los dos sólo tocan suscripciones que el sistema conoce. Si ese débito " +
+      "todavía existe, va a seguir cobrando el monto viejo: buscalo en el panel de Mercado Pago y " +
+      "ajustalo o cancelalo ahí.",
   },
 } as const;

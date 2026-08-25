@@ -18,16 +18,12 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
 import { PAYMENT_TYPE_LABELS } from "@/lib/treasury/labels";
 import { fetchReceiptsPage, parseReceiptFilters } from "@/lib/treasury/receipts-query";
+import { SELECT_CLASS } from "@/lib/admin/field-styles";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Recibos — SIGeV" };
 
 const BASE = "/admin/tesoreria/recibos";
-
-// Tokens del shell y no `border` pelado: en modo oscuro un select sin
-// `border-input` ni fondo propio se ve plano contra la página.
-const SELECT_CLASS =
-  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 export default async function RecibosPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;

@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import {
+  Bell, ClipboardList, CreditCard, FileImage, Gavel, User,
+} from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { formatARS, formatBytes, formatDateAR } from "@/lib/format";
+import { formatARS, formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { APPLICATION_STATUS_LABELS, DOCUMENT_TYPE_LABELS } from "@/lib/applications/labels";
+import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import { isDecidable } from "@/lib/applications/decision";
 import {
   APPROVED_AFTER_EXPIRY_ACTION, lateEntryNotice, subscriptionIsActive,
@@ -21,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { recategorizeApplicationAction, rejectApplicationAction } from "../actions";
 import { DecisionForms } from "./decision-forms";
+import { DocumentViewer } from "./document-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -177,9 +181,111 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
         </div>
       </PageHeader>
 
+      {/* Avisos de Mercado Pago, ARRIBA de todo: son la señal más cara de la
+          pantalla (un débito que sigue cobrando, o uno que no se sabe si
+          cobra) y estaban enterrados al final de la Card de Pago, cuarta de
+          seis. Mismas cuatro condiciones y mismos textos que antes — sólo
+          cambia dónde se pintan. */}
+      {revivedEntry && lateEntry === "no_debit" && (
+        // Mismo criterio que el aviso de "suscripción sin cancelar": el dato
+        // existía sólo en la auditoría y ahí no lo mira nadie. Acá hace falta
+        // porque la solicitud se puede asentar en acta desde la bandeja sin
+        // abrir esta pantalla, y el alta quedaría sin débito.
+        <FormMessage kind="warning" box>
+          El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
+          solicitud ya estaba vencida, y se aceptó igual. Al vencer se canceló la
+          suscripción de Mercado Pago: el vecino pagó el ingreso pero{" "}
+          <strong>quedó sin débito automático</strong>. Revisá la suscripción y volvé a
+          gestionarla con él antes de asentar el alta.
+        </FormMessage>
+      )}
+      {revivedEntry && lateEntry === "unknown" && (
+        // Tercer caso, distinto de los otros dos: no hay fila local de
+        // suscripción. Sin `preapprovalId` el cron ni siquiera intentó
+        // cancelar (ver `cron.ts`), así que acá no hay NADA probado —ni que
+        // el débito esté cancelado ni que siga vivo. No se puede reusar el
+        // texto de "verify": no hay estado que mostrar (`subscription` es
+        // null) ni preapproval que nombrar. El aviso dice la verdad: no se
+        // sabe, y hay que mirar en MP antes de gestionar nada. Mismo criterio
+        // que `pendingCancellation`, más abajo: sin fila local también avisa.
+        <FormMessage kind="warning" box>
+          El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
+          solicitud ya estaba vencida, y se aceptó igual. Esta solicitud{" "}
+          <strong>no tiene ninguna suscripción de Mercado Pago registrada</strong> en el
+          sistema, así que no se sabe si quedó algún débito activo. Buscá al vecino por DNI
+          o nombre en el panel de Mercado Pago y confirmá si hay un preapproval abierto
+          antes de gestionar uno nuevo.
+        </FormMessage>
+      )}
+      {revivedEntry && lateEntry === "verify" && (
+        // La otra mitad del mismo caso: el pago llegó tarde, pero la
+        // cancelación que el cron intentó al vencer NO figura aplicada. El
+        // aviso no puede afirmar que no hay débito —mandaría a crear un
+        // segundo preapproval sobre alguien a quien MP le sigue cobrando—,
+        // así que pide mirar antes de tocar.
+        <FormMessage kind="warning" box>
+          El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
+          solicitud ya estaba vencida, y se aceptó igual. Al vencer se intentó cancelar la
+          suscripción de Mercado Pago, pero{" "}
+          {subscriptionIsActive(subscription?.status)
+            ? "sigue figurando autorizada"
+            : `figura como «${subscription?.status}»`}
+          : la cancelación puede no haberse aplicado.{" "}
+          <strong>Verificá el preapproval en el panel de Mercado Pago</strong>
+          {app.preapprovalId && (
+            <> (<span className="font-mono">{app.preapprovalId}</span>)</>
+          )}{" "}
+          antes de gestionar un débito nuevo: si sigue activo, gestionar otro le dejaría dos
+          débitos al vecino.
+        </FormMessage>
+      )}
+      {pendingCancellation && (
+        <FormMessage kind="warning" box>
+          La solicitud está rechazada pero la suscripción de Mercado Pago no figura
+          cancelada: puede seguir debitándole la cuota al vecino. Cancelá el preapproval{" "}
+          <span className="font-mono">{app.preapprovalId}</span> a mano desde el panel de
+          Mercado Pago.
+        </FormMessage>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2">
+        {/* Sólo mientras la solicitud está viva: sobre una ya resuelta estos
+            dos formularios serían botones que el servidor va a rechazar
+            igual. Primera tarjeta y no quinta: es lo que el operador vino a
+            hacer acá, no algo que encuentra después de leer todo lo demás. */}
+        {decidable && (
+          <Card className="md:col-span-2">
+            <CardHeader>
+              <CardTitle as="h2" className="flex items-center gap-2">
+                <Gavel className="size-4 text-primary" aria-hidden />
+                Acciones
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DecisionForms
+                recategorize={recategorizeApplicationAction}
+                reject={rejectApplicationAction}
+                applicationId={app.id}
+                currentCategory={app.requestedCategory}
+                options={categoryOptions}
+                // `streetId` es una calle del catastro del barrio; sin ella, lo
+                // declarado fue calle + barrio de afuera (los dos juegos de
+                // campos se escriben excluyentes en el wizard).
+                livesInBarrio={app.streetId !== null}
+                hasSubscription={app.preapprovalId !== null}
+                minutes={minutes}
+              />
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
-          <CardHeader><CardTitle>Estado</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle as="h2" className="flex items-center gap-2">
+              <ClipboardList className="size-4 text-primary" aria-hidden />
+              Estado
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             <dl className="grid grid-cols-2 gap-3">
               <Field label="Estado" value={APPLICATION_STATUS_LABELS[app.status]} />
@@ -224,7 +330,12 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Datos personales</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle as="h2" className="flex items-center gap-2">
+              <User className="size-4 text-primary" aria-hidden />
+              Datos personales
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             <dl className="grid grid-cols-2 gap-3">
               <Field label="DNI" value={app.dni} />
@@ -240,35 +351,30 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader><CardTitle>Documentación</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle as="h2" className="flex items-center gap-2">
+              <FileImage className="size-4 text-primary" aria-hidden />
+              Documentación
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
             {documents.length === 0 ? (
               <EmptyState size="card" description="La solicitud todavía no adjuntó documentos." />
             ) : (
-              documents.map((doc) => (
-                <p key={doc.id} className="text-sm">
-                  {DOCUMENT_TYPE_LABELS[doc.type]} · {formatBytes(doc.size)} ·{" "}
-                  {/* Pestaña nueva: el operador compara la foto con los datos de
-                      esta misma pantalla sin perder el lugar. `rel="noopener"`
-                      porque la ruta sirve un archivo subido por un tercero. */}
-                  <a
-                    className="text-primary hover:underline"
-                    href={`/api/admin/solicitudes/${app.id}/documentos/${doc.id}`}
-                    target="_blank"
-                    rel="noopener"
-                  >
-                    Ver
-                  </a>
-                </p>
-              ))
+              <DocumentViewer applicationId={app.id} documents={documents} />
             )}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Pago y suscripción</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
+          <CardHeader>
+            <CardTitle as="h2" className="flex items-center gap-2">
+              <CreditCard className="size-4 text-primary" aria-hidden />
+              Pago y suscripción
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
             <dl className="grid grid-cols-2 gap-3">
               <Field label="Preapproval de MP" value={app.preapprovalId} />
               <Field label="Estado de la suscripción" value={subscription?.status} />
@@ -278,96 +384,16 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
                 value={app.entryAmount ? formatARS(Number(app.entryAmount)) : null}
               />
             </dl>
-            {revivedEntry && lateEntry === "no_debit" && (
-              // Mismo criterio que el aviso de "suscripción sin cancelar": el
-              // dato existía sólo en la auditoría y ahí no lo mira nadie. Acá
-              // hace falta porque la solicitud se puede asentar en acta desde la
-              // bandeja sin abrir esta pantalla, y el alta quedaría sin débito.
-              <FormMessage kind="warning" box>
-                El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
-                solicitud ya estaba vencida, y se aceptó igual. Al vencer se canceló la
-                suscripción de Mercado Pago: el vecino pagó el ingreso pero{" "}
-                <strong>quedó sin débito automático</strong>. Revisá la suscripción y volvé a
-                gestionarla con él antes de asentar el alta.
-              </FormMessage>
-            )}
-            {revivedEntry && lateEntry === "unknown" && (
-              // Tercer caso, distinto de los otros dos: no hay fila local de
-              // suscripción. Sin `preapprovalId` el cron ni siquiera intentó
-              // cancelar (ver `cron.ts`), así que acá no hay NADA probado —ni
-              // que el débito esté cancelado ni que siga vivo. No se puede
-              // reusar el texto de "verify": no hay estado que mostrar
-              // (`subscription` es null) ni preapproval que nombrar. El aviso
-              // dice la verdad: no se sabe, y hay que mirar en MP antes de
-              // gestionar nada. Mismo criterio que `pendingCancellation`, doce
-              // líneas más arriba: sin fila local también avisa.
-              <FormMessage kind="warning" box>
-                El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
-                solicitud ya estaba vencida, y se aceptó igual. Esta solicitud{" "}
-                <strong>no tiene ninguna suscripción de Mercado Pago registrada</strong> en el
-                sistema, así que no se sabe si quedó algún débito activo. Buscá al vecino por DNI
-                o nombre en el panel de Mercado Pago y confirmá si hay un preapproval abierto
-                antes de gestionar uno nuevo.
-              </FormMessage>
-            )}
-            {revivedEntry && lateEntry === "verify" && (
-              // La otra mitad del mismo caso: el pago llegó tarde, pero la
-              // cancelación que el cron intentó al vencer NO figura aplicada. El
-              // aviso no puede afirmar que no hay débito —mandaría a crear un
-              // segundo preapproval sobre alguien a quien MP le sigue cobrando—,
-              // así que pide mirar antes de tocar.
-              <FormMessage kind="warning" box>
-                El pago de ingreso llegó el {formatDateAR(revivedEntry.createdAt)}, cuando la
-                solicitud ya estaba vencida, y se aceptó igual. Al vencer se intentó cancelar la
-                suscripción de Mercado Pago, pero{" "}
-                {subscriptionIsActive(subscription?.status)
-                  ? "sigue figurando autorizada"
-                  : `figura como «${subscription?.status}»`}
-                : la cancelación puede no haberse aplicado.{" "}
-                <strong>Verificá el preapproval en el panel de Mercado Pago</strong>
-                {app.preapprovalId && (
-                  <> (<span className="font-mono">{app.preapprovalId}</span>)</>
-                )}{" "}
-                antes de gestionar un débito nuevo: si sigue activo, gestionar otro le dejaría dos
-                débitos al vecino.
-              </FormMessage>
-            )}
-            {pendingCancellation && (
-              <FormMessage kind="warning" box>
-                La solicitud está rechazada pero la suscripción de Mercado Pago no figura
-                cancelada: puede seguir debitándole la cuota al vecino. Cancelá el preapproval{" "}
-                <span className="font-mono">{app.preapprovalId}</span> a mano desde el panel de
-                Mercado Pago.
-              </FormMessage>
-            )}
           </CardContent>
         </Card>
 
-        {/* Sólo mientras la solicitud está viva: sobre una ya resuelta estos dos
-            formularios serían botones que el servidor va a rechazar igual. */}
-        {decidable && (
-          <Card className="md:col-span-2">
-            <CardHeader><CardTitle>Acciones</CardTitle></CardHeader>
-            <CardContent>
-              <DecisionForms
-                recategorize={recategorizeApplicationAction}
-                reject={rejectApplicationAction}
-                applicationId={app.id}
-                currentCategory={app.requestedCategory}
-                options={categoryOptions}
-                // `streetId` es una calle del catastro del barrio; sin ella, lo
-                // declarado fue calle + barrio de afuera (los dos juegos de
-                // campos se escriben excluyentes en el wizard).
-                livesInBarrio={app.streetId !== null}
-                hasSubscription={app.preapprovalId !== null}
-                minutes={minutes}
-              />
-            </CardContent>
-          </Card>
-        )}
-
         <Card>
-          <CardHeader><CardTitle>Notificaciones</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle as="h2" className="flex items-center gap-2">
+              <Bell className="size-4 text-primary" aria-hidden />
+              Notificaciones
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-1">
             {notifications.length === 0 ? (
               <EmptyState size="card" description="Sin notificaciones." />

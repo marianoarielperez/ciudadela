@@ -73,3 +73,41 @@ export function cancelEffectSentence(sub: {
         `Pago no le puede volver a debitar la cuota${fee}.`;
   }
 }
+
+// EXCEPCIÓN AUTORIZADA (revisión Tarea 13, fase 5B): agregado ESTRICTAMENTE
+// ADITIVO. `cancelEffectSentence` de arriba no se toca — la siguen usando las
+// pantallas del admin, en TERCERA persona, para un operador que lee sobre "el
+// vecino". `/mi/debito/cancelar` es la MISMA confirmación pero leída por el
+// propio socio, tres líneas abajo de un título que lo trata de "vos": las
+// frases de arriba ahí suenan a que alguien más está mirando su cuenta.
+//
+// Mismos cuatro casos, mismo cuidado de no mentir (ver el porqué de cada uno
+// en el comentario de cabecera de este archivo), en segunda persona:
+//
+//  - `unknown` además evita la jerga de "un estado que el sistema no conoce":
+//    eso describe el CÓDIGO, no algo que el socio necesite entender para
+//    decidir si cancela. Tampoco nombra el `statusLabel` crudo de MP —es
+//    ruido para quien no administra suscripciones—, sólo admite que no se
+//    pudo confirmar y afirma lo único cierto: cancelar corta cualquier cobro
+//    futuro.
+export function cancelEffectSentenceForMember(sub: {
+  effect: CancelEffect;
+  amountLabel: string | null;
+  statusLabel: string;
+}): string {
+  const fee = sub.amountLabel ? ` de ${sub.amountLabel}` : "";
+  switch (sub.effect) {
+    case "stops_charging":
+      return `Mercado Pago te deja de debitar la cuota${fee} todos los meses.`;
+    case "would_resume":
+      return "Esta suscripción está pausada: hoy no te está debitando, pero una pausa se reanuda y " +
+        `vuelve a cobrar. Al cancelarla, Mercado Pago no te va a poder debitar la cuota${fee} nunca más.`;
+    case "never_authorized":
+      return "Esta suscripción está pendiente de autorización: nunca autorizaste el débito, así que " +
+        "hoy no te está saliendo plata. Lo que se corta es que puedas autorizarla más adelante y " +
+        "que te empiece a cobrar sola.";
+    case "unknown":
+      return "No pudimos confirmar el estado exacto de tu débito en Mercado Pago; al cancelarlo, no " +
+        "se te va a debitar más.";
+  }
+}

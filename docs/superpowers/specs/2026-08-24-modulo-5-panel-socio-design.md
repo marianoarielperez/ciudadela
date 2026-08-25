@@ -296,6 +296,20 @@ La regla vive como **función pura** `src/lib/members/debit-adhesion.ts`:
 
 ### 7.2 Lado admin — bandeja "Solicitudes de socios"
 
+> **Enmienda (24/08/2026, a la noche — decisión del operador tras cuatro rondas):**
+> esta sección ya no nace como ítem nuevo de la navegación. `/admin/solicitudes`
+> pasa a ser una **sección unificada con pestañas por URL** (patrón Tesorería):
+> **Altas** (la bandeja del wizard, misma URL — se rediseña entera con el lenguaje
+> de la 5A, separando cola de trabajo de historial, con tarjetas, barra de asiento
+> fija y visor de DNI embebido en el detalle; la lógica —actions, actas, emails—
+> queda INTACTA) y **De socios** (`/admin/solicitudes/socios`, esta bandeja).
+> Contadores de pendientes en las pestañas y en la tarjeta del tablero. El chip
+> "Revisar domicilio" (ítem 8 abierto de docs/07) se absorbe en el rediseño.
+> El canal de aviso a la CD es la pestaña con contador + el tablero: el resumen
+> diario NO se toca (hoy no cubre `member_requests`). Detalle operativo en el
+> plan de la fase, Tasks 6-8. Lo que sigue de esta sección vale como semántica
+> de la bandeja; la ruta y el chrome son los de la enmienda.
+
 - Ítem nuevo en el grupo **Gestión** de `src/lib/admin/nav.ts` (+ tarjeta en
   `dashboard-cards.ts`; el test de sincronía existente lo cubre). `requireAdmin`
   (no superadmin). Ruta: `/admin/socios/solicitudes`.
@@ -435,3 +449,18 @@ bandeja admin + MP en el acto al recategorizar + notificaciones de decisión.
 4. `docs/07`: el alcance del M5 se implementa en dos fases 5A/5B con los CA de
    esta spec; los dos CA originales del módulo quedan cubiertos (el pago por
    link en sandbox ya fue verificado en 4B; el circuito de baja es CA-5B-3).
+
+Enmiendas menores del cierre de la 5B (25/08/2026):
+
+5. La frase de efecto de la cancelación se dirige al socio en **segunda persona**
+   vía `cancelEffectSentenceForMember` — agregado **aditivo** en
+   `src/lib/mp/cancel-effect.ts`; la función del admin sigue en tercera persona,
+   que es lo correcto para su pantalla.
+6. El panel de `/mi` pasó de `max-w-2xl` a **`max-w-3xl`** y la pestaña se
+   etiqueta **"Débito"** a secas (el nombre completo queda en el `h1` de la
+   página): con seis pestañas, el ancho de la 5A desbordaba en escritorio.
+   Reportado por el operador el 25/08.
+7. El aviso del débito al socio requiere **las DOS solapas de webhooks**
+   configuradas en el panel de MP: medido en el sandbox de cierre, el token
+   `APP_USR-…` de una aplicación de cuenta de prueba dispara por "Modo
+   productivo" (`docs/11` J.6 y J.1 paso 4).

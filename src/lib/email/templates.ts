@@ -1,6 +1,6 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
-import type { PaymentType } from "@/generated/prisma/client";
+import type { MemberRequestType, PaymentType } from "@/generated/prisma/client";
 import { formatARS, formatDateTimeAR } from "@/lib/format";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
@@ -535,5 +535,53 @@ Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pa
 <p>Mercado Pago intentó cobrar tu cuota social de <strong>${esc(amount)}</strong> y no pudo: ${esc(opts.reason)}.</p>
 <p>Tu cuota sigue como estaba: este intento no la modifica. Si el cobro era tu débito automático, Mercado Pago lo vuelve a intentar por su cuenta unas pocas veces más, pero no conviene esperar a que alguno prospere.</p>
 <p>Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pagar en la sede o pedirnos un link de pago respondiendo este mensaje.</p>`),
+  };
+}
+
+/** Decisión de la Comisión sobre una solicitud presentada desde `/mi/solicitudes`
+ *  (M5B): baja por renuncia o cambio de categoría, aceptada (Task 9 — piggyback
+ *  del flujo con acta, `notifyRequestDecided`) o rechazada (Task 8,
+ *  `rejectRequestAction`).
+ *
+ *  Las RECHAZADAS no saludan por nombre a propósito, mismo criterio que
+ *  `applicationRejectedEmail`: es un aviso de trámite, no una bienvenida. Las
+ *  ACEPTADAS sí saludan (Task 9, revisión) —en particular la de baja es la
+ *  despedida formal de un socio que puede llevar décadas, y un correo sin
+ *  destinatario en el cuerpo se lee frío en una casilla familiar compartida—,
+ *  con `fullName` opcional: si el llamador no lo tiene a mano, el correo sale
+ *  igual, sin saludo. La aceptada de baja dice que quedó asentada CON ACTA (el
+ *  socio dejó de serlo por una resolución formal, no por un clic); la de
+ *  categoría, que YA RIGE. Las rechazadas suman la nota de la Comisión cuando la
+ *  hay —nunca la inventan si no vino ninguna, mismo criterio que el rechazo de
+ *  altas, que tampoco expresa causa si no se la dieron—. */
+export function memberRequestDecided(opts: {
+  type: MemberRequestType;
+  accepted: boolean;
+  note?: string | null;
+  fullName?: string | null;
+}): { message: Rendered; summary: string } {
+  const kind = opts.type === "withdrawal" ? "baja por renuncia" : "cambio de categoría";
+  const verdict = opts.accepted ? "aceptada" : "rechazada";
+  const resultLine = opts.accepted
+    ? opts.type === "withdrawal"
+      ? "Tu baja quedó asentada con acta."
+      : "El cambio de categoría ya rige."
+    : "La Comisión Directiva resolvió no hacer lugar a tu solicitud.";
+  const noteText = !opts.accepted && opts.note ? `\n\nNota de la Comisión: ${opts.note}` : "";
+  const noteHtml = !opts.accepted && opts.note ? `<p>Nota de la Comisión: ${esc(opts.note)}</p>` : "";
+  const greeting = opts.accepted && opts.fullName ? `Hola ${opts.fullName}:\n\n` : "";
+  const greetingHtml = opts.accepted && opts.fullName ? `<p>Hola <strong>${esc(opts.fullName)}</strong>:</p>\n` : "";
+  const text = `${greeting}Tu solicitud de ${kind}, presentada desde tu panel de socio, fue ${verdict}.
+
+${resultLine}${noteText}
+
+Ante cualquier consulta, acercate a la sede vecinal.${SIGNATURE}`;
+  const html = layout(`Tu solicitud de ${kind} fue ${verdict}`, `${greetingHtml}<p>Tu solicitud de <strong>${esc(kind)}</strong>, presentada desde tu panel de socio, fue <strong>${esc(verdict)}</strong>.</p>
+<p>${esc(resultLine)}</p>
+${noteHtml}
+<p>Ante cualquier consulta, acercate a la sede vecinal.</p>`);
+  return {
+    message: { subject: `Tu solicitud de ${kind} fue ${verdict} — Vecinal Ciudadela`, text, html },
+    summary: `solicitud de ${kind} ${verdict}`,
   };
 }

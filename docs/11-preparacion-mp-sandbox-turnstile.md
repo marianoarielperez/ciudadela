@@ -144,7 +144,11 @@ Antes esta parte era una previsión; ahora es lo que hay que tildar.
    URL del túnel de desarrollo va en *Modo de prueba* y la del dominio en
    *Modo productivo*, y cada una tiene **su propia clave secreta**.
    - URL productiva: `https://vecinalciudadela.ar/api/webhooks/mp`
-   - URL de sandbox: la del túnel del día (ver Parte J).
+   - URL de sandbox: la del túnel del día (ver Parte J). **Matiz medido el
+     25/08/2026**: el token `APP_USR-…` de una aplicación de **cuenta de
+     prueba** dispara por la solapa *Modo productivo*, así que en sandbox hay
+     que configurar **las dos solapas** con la URL del túnel y la misma clave
+     (J.1 paso 4 y J.6).
 2. **Eventos a tildar: "Planes y suscripciones" + "Pagos (legacy)". Ningún otro.**
    En una aplicación de tipo **Suscripciones**, el panel **no ofrece "Pagos" a
    secas**: el evento del tópico `payment` aparece listado como **"Pagos
@@ -765,9 +769,14 @@ los hechos de acá abajo. Todo lo que dice esta parte está **medido**, no supue
    JavaScript**: Turnstile no se monta, el formulario manda el captcha vacío y
    `/ingresar` responde "credenciales inválidas". El síntoma no dice nada de la
    causa — se pierde un rato creyendo que es la contraseña.
-4. **Webhook en la solapa *Modo de prueba*** (Parte D), con la URL del túnel, y
-   **`MP_WEBHOOK_SECRET` = la clave que muestra esa solapa**. Sin eso, MP entrega
-   y todo muere en 401 (Parte I §8).
+4. **Webhook en LAS DOS solapas del panel** (Parte D), con la URL del túnel y la
+   **misma clave** en las dos, y **`MP_WEBHOOK_SECRET` = esa clave**. Este paso
+   decía "solapa *Modo de prueba*" y estaba **incompleto**: el 25/08/2026 se
+   midió que el token `APP_USR-…` de una aplicación de cuenta de prueba dispara
+   los webhooks por la solapa **Modo productivo**, no por la de prueba — con
+   sólo la solapa de prueba configurada el silencio es total (ver J.6). Lo que
+   funcionó fue configurar **las dos solapas con la misma URL y clave**. Y si la
+   clave no coincide, MP entrega y todo muere en 401 (Parte I §8).
 5. **`AUTH_URL` al túnel mientras dure la prueba**, y de vuelta a
    `http://localhost:3000` al terminar. Es fácil olvidarlo.
 
@@ -897,3 +906,67 @@ TESTUSER4538145150963760837`, nunca la real).
   (Parte I §1), y en sandbox eso significa el comprador de prueba. Es el mismo
   género de diagnóstico que la Parte I §9: leer el mensaje textual antes de
   hipotetizar — salvo que acá el mensaje no alcanza y hay que saber esto.
+
+### J.6 Sandbox de la fase 5B (25/08/2026)
+
+Batería de cierre de la fase 5B (débito autogestionado desde `/mi/debito`),
+misma cuenta de prueba y mismo túnel de siempre. Como todo lo de esta parte:
+**medido, no supuesto**.
+
+- **El panel de webhooks tiene DOS solapas, y el token `APP_USR-…` de una
+  aplicación de CUENTA DE PRUEBA dispara por "Modo productivo"**, no por "Modo
+  de prueba". Con sólo la solapa de prueba configurada el resultado es
+  **silencio total**: no se entrega nada y no queda nada encolado para
+  reintentar. Costó **dos adhesiones** descubrirlo — la de Rodrigo (socio 298)
+  quedó `authorized` en MP sin que llegara ningún aviso, y hasta ese momento el
+  panel decía estar configurado. Lo que funcionó: **las dos solapas con la misma
+  URL y la misma clave** (J.1 paso 4 quedó corregido con esto). Es la versión
+  concreta de la advertencia de la Parte D: "la solapa equivocada" no avisa por
+  ningún lado.
+- **Al configurar la solapa productiva, MP entregó AL INSTANTE lo que tenía
+  pendiente**: la notificación del pago de Roberto (socio 535) llegó en segundos
+  (21:39:42, `subscription_authorized_payment`), sin re-disparar nada del lado
+  nuestro.
+- **El checkout de suscripciones NO redirige solo al sitio**: el vecino tiene
+  que apretar "Volver al sitio del vendedor". Consecuencia de producto: el
+  `?volvio=1` de la vuelta puede **no ejecutarse nunca**, así que la pantalla
+  de `/mi/debito` muestra el estado del espejo local y la conciliación lo
+  sincroniza igual — no hay nada colgado de esa vuelta.
+- **Reconfirmados en esta batería** los dos hechos de J.4/J.3 que gobiernan la
+  red de seguridad: `/v1/payments/search` sigue devolviendo **0** en sandbox, y
+  `/authorized_payments/search` **sí encuentra el débito** — es el camino por el
+  que la conciliación recupera un cobro cuyo webhook no llegó.
+
+**La evidencia del circuito completo (CA-5B-1, por los DOS caminos):**
+
+- **Rodrigo (socio 298), el camino de la red**: adhesión desde `/mi/debito` →
+  preapproval `authorized` en MP → el webhook **no llegó** (la solapa productiva
+  estaba vacía, primer punto de arriba) → la **conciliación lo recuperó en su
+  primera corrida** (`debitsRecovered: 1`): Payment `type: debit` de $ 6.000,
+  cuota 2026-09 paga, recibo **2026-00008**. Operación MP `175616110782`.
+- **Roberto (socio 535), el camino directo**: ya con las dos solapas
+  configuradas, `subscription_authorized_payment` → `debit_applied` por
+  **webhook directo**: cuota 2026-09, recibo **2026-00009**. Operación MP
+  `175619922862`.
+- Ninguno de los dos cobros fue jamás `entry`: los dos entraron como cuota común
+  por la regla 3 de `resolve.ts`, sin tocarla (la fila local nace con
+  `memberId`; la referencia `socio:{id}` es para el operador, `docs/06` §2).
+
+**Y la cancelación (CA-5B-2)**: Roberto canceló **desde nuestra pantalla**
+(`/mi/debito/cancelar`) → MP respondió 200 → llegó el webhook
+`subscription_preapproval` → el espejo local quedó sincronizado y `autoDebit`
+bajó solo. La re-adhesión quedó bloqueada por la regla anti-duplicación mensual:
+"Ya abonaste una cuota este mes. Podés adherirte desde el 01/09/2026" (capturas
+del operador). La pantalla post-cancelación dice "Ese débito ya está cancelado".
+
+- **Tercer circuito (mismo día): el push de monto al recategorizar, medido.** Un
+  adherente se adhirió (preapproval nacido cobrando **$3.000**, primer débito
+  aplicado por webhook, recibo `2026-00010`), pidió el pase a activo desde su
+  panel, y la aceptación con acta empujó el monto **antes** de escribir lo
+  local: MP quedó cobrando **$6.000** (`preapproval 5d5ff26…`, verificado por
+  API), el espejo local sincronizado y el asiento con
+  `{subscriptionUpdated: true, amount: 6000, requestId}`. Es el CA-5B-4 del
+  Módulo 5, medido y no supuesto. En la misma corrida se vio la idempotencia
+  del webhook trabajando: las notificaciones duplicadas de
+  `subscription_authorized_payment` respondieron `already_processed` sin tocar
+  nada.

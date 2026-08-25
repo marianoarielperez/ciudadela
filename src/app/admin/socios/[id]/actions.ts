@@ -34,6 +34,9 @@ import { prisma } from "@/lib/prisma";
 import { parseForm } from "@/lib/forms";
 import { civilDateUtc } from "@/lib/dates";
 import { electionsOngoing, memberService } from "@/lib/members/service";
+import { memberRequests } from "@/lib/members/member-requests/service";
+import { notifyRequestDecided } from "@/lib/members/member-requests/notify";
+import { subscriptionAmountPlan, type SubscriptionSkipReason } from "@/lib/members/subscription-amount";
 import { withdrawWithDebits, type DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
@@ -41,6 +44,9 @@ import {
 import {
   canChangeCategory, canReadmit, canSuspend, canWithdraw, type RuleResult,
 } from "@/lib/members/rules";
+import { mpErrorLog } from "@/lib/mp/error-log";
+import { mpGateway } from "@/lib/mp/gateway";
+import { feeValueReader } from "@/lib/treasury/fee-values";
 import type { Member, MemberCategory, WithdrawalReason } from "@/generated/prisma/client";
 
 const CATEGORIES = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"] as const;
@@ -67,6 +73,17 @@ function dateFrom(s: string): Date {
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : "Error inesperado.";
+}
+
+// Sólo para los dos logs de `markAccepted`/`notifyRequestDecided` de más abajo:
+// el resto de esta action sigue devolviendo `messageOf` a la PANTALLA, que
+// necesita prosa. Un log de PM2 no —y `messageOf` de un error de Prisma puede
+// traer datos que no corresponde acumular ahí—, mismo criterio que el resto
+// del proyecto (`notify.ts`, `webhook-processor.ts`, `receipt-email.ts`, etc).
+function codeOf(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && code !== "") return code.slice(0, 200);
+  return e instanceof Error ? e.message.slice(0, 200) : "unknown";
 }
 
 async function runAction(
@@ -160,21 +177,77 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
     {
       reason: z.enum(REASONS, { error: "Elegí el motivo de la baja." }),
       detail: z.string().max(300, "El detalle no puede superar los 300 caracteres").optional(),
+      // M5B Task 9: opcional y sólo lo manda el camino "Aplicar" de la bandeja
+      // de solicitudes (hidden field precargado por `[accion]/page.tsx`). Un
+      // operador que entra por el camino de siempre nunca lo manda, así que
+      // `data.requestId` queda `undefined` y el comportamiento es idéntico al
+      // de hoy.
+      requestId: z.coerce.number().int().positive().optional(),
     },
     {
-      guard: (member) => canWithdraw(member),
+      guard: async (member, data) => {
+        const status = canWithdraw(member);
+        if (!status.ok) return status;
+        if (data.requestId) {
+          const req = await prisma.memberRequest.findUnique({ where: { id: data.requestId as number } });
+          if (!req || req.status !== "pending" || req.memberId !== member.id || req.type !== "withdrawal") {
+            return { ok: false, error: "La solicitud no corresponde a esta operación. Volvé a la bandeja." };
+          }
+          // Revisión de Task 9: el `<select>` de motivo viene precargado en
+          // "renuncia" pero no FIJO, así que un operador podía cambiarlo a
+          // expulsión o cesantía por mora y enviar igual. Eso asentaba la baja
+          // con otro motivo —expulsión además prende `reentryBlocked` de por
+          // vida— mientras la solicitud quedaba `accepted` y el correo le decía
+          // al socio que se le concedió justo lo que pidió: el Libro decía una
+          // cosa y el aviso otra. La solicitud del socio SIEMPRE es por
+          // renuncia (es la única causal que `/mi/solicitudes` ofrece), así que
+          // cualquier otro motivo con `requestId` puesto es una falsificación,
+          // no una decisión legítima de la Comisión sobre ESA solicitud.
+          if (data.reason !== "resignation") {
+            return {
+              ok: false,
+              error: "La solicitud es de baja por renuncia: para asentar otro motivo, rechazá la solicitud y hacé la baja aparte.",
+            };
+          }
+        }
+        return { ok: true };
+      },
       // `withdrawWithDebits` y no `memberService.withdraw`: dejar de ser socio
       // tiene que cortar el débito automático por el camino que sea (REG-16 no
       // devenga más, así que un débito vivo le cobra a alguien que ya no es
       // socio). La cancelación corre DESPUÉS del commit.
-      run: ({ memberId, minuteId, actorId }, _member, data) =>
-        withdrawWithDebits.withdraw({
+      run: async ({ memberId, minuteId, actorId }, _member, data) => {
+        const result = await withdrawWithDebits.withdraw({
           memberId, minuteId, actorId,
           reason: data.reason as WithdrawalReason,
           detail: data.detail as string | undefined,
-        }),
+        });
+        // La baja YA commiteó: lo que sigue es piggyback sobre un acto que ya
+        // pasó, y por eso NADA de esto puede tumbar el redirect de éxito. Las
+        // dos llamadas van en el MISMO try: `notifyRequestDecided` ya es
+        // best-effort por dentro (nunca tira hoy), pero dejarla afuera del try
+        // la acopla a que eso siga siendo cierto para siempre — si algún día
+        // dejara escapar un error, `runAction` lo cazaría, llamaría a
+        // `discardUnusedMinute` y mostraría pantalla de error por una baja que
+        // ya commiteó (mismo corolario que el PDF del recibo, CLAUDE.md).
+        if (data.requestId) {
+          const requestId = data.requestId as number;
+          try {
+            await memberRequests.markAccepted({ requestId, memberId, decidedById: actorId, type: "withdrawal" });
+            await notifyRequestDecided({ memberId, type: "withdrawal", accepted: true });
+          } catch (e) {
+            console.error("[solicitudes] markAccepted o el aviso al socio fallaron después de la baja —", {
+              requestId, memberId, error: codeOf(e),
+            });
+          }
+        }
+        return result;
+      },
       auditAction: "member_withdraw",
-      detail: (_m, data) => ({ reason: data.reason }),
+      detail: (_m, data) => ({
+        reason: data.reason,
+        ...(data.requestId ? { requestId: data.requestId } : {}),
+      }),
       // Los preapprovalIds SÍ van al asiento: `cancelFailed: true` sin decir QUÉ
       // cancelar no le sirve a nadie, y el asiento es donde el operador va a
       // buscar el id para reintentar en el panel de MP. Es un id de MP, no un
@@ -194,19 +267,168 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
 export async function changeCategoryAction(_p: State, formData: FormData): Promise<State> {
   return runAction(
     formData,
-    { newCategory: z.enum(CATEGORIES, { error: "Elegí la nueva categoría." }) },
     {
-      guard: async (member, data) =>
-        canChangeCategory(
+      newCategory: z.enum(CATEGORIES, { error: "Elegí la nueva categoría." }),
+      // M5B Task 9: mismo criterio que `withdrawAction` — opcional, sólo lo
+      // manda el camino "Aplicar" de la bandeja, y ausente deja el camino de
+      // siempre byte-idéntico.
+      requestId: z.coerce.number().int().positive().optional(),
+    },
+    {
+      guard: async (member, data) => {
+        const status = canChangeCategory(
           member, data.newCategory as MemberCategory, await electionsOngoing(prisma),
           await prisma.fee.count({ where: { memberId: member.id, status: "pending" } }),
-        ),
-      run: ({ memberId, minuteId, actorId }, _member, data) =>
-        memberService.changeCategory({
-          memberId, minuteId, actorId, newCategory: data.newCategory as MemberCategory,
-        }),
+        );
+        if (!status.ok) return status;
+        if (data.requestId) {
+          const req = await prisma.memberRequest.findUnique({ where: { id: data.requestId as number } });
+          if (
+            !req || req.status !== "pending" || req.memberId !== member.id ||
+            req.type !== "category_change" || req.requestedCategory !== data.newCategory
+          ) {
+            return { ok: false, error: "La solicitud no corresponde a esta operación. Volvé a la bandeja." };
+          }
+        }
+        return { ok: true };
+      },
+      run: async ({ memberId, minuteId, actorId }, _member, data) => {
+        const newCategory = data.newCategory as MemberCategory;
+
+        // M5B Task 10 (docs/07 fase 5B): si hay suscripción viva y el monto
+        // de cuota cambia con la categoría, se empuja a MP ANTES de escribir
+        // nada local — mismo orden medido en `recategorizeApplicationAction`
+        // (`src/app/admin/solicitudes/actions.ts:296-339`): si MP lo
+        // rechazara, lanzar acá es el corte total que pide la spec —
+        // `runAction` (arriba) atrapa la excepción, descarta el acta recién
+        // creada y no queda escrito ni el cambio local ni nada en MP.
+        //
+        // `orderBy: { id: "asc" }` para que "la primera suscripción
+        // chargeable" sea determinística (mismo criterio que
+        // `withdraw-with-debits.ts`): `memberId` es índice y no unique, un
+        // socio puede tener dos vivas.
+        const subs = await prisma.mpSubscription.findMany({
+          where: { memberId },
+          select: { preapprovalId: true, status: true, amount: true },
+          orderBy: { id: "asc" },
+        });
+        const feeValue = await feeValueReader.current();
+        const decision = subscriptionAmountPlan({
+          subscriptions: subs.map((s) => ({
+            preapprovalId: s.preapprovalId,
+            status: s.status,
+            amount: s.amount === null ? null : Number(s.amount),
+          })),
+          newCategory,
+          feeValue,
+        });
+        const plan = decision.plan;
+        // El monto ANTERIOR de la sub elegida, si se conocía: es lo único que
+        // se puede empujar de vuelta si `changeCategory` fallara después.
+        const previousAmount = plan
+          ? subs.find((s) => s.preapprovalId === plan.preapprovalId)?.amount ?? null
+          : null;
+
+        if (plan) {
+          try {
+            await mpGateway.updatePreapprovalAmount(plan.preapprovalId, plan.amount);
+          } catch (e) {
+            console.error(
+              "[socios] MP no aceptó el cambio de monto al recategorizar —",
+              mpErrorLog("updatePreapprovalAmount", {
+                memberId, preapprovalId: plan.preapprovalId, amount: plan.amount,
+              }, e),
+            );
+            throw new Error(
+              "MP no aceptó el cambio de monto de la suscripción. Reintentá o resolvelo desde el panel de MP.",
+            );
+          }
+        }
+
+        let updated: Awaited<ReturnType<typeof memberService.changeCategory>>;
+        try {
+          updated = await memberService.changeCategory({ memberId, minuteId, actorId, newCategory });
+        } catch (e) {
+          // Carrera: MP YA aceptó el monto nuevo (arriba) pero el cambio
+          // local no se pudo aplicar (otro admin cambió la ficha entre el
+          // guard y acá, o el estatuto lo bloqueó recién en la transacción
+          // del servicio). Compensación best-effort empujando el monto
+          // ANTERIOR — si tampoco prospera, la red real es la pantalla de
+          // divergencias REG-34 (`fee-value-batch.ts`), que la va a volver a
+          // alinear en su próxima corrida.
+          if (plan && previousAmount !== null) {
+            try {
+              await mpGateway.updatePreapprovalAmount(plan.preapprovalId, Number(previousAmount));
+            } catch (compEx) {
+              console.error(
+                "[socios] no se pudo compensar el monto en MP tras un cambio de categoría fallido —",
+                mpErrorLog("updatePreapprovalAmount", { memberId, preapprovalId: plan.preapprovalId }, compEx),
+                "mpPushCompensated=false",
+              );
+            }
+          }
+          throw e;
+        }
+
+        // Espejo local best-effort, DESPUÉS del cambio de categoría exitoso:
+        // si falla, la conciliación diaria (REG-34) corrige el espejo. Mismo
+        // criterio que `withdraw-with-debits.ts` para la cancelación de
+        // débitos.
+        if (plan) {
+          try {
+            await prisma.mpSubscription.update({
+              where: { preapprovalId: plan.preapprovalId },
+              data: { amount: plan.amount.toFixed(2), lastSyncAt: new Date() },
+            });
+          } catch (e) {
+            console.error(
+              "[socios] cambio de categoría: MP aceptó el monto nuevo pero el espejo local no se actualizó",
+              memberId, plan.preapprovalId, codeOf(e),
+            );
+          }
+        }
+
+        // Mismo criterio que `withdrawAction`: el cambio YA commiteó, así que
+        // ni el `markAccepted` ni el aviso pueden tumbar el redirect de éxito
+        // — por eso van en el MISMO try (ver el comentario largo en
+        // `withdrawAction`).
+        if (data.requestId) {
+          const requestId = data.requestId as number;
+          try {
+            await memberRequests.markAccepted({
+              requestId, memberId, decidedById: actorId, type: "category_change",
+            });
+            await notifyRequestDecided({ memberId, type: "category_change", accepted: true });
+          } catch (e) {
+            console.error("[solicitudes] markAccepted o el aviso al socio fallaron después del cambio de categoría —", {
+              requestId, memberId, error: codeOf(e),
+            });
+          }
+        }
+        return { member: updated, subscriptionPlan: plan, subscriptionSkipped: decision.skipped };
+      },
       auditAction: "member_category_change",
-      detail: (member, data) => ({ from: member.category, to: data.newCategory }),
+      detail: (member, data) => ({
+        from: member.category, to: data.newCategory,
+        ...(data.requestId ? { requestId: data.requestId } : {}),
+      }),
+      // Ids de MP, un booleano y un motivo, nunca datos personales (docs/08):
+      // el `preapprovalId` no es dato del socio y es lo que el operador
+      // necesita para reconciliar a mano si algo quedó raro. `subscriptionSkipped`
+      // (arreglo 4 de la revisión de Task 10) distingue "no tenía suscripción"
+      // de "tenía una viva y la categoría nueva no paga cuota" —hueco que antes
+      // quedaba indistinguible en el Libro y que el lote REG-34 tampoco levanta.
+      detailFromResult: (r) => {
+        const { subscriptionPlan, subscriptionSkipped } = r as {
+          subscriptionPlan: { preapprovalId: string; amount: number } | null;
+          subscriptionSkipped: SubscriptionSkipReason | null;
+        };
+        return {
+          subscriptionUpdated: !!subscriptionPlan,
+          ...(subscriptionPlan ? { preapprovalId: subscriptionPlan.preapprovalId, amount: subscriptionPlan.amount } : {}),
+          ...(subscriptionSkipped ? { subscriptionSkipped } : {}),
+        };
+      },
     },
   );
 }
@@ -335,10 +557,19 @@ export async function confirmAddressAction(formData: FormData): Promise<void> {
   if (!actor.ok) return;
   const memberId = Number(formData.get("memberId"));
   if (!Number.isInteger(memberId) || memberId <= 0) return;
-  await prisma.member.update({
-    where: { id: memberId },
-    data: { addressPendingReview: false },
-  });
+  try {
+    await prisma.member.update({ where: { id: memberId }, data: { addressPendingReview: false } });
+  } catch (e) {
+    // Sólo la ficha inexistente se traga (P2025): a esta action se llega desde
+    // un botón de la ficha, así que un id que ya no existe es un POST fabricado
+    // y no merece pantalla de error. Un fallo REAL de la base sí tiene que
+    // subir: tragarlo dejaría al operador con el cartel de "pendiente" intacto
+    // y sin ninguna pista de por qué el botón no hizo nada. El duck-typing
+    // sobre `.code` es la convención del proyecto con el adapter de MariaDB
+    // (ver `@/lib/treasury/unique-violation`, donde `meta.target` NO existe).
+    if ((e as { code?: string })?.code !== "P2025") throw e;
+    return;
+  }
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actor.actorId,
