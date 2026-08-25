@@ -29,13 +29,18 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 //   'self' se agregó en la tarea 7 de la fase 5B: el visor de documentos del
 //   detalle de solicitud (`document-viewer.tsx`) embebe un PDF en un <iframe>
 //   que apunta a `/api/admin/solicitudes/[id]/documentos/[docId]`, del MISMO
-//   origen. La CSP propia de esa ruta (`default-src 'none'; sandbox`) gobierna
-//   lo que el documento framed puede hacer hacia ADENTRO; esta directiva
-//   gobierna si el sitio puede framearlo desde AFUERA, y sin 'self' acá el
-//   navegador bloqueaba el iframe en silencio (recuadro en blanco, sin error
-//   visible más que en la consola). No amplía qué puede framear a este sitio
-//   —eso lo sigue negando `frame-ancestors 'none'` + `X-Frame-Options: DENY`,
-//   sin tocar—, sólo qué puede framear el sitio ADENTRO de sí mismo.
+//   origen. Esta directiva gobierna si el sitio puede framearlo desde AFUERA
+//   (qué embebo); la CSP propia de esa ruta gobierna lo que el documento
+//   framed puede hacer hacia ADENTRO (quién me embebe) — pero esa CSP propia
+//   NO rige por sí sola: la entrada global de `headers()` la pisaba desde el
+//   M3 (Next copia las cabeceras del `Response` con `setHeader`, que
+//   REEMPLAZA). La entrada específica de `/api/admin/solicitudes/:id/documentos/:docId`,
+//   agregada en esta misma tarea, es la que repone esa CSP dura. Sin 'self'
+//   acá el navegador bloqueaba el iframe en silencio (recuadro en blanco, sin
+//   error visible más que en la consola). Esta directiva no amplía qué puede
+//   framear a este sitio —eso lo sigue negando `frame-ancestors 'none'` +
+//   `X-Frame-Options: DENY` de la entrada global, sin tocar—, sólo qué puede
+//   framear el sitio ADENTRO de sí mismo.
 // - frame-ancestors 'none' + X-Frame-Options: DENY: la segunda es para los
 //   navegadores viejos que no leen frame-ancestors.
 // - upgrade-insecure-requests: en prod todo va por HTTPS detrás de Cloudflare.
@@ -124,7 +129,30 @@ const DEV_TUNNEL_ORIGINS = ["geological-expectations-winner-canal.trycloudflare.
 const nextConfig: NextConfig = {
   allowedDevOrigins: DEV_TUNNEL_ORIGINS,
   async headers() {
-    return [{ source: "/(.*)", headers: securityHeaders }];
+    return [
+      { source: "/(.*)", headers: securityHeaders },
+      {
+        // El visor del detalle de solicitud (document-viewer.tsx) framea este
+        // documento desde el MISMO origen. La entrada global de arriba lo
+        // niega con X-Frame-Options: DENY + frame-ancestors 'none'; esta
+        // entrada, más específica y declarada DESPUÉS, pisa por clave (medido
+        // con `curl -sI` contra el dev server, 25/08/2026) y reabre el
+        // framing SOLO para el propio sitio. De paso repone la CSP dura del
+        // documento (`default-src 'none'; sandbox`) que la entrada global
+        // venía pisando desde el M3: el handler la emite en su `Response`,
+        // pero Next copia las cabeceras de `headers()` con `setHeader`, que
+        // REEMPLAZA — así que sin esta entrada específica la CSP del handler
+        // nunca llegaba al cliente.
+        source: "/api/admin/solicitudes/:id/documentos/:docId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'self'",
+          },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+        ],
+      },
+    ];
   },
   experimental: {
     // El default de Next es 1 MB y las dos subidas del sistema pesan más: la
