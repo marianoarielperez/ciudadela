@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { getActivitiesForYear, getActivityYears } from "@/lib/activities/query";
-import { buildDailyAgenda } from "@/lib/activities/rules";
+import { buildDailyAgenda, initialAgendaDay } from "@/lib/activities/rules";
 import {
   activitiesYearHref,
   currentYearAR,
@@ -62,11 +62,11 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
   // abrir el selector del celular en el día que el vecino está mirando.
   const todayAR = currentWeekdayAR();
   // Un domingo no hay día que elegir —la semana va de lunes a sábado— y el
-  // selector abre en el primero. Se pregunta a la agenda en vez de comparar
-  // contra un 6 escrito acá: la forma de la semana la define WEEKDAYS, y
-  // DayTabs marca `aria-pressed` por coincidencia exacta, así que un día que
-  // no esté en la agenda dejaría las seis solapas sin ninguna marcada.
-  const initialDay = agenda.some((d) => d.day === todayAR) ? todayAR : agenda[0].day;
+  // selector abre en el primero. La regla vive en `rules.ts`, con WEEKDAYS y
+  // con su test: acá era la única lógica nueva de la pantalla y esta página no
+  // tiene tests de render, así que una simplificación futura a `todayAR` pelado
+  // pasaba la suite en verde.
+  const initialDay = initialAgendaDay(agenda, todayAR);
   // El chip "Hoy" sólo tiene sentido sobre la semana del año en curso: en el
   // calendario de 2024 el jueves de esta semana no es ningún "hoy".
   const isCurrentYear = year === currentYear;
@@ -146,7 +146,18 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
                 >
                   {label}
                   {isCurrentYear && day === todayAR && (
-                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                    // El par lleno `bg-primary text-primary-foreground` es el
+                    // mismo que usan la solapa elegida de DayTabs y el año
+                    // activo: es el único que el sistema garantiza en los dos
+                    // temas. `bg-primary/10 text-primary` componía sobre blanco
+                    // a ~4.18:1 —debajo de AA— y encima a 10px, justo en la
+                    // única marca que orienta al vecino en la grilla de seis
+                    // columnas. Sigue subordinado al encabezado por tamaño
+                    // (11px contra 14px semibold), no por contraste.
+                    // `shrink-0` para que el chip no se aplaste en la columna
+                    // angosta: que se acomode el nombre del día, que sí puede
+                    // cortarse sin perder nada.
+                    <span className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-primary-foreground">
                       Hoy
                     </span>
                   )}

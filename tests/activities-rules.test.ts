@@ -3,6 +3,7 @@ import {
   buildDailyAgenda,
   buildWeeklyGrid,
   findScheduleConflict,
+  initialAgendaDay,
   minutesToTime,
   parseWeekdays,
   ROOM_KEYS,
@@ -326,5 +327,26 @@ describe("etiquetas visibles", () => {
       [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],
       [5, "Viernes"], [6, "Sábado"],
     ]);
+  });
+});
+
+describe("initialAgendaDay", () => {
+  // La agenda que arma buildDailyAgenda: siempre los seis días de WEEKDAYS.
+  const agenda = buildDailyAgenda([]);
+
+  it("un domingo (7, fuera de WEEKDAYS) abre en el primer día de la agenda", () => {
+    // currentWeekdayAR() devuelve 7 los domingos y la agenda va de 1 a 6: sin
+    // este piso, DayTabs marcaría `aria-pressed` en ninguna solapa y mostraría
+    // el lunes sin decirlo. Es el único caso que el reloj no puede reproducir a
+    // pedido, así que se fija acá.
+    expect(initialAgendaDay(agenda, 7)).toBe(1);
+  });
+
+  it("un día hábil abre en ese día", () => {
+    expect(initialAgendaDay(agenda, 3)).toBe(3);
+  });
+
+  it("el sábado abre en el sábado (el último día sigue siendo hábil)", () => {
+    expect(initialAgendaDay(agenda, 6)).toBe(6);
   });
 });

@@ -13,7 +13,15 @@ export function DayTabs({ agenda, initialDay }: { agenda: AgendaDay[]; initialDa
   const current = agenda.find((d) => d.day === selected) ?? agenda[0];
   return (
     <div>
-      <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label="Elegir día">
+      {/* `role="group"` y no `<nav>`: un div pelado mapea a `generic`, que
+          PROHIBE nombrarse, así que el `aria-label` se caía y quedaban seis
+          botones sueltos sin nada que dijera qué eligen. Los chips de año sí
+          son `<nav>` porque son links que navegan a otra URL; estos botones no
+          navegan —cambian una vista de la misma página, sin tocar la barra de
+          direcciones—, y un landmark de navegación prometería lo contrario en
+          la lista de landmarks del lector de pantalla. No es un `tablist`: eso
+          debería flechas del teclado, y no es parte de este arreglo. */}
+      <div role="group" aria-label="Elegir día" className="flex gap-1.5 overflow-x-auto pb-1">
         {agenda.map((d) => (
           <button
             key={d.day}

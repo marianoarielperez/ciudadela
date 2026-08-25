@@ -191,3 +191,17 @@ export function buildDailyAgenda(
       ),
   }));
 }
+
+// El selector de día abre en el día de hoy; un domingo (día 7, fuera de
+// WEEKDAYS) abre en el primero de la agenda.
+//
+// Vive acá, al lado de WEEKDAYS —que es quien define la forma de la semana— y
+// no en la página, porque es la única lógica de comportamiento del calendario
+// público y su modo de fallar es MUDO: DayTabs marca `aria-pressed` por
+// coincidencia exacta y cae a `agenda[0]` para el contenido, así que sin este
+// piso un domingo mostraría el lunes con las seis solapas sin ninguna marcada.
+// Se le pregunta a la agenda en vez de comparar contra un 6 escrito a mano:
+// si la semana cambia de forma otra vez, esto la sigue.
+export function initialAgendaDay(agenda: Array<{ day: number }>, todayAR: number): number {
+  return agenda.some((d) => d.day === todayAR) ? todayAR : agenda[0].day;
+}
