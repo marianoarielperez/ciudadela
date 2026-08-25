@@ -1,15 +1,18 @@
 "use client";
 // La confirmación de "Cancelar el débito" (5B, Task 13). Calca
 // `admin/tesoreria/suscripciones/[preapprovalId]/cancelar/cancel-form.tsx`:
-// misma frase de efecto (`cancelEffectSentence`, cuatro desenlaces, no un
-// booleano), mismo grupo enfocable al montarse (el vecino viene de hacer clic
-// en el link "Cancelar el débito" de la tarjeta de arriba, que se desmontó).
+// mismos cuatro desenlaces (no un booleano), mismo grupo enfocable al
+// montarse (el vecino viene de hacer clic en el link "Cancelar el débito" de
+// la tarjeta de arriba, que se desmontó). La FRASE de efecto no es la misma:
+// acá es el propio socio quien lee, así que usa `cancelEffectSentenceForMember`
+// (segunda persona) y no la `cancelEffectSentence` del admin (que habla del
+// "vecino" en tercera persona).
 import Link from "next/link";
 import { useActionState, useEffect, useRef } from "react";
 
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
-import { type CancelEffect, cancelEffectSentence } from "@/lib/mp/cancel-effect";
+import { type CancelEffect, cancelEffectSentenceForMember } from "@/lib/mp/cancel-effect";
 import { cancelDebitAction, type DebitState } from "../actions";
 
 export function CancelForm({ preapprovalId, subscription }: {
@@ -58,7 +61,7 @@ export function CancelForm({ preapprovalId, subscription }: {
             <dt className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
               Al confirmar
             </dt>
-            <dd>{cancelEffectSentence(subscription)}</dd>
+            <dd>{cancelEffectSentenceForMember(subscription)}</dd>
           </div>
           <div className="grid gap-x-4 sm:grid-cols-[8rem_1fr]">
             <dt className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">

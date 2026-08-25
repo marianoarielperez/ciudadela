@@ -45,6 +45,7 @@ export default async function CancelarDebitoPage(props: {
   return (
     <div className="max-w-2xl space-y-4">
       <BackLink />
+      <h1 className="text-2xl font-bold">Cancelar el débito</h1>
       {isKnownDead(sub.status) ? (
         // Precondición de `cancelEffect`: una `cancelled` no se le pasa (caería
         // en "unknown", que sería falso). Nada que confirmar acá.

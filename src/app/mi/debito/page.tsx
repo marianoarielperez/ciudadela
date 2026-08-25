@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { memberPayLimiter } from "@/lib/auth/rate-limiter";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatARS } from "@/lib/format";
 import { adhesionBlockMessage } from "@/lib/members/debit-adhesion";
@@ -60,8 +61,15 @@ export default async function MiDebitoPage(props: {
   // que la conciliación diaria (`reconcile`, docs/07 4B): sincronizar el
   // espejo local contra MP antes de leerlo. Va ANTES de la lectura de
   // suscripciones para que la tarjeta de abajo ya muestre el estado fresco.
+  //
+  // Es el ÚNICO GET del módulo que sale a la red del proveedor: un F5
+  // sostenido sobre `?volvio=1` sería una llamada a MP por recarga, sin
+  // presupuesto. Se gatea con el mismo limiter que las actions (mismo cupo
+  // del socio, no uno nuevo): sin cupo, se SALTEA la sincronización — la
+  // página no se rechaza ni muestra error, sólo se queda sin el estado
+  // fresco y `volvioMessage` cae sola en su rama "no pudimos confirmar".
   let freshStatus: string | null = null;
-  if (volvio) {
+  if (volvio && memberPayLimiter.check(String(actor.memberId))) {
     const synced = await memberDebit.syncStatus({ memberId: actor.memberId });
     freshStatus = synced.status;
   }
@@ -145,6 +153,11 @@ export default async function MiDebitoPage(props: {
             </FormMessage>
           )}
         </div>
+      ) : !canAct ? (
+        <FormMessage kind="warning" box>
+          Mientras estés suspendido no podés adherir el débito automático desde acá. Comunicate con
+          la vecinal.
+        </FormMessage>
       ) : !preview.verdict.ok ? (
         <FormMessage kind="warning" box>
           {adhesionBlockMessage(preview.verdict)}
