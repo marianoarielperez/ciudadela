@@ -379,10 +379,13 @@ son datos de prueba y el padrón de verdad viene del Excel. **Ya se hizo una vez
 Con datos reales cargados —278 socios, 3076 cuotas, recibos emitidos— **esto no se
 vuelve a correr nunca**: no hay "des-importar".
 
-Lo único que sobrevive son **cuatro tablas**: `configuration`, `users`, `roles` y
-`user_roles`. Todo lo demás se rehace desde los archivos de `datos/`. La suscripción
-del piloto **no** se rescata a propósito: vuelve a aparecer en "Sin vincular" y se
-vincula desde el panel, que es el camino que la fase 4B dejó hecho.
+Lo único que sobrevive son **seis tablas**: `configuration`, `users`, `roles`,
+`user_roles`, `activities` y `news`. Las dos últimas son contenido cargado a mano
+desde el panel — no hay archivo en `datos/` que las reponga, y así se perdieron las
+actividades de prueba en el rearmado del 22/08/2026. Todo lo demás se rehace desde
+los archivos de `datos/`. La suscripción del piloto **no** se rescata a propósito:
+vuelve a aparecer en "Sin vincular" y se vincula desde el panel, que es el camino
+que la fase 4B dejó hecho.
 
 **Antes de tipear nada**: apagá ASOCIATE desde `/admin/configuracion` y no uses el
 panel hasta terminar. Una solicitud que entre en el medio es de un vecino de verdad
@@ -411,7 +414,7 @@ tar tzf /root/backup-archivos-$STAMP.tar.gz | wc -l
 El `tail -1` tiene que decir `-- Dump completed on …` y el `wc -l`, un número mayor
 que 0. **Si alguna de las dos falla, frená acá.**
 
-**Paso 2 — Copiar las cuatro tablas a una base de rescate.** Abrí una sesión
+**Paso 2 — Copiar las seis tablas a una base de rescate.** Abrí una sesión
 interactiva (`mysql`) y dejala abierta hasta el paso 10: los pasos 2, 3, 5 y 10 son
 SQL de la misma secuencia, y conviene correrlos de a uno con los conteos a la vista
 para poder **frenar** en cuanto un número no dé.
@@ -424,19 +427,25 @@ CREATE TABLE sigev_rescate.configuration LIKE sigev.configuration;
 CREATE TABLE sigev_rescate.users         LIKE sigev.users;
 CREATE TABLE sigev_rescate.roles         LIKE sigev.roles;
 CREATE TABLE sigev_rescate.user_roles    LIKE sigev.user_roles;
+CREATE TABLE sigev_rescate.activities    LIKE sigev.activities;
+CREATE TABLE sigev_rescate.news          LIKE sigev.news;
 
 INSERT INTO sigev_rescate.configuration SELECT * FROM sigev.configuration;
 INSERT INTO sigev_rescate.users         SELECT * FROM sigev.users;
 INSERT INTO sigev_rescate.roles         SELECT * FROM sigev.roles;
 INSERT INTO sigev_rescate.user_roles    SELECT * FROM sigev.user_roles;
+INSERT INTO sigev_rescate.activities    SELECT * FROM sigev.activities;
+INSERT INTO sigev_rescate.news          SELECT * FROM sigev.news;
 
 SELECT (SELECT COUNT(*) FROM sigev_rescate.configuration) AS config,
        (SELECT COUNT(*) FROM sigev_rescate.users)         AS usuarios,
        (SELECT COUNT(*) FROM sigev_rescate.roles)         AS roles,
-       (SELECT COUNT(*) FROM sigev_rescate.user_roles)    AS user_roles;
+       (SELECT COUNT(*) FROM sigev_rescate.user_roles)    AS user_roles,
+       (SELECT COUNT(*) FROM sigev_rescate.activities)    AS actividades,
+       (SELECT COUNT(*) FROM sigev_rescate.news)          AS noticias;
 ```
 
-**Anotá esos cuatro números.** Son los que tienen que volver en el paso 5.
+**Anotá esos seis números.** Son los que tienen que volver en el paso 5.
 
 **Paso 3 — Base nueva.** Recién con los números anotados:
 
@@ -452,8 +461,9 @@ que reponga las claves nuevas sin pisar las cargadas:
 cd /root/dev/ciudadela && npx prisma migrate deploy
 ```
 
-**Paso 5 — Restaurar las cuatro tablas.** El orden respeta las claves foráneas
-(`user_roles` cuelga de las otras dos). **No hay `TRUNCATE` ni
+**Paso 5 — Restaurar las seis tablas.** El orden respeta las claves foráneas
+(`user_roles` cuelga de las otras dos, y `news` de `users` por su `author_id`;
+`activities` no cuelga de nada). **No hay `TRUNCATE` ni
 `SET FOREIGN_KEY_CHECKS = 0`**: el paso 3 dejó la base vacía y ninguna migración
 inserta filas, así que vaciarlas sería redundante — y un bloque copiable que borra
 `users` y `configuration` es exactamente lo que no queremos que ande dando vueltas
@@ -466,14 +476,18 @@ INSERT INTO sigev.roles         SELECT * FROM sigev_rescate.roles;
 INSERT INTO sigev.users         SELECT * FROM sigev_rescate.users;
 INSERT INTO sigev.user_roles    SELECT * FROM sigev_rescate.user_roles;
 INSERT INTO sigev.configuration SELECT * FROM sigev_rescate.configuration;
+INSERT INTO sigev.activities    SELECT * FROM sigev_rescate.activities;
+INSERT INTO sigev.news          SELECT * FROM sigev_rescate.news;
 
 SELECT (SELECT COUNT(*) FROM sigev.configuration) AS config,
        (SELECT COUNT(*) FROM sigev.users)         AS usuarios,
        (SELECT COUNT(*) FROM sigev.roles)         AS roles,
-       (SELECT COUNT(*) FROM sigev.user_roles)    AS user_roles;
+       (SELECT COUNT(*) FROM sigev.user_roles)    AS user_roles,
+       (SELECT COUNT(*) FROM sigev.activities)    AS actividades,
+       (SELECT COUNT(*) FROM sigev.news)          AS noticias;
 ```
 
-Los cuatro números tienen que ser los del paso 2.
+Los seis números tienen que ser los del paso 2.
 
 > **Si un `INSERT … SELECT *` falla por cantidad de columnas**, es que una migración
 > nueva le agregó una columna a esa tabla y el rescate tiene el esquema viejo. No es
@@ -513,12 +527,15 @@ SELECT COUNT(*) AS cuotas_import FROM fees WHERE origin='import';
 SELECT COUNT(DISTINCT member_id) AS deudores FROM fees WHERE status='pending';
 SELECT COUNT(*) AS usuarios FROM users;
 SELECT COUNT(*) AS recibos FROM receipts;
-SELECT COUNT(*) AS solicitudes FROM applications;"
+SELECT COUNT(*) AS solicitudes FROM applications;
+SELECT COUNT(*) AS actividades FROM activities;
+SELECT COUNT(*) AS noticias FROM news;"
 ```
 
 Esperado: **278 socios**, **40 calles**, **3076 cuotas**, **118 deudores**,
 0 recibos y 0 solicitudes. `usuarios` no tiene un número fijo: tiene que dar **el
-que anotaste en el paso 2**.
+que anotaste en el paso 2**. `actividades` y `noticias` tampoco tienen un número
+fijo: tienen que dar los que anotaste en el paso 2.
 
 En el panel: `/admin/tesoreria/deudores` lista a los socios con deuda ordenados por
 monto, y `/admin/tesoreria/valores` muestra los dos montos vigentes. Si dice
