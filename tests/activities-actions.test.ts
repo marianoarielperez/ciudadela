@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // guarda en sí la fija `activities-actions-auth.test.ts`).
 //
 // Se asierta sobre los ARGUMENTOS que llegan a Prisma, no sobre "no explotó":
-// que `findOverlap` esté probada en `activities-rules.test.ts` no prueba que la
-// action la use ni que le pase el año correcto. El fake de `findMany` guarda sus
-// argumentos por eso.
+// que `findScheduleConflict` esté probada en `activities-rules.test.ts` no
+// prueba que la action la use ni que le pase el año correcto. El fake de
+// `findMany` guarda sus argumentos por eso.
 //
 // `vi.hoisted` porque `vi.mock` se iza al tope del archivo.
 const prismaMock = vi.hoisted(() => ({
@@ -131,11 +131,51 @@ describe("createActivityAction", () => {
     existing([stored({ name: "Gimnasia mujeres", startTime: "18:00", endTime: "19:30" })]);
     const result = await createActivityAction({}, form(base));
     expect(result.error).toBe(
-      'Se superpone con "Gimnasia mujeres" (18:00–19:30) en el mismo salón. Ajustá el horario o los días.',
+      'Se superpone con "Gimnasia mujeres" (18:00–19:30) en el mismo espacio. Ajustá el horario o los días.',
     );
     expect(prismaMock.activity.create).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
     expect(updateTag).not.toHaveBeenCalled();
+  });
+
+  // "Aulas" son tres aulas físicas sin identificar: la cuarta simultánea es la
+  // que se rechaza, y el mensaje informa la franja ocupada en vez de nombrar a
+  // una de las tres (cualquiera sería arbitraria).
+  const threeClassrooms = () =>
+    existing([1, 2, 3].map((id) => stored({ id, room: "classroom", weekdays: [1], startTime: "18:00", endTime: "19:30" })));
+
+  it("la tercera actividad simultánea en las aulas entra", async () => {
+    existing([1, 2].map((id) => stored({ id, room: "classroom", weekdays: [1], startTime: "18:00", endTime: "19:30" })));
+    const result = await createActivityAction(
+      {},
+      form({ ...base, room: "classroom", startTime: "18:30", endTime: "20:00" }, [1]),
+    );
+    expect(result).toBeUndefined();
+    expect(prismaMock.activity.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("la cuarta actividad simultánea en las aulas se rechaza con la franja ocupada", async () => {
+    threeClassrooms();
+    const result = await createActivityAction(
+      {},
+      form({ ...base, room: "classroom", startTime: "18:30", endTime: "20:00" }, [1]),
+    );
+    expect(result.error).toBe(
+      "Las 3 aulas ya están ocupadas de 18:30 a 19:30. Ajustá el horario o los días.",
+    );
+    expect(prismaMock.activity.create).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(updateTag).not.toHaveBeenCalled();
+  });
+
+  it("el cupo es POR espacio: el mismo horario en el salón vidriado entra", async () => {
+    threeClassrooms();
+    const result = await createActivityAction(
+      {},
+      form({ ...base, room: "glass", startTime: "18:30", endTime: "20:00" }, [1]),
+    );
+    expect(result).toBeUndefined();
+    expect(prismaMock.activity.create).toHaveBeenCalledTimes(1);
   });
 
   it("acepta el borde exacto: una termina 19:30 y la otra empieza 19:30", async () => {
@@ -148,7 +188,7 @@ describe("createActivityAction", () => {
     expect(prismaMock.activity.create).toHaveBeenCalledTimes(1);
   });
 
-  it("no hay solape si el salón es otro", async () => {
+  it("no hay solape si el espacio es otro", async () => {
     existing([stored({ room: "historic" })]);
     await createActivityAction({}, form(base));
     expect(prismaMock.activity.create).toHaveBeenCalledTimes(1);
@@ -160,7 +200,7 @@ describe("createActivityAction", () => {
     expect(prismaMock.activity.create).toHaveBeenCalledTimes(1);
   });
 
-  it("una actividad OCULTA no ocupa el salón: se guarda aunque se pise", async () => {
+  it("una actividad OCULTA no ocupa el espacio: se guarda aunque se pise", async () => {
     existing([stored()]);
     // Sin `active`: el navegador simplemente no manda el checkbox destildado.
     const { name, room, startTime, endTime, year } = base;
@@ -176,9 +216,9 @@ describe("createActivityAction", () => {
     expect(prismaMock.activity.create).toHaveBeenCalledTimes(1);
   });
 
-  // ESTE es el criterio de aceptación de la task: `findOverlap` da por sentado
-  // que start < end y compara `start < oEnd && oStart < end`. Con "20:00 a
-  // 08:00" esa condición no se cumple contra NADA, así que sin esta guarda la
+  // ESTE es el criterio de aceptación de la task: `findScheduleConflict` da por
+  // sentado que start < end y compara `start < oEnd && oStart < end`. Con "20:00
+  // a 08:00" esa condición no se cumple contra NADA, así que sin esta guarda la
   // actividad entraría sin ningún control de solape.
   it("rechaza un rango invertido antes de siquiera consultar el solapamiento", async () => {
     existing([stored()]);
@@ -188,8 +228,9 @@ describe("createActivityAction", () => {
     );
     expect(result.error).toBe("La hora de fin tiene que ser posterior a la de inicio.");
     expect(prismaMock.activity.create).not.toHaveBeenCalled();
-    // La guarda corre ANTES de findOverlap, no después: si se consultara la
-    // base primero, el rango invertido pasaría por el comparador roto.
+    // La guarda corre ANTES de findScheduleConflict, no después: si se
+    // consultara la base primero, el rango invertido pasaría por el comparador
+    // roto.
     expect(prismaMock.activity.findMany).not.toHaveBeenCalled();
   });
 
@@ -261,7 +302,7 @@ describe("updateActivityAction", () => {
     });
   });
 
-  it("sí choca contra OTRA fila del mismo salón y año", async () => {
+  it("sí choca contra OTRA fila del mismo espacio y año", async () => {
     existing([stored({ id: 5 }), stored({ id: 8, name: "Zumba" })]);
     const result = await updateActivityAction({}, form({ id: "5", ...base }));
     expect(result.error).toContain('"Zumba"');

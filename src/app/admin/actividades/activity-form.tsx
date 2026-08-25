@@ -1,5 +1,5 @@
 "use client";
-// Formulario del calendario de salones.
+// Formulario del calendario de espacios de la sede.
 //
 // El detalle que importa acá son los días de la semana. Son un GRUPO de
 // checkboxes con el mismo `name`, y el rechazo por solapamiento es el caso
@@ -115,7 +115,7 @@ export function ActivityForm(
           Visible en el sitio público
         </Label>
         <p className="text-xs text-muted-foreground">
-          Una actividad oculta se guarda igual y no ocupa el salón: no se controla el solapamiento
+          Una actividad oculta se guarda igual y no ocupa el espacio: no se controla el solapamiento
           hasta que la hagas visible.
         </p>
       </div>

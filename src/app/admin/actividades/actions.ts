@@ -7,10 +7,11 @@
 // `@/lib/auth/require-admin`. El `requireAdmin()` que abre cada función no es
 // ceremonia: es el único control que hay.
 //
-// La otra frontera es la de solapamiento. Los dos salones son un espacio físico:
-// dos actividades activas del mismo salón y año que compartan día y horario no
-// pueden convivir, y el alta que choca se rechaza NOMBRANDO a la existente para
-// que el operador sepa con qué se pisó.
+// La otra frontera es la de solapamiento. Cada espacio físico tiene una
+// capacidad (los salones y la cocina, una actividad; las aulas, tres): el alta
+// que la excede se rechaza NOMBRANDO a la existente con la que se pisó, o —si
+// el cupo del espacio ya está lleno— informando la franja ocupada, para que el
+// operador sepa qué esquivar.
 import { headers } from "next/headers";
 import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
@@ -19,7 +20,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
-import { findOverlap, parseWeekdays, timeToMinutes } from "@/lib/activities/rules";
+import { findScheduleConflict, parseWeekdays, timeToMinutes } from "@/lib/activities/rules";
 import { activitiesQueries } from "@/lib/activities/query";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 
@@ -82,8 +83,8 @@ async function validateActivity(formData: FormData, selfId?: number) {
   if (!weekdays.ok) return { ok: false as const, error: weekdays.error };
   const start = timeToMinutes(parsed.data.startTime);
   const end = timeToMinutes(parsed.data.endTime);
-  // ESTE chequeo va ANTES de findOverlap y no es cosmético: findOverlap da por
-  // sentado que start < end y compara `start < oEnd && oStart < end`. Con un
+  // ESTE chequeo va ANTES de findScheduleConflict y no es cosmético: la regla da
+  // por sentado que start < end y compara `start < oEnd && oStart < end`. Con un
   // rango invertido ("20:00 a 08:00") esa condición no se cumple contra nada, o
   // sea que la actividad entraría sin ningún control de solape y encima con un
   // horario que no significa nada. El orden acá es la guarda.
@@ -92,8 +93,8 @@ async function validateActivity(formData: FormData, selfId?: number) {
   }
   // `data` es exactamente lo que va a la fila: sin `id`, para no mandarle a
   // Prisma una clave que no le corresponde fijar. El id propio entra solo en el
-  // candidato que mira `findOverlap`, que lo necesita para no comparar una
-  // actividad contra sí misma al editarla.
+  // candidato que mira `findScheduleConflict`, que lo necesita para no comparar
+  // una actividad contra sí misma al editarla.
   const data = {
     name: parsed.data.name,
     room: parsed.data.room,
@@ -103,15 +104,18 @@ async function validateActivity(formData: FormData, selfId?: number) {
     year: parsed.data.year,
     active: parsed.data.active === "on",
   };
-  // Una actividad oculta no ocupa el salón: no se muestra en el sitio público y
-  // se guarda como borrador aunque pise a otra.
+  // Una actividad oculta no ocupa el espacio: no se muestra en el sitio público
+  // y se guarda como borrador aunque pise a otra.
   if (data.active) {
     const existing = await activitiesQueries.allForAdmin(data.year);
-    const clash = findOverlap({ ...data, id: selfId }, existing);
-    if (clash) {
+    const conflict = findScheduleConflict({ ...data, id: selfId }, existing);
+    if (conflict) {
       return {
         ok: false as const,
-        error: `Se superpone con "${clash.name}" (${clash.startTime}–${clash.endTime}) en el mismo salón. Ajustá el horario o los días.`,
+        error:
+          conflict.kind === "overlap"
+            ? `Se superpone con "${conflict.other.name}" (${conflict.other.startTime}–${conflict.other.endTime}) en el mismo espacio. Ajustá el horario o los días.`
+            : `Las ${conflict.capacity} aulas ya están ocupadas de ${conflict.startTime} a ${conflict.endTime}. Ajustá el horario o los días.`,
       };
     }
   }
@@ -153,9 +157,9 @@ export async function updateActivityAction(
   if (!parsedId.ok) return { error: parsedId.error };
   const existing = await prisma.activity.findUnique({ where: { id: parsedId.data.id } });
   if (!existing) return { error: NOT_FOUND };
-  // El id propio va a validateActivity para que findOverlap NO se compare la
-  // actividad contra sí misma: si no, editarle el nombre sin tocar el horario
-  // se rechazaría por pisarse con su propia fila.
+  // El id propio va a validateActivity para que findScheduleConflict NO se
+  // compare la actividad contra sí misma: si no, editarle el nombre sin tocar el
+  // horario se rechazaría por pisarse con su propia fila.
   const validated = await validateActivity(formData, existing.id);
   if (!validated.ok) return { error: validated.error };
   const data = validated.data;

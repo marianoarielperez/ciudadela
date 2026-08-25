@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildDailyAgenda,
   buildWeeklyGrid,
-  findOverlap,
+  findScheduleConflict,
+  minutesToTime,
   parseWeekdays,
   ROOM_KEYS,
   ROOM_LABELS,
@@ -40,22 +41,105 @@ describe("timeToMinutes", () => {
   });
 });
 
-describe("findOverlap", () => {
-  it("detecta solape parcial en mismo salón, año y día", () => {
-    const hit = findOverlap(slot({ id: undefined, startTime: "19:00", endTime: "20:00" }), [slot()]);
-    expect(hit?.name).toBe("Gimnasia mujeres");
+describe("minutesToTime", () => {
+  it("es la inversa de timeToMinutes", () => {
+    expect(minutesToTime(1110)).toBe("18:30");
+    expect(minutesToTime(0)).toBe("00:00");
+  });
+});
+
+describe("findScheduleConflict (capacidad 1: salones y cocina)", () => {
+  it("detecta solape parcial en mismo espacio, año y día", () => {
+    const hit = findScheduleConflict(slot({ id: undefined, startTime: "19:00", endTime: "20:00" }), [slot()]);
+    expect(hit).toMatchObject({ kind: "overlap", other: { name: "Gimnasia mujeres" } });
   });
   it("borde exacto NO es solape (19:30 empieza cuando 19:30 termina)", () => {
-    expect(findOverlap(slot({ id: undefined, startTime: "19:30", endTime: "20:30" }), [slot()])).toBeNull();
+    expect(findScheduleConflict(slot({ id: undefined, startTime: "19:30", endTime: "20:30" }), [slot()])).toBeNull();
   });
-  it("otro salón, otro año, día sin intersección o inactiva: no chocan", () => {
-    expect(findOverlap(slot({ id: undefined, room: "glass" }), [slot()])).toBeNull();
-    expect(findOverlap(slot({ id: undefined, year: 2027 }), [slot()])).toBeNull();
-    expect(findOverlap(slot({ id: undefined, weekdays: [2, 4] }), [slot()])).toBeNull();
-    expect(findOverlap(slot({ id: undefined }), [slot({ active: false })])).toBeNull();
+  it("el borde exacto tampoco es solape del otro lado (termina cuando la otra empieza)", () => {
+    expect(findScheduleConflict(slot({ id: undefined, startTime: "17:00", endTime: "18:00" }), [slot()])).toBeNull();
   });
-  it("en edición se ignora a sí misma", () => {
-    expect(findOverlap(slot({ id: 1 }), [slot()])).toBeNull();
+  it("otro espacio, otro año, día sin intersección o inactiva: no chocan", () => {
+    expect(findScheduleConflict(slot({ id: undefined, room: "glass" }), [slot()])).toBeNull();
+    expect(findScheduleConflict(slot({ id: undefined, year: 2027 }), [slot()])).toBeNull();
+    expect(findScheduleConflict(slot({ id: undefined, weekdays: [2, 4] }), [slot()])).toBeNull();
+    expect(findScheduleConflict(slot({ id: undefined }), [slot({ active: false })])).toBeNull();
+  });
+  it("la cocina también es un espacio único", () => {
+    const hit = findScheduleConflict(
+      slot({ id: undefined, room: "kitchen", startTime: "19:00", endTime: "20:00" }),
+      [slot({ room: "kitchen" })],
+    );
+    expect(hit?.kind).toBe("overlap");
+  });
+  it("en edición se ignora a sí misma pero sigue viendo a las demás", () => {
+    expect(findScheduleConflict(slot({ id: 1 }), [slot()])).toBeNull();
+    const otra = slot({ id: 2, name: "Zumba", startTime: "19:00", endTime: "20:00" });
+    const hit = findScheduleConflict(slot({ id: 1, startTime: "19:15", endTime: "20:15" }), [slot(), otra]);
+    expect(hit).toMatchObject({ kind: "overlap", other: { name: "Zumba" } });
+  });
+  it("el candidato inactivo no choca con nada", () => {
+    expect(findScheduleConflict(slot({ id: undefined, active: false }), [slot()])).toBeNull();
+  });
+  it("una actividad contenida dentro de otra sí choca", () => {
+    const hit = findScheduleConflict(slot({ id: undefined, startTime: "18:30", endTime: "19:00" }), [slot()]);
+    expect(hit?.kind).toBe("overlap");
+  });
+  it("horario inválido no se reporta como conflicto (lo rechaza la validación, no esta regla)", () => {
+    expect(findScheduleConflict(slot({ id: undefined, startTime: "25:00" }), [slot()])).toBeNull();
+  });
+});
+
+describe("findScheduleConflict (capacidad 3: aulas)", () => {
+  const aula = (over: Record<string, unknown> = {}) =>
+    slot({ room: "classroom", weekdays: [1], startTime: "18:00", endTime: "19:30", ...over });
+
+  it("la segunda y la tercera actividad superpuestas entran", () => {
+    expect(findScheduleConflict(aula({ id: undefined }), [aula({ id: 1 })])).toBeNull();
+    expect(findScheduleConflict(aula({ id: undefined }), [aula({ id: 1 }), aula({ id: 2 })])).toBeNull();
+  });
+
+  it("la cuarta se rechaza informando la ventana ocupada", () => {
+    const hit = findScheduleConflict(aula({ id: undefined, startTime: "18:30", endTime: "20:00" }), [
+      aula({ id: 1 }), aula({ id: 2 }), aula({ id: 3 }),
+    ]);
+    expect(hit).toEqual({ kind: "full", capacity: 3, startTime: "18:30", endTime: "19:30" });
+  });
+
+  it("tres existentes que NO coinciden entre sí a ninguna hora no llenan el aula", () => {
+    // Escalera: cada una pisa a la siguiente pero nunca hay 3 en simultáneo.
+    const hit = findScheduleConflict(aula({ id: undefined, startTime: "08:00", endTime: "12:00" }), [
+      aula({ id: 1, startTime: "08:00", endTime: "09:00" }),
+      aula({ id: 2, startTime: "09:00", endTime: "10:00" }),
+      aula({ id: 3, startTime: "10:00", endTime: "11:00" }),
+    ]);
+    expect(hit).toBeNull();
+  });
+
+  it("el borde exacto no cuenta como simultaneidad", () => {
+    const hit = findScheduleConflict(aula({ id: undefined }), [
+      aula({ id: 1 }), aula({ id: 2, startTime: "16:30", endTime: "18:00" }), aula({ id: 3, startTime: "16:00", endTime: "18:00" }),
+    ]);
+    expect(hit).toBeNull();
+  });
+
+  it("una oculta no ocupa aula", () => {
+    const hit = findScheduleConflict(aula({ id: undefined }), [
+      aula({ id: 1 }), aula({ id: 2 }), aula({ id: 3, active: false }),
+    ]);
+    expect(hit).toBeNull();
+  });
+
+  it("la simultaneidad se mide por día: 3 en lunes no bloquean el martes", () => {
+    const hit = findScheduleConflict(aula({ id: undefined, weekdays: [2] }), [
+      aula({ id: 1 }), aula({ id: 2 }), aula({ id: 3 }),
+    ]);
+    expect(hit).toBeNull();
+  });
+
+  it("en edición no se cuenta a sí misma para el cupo", () => {
+    const hit = findScheduleConflict(aula({ id: 3 }), [aula({ id: 1 }), aula({ id: 2 }), aula({ id: 3 })]);
+    expect(hit).toBeNull();
   });
 });
 
@@ -131,6 +215,25 @@ describe("buildWeeklyGrid", () => {
     expect(grid.historic[1]).toEqual([]);
   });
 
+  // Mismo riesgo que las claves de prototipo, pero por la otra dimensión de la
+  // grilla: `room` llega desde la base con un cast sin chequear (query.ts), así
+  // que una fila con un espacio que ya no existe en SITE.rooms indexaría
+  // `undefined` y tiraría 500 en la página pública.
+  // "toString" está en la lista por lo mismo que en los días: la grilla sale de
+  // `Object.fromEntries`, así que un `in` habría dejado pasar esa clave.
+  it.each(["quincho", "toString", "__proto__"])(
+    "descarta la fila cuyo espacio %s no existe en lugar de explotar",
+    (room) => {
+      const build = () => buildWeeklyGrid([slot({ room: room as never }), slot({ id: 2, weekdays: [2] })]);
+      expect(build).not.toThrow();
+      const grid = build();
+      expect(Object.keys(grid)).toEqual(ROOM_KEYS);
+      expect(grid.historic[1]).toEqual([]);
+      // La fila sana de la misma tanda sigue entrando.
+      expect(grid.historic[2].map((a) => a.id)).toEqual([2]);
+    },
+  );
+
   it("valores corruptos no enteros o fuera de rango también se descartan", () => {
     const grid = buildWeeklyGrid([slot({ weekdays: [0, -1, 1.5, 8, NaN, null, undefined, "lunes"] })]);
     expect(WEEKDAYS.every(([d]) => grid.historic[d].length === 0)).toBe(true);
@@ -198,32 +301,6 @@ describe("buildDailyAgenda", () => {
       ["Apoyo escolar", "classroom"],
       ["Cocina para todos", "kitchen"],
     ]);
-  });
-});
-
-// Cobertura extra sobre el borde de la regla, que es lo que el revisor mira.
-describe("findOverlap (bordes)", () => {
-  it("el candidato inactivo no choca con nada", () => {
-    expect(findOverlap(slot({ id: undefined, active: false }), [slot()])).toBeNull();
-  });
-
-  it("una actividad contenida dentro de otra sí choca", () => {
-    const hit = findOverlap(slot({ id: undefined, startTime: "18:30", endTime: "19:00" }), [slot()]);
-    expect(hit?.id).toBe(1);
-  });
-
-  it("el borde exacto tampoco es solape del otro lado (termina cuando la otra empieza)", () => {
-    expect(findOverlap(slot({ id: undefined, startTime: "17:00", endTime: "18:00" }), [slot()])).toBeNull();
-  });
-
-  it("en edición se ignora a sí misma pero sigue viendo a las demás", () => {
-    const otra = slot({ id: 2, name: "Zumba", startTime: "19:00", endTime: "20:00" });
-    const hit = findOverlap(slot({ id: 1, startTime: "19:15", endTime: "20:15" }), [slot(), otra]);
-    expect(hit?.name).toBe("Zumba");
-  });
-
-  it("horario inválido no se reporta como solape (lo rechaza la validación, no esta regla)", () => {
-    expect(findOverlap(slot({ id: undefined, startTime: "25:00" }), [slot()])).toBeNull();
   });
 });
 

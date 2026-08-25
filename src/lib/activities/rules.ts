@@ -44,24 +44,69 @@ export function timeToMinutes(hhmm: string): number | null {
   return h * 60 + m;
 }
 
-export function findOverlap(
+// Capacidad física de cada espacio: los salones y la cocina son un ambiente
+// único; "Aulas" son tres aulas sin identificar, así que hasta tres
+// actividades activas pueden convivir en el mismo horario.
+export const ROOM_CAPACITY: Record<RoomKey, number> = {
+  historic: 1,
+  glass: 1,
+  kitchen: 1,
+  classroom: 3,
+};
+
+export function minutesToTime(min: number): string {
+  const h = String(Math.floor(min / 60)).padStart(2, "0");
+  const m = String(min % 60).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+export type ScheduleConflict =
+  | { kind: "overlap"; other: ActivitySlot }
+  | { kind: "full"; capacity: number; startTime: string; endTime: string };
+
+// Reemplaza a findOverlap: misma regla estricta de solape (compartir el borde
+// exacto es válido) generalizada por capacidad. Con capacidad 1 el resultado
+// es el de siempre — la primera actividad pisada—; con capacidad N el
+// candidato entra salvo que en algún instante de su rango ya haya N activas
+// en simultáneo EN EL MISMO DÍA, y en ese caso se informa la ventana ocupada
+// para que el operador sepa qué franja tiene que esquivar.
+export function findScheduleConflict(
   candidate: Omit<ActivitySlot, "id"> & { id?: number },
   existing: ActivitySlot[],
-): ActivitySlot | null {
+): ScheduleConflict | null {
   const start = timeToMinutes(candidate.startTime);
   const end = timeToMinutes(candidate.endTime);
-  if (start === null || end === null) return null;
-  for (const other of existing) {
-    if (other.id === candidate.id) continue;
-    if (!other.active || !candidate.active) continue;
-    if (other.room !== candidate.room || other.year !== candidate.year) continue;
-    if (!other.weekdays.some((d) => candidate.weekdays.includes(d))) continue;
+  if (start === null || end === null || !candidate.active) return null;
+  const overlapping = existing.filter((other) => {
+    if (other.id === candidate.id || !other.active) return false;
+    if (other.room !== candidate.room || other.year !== candidate.year) return false;
+    if (!other.weekdays.some((d) => candidate.weekdays.includes(d))) return false;
     const oStart = timeToMinutes(other.startTime);
     const oEnd = timeToMinutes(other.endTime);
-    if (oStart === null || oEnd === null) continue;
-    // Solape estricto: compartir el borde exacto (una termina 19:30, la otra
-    // empieza 19:30) es válido.
-    if (start < oEnd && oStart < end) return other;
+    return oStart !== null && oEnd !== null && start < oEnd && oStart < end;
+  });
+  const capacity = ROOM_CAPACITY[candidate.room];
+  if (capacity === 1) {
+    return overlapping.length > 0 ? { kind: "overlap", other: overlapping[0] } : null;
+  }
+  // Barrido por día: la concurrencia solo puede subir donde EMPIEZA una
+  // actividad, así que alcanza con medirla en cada inicio (acotado al rango
+  // del candidato). Los horarios de `overlapping` ya validaron en el filtro.
+  for (const day of candidate.weekdays) {
+    const sameDay = overlapping.filter((o) => o.weekdays.includes(day));
+    if (sameDay.length < capacity) continue;
+    const points = [...new Set(sameDay.map((o) => Math.max(timeToMinutes(o.startTime)!, start)))].sort(
+      (a, b) => a - b,
+    );
+    for (const p of points) {
+      const concurrent = sameDay.filter(
+        (o) => timeToMinutes(o.startTime)! <= p && p < timeToMinutes(o.endTime)!,
+      );
+      if (concurrent.length >= capacity) {
+        const busyEnd = Math.min(end, ...concurrent.map((o) => timeToMinutes(o.endTime)!));
+        return { kind: "full", capacity, startTime: minutesToTime(p), endTime: minutesToTime(busyEnd) };
+      }
+    }
   }
   return null;
 }
@@ -77,6 +122,13 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
   >;
   for (const a of activities) {
     if (!a.active) continue;
+    // Mismo motivo que el guard de día de abajo: `room` llega con un cast sin
+    // chequear desde la base, y una fila con un espacio que ya no existe en
+    // SITE.rooms indexaría `undefined` y tiraría 500 en la página pública.
+    // `Object.hasOwn` y no `in`: la grilla sale de `Object.fromEntries`, así que
+    // `"toString" in grid` da true y volveríamos a caer en el mismo TypeError
+    // que el guard de día documenta ocho líneas más abajo.
+    if (!Object.hasOwn(grid, a.room)) continue;
     // `new Set` porque un `weekdays` con el día repetido ([2,2]) pintaría la
     // actividad dos veces en el martes. Por el ABM no puede entrar —
     // `parseWeekdays` deduplica—, pero esta función también recibe lo que haya
@@ -113,10 +165,10 @@ export type AgendaEntry = {
 };
 
 // Reproyección día-primero de buildWeeklyGrid para el calendario público. La
-// grilla por salón es la vista del que administra el espacio; el vecino
-// pregunta "¿qué hay el martes?" y "¿a qué hora?", y el salón recién le importa
-// cuando ya está yendo. Acá el día es el eje y el salón es un dato de cada
-// actividad, así el martes aparece una sola vez y no dos.
+// grilla por espacio es la vista del que administra la sede; el vecino
+// pregunta "¿qué hay el martes?" y "¿a qué hora?", y el espacio recién le
+// importa cuando ya está yendo. Acá el día es el eje y el espacio es un dato de
+// cada actividad, así el martes aparece una sola vez y no dos.
 //
 // Mismo contrato implícito que buildWeeklyGrid: recibe las actividades de UN
 // solo año, no filtra por año.
