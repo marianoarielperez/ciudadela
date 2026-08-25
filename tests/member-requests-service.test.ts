@@ -226,6 +226,27 @@ describe("memberRequests.markAccepted", () => {
     await service.markAccepted({ requestId: created.requestId, memberId: 14, decidedById: 3, type: "category_change" });
     expect(state.requests[0]).toMatchObject({ status: "accepted", movementId: 6 });
   });
+
+  // Las dos guardas del `where`: el par requestId/memberId lo arma la action del
+  // panel, y si alguna vez lo tomara de dos fuentes distintas no puede terminar
+  // aceptándole la solicitud a otro socio ni resucitando una ya retirada.
+  it("no acepta la solicitud de OTRO socio aunque el id exista", async () => {
+    const { service, state } = fakeDb({ member: activeMember() });
+    const created = await service.create({ memberId: 14, type: "withdrawal" });
+    if (!created.ok) throw new Error("setup failed");
+    await service.markAccepted({ requestId: created.requestId, memberId: 99, decidedById: 7, type: "withdrawal" });
+    expect(state.requests[0]).toMatchObject({ status: "pending" });
+    expect(state.requests[0].decidedById).toBeFalsy();
+  });
+
+  it("no resucita como aceptada una solicitud que el socio ya retiró", async () => {
+    const { service, state } = fakeDb({ member: activeMember() });
+    const created = await service.create({ memberId: 14, type: "withdrawal" });
+    if (!created.ok) throw new Error("setup failed");
+    await service.cancel({ memberId: 14, requestId: created.requestId });
+    await service.markAccepted({ requestId: created.requestId, memberId: 14, decidedById: 7, type: "withdrawal" });
+    expect(state.requests[0]).toMatchObject({ status: "cancelled" });
+  });
 });
 
 describe("memberRequests.reject", () => {

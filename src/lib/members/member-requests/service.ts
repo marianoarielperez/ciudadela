@@ -150,8 +150,15 @@ export function makeMemberRequests(deps: Deps) {
         orderBy: [{ date: "desc" }, { id: "desc" }],
         select: { id: true },
       });
-      await db.memberRequest.update({
-        where: { id: input.requestId },
+      // `updateMany` con `memberId` y `status` en el WHERE, no `update` por id:
+      // el par requestId/memberId lo arma el llamador (la action del panel), y
+      // si alguna vez lo tomara de dos fuentes distintas —el id del formulario y
+      // el socio de la ficha— un `update` por id solo le marcaría aceptada la
+      // solicitud a OTRO socio y le colgaría un movimiento ajeno. El `status`
+      // cierra la otra mitad: una solicitud que el socio ya retiró no puede
+      // resucitar como aceptada. Misma guarda por `where` que `cancel`.
+      const applied = await db.memberRequest.updateMany({
+        where: { id: input.requestId, memberId: input.memberId, status: "pending" },
         data: {
           status: "accepted",
           decidedAt: now(),
@@ -163,6 +170,20 @@ export function makeMemberRequests(deps: Deps) {
           movementId: movement?.id ?? null,
         },
       });
+      // Best-effort con fallo VISIBLE en el log (doctrina de CLAUDE.md): acá no
+      // hay pantalla que lo cuente —la firma es `void` a propósito, porque el
+      // acta ya commiteó y reventar dejaría la aceptación a mitad de camino—,
+      // así que el log de PM2 es el único lugar donde un error de orden del
+      // llamador se vuelve diagnosticable.
+      if (applied.count === 0) {
+        console.error("[solicitudes] markAccepted no encontró la solicitud pendiente —", {
+          requestId: input.requestId, memberId: input.memberId, type: input.type,
+        });
+      } else if (!movement) {
+        console.error("[solicitudes] aceptada sin movimiento asociado —", {
+          requestId: input.requestId, memberId: input.memberId, type: input.type,
+        });
+      }
     },
 
     /** Sólo actúa sobre `pending`, con la misma guarda por `where` que `cancel`
