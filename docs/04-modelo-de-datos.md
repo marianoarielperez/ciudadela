@@ -388,17 +388,24 @@ Identidad única de la persona a través de todos los libros.
 
 ### Actividad (`activities`) — Módulo 2
 
-Actividad sistemática semanal de un salón de la sede ("Gimnasia mujeres",
+Actividad sistemática semanal de un espacio de la sede ("Gimnasia mujeres",
 "Taekwondo niños"), con vigencia anual. Solo consulta pública; no hay reservas.
 
 - `name` (varchar 120), `room` (enum `Room`: `historic` = Salón Histórico,
-  `glass` = Salón Vidriado — salones fijos, sin tabla), `weekdays` (JSON, array
-  de enteros 1–7, lunes=1), `start_time`/`end_time` (varchar "HH:MM", hora de
-  pared local SIN conversión a UTC: es un horario recurrente, no un instante),
-  `year` (smallint), `active` (bool).
-- Regla: dos actividades activas del mismo salón y año no pueden solaparse
-  en día y horario (validada en `src/lib/activities/rules.ts`). Compartir el
-  borde exacto (una termina 19:30, la otra empieza 19:30) sí es válido.
+  `glass` = Salón Vidriado, `kitchen` = Cocina, `classroom` = Aulas — espacios
+  fijos, sin tabla), `weekdays` (JSON, array de enteros 1–6, lunes=1: la semana
+  va de lunes a sábado, la vecinal no abre los domingos), `start_time`/`end_time`
+  (varchar "HH:MM", hora de pared local SIN conversión a UTC: es un horario
+  recurrente, no un instante), `year` (smallint), `active` (bool).
+- Cada espacio tiene una **capacidad**: `historic`, `glass` y `kitchen` son un
+  ambiente único y admiten una actividad por vez; `classroom` son tres aulas
+  físicas que no se identifican una por una, así que admite **tres** actividades
+  simultáneas y recién la cuarta se rechaza.
+- Regla: dos actividades activas del mismo espacio y año no pueden solaparse
+  en día y horario más allá de esa capacidad (validada en
+  `src/lib/activities/rules.ts`). Compartir el borde exacto (una termina 19:30,
+  la otra empieza 19:30) sí es válido. Una actividad oculta (`active = false`)
+  no ocupa lugar: nunca cuenta para la capacidad.
 
 ### Calle
 - Importada de `datos/calles_inicial.csv`: `id_calle`, `orden_carga`, `nombre_calle`,
