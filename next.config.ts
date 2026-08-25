@@ -124,7 +124,7 @@ const securityHeaders = [
 //
 // El dominio del túnel cambia en cada corrida de cloudflared: si el login vuelve
 // a fallar por esto, la línea a actualizar es ésta.
-const DEV_TUNNEL_ORIGINS = ["geological-expectations-winner-canal.trycloudflare.com"];
+const DEV_TUNNEL_ORIGINS = ["than-work-iowa-jewel.trycloudflare.com"];
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: DEV_TUNNEL_ORIGINS,
