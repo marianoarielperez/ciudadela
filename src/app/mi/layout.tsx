@@ -6,17 +6,21 @@ import { FormMessage } from "@/components/admin/form-message";
 import { SignOutButton } from "@/components/admin/sign-out-button";
 import { MiTabs } from "@/components/mi/mi-tabs";
 import { requireMember } from "@/lib/auth/require-member";
-import { MI_TABS } from "@/lib/mi/nav";
+import { miTabsFor, type MiTab } from "@/lib/mi/nav";
 import { suspensionNotice } from "@/lib/mi/suspension";
+import { prisma } from "@/lib/prisma";
+import { categoryPaysFee } from "@/lib/treasury/rules";
 
 function Shell({
   children,
   banner,
   showTabs = true,
+  tabs,
 }: {
   children: React.ReactNode;
   banner?: React.ReactNode;
   showTabs?: boolean;
+  tabs?: MiTab[];
 }) {
   return (
     <div className="min-h-screen bg-secondary/40">
@@ -44,7 +48,7 @@ function Shell({
         </div>
         {showTabs && (
           <div className="mx-auto w-full max-w-2xl px-4">
-            <MiTabs tabs={MI_TABS} />
+            <MiTabs tabs={tabs ?? []} />
           </div>
         )}
       </header>
@@ -68,7 +72,19 @@ export default async function MiLayout({ children }: { children: React.ReactNode
         {suspensionNotice(actor.suspension)}
       </FormMessage>
     ) : undefined;
-    return <Shell banner={banner}>{children}</Shell>;
+    // Qué pestaña ve depende de la categoría: es DISPLAY (comentario en
+    // `lib/mi/nav.ts`), la autorización real de /mi/debito vive en la página y
+    // en sus actions (`requireMember` + `memberDebit`), no en este filtro.
+    const member = await prisma.member.findUnique({
+      where: { id: actor.memberId },
+      select: { category: true },
+    });
+    const tabs = miTabsFor(member ? categoryPaysFee(member.category) : false);
+    return (
+      <Shell banner={banner} tabs={tabs}>
+        {children}
+      </Shell>
+    );
   }
 
   // Sin sesión: al login. Con sesión pero sin habilitación NO se puede
