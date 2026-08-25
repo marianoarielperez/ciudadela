@@ -72,10 +72,16 @@ export function DocumentViewer({
                 className="max-h-96 w-full rounded-md border object-contain"
               />
             ) : (
+              // SIN atributo `sandbox`: un iframe totalmente sandboxeado hace
+              // que Chromium bloquee el REQUEST del PDF antes de pedirlo
+              // (net::ERR_BLOCKED_BY_CLIENT, medido el 25/08/2026 con la misma
+              // URL en dos iframes: sin sandbox → 200 y pinta; con sandbox=""
+              // → bloqueado). El aislamiento del documento lo pone la CSP de
+              // respuesta (`default-src 'none'; sandbox`) de la entrada
+              // específica de next.config.ts, que sí convive con el visor.
               <iframe
                 src={href}
                 title={label}
-                sandbox=""
                 className="h-96 max-w-full w-full rounded-md border"
               />
             )}
