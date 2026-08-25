@@ -36,7 +36,7 @@ import { civilDateUtc } from "@/lib/dates";
 import { electionsOngoing, memberService } from "@/lib/members/service";
 import { memberRequests } from "@/lib/members/member-requests/service";
 import { notifyRequestDecided } from "@/lib/members/member-requests/notify";
-import { subscriptionAmountPlan } from "@/lib/members/subscription-amount";
+import { subscriptionAmountPlan, type SubscriptionSkipReason } from "@/lib/members/subscription-amount";
 import { withdrawWithDebits, type DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
@@ -313,7 +313,7 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
           orderBy: { id: "asc" },
         });
         const feeValue = await feeValueReader.current();
-        const plan = subscriptionAmountPlan({
+        const decision = subscriptionAmountPlan({
           subscriptions: subs.map((s) => ({
             preapprovalId: s.preapprovalId,
             status: s.status,
@@ -322,6 +322,7 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
           newCategory,
           feeValue,
         });
+        const plan = decision.plan;
         // El monto ANTERIOR de la sub elegida, si se conocía: es lo único que
         // se puede empujar de vuelta si `changeCategory` fallara después.
         const previousAmount = plan
@@ -404,21 +405,28 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
             });
           }
         }
-        return { member: updated, subscriptionPlan: plan };
+        return { member: updated, subscriptionPlan: plan, subscriptionSkipped: decision.skipped };
       },
       auditAction: "member_category_change",
       detail: (member, data) => ({
         from: member.category, to: data.newCategory,
         ...(data.requestId ? { requestId: data.requestId } : {}),
       }),
-      // Ids de MP y un booleano, nunca datos personales (docs/08): el
-      // `preapprovalId` no es dato del socio y es lo que el operador necesita
-      // para reconciliar a mano si algo quedó raro.
+      // Ids de MP, un booleano y un motivo, nunca datos personales (docs/08):
+      // el `preapprovalId` no es dato del socio y es lo que el operador
+      // necesita para reconciliar a mano si algo quedó raro. `subscriptionSkipped`
+      // (arreglo 4 de la revisión de Task 10) distingue "no tenía suscripción"
+      // de "tenía una viva y la categoría nueva no paga cuota" —hueco que antes
+      // quedaba indistinguible en el Libro y que el lote REG-34 tampoco levanta.
       detailFromResult: (r) => {
-        const plan = (r as { subscriptionPlan: { preapprovalId: string; amount: number } | null }).subscriptionPlan;
+        const { subscriptionPlan, subscriptionSkipped } = r as {
+          subscriptionPlan: { preapprovalId: string; amount: number } | null;
+          subscriptionSkipped: SubscriptionSkipReason | null;
+        };
         return {
-          subscriptionUpdated: !!plan,
-          ...(plan ? { preapprovalId: plan.preapprovalId, amount: plan.amount } : {}),
+          subscriptionUpdated: !!subscriptionPlan,
+          ...(subscriptionPlan ? { preapprovalId: subscriptionPlan.preapprovalId, amount: subscriptionPlan.amount } : {}),
+          ...(subscriptionSkipped ? { subscriptionSkipped } : {}),
         };
       },
     },
