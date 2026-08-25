@@ -26,6 +26,16 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 //   y los iframes de Checkout Pro / Bricks (MP_FRAME). Ojo: un iframe bloqueado
 //   por CSP no rompe nada visible, deja un recuadro vacío en silencio — si se
 //   cambia el proveedor de mapa o el de captcha hay que tocar acá.
+//   'self' se agregó en la tarea 7 de la fase 5B: el visor de documentos del
+//   detalle de solicitud (`document-viewer.tsx`) embebe un PDF en un <iframe>
+//   que apunta a `/api/admin/solicitudes/[id]/documentos/[docId]`, del MISMO
+//   origen. La CSP propia de esa ruta (`default-src 'none'; sandbox`) gobierna
+//   lo que el documento framed puede hacer hacia ADENTRO; esta directiva
+//   gobierna si el sitio puede framearlo desde AFUERA, y sin 'self' acá el
+//   navegador bloqueaba el iframe en silencio (recuadro en blanco, sin error
+//   visible más que en la consola). No amplía qué puede framear a este sitio
+//   —eso lo sigue negando `frame-ancestors 'none'` + `X-Frame-Options: DENY`,
+//   sin tocar—, sólo qué puede framear el sitio ADENTRO de sí mismo.
 // - frame-ancestors 'none' + X-Frame-Options: DENY: la segunda es para los
 //   navegadores viejos que no leen frame-ancestors.
 // - upgrade-insecure-requests: en prod todo va por HTTPS detrás de Cloudflare.
@@ -75,7 +85,7 @@ const csp = [
   "img-src 'self' data: blob:",
   "font-src 'self'",
   `connect-src ${["'self'", ...MP_CONNECT].join(" ")}`,
-  `frame-src ${["https://www.openstreetmap.org", ...MP_FRAME, ...TURNSTILE].join(" ")}`,
+  `frame-src ${["'self'", "https://www.openstreetmap.org", ...MP_FRAME, ...TURNSTILE].join(" ")}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
