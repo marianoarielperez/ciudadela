@@ -20,9 +20,11 @@ describe("parseWeekdays", () => {
   it("acepta días válidos y los ordena sin duplicados", () => {
     expect(parseWeekdays(["3", "1", "3"])).toEqual({ ok: true, value: [1, 3] });
   });
-  it("rechaza vacío y valores fuera de 1-7 con mensaje es-AR", () => {
+  it("rechaza vacío y valores fuera de 1-6 con mensaje es-AR", () => {
     expect(parseWeekdays([]).ok).toBe(false);
     expect(parseWeekdays(["0"]).ok).toBe(false);
+    // La vecinal no abre los domingos: el día 7 dejó de ser cargable.
+    expect(parseWeekdays(["7"]).ok).toBe(false);
     expect(parseWeekdays(["8"]).ok).toBe(false);
     expect(parseWeekdays(["x"]).ok).toBe(false);
   });
@@ -67,19 +69,19 @@ describe("buildWeeklyGrid", () => {
     expect(grid.historic[1].map((a) => a.name)).toEqual([]);
   });
 
-  it("repite la actividad en cada uno de sus días y deja los siete días armados", () => {
+  it("repite la actividad en cada uno de sus días y deja los seis días armados", () => {
     const grid = buildWeeklyGrid([slot()]); // lunes y miércoles
     expect(grid.historic[1].map((a) => a.id)).toEqual([1]);
     expect(grid.historic[3].map((a) => a.id)).toEqual([1]);
-    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(Object.keys(grid.glass).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(Object.keys(grid.glass).map(Number)).toEqual([1, 2, 3, 4, 5, 6]);
     // Los salones no comparten arrays: empujar en uno no debe verse en el otro.
     expect(grid.glass[1]).toEqual([]);
   });
 
-  it("ignora días fuera de 1-7 en lugar de inventar columnas", () => {
-    const grid = buildWeeklyGrid([slot({ weekdays: [1, 9] })]);
-    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it("ignora días fuera de 1-6 en lugar de inventar columnas", () => {
+    const grid = buildWeeklyGrid([slot({ weekdays: [1, 7] })]);
+    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(grid.historic[1]).toHaveLength(1);
   });
 
@@ -106,7 +108,7 @@ describe("buildWeeklyGrid", () => {
     const build = () => buildWeeklyGrid([slot({ weekdays })]);
     expect(build).not.toThrow();
     const grid = build();
-    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(Object.keys(grid.historic).map(Number)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(WEEKDAYS.every(([d]) => grid.historic[d].length === 0)).toBe(true);
     expect(WEEKDAYS.every(([d]) => grid.glass[d].length === 0)).toBe(true);
   });
@@ -126,19 +128,19 @@ describe("buildWeeklyGrid", () => {
 describe("buildDailyAgenda (datos corruptos)", () => {
   // buildDailyAgenda se apoya en buildWeeklyGrid: si la grilla explota, /actividades
   // devuelve 500. Es la ruta pública, así que se cubre de punta a punta.
-  it("no explota con claves de prototipo y devuelve los siete días vacíos", () => {
+  it("no explota con claves de prototipo y devuelve los seis días vacíos", () => {
     const build = () => buildDailyAgenda([slot({ weekdays: ["toString"] }), slot({ id: 2, weekdays: ["constructor"] })]);
     expect(build).not.toThrow();
     const agenda = build();
-    expect(agenda.map((d) => d.day)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(agenda.map((d) => d.day)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(agenda.every((d) => d.entries.length === 0)).toBe(true);
   });
 });
 
 describe("buildDailyAgenda", () => {
-  it("devuelve los siete días en orden, con o sin actividades", () => {
+  it("devuelve los seis días en orden, con o sin actividades", () => {
     const agenda = buildDailyAgenda([]);
-    expect(agenda.map((d) => d.day)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(agenda.map((d) => d.day)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(agenda.map((d) => d.label)).toEqual(WEEKDAYS.map(([, l]) => l));
     expect(agenda.every((d) => d.entries.length === 0)).toBe(true);
   });
@@ -208,10 +210,10 @@ describe("etiquetas visibles", () => {
     expect(ROOM_LABELS.historic).toBe(SITE.rooms.historic);
   });
 
-  it("WEEKDAYS va de lunes a domingo con nombres es-AR", () => {
+  it("WEEKDAYS va de lunes a sábado con nombres es-AR", () => {
     expect(WEEKDAYS).toEqual([
       [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],
-      [5, "Viernes"], [6, "Sábado"], [7, "Domingo"],
+      [5, "Viernes"], [6, "Sábado"],
     ]);
   });
 });

@@ -1,11 +1,12 @@
-// Reglas del calendario de salones. Los dos salones son un espacio físico:
-// dos actividades activas del mismo salón y año no pueden pisarse en día y
-// horario — el alta que choca se rechaza nombrando a la actividad existente.
+// Reglas del calendario de espacios de la sede. La semana va de lunes a
+// sábado (la vecinal no abre los domingos) y cada espacio físico tiene una
+// capacidad: dos actividades activas del mismo espacio y año no pueden
+// pisarse en día y horario más allá de esa capacidad.
 import { SITE } from "@/lib/site";
 
 export const WEEKDAYS: Array<[number, string]> = [
   [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],
-  [5, "Viernes"], [6, "Sábado"], [7, "Domingo"],
+  [5, "Viernes"], [6, "Sábado"],
 ];
 
 export const ROOM_LABELS: Record<"historic" | "glass", string> = SITE.rooms;
@@ -24,7 +25,7 @@ export type ActivitySlot = {
 export function parseWeekdays(raw: string[]): { ok: true; value: number[] } | { ok: false; error: string } {
   if (raw.length === 0) return { ok: false, error: "Elegí al menos un día de la semana." };
   const days = [...new Set(raw.map((r) => Number(r)))].sort((a, b) => a - b);
-  if (days.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) {
+  if (days.some((d) => !Number.isInteger(d) || d < 1 || d > 6)) {
     return { ok: false, error: "Día de la semana inválido." };
   }
   return { ok: true, value: days };
@@ -80,9 +81,10 @@ export function buildWeeklyGrid(activities: ActivitySlot[]) {
       // "toString" o "constructor" resolvería a una función heredada y el `?.`
       // no protege (el valor existe, solo que no es un array) — `.push` tira
       // TypeError y la página pública devuelve 500. Con este guard, cualquier
-      // día que no sea un entero de 1 a 7 se descarta como el resto de la
+      // día que no sea un entero de 1 a 6 se descarta como el resto de la
       // basura posible.
-      if (!Number.isInteger(d) || d < 1 || d > 7) continue;
+      // El 7 (domingo) quedó fuera de la semana: una fila vieja con domingo se descarta acá, no rompe.
+      if (!Number.isInteger(d) || d < 1 || d > 6) continue;
       grid[a.room][d].push({ id: a.id, name: a.name, startTime: a.startTime, endTime: a.endTime });
     }
   }
