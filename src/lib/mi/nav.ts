@@ -23,7 +23,10 @@ export type MiTab = {
 export const MI_TABS: MiTab[] = [
   { href: "/mi", label: "Inicio", icon: "home" },
   { href: "/mi/cuenta", label: "Mi cuenta", icon: "wallet" },
-  { href: "/mi/debito", label: "Débito automático", icon: "refresh-cw", paysFeeOnly: true },
+  // "Débito" a secas: con seis pestañas en el ancho del panel, la etiqueta
+  // completa era la que empujaba a "Estatuto" fuera de la vista en escritorio.
+  // El nombre entero lo dice el título de la página.
+  { href: "/mi/debito", label: "Débito", icon: "refresh-cw", paysFeeOnly: true },
   { href: "/mi/datos", label: "Mis datos", icon: "user" },
   { href: "/mi/solicitudes", label: "Solicitudes", icon: "file-text" },
   { href: "/mi/estatuto", label: "Estatuto", icon: "scroll-text" },

@@ -31,7 +31,7 @@ function Shell({
         Saltar al contenido
       </a>
       <header className="border-b-4 border-primary bg-background">
-        <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-4 px-4 pt-3 pb-1">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 pt-3 pb-1">
           <Link
             href="/mi"
             className="flex min-h-12 items-center gap-3 rounded-md outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
@@ -47,12 +47,12 @@ function Shell({
           <SignOutButton className="inline-flex min-h-12 items-center px-2 text-sm underline underline-offset-2 rounded-md outline-hidden focus-visible:ring-2 focus-visible:ring-ring" />
         </div>
         {showTabs && (
-          <div className="mx-auto w-full max-w-2xl px-4">
+          <div className="mx-auto w-full max-w-3xl px-4">
             <MiTabs tabs={tabs ?? []} />
           </div>
         )}
       </header>
-      <main id="contenido" tabIndex={-1} className="mx-auto w-full max-w-2xl space-y-4 p-4 outline-hidden">
+      <main id="contenido" tabIndex={-1} className="mx-auto w-full max-w-3xl space-y-4 p-4 outline-hidden">
         {banner}
         {children}
       </main>
