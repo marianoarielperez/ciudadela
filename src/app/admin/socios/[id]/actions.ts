@@ -337,8 +337,16 @@ export async function confirmAddressAction(formData: FormData): Promise<void> {
   if (!Number.isInteger(memberId) || memberId <= 0) return;
   try {
     await prisma.member.update({ where: { id: memberId }, data: { addressPendingReview: false } });
-  } catch {
-    return; // ficha inexistente: solo un POST fabricado llega acá
+  } catch (e) {
+    // Sólo la ficha inexistente se traga (P2025): a esta action se llega desde
+    // un botón de la ficha, así que un id que ya no existe es un POST fabricado
+    // y no merece pantalla de error. Un fallo REAL de la base sí tiene que
+    // subir: tragarlo dejaría al operador con el cartel de "pendiente" intacto
+    // y sin ninguna pista de por qué el botón no hizo nada. El duck-typing
+    // sobre `.code` es la convención del proyecto con el adapter de MariaDB
+    // (ver `@/lib/treasury/unique-violation`, donde `meta.target` NO existe).
+    if ((e as { code?: string })?.code !== "P2025") throw e;
+    return;
   }
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
