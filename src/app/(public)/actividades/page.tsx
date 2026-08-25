@@ -2,15 +2,18 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { getActivitiesForYear, getActivityYears } from "@/lib/activities/query";
-import { buildDailyAgenda, ROOM_LABELS } from "@/lib/activities/rules";
+import { buildDailyAgenda } from "@/lib/activities/rules";
 import {
   activitiesYearHref,
   currentYearAR,
   resolveActivitiesYear,
 } from "@/lib/activities/year-param";
+import { currentWeekdayAR } from "@/lib/dates";
 import { SITE, siteBaseUrl } from "@/lib/site";
+import { ActivityCard } from "./activity-card";
+import { DayTabs } from "./day-tabs";
 
-const DESCRIPTION = `Calendario semanal de actividades del ${SITE.rooms.historic} y el ${SITE.rooms.glass}.`;
+const DESCRIPTION = "Calendario semanal de actividades de la sede: salones, cocina y aulas.";
 
 export async function generateMetadata({
   searchParams,
@@ -30,20 +33,17 @@ export async function generateMetadata({
   };
 }
 
-// "martes, jueves y domingo". Sin Intl.ListFormat para no depender de qué ICU
-// trae el Node del VPS.
-function joinEs(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
-}
-
 export default async function ActividadesPage({ searchParams }: PageProps<"/actividades">) {
   const sp = await searchParams;
   const years = await getActivityYears(); // descendente, solo años con actividades activas
+  // Un solo `currentYearAR()` para el render entero: si se llamara otra vez más
+  // abajo, un render que cruce la medianoche del 31/12 resolvería el año con un
+  // valor y decidiría el chip "Hoy" con otro.
+  const currentYear = currentYearAR();
   const { year, fallback, canonicalHref, isCanonical } = resolveActivitiesYear(
     sp.anio,
     years,
-    currentYearAR(),
+    currentYear,
   );
 
   // Redirigir cuando la URL pedida NO es la canónica del año que se va a
@@ -58,7 +58,18 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
   // vacío o corrupto no cae en ningún día y dejaría la grilla en blanco sin
   // explicar nada. Lo que decide el estado vacío es lo que se puede mostrar.
   const busyDays = agenda.filter((d) => d.entries.length > 0);
-  const freeDays = agenda.filter((d) => d.entries.length === 0);
+  // Hoy en hora argentina, para marcar la columna de hoy en el escritorio y
+  // abrir el selector del celular en el día que el vecino está mirando.
+  const todayAR = currentWeekdayAR();
+  // Un domingo no hay día que elegir —la semana va de lunes a sábado— y el
+  // selector abre en el primero. Se pregunta a la agenda en vez de comparar
+  // contra un 6 escrito acá: la forma de la semana la define WEEKDAYS, y
+  // DayTabs marca `aria-pressed` por coincidencia exacta, así que un día que
+  // no esté en la agenda dejaría las seis solapas sin ninguna marcada.
+  const initialDay = agenda.some((d) => d.day === todayAR) ? todayAR : agenda[0].day;
+  // El chip "Hoy" sólo tiene sentido sobre la semana del año en curso: en el
+  // calendario de 2024 el jueves de esta semana no es ningún "hoy".
+  const isCurrentYear = year === currentYear;
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-10">
@@ -70,7 +81,7 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
         <div>
           <h1 className="text-2xl font-semibold">Actividades {year}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Grilla semanal del {SITE.rooms.historic} y el {SITE.rooms.glass}, en la sede de{" "}
+            Grilla semanal de lunes a sábado en la sede de{" "}
             <Link href="/ubicacion" className="text-primary underline">
               {SITE.address}
             </Link>
@@ -111,50 +122,41 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
         </p>
       ) : (
         <>
-          {/* Un solo marcado para las dos lecturas de la misma semana:
-              — hasta lg es una lista de días, uno abajo del otro, y los días sin
-                nada se resumen en la línea de abajo en vez de ocupar una tarjeta
-                cada uno (siete tarjetas de las cuales cuatro dicen "—" son puro
-                andamiaje en una pantalla de 375 px);
-              — desde lg los siete días son siete columnas y la semana entra de
-                un vistazo, que es donde el hueco del miércoles sí informa.
+          {/* Dos lecturas distintas de la misma semana, cada una con su
+              tratamiento en vez de un marcado de compromiso:
+              — desde lg, "¿cómo viene la semana?": seis columnas, todo de un
+                vistazo, y los días vacíos visibles con borde punteado porque
+                ahí el hueco del miércoles es información;
+              — hasta lg, "¿qué hay hoy?": un día por vez con el de hoy
+                elegido, que seis tarjetas apiladas en 375 px no contestan.
               Sin `items-start`: el `stretch` que trae grid por default empareja
-              la altura de las tarjetas de cada fila. Con items-start las siete
-              columnas quedaban dentadas (290/66/290/66/210/106/66 px), que es
-              exactamente lo contrario de "la semana de un vistazo". */}
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-7 lg:gap-2">
+              la altura de las tarjetas de la fila. Con items-start las columnas
+              quedaban dentadas, que es lo contrario de "la semana de un
+              vistazo". */}
+          <div className="mt-6 hidden gap-2 lg:grid lg:grid-cols-6">
             {agenda.map(({ day, label, entries }) => (
               <section
                 key={day}
-                // El día vacío sigue en la fila de lg para que la semana se lea
-                // completa, pero con borde punteado y título atenuado: informa
-                // el hueco sin pesar lo mismo que un día con actividades.
-                className={`rounded-lg border p-3 ${
-                  entries.length === 0 ? "hidden border-dashed lg:block" : ""
-                }`}
+                className={`rounded-lg border p-3 ${entries.length === 0 ? "border-dashed" : ""}`}
               >
                 <h2
-                  className={`text-sm font-semibold ${entries.length === 0 ? "text-muted-foreground" : ""}`}
+                  className={`flex items-center justify-between gap-1 text-sm font-semibold ${
+                    entries.length === 0 ? "text-muted-foreground" : ""
+                  }`}
                 >
                   {label}
+                  {isCurrentYear && day === todayAR && (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                      Hoy
+                    </span>
+                  )}
                 </h2>
                 {entries.length === 0 ? (
                   <p className="mt-1 text-xs text-muted-foreground">Sin actividades</p>
                 ) : (
-                  <ul className="mt-2 space-y-3">
-                    {entries.map((a) => (
-                      // El nombre lo escribe la Comisión y puede ser largo
-                      // ("Taekwondo infantil y juvenil"): en una columna de
-                      // ~110 px sin esto empuja el ancho de la grilla entera.
-                      <li key={`${a.id}-${day}`} className="border-l-2 border-primary/50 pl-2.5">
-                        <p className="text-sm font-medium [overflow-wrap:anywhere]">{a.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {a.startTime} a {a.endTime}
-                        </p>
-                        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                          {ROOM_LABELS[a.room]}
-                        </p>
-                      </li>
+                  <ul className="mt-2 space-y-2">
+                    {entries.map((e) => (
+                      <ActivityCard key={e.id} entry={e} />
                     ))}
                   </ul>
                 )}
@@ -162,11 +164,9 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
             ))}
           </div>
 
-          {freeDays.length > 0 && (
-            <p className="mt-4 text-sm text-muted-foreground lg:hidden">
-              Sin actividades: {joinEs(freeDays.map((d) => d.label.toLocaleLowerCase("es-AR")))}.
-            </p>
-          )}
+          <div className="mt-6 lg:hidden">
+            <DayTabs agenda={agenda} initialDay={initialDay} />
+          </div>
         </>
       )}
     </main>
