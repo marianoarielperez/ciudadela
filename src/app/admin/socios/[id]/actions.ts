@@ -71,6 +71,17 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : "Error inesperado.";
 }
 
+// Sólo para los dos logs de `markAccepted`/`notifyRequestDecided` de más abajo:
+// el resto de esta action sigue devolviendo `messageOf` a la PANTALLA, que
+// necesita prosa. Un log de PM2 no —y `messageOf` de un error de Prisma puede
+// traer datos que no corresponde acumular ahí—, mismo criterio que el resto
+// del proyecto (`notify.ts`, `webhook-processor.ts`, `receipt-email.ts`, etc).
+function codeOf(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && code !== "") return code.slice(0, 200);
+  return e instanceof Error ? e.message.slice(0, 200) : "unknown";
+}
+
 async function runAction(
   formData: FormData,
   extraSchema: z.ZodRawShape,
@@ -178,6 +189,22 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
           if (!req || req.status !== "pending" || req.memberId !== member.id || req.type !== "withdrawal") {
             return { ok: false, error: "La solicitud no corresponde a esta operación. Volvé a la bandeja." };
           }
+          // Revisión de Task 9: el `<select>` de motivo viene precargado en
+          // "renuncia" pero no FIJO, así que un operador podía cambiarlo a
+          // expulsión o cesantía por mora y enviar igual. Eso asentaba la baja
+          // con otro motivo —expulsión además prende `reentryBlocked` de por
+          // vida— mientras la solicitud quedaba `accepted` y el correo le decía
+          // al socio que se le concedió justo lo que pidió: el Libro decía una
+          // cosa y el aviso otra. La solicitud del socio SIEMPRE es por
+          // renuncia (es la única causal que `/mi/solicitudes` ofrece), así que
+          // cualquier otro motivo con `requestId` puesto es una falsificación,
+          // no una decisión legítima de la Comisión sobre ESA solicitud.
+          if (data.reason !== "resignation") {
+            return {
+              ok: false,
+              error: "La solicitud es de baja por renuncia: para asentar otro motivo, rechazá la solicitud y hacé la baja aparte.",
+            };
+          }
         }
         return { ok: true };
       },
@@ -192,20 +219,23 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
           detail: data.detail as string | undefined,
         });
         // La baja YA commiteó: lo que sigue es piggyback sobre un acto que ya
-        // pasó, y por eso NINGUNA de las dos líneas puede tumbar el redirect
-        // de éxito. `markAccepted` va en su propio try —un hipo de la base acá
-        // no puede convertir una baja exitosa en una pantalla de error—, y
-        // `notifyRequestDecided` ya es best-effort por dentro (nunca tira).
+        // pasó, y por eso NADA de esto puede tumbar el redirect de éxito. Las
+        // dos llamadas van en el MISMO try: `notifyRequestDecided` ya es
+        // best-effort por dentro (nunca tira hoy), pero dejarla afuera del try
+        // la acopla a que eso siga siendo cierto para siempre — si algún día
+        // dejara escapar un error, `runAction` lo cazaría, llamaría a
+        // `discardUnusedMinute` y mostraría pantalla de error por una baja que
+        // ya commiteó (mismo corolario que el PDF del recibo, CLAUDE.md).
         if (data.requestId) {
           const requestId = data.requestId as number;
           try {
             await memberRequests.markAccepted({ requestId, memberId, decidedById: actorId, type: "withdrawal" });
+            await notifyRequestDecided({ memberId, type: "withdrawal", accepted: true });
           } catch (e) {
-            console.error("[solicitudes] markAccepted falló después de la baja —", {
-              requestId, memberId, error: messageOf(e),
+            console.error("[solicitudes] markAccepted o el aviso al socio fallaron después de la baja —", {
+              requestId, memberId, error: codeOf(e),
             });
           }
-          await notifyRequestDecided({ memberId, type: "withdrawal", accepted: true });
         }
         return result;
       },
@@ -263,19 +293,21 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
           memberId, minuteId, actorId, newCategory: data.newCategory as MemberCategory,
         });
         // Mismo criterio que `withdrawAction`: el cambio YA commiteó, así que
-        // ni el `markAccepted` ni el aviso pueden tumbar el redirect de éxito.
+        // ni el `markAccepted` ni el aviso pueden tumbar el redirect de éxito
+        // — por eso van en el MISMO try (ver el comentario largo en
+        // `withdrawAction`).
         if (data.requestId) {
           const requestId = data.requestId as number;
           try {
             await memberRequests.markAccepted({
               requestId, memberId, decidedById: actorId, type: "category_change",
             });
+            await notifyRequestDecided({ memberId, type: "category_change", accepted: true });
           } catch (e) {
-            console.error("[solicitudes] markAccepted falló después del cambio de categoría —", {
-              requestId, memberId, error: messageOf(e),
+            console.error("[solicitudes] markAccepted o el aviso al socio fallaron después del cambio de categoría —", {
+              requestId, memberId, error: codeOf(e),
             });
           }
-          await notifyRequestDecided({ memberId, type: "category_change", accepted: true });
         }
         return result;
       },

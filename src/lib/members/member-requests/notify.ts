@@ -10,10 +10,19 @@
 // y lo loguea con el CÓDIGO —nunca la dirección del socio (Ley 25.326)—: no
 // hay pantalla que cuente este envío en particular, así que el log de PM2 es
 // el único rastro.
-import type { MemberRequestType } from "@/generated/prisma/client";
+//
+// Mismo patrón de inyección que su hermano `member-requests/service.ts`
+// (`makeX(deps)` + singleton): `@/lib/prisma` tira al importarse sin
+// `DATABASE_URL`, así que un test puro no puede importar el cliente real, y
+// sin `db`/`mailer` inyectados la mitad emisora de este módulo (la guarda de
+// email inutilizable, el mapeo aceptada/rechazada → tipo de notificación) no
+// se podía probar sin mockear módulos enteros.
+import type { MemberRequestType, PrismaClient } from "@/generated/prisma/client";
 import { mailer } from "@/lib/email";
 import { memberRequestDecided } from "@/lib/email/templates";
 import { prisma } from "@/lib/prisma";
+
+type Mailer = Pick<typeof mailer, "sendToMember">;
 
 function codeOf(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
@@ -21,38 +30,48 @@ function codeOf(e: unknown): string {
   return e instanceof Error ? e.message.slice(0, 200) : "unknown";
 }
 
-export async function notifyRequestDecided(input: {
-  memberId: number;
-  type: MemberRequestType;
-  accepted: boolean;
-  note?: string | null;
-}): Promise<void> {
-  try {
-    const member = await prisma.member.findUnique({
-      where: { id: input.memberId },
-      select: { email: true, emailStatus: true },
-    });
-    // Sin dirección utilizable no hay nada que mandar. Una casilla `bounced`
-    // no es un domicilio electrónico vigente (mismo criterio que el resto del
-    // proyecto) y una ficha sin email es el caso esperado del padrón
-    // importado, no un fallo que loguear.
-    if (!member?.email || member.emailStatus === "bounced") return;
+export function makeMemberRequestNotifier(deps: {
+  db: Pick<PrismaClient, "member">;
+  mailer: Mailer;
+}) {
+  return {
+    async notifyRequestDecided(input: {
+      memberId: number;
+      type: MemberRequestType;
+      accepted: boolean;
+      note?: string | null;
+    }): Promise<void> {
+      try {
+        const member = await deps.db.member.findUnique({
+          where: { id: input.memberId },
+          select: { fullName: true, email: true, emailStatus: true },
+        });
+        // Sin dirección utilizable no hay nada que mandar. Una casilla `bounced`
+        // no es un domicilio electrónico vigente (mismo criterio que el resto del
+        // proyecto) y una ficha sin email es el caso esperado del padrón
+        // importado, no un fallo que loguear.
+        if (!member?.email || member.emailStatus === "bounced") return;
 
-    const { message, summary } = memberRequestDecided({
-      type: input.type,
-      accepted: input.accepted,
-      note: input.note ?? null,
-    });
-    await mailer.sendToMember({
-      memberId: input.memberId,
-      to: member.email,
-      type: input.accepted ? "request_accepted" : "request_rejected",
-      message,
-      summary,
-    });
-  } catch (e) {
-    console.error("[solicitudes] no se pudo avisar la decisión al socio —", {
-      memberId: input.memberId, type: input.type, accepted: input.accepted, code: codeOf(e),
-    });
-  }
+        const { message, summary } = memberRequestDecided({
+          type: input.type,
+          accepted: input.accepted,
+          note: input.note ?? null,
+          fullName: member.fullName,
+        });
+        await deps.mailer.sendToMember({
+          memberId: input.memberId,
+          to: member.email,
+          type: input.accepted ? "request_accepted" : "request_rejected",
+          message,
+          summary,
+        });
+      } catch (e) {
+        console.error("[solicitudes] no se pudo avisar la decisión al socio —", {
+          memberId: input.memberId, type: input.type, accepted: input.accepted, code: codeOf(e),
+        });
+      }
+    },
+  };
 }
+
+export const { notifyRequestDecided } = makeMemberRequestNotifier({ db: prisma, mailer });

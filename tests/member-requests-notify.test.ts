@@ -45,6 +45,26 @@ describe("plantilla de decisión sobre una solicitud de socio (memberRequestDeci
     expect(message.text).not.toContain("Esto no debería salir.");
   });
 
+  it("aceptada con fullName: saluda por nombre en texto y html", () => {
+    const { message } = memberRequestDecided({ type: "withdrawal", accepted: true, fullName: "Soto Juan" });
+    expect(message.text).toMatch(/^Hola Soto Juan:/);
+    expect(message.html).toContain("Hola <strong>Soto Juan</strong>");
+  });
+
+  it("aceptada sin fullName: no saluda (el llamador no lo tenía a mano)", () => {
+    const { message } = memberRequestDecided({ type: "category_change", accepted: true });
+    expect(message.text).not.toMatch(/^Hola/);
+    expect(message.html).not.toContain("Hola <strong>");
+  });
+
+  it("rechazada con fullName: NO saluda, mismo criterio que applicationRejectedEmail", () => {
+    const { message } = memberRequestDecided({
+      type: "withdrawal", accepted: false, fullName: "Soto Juan", note: "Falta la firma.",
+    });
+    expect(message.text).not.toMatch(/^Hola/);
+    expect(message.html).not.toContain("Hola <strong>");
+  });
+
   it("las cuatro variantes traen texto plano usable, sin HTML, y un summary no vacío", () => {
     const variants = [
       memberRequestDecided({ type: "withdrawal", accepted: true }),

@@ -543,16 +543,22 @@ Si querés resolverlo ahora, podés revisar tu medio de pago en Mercado Pago, pa
  *  del flujo con acta, `notifyRequestDecided`) o rechazada (Task 8,
  *  `rejectRequestAction`).
  *
- *  No saluda por nombre a propósito, mismo criterio que `applicationRejectedEmail`:
- *  es un aviso de trámite, no una bienvenida. La aceptada de baja dice que quedó
- *  asentada CON ACTA (el socio dejó de serlo por una resolución formal, no por un
- *  clic); la de categoría, que YA RIGE. Las rechazadas suman la nota de la
- *  Comisión cuando la hay —nunca la inventan si no vino ninguna, mismo criterio
- *  que el rechazo de altas, que tampoco expresa causa si no se la dieron—. */
+ *  Las RECHAZADAS no saludan por nombre a propósito, mismo criterio que
+ *  `applicationRejectedEmail`: es un aviso de trámite, no una bienvenida. Las
+ *  ACEPTADAS sí saludan (Task 9, revisión) —en particular la de baja es la
+ *  despedida formal de un socio que puede llevar décadas, y un correo sin
+ *  destinatario en el cuerpo se lee frío en una casilla familiar compartida—,
+ *  con `fullName` opcional: si el llamador no lo tiene a mano, el correo sale
+ *  igual, sin saludo. La aceptada de baja dice que quedó asentada CON ACTA (el
+ *  socio dejó de serlo por una resolución formal, no por un clic); la de
+ *  categoría, que YA RIGE. Las rechazadas suman la nota de la Comisión cuando la
+ *  hay —nunca la inventan si no vino ninguna, mismo criterio que el rechazo de
+ *  altas, que tampoco expresa causa si no se la dieron—. */
 export function memberRequestDecided(opts: {
   type: MemberRequestType;
   accepted: boolean;
   note?: string | null;
+  fullName?: string | null;
 }): { message: Rendered; summary: string } {
   const kind = opts.type === "withdrawal" ? "baja por renuncia" : "cambio de categoría";
   const verdict = opts.accepted ? "aceptada" : "rechazada";
@@ -563,12 +569,14 @@ export function memberRequestDecided(opts: {
     : "La Comisión Directiva resolvió no hacer lugar a tu solicitud.";
   const noteText = !opts.accepted && opts.note ? `\n\nNota de la Comisión: ${opts.note}` : "";
   const noteHtml = !opts.accepted && opts.note ? `<p>Nota de la Comisión: ${esc(opts.note)}</p>` : "";
-  const text = `Tu solicitud de ${kind}, presentada desde tu panel de socio, fue ${verdict}.
+  const greeting = opts.accepted && opts.fullName ? `Hola ${opts.fullName}:\n\n` : "";
+  const greetingHtml = opts.accepted && opts.fullName ? `<p>Hola <strong>${esc(opts.fullName)}</strong>:</p>\n` : "";
+  const text = `${greeting}Tu solicitud de ${kind}, presentada desde tu panel de socio, fue ${verdict}.
 
 ${resultLine}${noteText}
 
 Ante cualquier consulta, acercate a la sede vecinal.${SIGNATURE}`;
-  const html = layout(`Tu solicitud de ${kind} fue ${verdict}`, `<p>Tu solicitud de <strong>${esc(kind)}</strong>, presentada desde tu panel de socio, fue <strong>${esc(verdict)}</strong>.</p>
+  const html = layout(`Tu solicitud de ${kind} fue ${verdict}`, `${greetingHtml}<p>Tu solicitud de <strong>${esc(kind)}</strong>, presentada desde tu panel de socio, fue <strong>${esc(verdict)}</strong>.</p>
 <p>${esc(resultLine)}</p>
 ${noteHtml}
 <p>Ante cualquier consulta, acercate a la sede vecinal.</p>`);
