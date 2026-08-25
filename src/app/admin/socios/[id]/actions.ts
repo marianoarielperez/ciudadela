@@ -36,6 +36,7 @@ import { civilDateUtc } from "@/lib/dates";
 import { electionsOngoing, memberService } from "@/lib/members/service";
 import { memberRequests } from "@/lib/members/member-requests/service";
 import { notifyRequestDecided } from "@/lib/members/member-requests/notify";
+import { subscriptionAmountPlan } from "@/lib/members/subscription-amount";
 import { withdrawWithDebits, type DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
@@ -43,6 +44,9 @@ import {
 import {
   canChangeCategory, canReadmit, canSuspend, canWithdraw, type RuleResult,
 } from "@/lib/members/rules";
+import { mpErrorLog } from "@/lib/mp/error-log";
+import { mpGateway } from "@/lib/mp/gateway";
+import { feeValueReader } from "@/lib/treasury/fee-values";
 import type { Member, MemberCategory, WithdrawalReason } from "@/generated/prisma/client";
 
 const CATEGORIES = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"] as const;
@@ -289,9 +293,100 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
         return { ok: true };
       },
       run: async ({ memberId, minuteId, actorId }, _member, data) => {
-        const result = await memberService.changeCategory({
-          memberId, minuteId, actorId, newCategory: data.newCategory as MemberCategory,
+        const newCategory = data.newCategory as MemberCategory;
+
+        // M5B Task 10 (docs/07 fase 5B): si hay suscripción viva y el monto
+        // de cuota cambia con la categoría, se empuja a MP ANTES de escribir
+        // nada local — mismo orden medido en `recategorizeApplicationAction`
+        // (`src/app/admin/solicitudes/actions.ts:296-339`): si MP lo
+        // rechazara, lanzar acá es el corte total que pide la spec —
+        // `runAction` (arriba) atrapa la excepción, descarta el acta recién
+        // creada y no queda escrito ni el cambio local ni nada en MP.
+        //
+        // `orderBy: { id: "asc" }` para que "la primera suscripción
+        // chargeable" sea determinística (mismo criterio que
+        // `withdraw-with-debits.ts`): `memberId` es índice y no unique, un
+        // socio puede tener dos vivas.
+        const subs = await prisma.mpSubscription.findMany({
+          where: { memberId },
+          select: { preapprovalId: true, status: true, amount: true },
+          orderBy: { id: "asc" },
         });
+        const feeValue = await feeValueReader.current();
+        const plan = subscriptionAmountPlan({
+          subscriptions: subs.map((s) => ({
+            preapprovalId: s.preapprovalId,
+            status: s.status,
+            amount: s.amount === null ? null : Number(s.amount),
+          })),
+          newCategory,
+          feeValue,
+        });
+        // El monto ANTERIOR de la sub elegida, si se conocía: es lo único que
+        // se puede empujar de vuelta si `changeCategory` fallara después.
+        const previousAmount = plan
+          ? subs.find((s) => s.preapprovalId === plan.preapprovalId)?.amount ?? null
+          : null;
+
+        if (plan) {
+          try {
+            await mpGateway.updatePreapprovalAmount(plan.preapprovalId, plan.amount);
+          } catch (e) {
+            console.error(
+              "[socios] MP no aceptó el cambio de monto al recategorizar —",
+              mpErrorLog("updatePreapprovalAmount", {
+                memberId, preapprovalId: plan.preapprovalId, amount: plan.amount,
+              }, e),
+            );
+            throw new Error(
+              "MP no aceptó el cambio de monto de la suscripción. Reintentá o resolvelo desde el panel de MP.",
+            );
+          }
+        }
+
+        let updated: Awaited<ReturnType<typeof memberService.changeCategory>>;
+        try {
+          updated = await memberService.changeCategory({ memberId, minuteId, actorId, newCategory });
+        } catch (e) {
+          // Carrera: MP YA aceptó el monto nuevo (arriba) pero el cambio
+          // local no se pudo aplicar (otro admin cambió la ficha entre el
+          // guard y acá, o el estatuto lo bloqueó recién en la transacción
+          // del servicio). Compensación best-effort empujando el monto
+          // ANTERIOR — si tampoco prospera, la red real es la pantalla de
+          // divergencias REG-34 (`fee-value-batch.ts`), que la va a volver a
+          // alinear en su próxima corrida.
+          if (plan && previousAmount !== null) {
+            try {
+              await mpGateway.updatePreapprovalAmount(plan.preapprovalId, Number(previousAmount));
+            } catch (compEx) {
+              console.error(
+                "[socios] no se pudo compensar el monto en MP tras un cambio de categoría fallido —",
+                mpErrorLog("updatePreapprovalAmount", { memberId, preapprovalId: plan.preapprovalId }, compEx),
+                "mpPushCompensated=false",
+              );
+            }
+          }
+          throw e;
+        }
+
+        // Espejo local best-effort, DESPUÉS del cambio de categoría exitoso:
+        // si falla, la conciliación diaria (REG-34) corrige el espejo. Mismo
+        // criterio que `withdraw-with-debits.ts` para la cancelación de
+        // débitos.
+        if (plan) {
+          try {
+            await prisma.mpSubscription.update({
+              where: { preapprovalId: plan.preapprovalId },
+              data: { amount: plan.amount.toFixed(2), lastSyncAt: new Date() },
+            });
+          } catch (e) {
+            console.error(
+              "[socios] cambio de categoría: MP aceptó el monto nuevo pero el espejo local no se actualizó",
+              memberId, plan.preapprovalId, codeOf(e),
+            );
+          }
+        }
+
         // Mismo criterio que `withdrawAction`: el cambio YA commiteó, así que
         // ni el `markAccepted` ni el aviso pueden tumbar el redirect de éxito
         // — por eso van en el MISMO try (ver el comentario largo en
@@ -309,13 +404,23 @@ export async function changeCategoryAction(_p: State, formData: FormData): Promi
             });
           }
         }
-        return result;
+        return { member: updated, subscriptionPlan: plan };
       },
       auditAction: "member_category_change",
       detail: (member, data) => ({
         from: member.category, to: data.newCategory,
         ...(data.requestId ? { requestId: data.requestId } : {}),
       }),
+      // Ids de MP y un booleano, nunca datos personales (docs/08): el
+      // `preapprovalId` no es dato del socio y es lo que el operador necesita
+      // para reconciliar a mano si algo quedó raro.
+      detailFromResult: (r) => {
+        const plan = (r as { subscriptionPlan: { preapprovalId: string; amount: number } | null }).subscriptionPlan;
+        return {
+          subscriptionUpdated: !!plan,
+          ...(plan ? { preapprovalId: plan.preapprovalId, amount: plan.amount } : {}),
+        };
+      },
     },
   );
 }
