@@ -449,3 +449,18 @@ bandeja admin + MP en el acto al recategorizar + notificaciones de decisión.
 4. `docs/07`: el alcance del M5 se implementa en dos fases 5A/5B con los CA de
    esta spec; los dos CA originales del módulo quedan cubiertos (el pago por
    link en sandbox ya fue verificado en 4B; el circuito de baja es CA-5B-3).
+
+Enmiendas menores del cierre de la 5B (25/08/2026):
+
+5. La frase de efecto de la cancelación se dirige al socio en **segunda persona**
+   vía `cancelEffectSentenceForMember` — agregado **aditivo** en
+   `src/lib/mp/cancel-effect.ts`; la función del admin sigue en tercera persona,
+   que es lo correcto para su pantalla.
+6. El panel de `/mi` pasó de `max-w-2xl` a **`max-w-3xl`** y la pestaña se
+   etiqueta **"Débito"** a secas (el nombre completo queda en el `h1` de la
+   página): con seis pestañas, el ancho de la 5A desbordaba en escritorio.
+   Reportado por el operador el 25/08.
+7. El aviso del débito al socio requiere **las DOS solapas de webhooks**
+   configuradas en el panel de MP: medido en el sandbox de cierre, el token
+   `APP_USR-…` de una aplicación de cuenta de prueba dispara por "Modo
+   productivo" (`docs/11` J.6 y J.1 paso 4).

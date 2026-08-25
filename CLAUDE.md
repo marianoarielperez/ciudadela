@@ -93,7 +93,9 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   `<main id="contenido">`.
 - Deuda anotada: 4 formularios y 9 `<select>` crudos siguen sin migrar a `synced-fields`
   (se ven planos en modo oscuro); `AdminActor` no devuelve los roles vivos, así que el layout
-  llama a `auth()` una segunda vez.
+  llama a `auth()` una segunda vez. Misma clase de deuda en el panel de socio: el layout de
+  `/mi` hace una consulta extra por render (la categoría del socio, para decidir si muestra
+  la pestaña "Débito").
 
 ## Patrones que estrenó el Módulo 3 (reutilizables)
 
@@ -265,6 +267,40 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   quedó impaga" en vez de "vence mañana"). Sin escotilla, una corrida perdida no se
   recuperaba hasta el mes siguiente. El `curl` copiable está en `docs/11` Parte H.
 
+## Patrones que estrenó el Módulo 5 (panel de socio)
+
+- **La adhesión al débito se apoya en la regla 3 de `resolve.ts` SIN tocarla.**
+  `member-debit.ts` crea la fila local con su `memberId` desde el nacimiento, así que
+  los cobros se imputan por la suscripción como cualquier débito vinculado. La
+  referencia `socio:{id}` (reservada en la 4B, estrenada acá) es para que el
+  **operador** reconozca la suscripción en el panel de MP, no para resolver pagos.
+- **El veredicto de adhesión es una función pura compartida por pantalla y action**
+  (`src/lib/members/debit-adhesion.ts`): las cuatro guardas (categoría → suscripción
+  cobrable → pago del mes → email) se deciden en un solo lugar, y lo que la pantalla
+  muestra deshabilitado es exactamente lo que la action rechaza.
+- **`member_requests` con mutex por socio y "una pendiente por tipo".** El mutex
+  (`request:{memberId}`) envuelve la `$transaction` ENTERA con el conteo adentro:
+  la invariante se sostiene bajo concurrencia real, no por buena suerte. Corolario
+  de la revisión: sólo la creación necesita el mutex; el rechazo no puede romper la
+  invariante.
+- **`requireMember({ allowSuspended })` es el modo lectura del panel de socio** (de
+  la 5A, consolidado en la 5B): el suspendido ve su cuenta y paga; adherir el débito,
+  cancelarlo y presentar solicitudes usan `requireMember()` pelado y lo cortan.
+- **La sección `/admin/solicitudes` unificada fue un rediseño de PRESENTACIÓN.**
+  Pestañas Altas | De socios, cola, tarjetas y barra de asiento sticky — con las
+  actions de altas, las actas, `record.ts` y los emails byte-idénticos: la suite de
+  `applications` pasó sin tocar una aserción. Rediseñar una pantalla no autoriza a
+  reescribir su lógica.
+- **La regla anti-duplicación mensual es una decisión de producto, no un tecnicismo**:
+  quien pagó una cuota en el mes calendario en curso no puede adherirse hasta el mes
+  siguiente ("Podés adherirte desde el 01/09/2026"), porque el primer débito entraría
+  en el mismo mes ya cubierto. Verificada en vivo en sandbox (docs/11 J.6).
+- **El panel de webhooks de MP tiene DOS solapas, y el token `APP_USR-…` de una
+  aplicación de cuenta de prueba dispara por "Modo productivo"** — con solo la solapa
+  de prueba configurada el silencio es total y nada se encola. En sandbox se
+  configuran LAS DOS solapas con la misma URL y clave; costó dos adhesiones medirlo
+  (docs/11 J.6, J.1 paso 4 corregido).
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -355,13 +391,15 @@ webhook que aplica, Checkout Pro, bandeja sin conciliar, ingresos no societarios
 vinculación de suscripciones, conciliación diaria, lote REG-34) y **4C** (crons de
 devengo / recordatorio / resumen, `Notification.failed` con reenvío, aviso del
 débito rechazado, `/admin/salud`, padrón electoral y la cancelación del débito de MP
-al dar de baja). Del **Módulo 5** (panel de socio) está cerrada la **fase 5A**
-(24/08/2026): shell propio de `/mi` con pestañas por URL, credencial de socio en
-el Inicio, `/mi/datos` editable (teléfono, domicilio, email) y estatuto en PDF
-autenticado, con el socio suspendido en modo "ver + pagar" (ve su cuenta y sus
-recibos, puede pagar, nada más). Sigue la **fase 5B**: débito automático
-autogestionado (adherir y cancelar desde `/mi/debito`), y las solicitudes de baja
-(REG-19) y de cambio de categoría con su bandeja en el panel admin. Ver `docs/07`.
+al dar de baja). El **Módulo 5 está cerrado entero**: **5A** (24/08/2026: shell
+propio de `/mi` con pestañas por URL, credencial de socio en el Inicio, `/mi/datos`
+editable, estatuto en PDF autenticado, suspendido en modo "ver + pagar") y **5B**
+(25/08/2026: débito automático autogestionado desde `/mi/debito` —verificado en
+sandbox por los dos caminos, webhook directo y conciliación—, solicitudes de baja
+REG-19 y de cambio de categoría desde `/mi/solicitudes`, la sección
+`/admin/solicitudes` unificada con pestañas Altas | De socios, y el empuje del
+monto a MP en el acto al recategorizar con débito vivo). Sigue el **Módulo 6**:
+re-empadronamiento y cierre de libro. Ver `docs/07`.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab
