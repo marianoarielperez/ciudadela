@@ -1,8 +1,8 @@
 // Etiquetas es-AR de los enums del padrón. Un solo lugar: el listado, la ficha y
 // la exportación tienen que nombrar lo mismo que el Libro en papel.
 import type {
-  EmailStatus, MemberCategory, MemberStatus, MinuteType, MovementType,
-  NotificationStatus, NotificationType, WithdrawalReason,
+  EmailStatus, MemberCategory, MemberRequestStatus, MemberRequestType, MemberStatus,
+  MinuteType, MovementType, NotificationStatus, NotificationType, WithdrawalReason,
 } from "@/generated/prisma/client";
 
 export const CATEGORY_LABELS: Record<MemberCategory, string> = {
@@ -34,10 +34,17 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   reregistration_second: "Re-empadronamiento (2° aviso)", withdrawal_declared: "Baja declarada",
   fee_reminder: "Recordatorio de cuota", arrears_alert: "Aviso de mora",
   receipt: "Recibo", payment_rejected: "Pago rechazado",
+  request_accepted: "Solicitud aceptada", request_rejected: "Solicitud rechazada",
   board_digest: "Resumen para la cartelera", generic: "Aviso",
 };
 export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
   sent: "Enviada", delivered: "Entregada", bounced: "Rebotada",
   posted_board: "Publicada en cartelera", completed_board: "Cartelera cumplida",
   failed: "Fallida",
+};
+export const REQUEST_TYPE_LABELS: Record<MemberRequestType, string> = {
+  withdrawal: "Baja por renuncia", category_change: "Cambio de categoría",
+};
+export const REQUEST_STATUS_LABELS: Record<MemberRequestStatus, string> = {
+  pending: "Pendiente", accepted: "Aceptada", rejected: "Rechazada", cancelled: "Retirada",
 };
