@@ -11,6 +11,12 @@ describe("MI_TABS", () => {
   it("starts at Inicio (/mi)", () => {
     expect(MI_TABS[0]).toMatchObject({ href: "/mi", label: "Inicio" });
   });
+
+  it("includes Solicitudes between Mis datos and Estatuto", () => {
+    const hrefs = MI_TABS.map((t) => t.href);
+    expect(hrefs.indexOf("/mi/solicitudes")).toBeGreaterThan(hrefs.indexOf("/mi/datos"));
+    expect(hrefs.indexOf("/mi/solicitudes")).toBeLessThan(hrefs.indexOf("/mi/estatuto"));
+  });
 });
 
 describe("isMiTabActive", () => {
