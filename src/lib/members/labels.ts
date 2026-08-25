@@ -1,5 +1,7 @@
 // Etiquetas es-AR de los enums del padrón. Un solo lugar: el listado, la ficha y
 // la exportación tienen que nombrar lo mismo que el Libro en papel.
+import { ArrowLeftRight, UserMinus } from "lucide-react";
+import type { ComponentType } from "react";
 import type {
   EmailStatus, MemberCategory, MemberRequestStatus, MemberRequestType, MemberStatus,
   MinuteType, MovementType, NotificationStatus, NotificationType, WithdrawalReason,
@@ -47,4 +49,17 @@ export const REQUEST_TYPE_LABELS: Record<MemberRequestType, string> = {
 };
 export const REQUEST_STATUS_LABELS: Record<MemberRequestStatus, string> = {
   pending: "Pendiente", accepted: "Aceptada", rejected: "Rechazada", cancelled: "Retirada",
+};
+
+// Badge e ícono por solicitud de socio (M5B): estrenados por `/mi/solicitudes`
+// y reutilizados tal cual por la bandeja del panel (`/admin/solicitudes/socios`,
+// Task 8) para que las dos pantallas no puedan divergir. El color nunca es el
+// único canal: el texto de REQUEST_STATUS_LABELS acompaña a cada badge.
+export const REQUEST_STATUS_BADGE_VARIANT: Record<
+  MemberRequestStatus, "default" | "success" | "destructive" | "secondary"
+> = {
+  pending: "default", accepted: "success", rejected: "destructive", cancelled: "secondary",
+};
+export const REQUEST_TYPE_ICONS: Record<MemberRequestType, ComponentType<{ className?: string }>> = {
+  withdrawal: UserMinus, category_change: ArrowLeftRight,
 };

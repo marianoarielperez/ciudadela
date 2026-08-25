@@ -3,36 +3,20 @@
 // VE esta pantalla (allowSuspended) pero no actúa: `canAct` decide qué se
 // renderiza, y las tres actions vuelven a exigir la vigencia por su cuenta
 // (REG-20) — la pantalla no es la única barrera.
-import { ArrowLeftRight, UserMinus } from "lucide-react";
-
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatDateTimeAR } from "@/lib/format";
-import { REQUEST_STATUS_LABELS, REQUEST_TYPE_LABELS } from "@/lib/members/labels";
+import {
+  REQUEST_STATUS_BADGE_VARIANT, REQUEST_STATUS_LABELS, REQUEST_TYPE_ICONS, REQUEST_TYPE_LABELS,
+} from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
-import type { MemberRequestStatus, MemberRequestType } from "@/generated/prisma/client";
 import { CancelRequestForm, CategoryRequestForm, WithdrawalRequestForm } from "./request-forms";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Solicitudes — Vecinal Ciudadela" };
-
-// El color nunca es el único canal: el texto de REQUEST_STATUS_LABELS
-// acompaña a cada badge, así que "pendiente" no depende de distinguir celeste
-// de gris.
-const STATUS_BADGE: Record<MemberRequestStatus, "default" | "success" | "destructive" | "secondary"> = {
-  pending: "default",
-  accepted: "success",
-  rejected: "destructive",
-  cancelled: "secondary",
-};
-
-const TYPE_ICONS: Record<MemberRequestType, React.ComponentType<{ className?: string }>> = {
-  withdrawal: UserMinus,
-  category_change: ArrowLeftRight,
-};
 
 export default async function MiSolicitudesPage() {
   const actor = await requireMember({ allowSuspended: true });
@@ -66,7 +50,7 @@ export default async function MiSolicitudesPage() {
       ) : (
         <div className="space-y-3">
           {requests.map((request) => {
-            const Icon = TYPE_ICONS[request.type];
+            const Icon = REQUEST_TYPE_ICONS[request.type];
             return (
               <Card key={request.id}>
                 <CardHeader>
@@ -78,7 +62,7 @@ export default async function MiSolicitudesPage() {
                       <Icon className="size-4 text-primary" aria-hidden />
                       {REQUEST_TYPE_LABELS[request.type]}
                     </span>
-                    <Badge variant={STATUS_BADGE[request.status]}>
+                    <Badge variant={REQUEST_STATUS_BADGE_VARIANT[request.status]}>
                       {REQUEST_STATUS_LABELS[request.status]}
                     </Badge>
                   </CardTitle>
