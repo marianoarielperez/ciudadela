@@ -7,6 +7,7 @@
 import type {
   ApplicationStatus, MemberCategory, Prisma, PrismaClient,
 } from "@/generated/prisma/client";
+import { categoryAllowedForResidence } from "@/lib/applications/wizard";
 
 // 50 filas: el mismo tamaño que el padrón. La bandeja arranca con decenas de
 // solicitudes, no con miles, pero el día que haya una campaña de alta el
@@ -72,6 +73,20 @@ export type ApplicationRow = {
    *  `cancelled`…), o `null` si nunca hubo una. Lo necesita el aviso de pago
    *  tardío: ver `lateEntryNotice`. */
   subscriptionStatus: string | null;
+  /** ¿La categoría PEDIDA no corresponde al domicilio declarado (Art. 5 y 5
+   *  bis)? Cierra el ítem 8 abierto de docs/07: antes `residenceMismatch`
+   *  sólo se computaba al recategorizar, así que una solicitud con la
+   *  categoría equivocada que nadie tocaba no quedaba marcada en ningún lado.
+   *
+   *  Mismo criterio EXACTO que usa `recategorizeApplicationAction`
+   *  (`src/app/admin/solicitudes/actions.ts`, alrededor de la línea 293):
+   *  `categoryAllowedForResidence` sobre si la solicitud vive en el barrio
+   *  (`streetId !== null`, porque `streetId` sólo se completa con una calle
+   *  del catastro — ver `asociate/actions.ts`, donde `streetId` y
+   *  `streetText`/`neighborhood` se escriben excluyentes). Dos definiciones
+   *  del mismo hecho divergirían, así que esto NO reimplementa la regla: la
+   *  reutiliza. El chip "Revisar domicilio" de la bandeja la muestra. */
+  residenceMismatch: boolean;
 };
 
 /** ¿La bandeja puede afirmar "Reingreso" mirando SÓLO esta fila?
@@ -238,15 +253,22 @@ export function makeApplicationQueries(db: Pick<PrismaClient, "application">) {
           // filas como mucho, no un N+1. NO se trae `payerEmail`: es un dato
           // personal que la tabla no muestra (docs/08).
           subscriptions: { select: { status: true }, orderBy: { createdAt: "desc" }, take: 1 },
+          // Sólo para derivar `residenceMismatch` (el mismo booleano que ya
+          // calcula `recategorizeApplicationAction`): no se devuelve crudo, se
+          // aplana abajo. No es un dato sensible por sí solo —es el id de una
+          // calle del catastro, no un domicilio completo— pero la tabla no lo
+          // muestra, así que no sale de esta función.
+          streetId: true,
         },
       });
       return {
         // La fila se aplana acá y no en la página: `ApplicationRow` es el
         // contrato que consume la tabla, y un array anidado ahí obligaría a cada
         // pantalla a repetir el `[0]`.
-        rows: rows.map(({ subscriptions, ...row }) => ({
+        rows: rows.map(({ subscriptions, streetId, ...row }) => ({
           ...row,
           subscriptionStatus: subscriptions?.[0]?.status ?? null,
+          residenceMismatch: !categoryAllowedForResidence(row.requestedCategory, streetId !== null),
         })),
         total, page: current, pageCount, pageSize: APPLICATIONS_PAGE_SIZE,
       };

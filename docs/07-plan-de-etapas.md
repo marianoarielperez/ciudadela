@@ -464,9 +464,13 @@ efecto**; **7 está cerrado**; **8 queda abierto** y sin fase asignada.
    recategorización resuelve el plan nuevo ANTES de tocar MP y, si no está
    configurado, corta con un error en pantalla sin llamar a la API ni escribir
    nada.
-8. **Una solicitud que llegó con la categoría equivocada y que nadie toca** no
+8. ~~**Una solicitud que llegó con la categoría equivocada y que nadie toca** no
    queda marcada en ningún lado: `residenceMismatch` solo se computa al
-   recategorizar. Candidato a señal de la bandeja o del resumen.
+   recategorizar. Candidato a señal de la bandeja o del resumen.~~ **Cerrado
+   en la fase 5B (Tarea 6)**: `src/lib/applications/query.ts` computa
+   `residenceMismatch` para cada fila con el mismo criterio EXACTO que
+   `recategorizeApplicationAction`, y la bandeja de Altas lo muestra como el
+   chip "Revisar domicilio".
 
 ## Módulo 5 — Panel de socio
 

@@ -7,6 +7,7 @@ import {
   parseApplicationsPage, showsNoDebitBadge, showsReentryBadge, showsUnknownDebitBadge,
   subscriptionIsActive,
 } from "@/lib/applications/query";
+import { categoryAllowedForResidence } from "@/lib/applications/wizard";
 
 describe("parseApplicationFilters", () => {
   it("acepta estados válidos y descarta basura", () => {
@@ -103,9 +104,12 @@ describe("makeApplicationQueries.fetchPage", () => {
     await makeApplicationQueries(client).fetchPage({}, 1);
 
     const select = findMany.mock.calls[0][0].select as Record<string, unknown>;
+    // `streetId` se agregó para derivar `residenceMismatch` (el chip "Revisar
+    // domicilio"): es el único agregado que admite este módulo, y se aplana
+    // antes de devolver la fila — ver el test de abajo.
     expect(Object.keys(select).sort()).toEqual([
       "createdAt", "dni", "emailVerifiedAt", "fullName", "id", "memberId",
-      "requestedCategory", "status", "subscriptions", "wantsDebit",
+      "requestedCategory", "status", "streetId", "subscriptions", "wantsDebit",
     ]);
     expect(select).not.toHaveProperty("resumeTokenHash");
     expect(select).not.toHaveProperty("ip");
@@ -130,6 +134,39 @@ describe("makeApplicationQueries.fetchPage", () => {
     const res = await makeApplicationQueries(client).fetchPage({}, 1);
     expect(res.rows.map((r) => r.subscriptionStatus)).toEqual(["cancelled", null]);
     expect(res.rows[0]).not.toHaveProperty("subscriptions");
+  });
+
+  // El chip "Revisar domicilio" (docs/07, ítem 8 cerrado por esta tarea):
+  // `residenceMismatch` se deriva con el MISMO criterio que
+  // `recategorizeApplicationAction` (actions.ts), reusando
+  // `categoryAllowedForResidence` en vez de reimplementarlo — dos definiciones
+  // del mismo hecho divergirían.
+  it("deriva `residenceMismatch` con el mismo criterio que la recategorización, y no filtra `streetId`", async () => {
+    const { db: client } = db(
+      [
+        // Vive en el barrio (streetId != null) pidiendo colaborador: no le
+        // corresponde (Art. 5 y 5 bis).
+        { id: 1, requestedCategory: "collaborator", streetId: 12, subscriptions: [] },
+        // Vive en el barrio pidiendo activo: corresponde.
+        { id: 2, requestedCategory: "active", streetId: 12, subscriptions: [] },
+        // Fuera del barrio (streetId null) pidiendo activo: no le corresponde.
+        { id: 3, requestedCategory: "active", streetId: null, subscriptions: [] },
+        // Fuera del barrio pidiendo colaborador: corresponde.
+        { id: 4, requestedCategory: "collaborator", streetId: null, subscriptions: [] },
+      ],
+      4,
+    );
+    const res = await makeApplicationQueries(client).fetchPage({}, 1);
+    expect(res.rows.map((r) => r.residenceMismatch)).toEqual([true, false, true, false]);
+    // Sale aplanado: el id de calle no es lo que la tabla muestra.
+    for (const row of res.rows) expect(row).not.toHaveProperty("streetId");
+    // El criterio no está duplicado: se verifica contra la función pura real.
+    expect(res.rows.map((r) => r.residenceMismatch)).toEqual([
+      !categoryAllowedForResidence("collaborator", true),
+      !categoryAllowedForResidence("active", true),
+      !categoryAllowedForResidence("active", false),
+      !categoryAllowedForResidence("collaborator", false),
+    ]);
   });
 
   // Un `?page=99` tipeado a mano —o un filtro que achica la bandeja mientras se
