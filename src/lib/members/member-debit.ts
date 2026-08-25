@@ -131,6 +131,15 @@ export function makeMemberDebit(deps: Deps) {
         return { ok: false as const, error: "Tu categoría no paga cuota, así que no hay débito que adherir." };
       }
 
+      // Residual conocido de concurrencia (mismo patrón que
+      // `asociate/actions.ts:606-611`): dos `start` simultáneos del mismo
+      // socio pasan las guardas de arriba —todavía no hay fila local que los
+      // frene— y pueden crear DOS preapprovals `pending` en MP. El desenlace
+      // es benigno: solo cobra el que el vecino autorice en el checkout, y
+      // después del primer commit la guarda de suscripción viva (`verdictFor`)
+      // cierra la ventana para cualquier intento siguiente. La pantalla
+      // (Task 13) deshabilita el botón mientras ya haya una `pending`, igual
+      // que el wizard.
       let sub: { id: string; initPoint: string; status: string };
       try {
         sub = await deps.gateway.createPreapproval({

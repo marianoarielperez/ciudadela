@@ -227,6 +227,13 @@ describe("memberDebit.syncStatus", () => {
   it("refresca contra MP y actualiza el espejo local", async () => {
     const d = deps({ latestSub: { preapprovalId: "pre-1", status: "pending" } });
     expect(await d.service.syncStatus({ memberId: 14 })).toEqual({ status: "authorized" });
+    // El `where` filtra por memberId: sin eso, cualquiera podría refrescar (y
+    // espejar) la suscripción de otro socio conociendo su preapprovalId.
+    expect(d.db.mpSubscription.findFirst).toHaveBeenCalledWith({
+      where: { memberId: 14 },
+      orderBy: { id: "desc" },
+      select: { preapprovalId: true, status: true },
+    });
     expect(d.gateway.getPreapproval).toHaveBeenCalledWith("pre-1");
     expect(d.db.mpSubscription.update).toHaveBeenCalledWith({
       where: { preapprovalId: "pre-1" },
@@ -273,10 +280,22 @@ describe("memberDebit.cancel", () => {
   it("happy path: cancela en MP, espeja local y baja autoDebit si no queda otra cobrable", async () => {
     const d = deps({ otherSubs: [{ status: "cancelled" }] });
     expect(await d.service.cancel({ memberId: 14, preapprovalId: "pre-1" })).toEqual({ ok: true });
+    // El `where` de la búsqueda de la suscripción a cancelar lleva memberId:
+    // sin eso, un socio podría cancelar el débito de OTRO conociendo su id.
+    expect(d.db.mpSubscription.findFirst).toHaveBeenCalledWith({
+      where: { preapprovalId: "pre-1", memberId: 14 },
+      select: { preapprovalId: true, status: true },
+    });
     expect(d.gateway.cancelPreapproval).toHaveBeenCalledWith("pre-1");
     expect(d.db.mpSubscription.update).toHaveBeenCalledWith({
       where: { preapprovalId: "pre-1" },
       data: { status: "cancelled", lastSyncAt: NOW },
+    });
+    // El reconteo EXCLUYE la recién cancelada (`not`, no igualdad): si fuera
+    // igualdad, se bajaría autoDebit mirando solo la que ya se cancela.
+    expect(d.db.mpSubscription.findMany).toHaveBeenCalledWith({
+      where: { memberId: 14, preapprovalId: { not: "pre-1" } },
+      select: { status: true },
     });
     expect(d.db.member.update).toHaveBeenCalledWith({ where: { id: 14 }, data: { autoDebit: false } });
   });

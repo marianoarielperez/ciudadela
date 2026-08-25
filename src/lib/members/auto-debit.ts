@@ -20,13 +20,18 @@
 // --------------------------------------
 // Ninguna de las dos alcanza sola:
 //
-//  - `Member.autoDebit` se escribe desde TRES lugares, no uno: el padrón
+//  - `Member.autoDebit` se escribe desde CUATRO lugares, no tres: el padrón
 //    importado (`padron/mapping.ts`, fichas viejas cuyo débito se gestionó a
 //    mano en el panel de MP antes de que existiera este sistema), el alta web y
-//    el reingreso (`applications/record.ts`, con `app.wantsDebit`) y la
-//    vinculación manual (`mp/link-subscription.ts`). Ninguno lo BAJA nunca. Por
-//    eso el flag solo dice "en algún momento hubo intención de débito" y NO de
-//    dónde salió: los textos de abajo no pueden atribuirle una procedencia.
+//    el reingreso (`applications/record.ts`, con `app.wantsDebit`), la
+//    vinculación manual (`mp/link-subscription.ts`) y la adhesión
+//    autogestionada del socio (`members/member-debit.ts`, Task 12 de 5B). Los
+//    primeros tres solo lo SUBEN. El cuarto es distinto: la adhesión lo sube
+//    igual que los otros, pero la cancelación lo BAJA —solo si no le queda al
+//    socio otra suscripción cobrable (`cancel`, mismo archivo)—. Por eso el
+//    flag ya no dice solamente "en algún momento hubo intención de débito":
+//    los textos de abajo siguen sin poder atribuirle una procedencia, pero
+//    ahora un `false` también puede significar que el socio canceló.
 //  - `MpSubscription` con `memberId` es la suscripción que el sistema conoce:
 //    la creó el Módulo 3 al asociarse el vecino, o la vinculó un admin. Una
 //    ficha nueva tiene fila y puede tener el flag en `false` (nadie lo edita al
