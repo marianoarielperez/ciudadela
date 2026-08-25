@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  applicationReference, parseApplicationReference, parsePaymentLinkReference, paymentLinkReference,
+  applicationReference, memberSubscriptionReference, parseApplicationReference,
+  parseMemberSubscriptionReference, parsePaymentLinkReference, paymentLinkReference,
 } from "@/lib/mp/references";
 
 describe("referencias de MP", () => {
@@ -22,5 +23,21 @@ describe("referencias de MP", () => {
   it("armar con valores fuera de rango tira", () => {
     expect(() => paymentLinkReference(14, 0)).toThrow();
     expect(() => paymentLinkReference(14, 61)).toThrow();
+  });
+
+  it("socio:{id} ida y vuelta", () => {
+    expect(memberSubscriptionReference(298)).toBe("socio:298");
+    expect(parseMemberSubscriptionReference("socio:298")).toBe(298);
+    expect(parseMemberSubscriptionReference("socio:0")).toBeNull();
+    expect(parseMemberSubscriptionReference("socio:x")).toBeNull();
+    expect(parseMemberSubscriptionReference("solicitud:298")).toBeNull();
+    expect(parseMemberSubscriptionReference(null)).toBeNull();
+    expect(parseMemberSubscriptionReference(undefined)).toBeNull();
+  });
+
+  it("armar socio:{id} con valores inválidos tira", () => {
+    expect(() => memberSubscriptionReference(0)).toThrow();
+    expect(() => memberSubscriptionReference(-1)).toThrow();
+    expect(() => memberSubscriptionReference(1.5)).toThrow();
   });
 });
