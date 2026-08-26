@@ -244,8 +244,23 @@ describe("memberRequests.markAccepted", () => {
     const created = await service.create({ memberId: 14, type: "withdrawal" });
     if (!created.ok) throw new Error("setup failed");
     await service.cancel({ memberId: 14, requestId: created.requestId });
+    expect(state.requests[0]).toMatchObject({ status: "cancelled" });
     await service.markAccepted({ requestId: created.requestId, memberId: 14, decidedById: 7, type: "withdrawal" });
     expect(state.requests[0]).toMatchObject({ status: "cancelled" });
+  });
+
+  // El estado nuevo de la M6A entra por el mismo filtro `status: "pending"` del
+  // `where`, así que la guarda vale igual para él: una solicitud que cerró la
+  // baja del socio no puede volver como aceptada y colgarse un acta ajena.
+  it("tampoco resucita como aceptada una solicitud que cerró la baja del socio", async () => {
+    const { service, state } = fakeDb({ member: activeMember() });
+    const created = await service.create({ memberId: 14, type: "withdrawal" });
+    if (!created.ok) throw new Error("setup failed");
+    // Exactamente lo que escribe `memberService.withdraw` en su transacción.
+    state.requests[0].status = "superseded";
+    await service.markAccepted({ requestId: created.requestId, memberId: 14, decidedById: 7, type: "withdrawal" });
+    expect(state.requests[0]).toMatchObject({ status: "superseded" });
+    expect(state.requests[0].decidedById).toBeFalsy();
   });
 });
 

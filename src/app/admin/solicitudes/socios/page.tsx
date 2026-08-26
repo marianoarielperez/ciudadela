@@ -39,7 +39,10 @@ export const metadata = { title: "Solicitudes — SIGeV" };
 
 const BASE = "/admin/solicitudes/socios";
 const PAGE_SIZE = 50;
-const RESOLVED_STATUSES: MemberRequestStatus[] = ["accepted", "rejected", "cancelled"];
+// Todo lo que ya no está pendiente entra en "Resueltas". `superseded` (la que
+// cerró una baja por otro camino, M6A) tiene que estar en la lista: un estado
+// que ningún filtro enumera desaparece de las dos vistas sin dejar rastro.
+const RESOLVED_STATUSES: MemberRequestStatus[] = ["accepted", "rejected", "cancelled", "superseded"];
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -221,8 +224,17 @@ function RequestCard({ request, resolved }: { request: RequestRow; resolved: boo
 
         {resolved ? (
           <div className="space-y-1 border-t pt-2 text-sm text-muted-foreground">
+            {/* Las dos formas de cerrarse sin decisión de la Comisión se
+                redactan distinto a propósito: `cancelled` la retiró el socio y
+                `superseded` la cerró la baja. Decir "Retirada por el socio"
+                sobre una cesantía por mora afirma un hecho que no ocurrió. */}
             {request.status === "cancelled" ? (
               <p>Retirada por el socio el {request.cancelledAt ? formatDateTimeAR(request.cancelledAt) : "—"}.</p>
+            ) : request.status === "superseded" ? (
+              <p>
+                Quedó sin efecto por la baja del socio, el{" "}
+                {request.cancelledAt ? formatDateTimeAR(request.cancelledAt) : "—"}.
+              </p>
             ) : (
               <p>
                 {request.decidedBy?.name ?? "—"}

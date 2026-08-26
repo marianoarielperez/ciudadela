@@ -45,8 +45,14 @@ export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
 export const REQUEST_TYPE_LABELS: Record<MemberRequestType, string> = {
   withdrawal: "Baja por renuncia", category_change: "Cambio de categoría",
 };
+// `cancelled` es el retiro VOLUNTARIO del socio ("Retirada"); `superseded` es la
+// solicitud que quedó sin objeto porque al socio lo dieron de baja por otro
+// camino (M6A). Son dos hechos distintos y la pantalla no puede confundirlos:
+// decirle "Retirada" a una que cerró una cesantía por mora le atribuye al socio
+// una acción que no hizo.
 export const REQUEST_STATUS_LABELS: Record<MemberRequestStatus, string> = {
   pending: "Pendiente", accepted: "Aceptada", rejected: "Rechazada", cancelled: "Retirada",
+  superseded: "Sin efecto",
 };
 
 // Badge por solicitud de socio (M5B): estrenado por `/mi/solicitudes`
@@ -58,4 +64,7 @@ export const REQUEST_STATUS_BADGE_VARIANT: Record<
   MemberRequestStatus, "default" | "success" | "destructive" | "secondary"
 > = {
   pending: "default", accepted: "success", rejected: "destructive", cancelled: "secondary",
+  // "Sin efecto" no es una negativa de la Comisión: comparte el gris de
+  // `cancelled` (cerrada sin decisión) y no el rojo de `rejected`.
+  superseded: "secondary",
 };

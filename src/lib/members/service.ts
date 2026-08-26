@@ -147,15 +147,23 @@ export function makeMemberService(db: PrismaClient) {
           await tx.user.update({ where: { id: member.userId }, data: { active: false } });
         }
         // Y una baja tampoco deja solicitudes vivas. Una pendiente de un socio
-        // dado de baja no tiene ninguna salida: la bandeja del admin y el
-        // contador de la campanita la muestran para siempre, aplicarla es
-        // imposible (`canWithdraw`/`canChangeCategory` la rechazan por el
-        // status) y el socio ya no puede retirarla porque `requireMember` le
-        // cierra el panel. Va acá y no en la pantalla que ordenó la baja por el
-        // mismo motivo que `debtAtWithdrawal`: así lo llevan por igual la baja
-        // individual, el lote de cesantía por mora y las bajas en lote del
-        // re-empadronamiento (M6), que son las que multiplicarían el hueco.
-        // El `count` no se mira: no haber tenido nada que cancelar es el caso
+        // dado de baja se queda sin salida razonable: sigue contando en el badge
+        // de la pestaña y en la tarjeta del tablero, aplicarla es imposible
+        // (`canWithdraw`/`canChangeCategory` la rechazan por el status) y el
+        // socio ya no puede retirarla porque `requireMember` le cierra el panel
+        // —al operador sólo le quedaba rechazarla, y el correo salía diciendo
+        // "rechazada", que no es lo que pasó—. Va acá y no en la pantalla que
+        // ordenó la baja por el mismo motivo que `debtAtWithdrawal`: así lo
+        // llevan por igual la baja individual y el lote de cesantía por mora,
+        // que es el que multiplicaría el hueco.
+        //
+        // El estado es `superseded` y NO `cancelled`: `cancelled` es el retiro
+        // voluntario del socio, y la bandeja lo redacta como "Retirada por el
+        // socio el ...". Acá el socio no tocó nada —la cerró la baja—, así que
+        // reusar `cancelled` le hacía afirmar al panel un hecho que no ocurrió.
+        // La fecha de cierre sigue siendo `cancelledAt` (es la única columna de
+        // "se cerró sin decisión"); lo que distingue los dos casos es el estado.
+        // El `count` no se mira: no haber tenido nada que cerrar es el caso
         // normal, no un error.
         await tx.memberRequest.updateMany({
           where: {
@@ -163,7 +171,7 @@ export function makeMemberService(db: PrismaClient) {
             status: "pending",
             ...(input.sparedRequestId ? { id: { not: input.sparedRequestId } } : {}),
           },
-          data: { status: "cancelled", cancelledAt: new Date() },
+          data: { status: "superseded", cancelledAt: new Date() },
         });
         await tx.movement.create({
           data: {

@@ -145,7 +145,14 @@ enum MemberRequestStatus {
   pending
   accepted
   rejected
+  // El socio retiró su propia solicitud desde `/mi/solicitudes`.
   cancelled
+  // La solicitud quedó sin objeto porque el socio fue dado de baja por otro
+  // camino (cesantía por mora, baja declarada por la Comisión). NO es lo mismo
+  // que `cancelled`: la bandeja del panel redacta ese estado como "Retirada por
+  // el socio", y acá el socio no tocó nada. Los dos usan `cancelledAt` como
+  // fecha de cierre; lo que los distingue es el estado.
+  superseded
 }
 
 enum MinuteType {

@@ -290,24 +290,41 @@ describe("memberService.withdraw", () => {
 
   // M6A Task 5. Una baja por otro camino —cesantía por mora, baja declarada por
   // la Comisión— dejaba viva la solicitud que el socio había presentado: seguía
-  // contando en la campanita, el socio ya no podía retirarla (`requireMember`
-  // corta al dado de baja) y aplicarla era imposible porque `canWithdraw` la
-  // rechaza. Quedaba trabada sin salida.
+  // contando en el badge de la pestaña y en la tarjeta del tablero, el socio ya
+  // no podía retirarla (`requireMember` corta al dado de baja) y aplicarla era
+  // imposible porque `canWithdraw` la rechaza. Al operador sólo le quedaba
+  // rechazarla, con un correo que decía "rechazada" sin serlo.
   it("cancels the pending requests of the member it withdraws, and nobody else's", async () => {
     const { db, state } = makeFakeDb({});
     const svc = makeMemberService(db as never);
     await svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 });
     const byId = Object.fromEntries(state.requests.map((r) => [r.id, r]));
-    expect(byId[71].status).toBe("cancelled");
+    expect(byId[71].status).toBe("superseded");
     expect(byId[71].cancelledAt).toBeInstanceOf(Date);
     // Las dos pendientes, sea cual sea el tipo: una de cambio de categoría
     // sobre un socio dado de baja es igual de inaplicable que una de baja.
-    expect(byId[72].status).toBe("cancelled");
+    expect(byId[72].status).toBe("superseded");
     // Una ya decidida no se re-escribe: perdería su `decidedAt`/`decidedById`.
     expect(byId[73].status).toBe("accepted");
     expect(byId[73].cancelledAt).toBeNull();
     // Y la de otro socio no se toca.
     expect(byId[74].status).toBe("pending");
+  });
+
+  // El estado propio es lo que hace verdadera a la pantalla: `cancelled` lo
+  // escribe el socio cuando retira su propia solicitud, y la bandeja lo redacta
+  // como "Retirada por el socio". Una baja por mora no la retiró nadie, así que
+  // se asienta `superseded` — el operador lee "Sin efecto por la baja del socio"
+  // y no una acción que el socio nunca hizo.
+  it("marks the requests it closes as superseded, never as cancelled by the member", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 });
+    const byId = Object.fromEntries(state.requests.map((r) => [r.id, r]));
+    expect(byId[71].status).toBe("superseded");
+    expect(byId[72].status).toBe("superseded");
+    // Ninguna termina en `cancelled`: ése es el retiro voluntario del socio.
+    expect(state.requests.some((r) => r.status === "cancelled")).toBe(false);
   });
 
   // La trampa: `withdrawAction` marca la solicitud como `accepted` DESPUÉS del
@@ -323,7 +340,7 @@ describe("memberService.withdraw", () => {
     expect(byId[71].status).toBe("pending");
     expect(byId[71].cancelledAt).toBeNull();
     // La excepción es de UNA solicitud, no de todas: el resto se cierra igual.
-    expect(byId[72].status).toBe("cancelled");
+    expect(byId[72].status).toBe("superseded");
   });
 
   it("goes through with the withdrawal when there is no pending request to cancel", async () => {

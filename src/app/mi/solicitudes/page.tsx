@@ -74,6 +74,19 @@ export default async function MiSolicitudesPage() {
                   {/* Texto plano SIEMPRE: viene de renderWithdrawalText o del
                       servicio, nunca HTML. */}
                   <p className="whitespace-pre-line text-sm">{request.text}</p>
+                  {/* `superseded` (M6A) es la solicitud que quedó sin objeto
+                      porque se asentó la baja del socio por otro camino. El
+                      badge dice "Sin efecto" y solo, sin esta línea, se lee
+                      como un rechazo: hay que aclarar que no la retiró él ni la
+                      rechazó la Comisión. La ve quien volvió a ser socio por
+                      reingreso — al dado de baja `requireMember` le cierra el
+                      panel. */}
+                  {request.status === "superseded" && (
+                    <FormMessage kind="neutral" box>
+                      Esta solicitud quedó sin efecto cuando se asentó tu baja como socio. No hace
+                      falta que hagas nada: si querés, podés presentar una nueva.
+                    </FormMessage>
+                  )}
                   {request.decisionNote && (
                     <FormMessage kind="neutral" box className="whitespace-pre-line">
                       {request.decisionNote}
