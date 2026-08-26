@@ -74,9 +74,33 @@ type World = {
   process?: { id: number; bookId: number; secondEndsAt: Date | null } | null;
 };
 
+/** Aplica un `where` LITERALMENTE contra una fila: cada clave que llega se
+ *  compara, y ninguna se da por supuesta.
+ *
+ *  Existe porque un doble que REIMPLEMENTA el filtro en vez de honrarlo deja de
+ *  ser un guardián. El caso concreto y caro es el cerrojo optimista de `post`:
+ *  si el doble buscara la fila "sin fijar" por su cuenta, borrar el
+ *  `postedAt: null` del `where` de producción NO pondría ningún test en rojo, y
+ *  en la base real la segunda fijación pisaría las fechas y le correría el plazo
+ *  de veinte días hábiles a cien vecinos. Pasando el `where` por acá, la
+ *  condición que se prueba es la que el código manda. */
+function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, expected]) => {
+    const actual = row[key];
+    // Dos `Date` distintas con el mismo instante son la misma fecha civil; el
+    // `===` diría que no.
+    if (expected instanceof Date) {
+      return actual instanceof Date && actual.getTime() === expected.getTime();
+    }
+    return actual === expected;
+  });
+}
+
 /** Base de mentira, mínima pero honesta: filtra por lo mismo que filtra la
  *  consulta real (estado de la presentación, aviso del proceso, `kind`), así
- *  que un caso que pasa acá no pasa por accidente. */
+ *  que un caso que pasa acá no pasa por accidente. Y donde el `where` es de
+ *  igualdad simple se lo aplica TAL CUAL llega (`matchesWhere`), sin repetir la
+ *  condición del lado del doble. */
 function fakeDb(world: World) {
   const created: Array<Record<string, unknown>> = [];
   const processRow =
@@ -87,13 +111,13 @@ function fakeDb(world: World) {
       findUnique: vi.fn(async () => processRow),
     },
     boardNotice: {
-      findUnique: vi.fn(async ({ where }: { where: { id: number } }) =>
-        world.notices.find((n) => n.id === where.id) ?? null,
+      findUnique: vi.fn(async ({ where }: { where: Partial<NoticeRow> }) =>
+        world.notices.find((n) => matchesWhere(n, where)) ?? null,
       ),
-      findFirst: vi.fn(async ({ where }: { where: { processId: number; kind: BoardNoticeKind } }) =>
-        world.notices.find(
-          (n) => n.processId === where.processId && n.kind === where.kind && n.postedAt === null,
-        ) ?? null,
+      // `openOther` busca el cartel complementario ABIERTO con `postedAt: null`
+      // en el `where`; el doble no lo sabe, lo aplica.
+      findFirst: vi.fn(async ({ where }: { where: Partial<NoticeRow> }) =>
+        world.notices.find((n) => matchesWhere(n, where)) ?? null,
       ),
       create: vi.fn(async ({ data }: { data: { processId: number; kind: BoardNoticeKind } }) => {
         const row: NoticeRow = {
@@ -108,10 +132,14 @@ function fakeDb(world: World) {
       }),
       updateMany: vi.fn(
         async ({ where, data }: {
-          where: { id: number; postedAt: null };
+          where: Partial<NoticeRow>;
           data: { postedAt: Date; dueAt: Date };
         }) => {
-          const row = world.notices.find((n) => n.id === where.id && n.postedAt === null);
+          // EL CERROJO SE PRUEBA ACÁ. La fila se busca con el `where` que manda
+          // producción y con nada más: si de allá desaparece el `postedAt: null`,
+          // esta línea encuentra igual el aviso ya fijado, lo pisa, y el test de
+          // la segunda fijación se pone rojo — que es exactamente su trabajo.
+          const row = world.notices.find((n) => matchesWhere(n, where));
           if (!row) return { count: 0 };
           row.postedAt = data.postedAt;
           row.dueAt = data.dueAt;
@@ -367,7 +395,8 @@ describe("post", () => {
   });
 
   it("un año sin feriados cargados vuelve como MENSAJE, no como excepción", async () => {
-    const { board: b, created } = board(worldWithNotice());
+    const world = worldWithNotice();
+    const { board: b, created } = board(world);
 
     // 20 días hábiles desde el 20/12/2026 entran en 2027, que acá no está
     // cargado. La lectura ingenua ("no hay filas = no hay feriados") contaría
@@ -385,10 +414,18 @@ describe("post", () => {
     expect(result.error).toContain("feriados");
     // Nada se estampó: el aviso sigue sin fijar y se puede reintentar.
     expect(created).toHaveLength(0);
+    // Y el aviso quedó SIN FIJAR, que es la mitad que importa: hoy se cumple
+    // porque el cómputo ocurre antes de abrir la transacción, y justamente por
+    // eso se fija acá. Si mañana alguien mueve ese cálculo adentro, el aviso
+    // quedaría estampado con un plazo que nunca se pudo calcular y el
+    // reintento chocaría contra su propio cerrojo.
+    expect(world.notices[0].postedAt).toBeNull();
+    expect(world.notices[0].dueAt).toBeNull();
   });
 
   it("un feriado fuera del formato canónico vuelve como MENSAJE, no como excepción", async () => {
-    const { board: b, created } = board(worldWithNotice());
+    const world = worldWithNotice();
+    const { board: b, created } = board(world);
 
     // Medianoche UTC: en Argentina eso son las 21:00 del día ANTERIOR, así que
     // el feriado se contaría el día equivocado y encima engañaría a la guarda
@@ -403,6 +440,9 @@ describe("post", () => {
     if (result.ok) return;
     expect(result.error).toContain("canónico");
     expect(created).toHaveLength(0);
+    // Mismo motivo que arriba: sin cómputo no hay estampado.
+    expect(world.notices[0].postedAt).toBeNull();
+    expect(world.notices[0].dueAt).toBeNull();
   });
 
   it("un aviso que no existe no rompe", async () => {
@@ -431,6 +471,28 @@ describe("openOther", () => {
     const second = await b.openOther({ processId: 1, memberId: 2 });
     expect(second.ok && second.noticeId).toBe(first.ok && first.noticeId);
     expect(world.notices).toHaveLength(1);
+  });
+
+  it("no reutiliza un cartel complementario YA FIJADO: abre otro", async () => {
+    // El `postedAt: null` del `where` es lo que se prueba acá, y el doble lo
+    // aplica tal cual llega. Un aviso fijado tiene su nómina CONGELADA en filas
+    // `Notification`: sumarle un vecino sería ponerle el nombre a un papel que
+    // ya está colgado y cuyo plazo ya corre, y ese nombre no se imprimiría
+    // nunca.
+    const world: World = {
+      notices: [
+        { id: 3, processId: 1, kind: "other", postedAt: d(2026, 10, 2), dueAt: d(2026, 11, 2) },
+      ],
+      covered: [],
+      cohort: [{ member: member(2, { email: "c@d.com", emailStatus: "bounced" }), status: "pending" }],
+    };
+    const { board: b } = board(world);
+
+    const result = await b.openOther({ processId: 1, memberId: 2 });
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.noticeId).not.toBe(3);
+    expect(world.notices).toHaveLength(2);
+    expect(world.notices[1].postedAt).toBeNull();
   });
 
   it("rechaza a quien no es destinatario de cartelera", async () => {
