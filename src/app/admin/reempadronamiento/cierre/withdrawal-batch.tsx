@@ -25,12 +25,14 @@ import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { PresentationStatus } from "@/generated/prisma/client";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { presentationStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { formatDateAR } from "@/lib/format";
 import { NOTIFICATION_TYPE_LABELS, PRESENTATION_STATUS_LABELS } from "@/lib/members/labels";
 // De `close` y NO de `withdrawals`: este es un componente de CLIENTE y
 // `withdrawals` arrastra Prisma y el mailer. `close` es puro.
 import { WITHDRAWAL_BATCH_MAX, type NoticeTrace } from "@/lib/reregistration/close";
+import { cn } from "@/lib/utils";
 import { declareWithdrawalsAction } from "./actions";
 
 const NUM = "font-mono tabular-nums";
@@ -357,8 +359,6 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
               {state.notices.emailed > 0 && `${state.notices.emailed} por correo. `}
               {state.notices.board > 0 &&
                 `${state.notices.board} sin casilla: generá el cartel de la sede acá abajo. `}
-              {state.notices.blocked > 0 &&
-                `${state.notices.blocked} no salieron por la lista blanca del entorno de prueba.`}
             </>
           )}
         </FormMessage>
@@ -372,7 +372,7 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
           <ul className="mt-1 space-y-1">
             {state.failures.map((f) => (
               <li key={f.memberId}>
-                <Link className="underline" href={`/admin/socios/${f.memberId}`}>{f.name}</Link>
+                <Link className={INLINE_LINK} href={`/admin/socios/${f.memberId}`}>{f.name}</Link>
                 {` — ${f.error}`}
               </li>
             ))}
@@ -382,21 +382,42 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
 
       {/* La baja salió y la notificación no. Es el aviso que no puede perderse:
           sin notificación no hay ventana de recurso corriendo, y esa persona
-          perdió la condición de socia sin enterarse. */}
-      {state.notices && (state.notices.failed.length > 0 || state.notices.deferred > 0) && (
+          perdió la condición de socia sin enterarse.
+          Los BLOQUEADOS van acá y no en la caja verde de arriba, que es donde
+          estaban: un bloqueo de `EMAIL_ALLOWLIST` no es un fallo de entrega
+          —es la guarda del entorno andando— pero deja exactamente a la misma
+          persona sin notificar, y esa lista sigue definida en producción hasta
+          el lanzamiento (docs/07), así que hoy es el camino ESPERABLE. */}
+      {state.notices &&
+        (state.notices.failed.length > 0 ||
+          state.notices.blocked.length > 0 ||
+          state.notices.deferred > 0) && (
         <FormMessage kind="error" box as="div">
-          <p className="font-medium">Estas bajas quedaron declaradas pero SIN notificar:</p>
+          <p className="font-medium">
+            Estas personas quedaron dadas de baja y SIN NOTIFICAR:
+          </p>
           <ul className="mt-1 list-disc pl-5">
             {state.notices.failed.map((n) => (
-              <li key={n}>{n} — el correo no salió.</li>
+              <li key={`f-${n}`}>{n} — el correo no salió.</li>
+            ))}
+            {state.notices.blocked.map((n) => (
+              <li key={`b-${n}`}>
+                {n} — el correo no salió: lo bloqueó la lista de direcciones permitidas del entorno.
+              </li>
             ))}
             {state.notices.deferred > 0 && (
               <li>{`${state.notices.deferred} quedaron fuera del tope de correos de la corrida.`}</li>
             )}
           </ul>
           <p className="mt-1">
-            Mientras no se les notifique no les corre la ventana de recurso. Cargales una casilla en
-            la ficha y reintentá, o sumalos al cartel de la sede.
+            Mientras no se les notifique no les corre la ventana de recurso y la resolución no es
+            oponible. Reintentá desde{" "}
+            <Link className={INLINE_LINK} href="#sin-notificar">
+              Bajas declaradas sin notificar
+            </Link>
+            , más abajo en esta pantalla — esa lista queda ahí hasta que se les notifique. Si el
+            bloqueo es de la lista de direcciones del entorno, el reintento va a volver a bloquearse
+            hasta que esa lista se borre.
           </p>
         </FormMessage>
       )}
@@ -432,10 +453,7 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
           </ul>
           <p className="mt-1">
             Mientras sigan vivos se les va a seguir cobrando:{" "}
-            <Link
-              className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-              href="/admin/tesoreria/suscripciones"
-            >
+            <Link className={cn(INLINE_LINK, "font-medium")} href="/admin/tesoreria/suscripciones">
               cancelalos desde Suscripciones
             </Link>
             .

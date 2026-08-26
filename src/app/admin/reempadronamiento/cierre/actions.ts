@@ -54,7 +54,12 @@ import {
 import { prisma } from "@/lib/prisma";
 import { canPrepareClose } from "@/lib/reregistration/rules";
 import { withdrawalConfirmToken, type WithdrawalConfirmTarget } from "@/lib/reregistration/withdrawal-confirm";
-import { WITHDRAWAL_BATCH_MAX, withdrawals } from "@/lib/reregistration/withdrawals";
+import {
+  WITHDRAWAL_AUDIT_ENTITY,
+  WITHDRAWAL_BATCH_MAX,
+  WITHDRAWAL_RETRY_AUDIT_ACTION,
+  withdrawals,
+} from "@/lib/reregistration/withdrawals";
 
 const BASE = "/admin/reempadronamiento/cierre";
 
@@ -77,9 +82,18 @@ export type WithdrawalState = {
    *  hay que decir: sin él, esa persona pierde la condición de socia sin
    *  enterarse. */
   unstamped?: Array<{ memberId: number; name: string }>;
-  /** Cómo salió cada aviso de baja. Los tres primeros son los que dejan a
-   *  alguien SIN notificar y por lo tanto sin ventana de recurso corriendo. */
-  notices?: { emailed: number; board: number; failed: string[]; blocked: number; deferred: number };
+  /** Cómo salió cada aviso de baja.
+   *
+   *  `failed` y `blocked` llevan NOMBRES y no contadores, y es lo mismo que
+   *  pasa con los baldes de arriba: los dos dejan a una persona dada de baja y
+   *  SIN notificar, o sea sin fecha fehaciente y sin ventana de recurso
+   *  corriendo. Un bloqueo además no escribe ninguna fila de notificación —es
+   *  la guarda del entorno, no un intento de entrega— y la persona ya dejó de
+   *  ser socia vigente, así que sale de la lista de pendientes en cuanto la
+   *  pantalla se recarga: si el nombre no viaja acá, no queda en NINGÚN lado.
+   *  `deferred` es un contador porque el tope se dimensiona a la tanda y por lo
+   *  tanto no puede alcanzarse; queda por si el default cambia. */
+  notices?: { emailed: number; board: number; failed: string[]; blocked: string[]; deferred: number };
   confirm?: {
     token: string;
     minuteLabel: string;
@@ -250,13 +264,13 @@ export async function declareWithdrawalsAction(
   // al que se le declaró la baja y al que nunca le empezó a correr la ventana de
   // recurso. Sigue siendo un techo contado contra la base, no un envío libre.
   const budget = makeMailBudget(Math.max(outcome.declared.length, 1));
-  const notices = { emailed: 0, board: 0, failed: [] as string[], blocked: 0, deferred: 0 };
+  const notices = { emailed: 0, board: 0, failed: [] as string[], blocked: [] as string[], deferred: 0 };
   for (const id of outcome.declared) {
     const result = await withdrawals.notifyWithdrawal({ presentationId: id, budget });
     if (result === "email") notices.emailed++;
     else if (result === "board") notices.board++;
     else if (result === "failed") notices.failed.push(name(id));
-    else if (result === "blocked") notices.blocked++;
+    else if (result === "blocked") notices.blocked.push(name(id));
     else if (result === "deferred") notices.deferred++;
   }
 
@@ -286,7 +300,7 @@ export async function declareWithdrawalsAction(
     debitFailures.length > 0 ||
     unstamped.length > 0 ||
     notices.failed.length > 0 ||
-    notices.blocked > 0 ||
+    notices.blocked.length > 0 ||
     notices.deferred > 0;
   if (somethingToSay) {
     return {
@@ -302,14 +316,132 @@ export async function declareWithdrawalsAction(
   redirect(`${BASE}?declaradas=${outcome.declared.length}&cartelera=${notices.board}`);
 }
 
-export type WithdrawalNoticeState = { error?: string; ok?: string };
-
+/** El proceso, y nada más: las dos acciones que lo llevan resuelven contra la
+ *  base a quién alcanzan. */
 const noticeSchema = z.object({
   processId: z.coerce
     .number("El proceso seleccionado no es válido.")
     .int("El proceso seleccionado no es válido.")
     .positive("El proceso seleccionado no es válido."),
 });
+
+// ── EL REINTENTO DE LA NOTIFICACIÓN DE UNA BAJA YA DECLARADA ─────────────────
+//
+// Por qué existe: cuando el correo de baja no sale —falla el SMTP, o lo bloquea
+// `EMAIL_ALLOWLIST`, que HOY sigue definida en producción hasta el lanzamiento
+// (docs/07)— la persona queda dada de baja sin fecha fehaciente y sin ventana de
+// recurso, y no hay ninguna fila de notificación que lo registre (un bloqueo del
+// entorno no es un intento de entrega). Como además dejó de ser socia vigente,
+// desaparece de la lista de convocados apenas se recarga la pantalla.
+//
+// Antes de esto la pantalla le pedía al operador "cargales una casilla y
+// reintentá, o sumalos al cartel", y las tres salidas eran falsas: ya tenían
+// casilla (por eso se les intentó el correo), no había ningún control de
+// reintento, y el cartel de bajas se arma justamente con quienes NO tienen
+// casilla. Prometer una salida inexistente es peor que decir que no la hay: el
+// operador cierra el libro creyendo que lo resolvió.
+//
+// Qué hace, y qué no:
+//   · la lista se resuelve SIEMPRE contra la base (`listUnnotifiedWithdrawals`);
+//     el formulario sólo trae el proceso, así que un POST armado a mano no puede
+//     elegir a quién se le notifica;
+//   · reutiliza `notifyWithdrawal`, que es el mismo camino del post-lote: al
+//     lograrlo estampa la fecha fehaciente y la ventana de recurso exactamente
+//     igual, y no hay una segunda escritura de esas dos columnas;
+//   · a quien no tiene casilla utilizable NO lo notifica —su vía es el cartel de
+//     la sede— y lo dice con todas las letras en vez de contarlo como éxito;
+//   · si el bloqueo se repite, lo dice y dice por qué: reintentar de nuevo no va
+//     a cambiar nada mientras la lista del entorno siga definida.
+export type RetryNoticesState = {
+  error?: string;
+  /** No había nada que reintentar, o el resultado no dejó a nadie sin notificar. */
+  ok?: string;
+  emailed?: number;
+  /** Siguen SIN notificar, por su nombre. */
+  blocked?: string[];
+  failed?: string[];
+  deferred?: number;
+  /** Su vía es el cartel de la sede: acá no se les notifica nada. */
+  board?: number;
+};
+
+/** Reintenta la notificación de las bajas que quedaron sin notificar.
+ *
+ *  Superadmin, como el resto de la pantalla: de que esta notificación salga
+ *  depende que la resolución de baja sea oponible y que le empiecen a correr al
+ *  vecino los treinta días del Art. 9° bis d). */
+export async function retryWithdrawalNoticesAction(
+  _prev: RetryNoticesState,
+  formData: FormData,
+): Promise<RetryNoticesState> {
+  const actor = await requireSuperadmin();
+  if (!actor.ok) return { error: actor.error };
+
+  const parsed = parseForm(noticeSchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const processId = parsed.data.processId;
+
+  const rows = await withdrawals.listUnnotifiedWithdrawals(processId);
+  if (rows.length === 0) {
+    return {
+      ok:
+        "No quedó ninguna baja sin notificar en este proceso: a todas se les estampó la fecha fehaciente, " +
+        "por correo o al asentar la fijación del cartel de la sede.",
+    };
+  }
+
+  // Dimensionado a la tanda y no al default de 50, igual que en el post-lote: acá
+  // no hay corrida siguiente que levante un diferido, y un aviso diferido es un
+  // vecino al que se le declaró la baja y al que nunca le arrancó la ventana de
+  // recurso. Sigue siendo un techo, no un envío libre.
+  const budget = makeMailBudget(Math.max(rows.length, 1));
+  const ip = (await headers()).get("x-real-ip") ?? "unknown";
+  const out: RetryNoticesState = { emailed: 0, blocked: [], failed: [], deferred: 0, board: 0 };
+
+  for (const row of rows) {
+    const result = await withdrawals.notifyWithdrawal({ presentationId: row.presentationId, budget });
+    if (result === "email") out.emailed = (out.emailed ?? 0) + 1;
+    else if (result === "board") out.board = (out.board ?? 0) + 1;
+    else if (result === "blocked") out.blocked?.push(row.fullName);
+    else if (result === "failed") out.failed?.push(row.fullName);
+    else if (result === "deferred") out.deferred = (out.deferred ?? 0) + 1;
+
+    // Un asiento por persona, y sólo por los que tuvieron un INTENTO de envío:
+    // `board` es "su vía es el cartel" y `skipped` es "alguien lo notificó en el
+    // medio", y cien asientos de "no se intentó nada" son ruido en un libro que
+    // se lee para probar cuándo quedó notificado un vecino. Ids y códigos, nunca
+    // el nombre ni la dirección (Ley 25.326).
+    if (result !== "board" && result !== "skipped") {
+      await audit({
+        userId: actor.actorId,
+        action: WITHDRAWAL_RETRY_AUDIT_ACTION,
+        entity: WITHDRAWAL_AUDIT_ENTITY,
+        entityId: row.memberId,
+        detail: { processId, presentationId: row.presentationId, outcome: result },
+        ip,
+      });
+    }
+  }
+
+  revalidatePath(BASE);
+  revalidatePath("/admin/reempadronamiento");
+
+  // Todos van al cartel: no hubo ningún correo que reintentar. El botón ya
+  // llega apagado en ese caso, así que esto cubre la carrera (alguien cargó o
+  // dio de baja una casilla en el medio) y el POST armado a mano — y sobre todo
+  // evita que la acción termine sin decir absolutamente nada.
+  if ((out.emailed ?? 0) === 0 && out.blocked?.length === 0 && out.failed?.length === 0 && (out.deferred ?? 0) === 0) {
+    return {
+      ...out,
+      ok:
+        "Ninguna de las bajas sin notificar tiene casilla utilizable: no había ningún correo que " +
+        "reintentar. A todas se las notifica por el cartel de la sede.",
+    };
+  }
+  return out;
+}
+
+export type WithdrawalNoticeState = { error?: string; ok?: string };
 
 /** Abre el cartel de la sede con las bajas ya declaradas de quienes no tienen
  *  casilla utilizable — que en este padrón son la enorme mayoría.

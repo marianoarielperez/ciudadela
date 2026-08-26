@@ -30,6 +30,7 @@ import { canPrepareClose } from "@/lib/reregistration/rules";
 import { LIVE_PROCESS_STATUSES } from "@/lib/reregistration/service";
 import { withdrawals } from "@/lib/reregistration/withdrawals";
 import { BoardInProgress, CloseChecklist, CloseVerdict, Section } from "./close-panels";
+import { UnnotifiedWithdrawals } from "./unnotified-withdrawals";
 import { WithdrawalNoticeButton } from "./withdrawal-notice-button";
 import { WithdrawalBatch } from "./withdrawal-batch";
 
@@ -100,9 +101,15 @@ export default async function CierrePage() {
 
   const now = new Date();
   const canClose = canPrepareClose(process, now);
-  const [{ preconditions, openNotices }, pending, minuteRows] = await Promise.all([
+  const [{ preconditions, openNotices }, pending, unnotified, minuteRows] = await Promise.all([
     withdrawals.closeChecklist(process.id),
     withdrawals.listPendingWithdrawals(process.id),
+    // Las bajas YA declaradas a las que no se les pudo notificar. Se consulta
+    // al ENTRAR y no sólo después de un lote: si dependiera del resultado del
+    // formulario, el nombre de quien quedó de baja sin notificar se perdería en
+    // la primera recarga —no escribe fila de notificación y ya no es socio
+    // vigente, así que no aparece en ninguna otra pantalla—.
+    withdrawals.listUnnotifiedWithdrawals(process.id),
     prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
   ]);
   const blockers = closeBlockers(preconditions);
@@ -177,6 +184,23 @@ export default async function CierrePage() {
           blockedReason={canClose ? undefined : "El plazo de la segunda instancia todavía corre."}
         />
       </Section>
+
+      {unnotified.length > 0 && (
+        <Section
+          id="sin-notificar"
+          title="Bajas declaradas sin notificar"
+          hint={
+            <>
+              Estas personas ya <strong>no son socias</strong> y todavía no se les notificó nada, así
+              que <strong>no les corre la ventana de recurso</strong> y la resolución no es oponible
+              (Art. 9° bis inc. d). La lista queda acá hasta que quede estampada su fecha fehaciente:
+              por correo, al enviarse; por cartelera, al cumplirse los veinte días hábiles.
+            </>
+          }
+        >
+          <UnnotifiedWithdrawals processId={process.id} rows={unnotified} />
+        </Section>
+      )}
 
       <Section
         id="cartel-de-bajas"
