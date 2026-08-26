@@ -225,6 +225,20 @@ export type ObserveResult =
 
 export type DecisionResult = ({ ok: true; presentationId: number; memberId: number }) | Err;
 
+/** Un cohortado en el buscador del mostrador. Lleva el estado de SU
+ *  presentación porque es lo que decide si hay algo que cargar: al que ya se
+ *  presentó no se le carga de nuevo, y la pantalla tiene que poder decirlo
+ *  ANTES de que el operador tipee media ficha. */
+export type CohortHit = {
+  presentationId: number;
+  memberId: number;
+  memberNumber: number | null;
+  fullName: string;
+  dni: string | null;
+  status: PresentationStatus;
+  submittedAt: Date | null;
+};
+
 export type InPersonResult =
   | {
       ok: true;
@@ -771,10 +785,8 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
       // El mismo veredicto que gobierna al vecino en la web, con el texto
       // traducido al mostrador: la REGLA es compartida (`editabilityOf`), lo
       // que cambia es a quién le habla el cartel.
-      const editable = editabilityOf({ status: row.status, processStatus: row.process.status });
-      if (!editable.ok) {
-        return { ok: false, error: editable.error === PROCESS_CLOSED ? IN_PERSON_CLOSED : IN_PERSON_NOT_EDITABLE };
-      }
+      const editable = counterEditability(row);
+      if (!editable.ok) return editable;
 
       const docs = presentationDocsComplete((await docTypesOf(row.id)).map((type) => ({ type })));
       if (!docs.ok) return docs;
@@ -797,6 +809,75 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
         firstSubmission: row.submittedAt === null,
       };
     },
+
+    /** La presentación de un cohortado, ya verificada como cargable desde el
+     *  mostrador. Es lo que usa la SUBIDA de documentos del panel: necesita el
+     *  id para nombrar la carpeta y no puede aceptar un archivo para algo que
+     *  la Comisión ya resolvió ni para un proceso cuyo plazo venció.
+     *
+     *  Comparte `counterEditability` con `registerInPerson`, así que las dos
+     *  escrituras del mostrador abren y cierran juntas: sin eso, el formulario
+     *  aceptaría un DNI y después rechazaría el registro. */
+    async openForCounter(presentationId: number): Promise<({ ok: true; presentationId: number; memberId: number }) | Err> {
+      const row = await decisionRow(presentationId);
+      if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
+      const editable = counterEditability(row);
+      if (!editable.ok) return editable;
+      return { ok: true, presentationId: row.id, memberId: row.memberId };
+    },
+
+    /** El buscador del mostrador: los cohortados de ESTE proceso, por nombre,
+     *  DNI o número de socio.
+     *
+     *  Es una variante propia y no `searchMembers` de tesorería (que no se
+     *  toca): aquel busca en todo el libro abierto, y acá buscar fuera de la
+     *  cohorte sería ofrecerle al operador cargarle una presentación a alguien
+     *  que nadie convocó —una fila que después no tiene dónde ir—. El filtro
+     *  por `processId` sale de la tabla misma: sólo hay fila para el convocado.
+     *
+     *  Hasta 10 resultados, como el buscador de tesorería: el operador afina la
+     *  consulta. */
+    async searchCohort(input: { processId: number; bookId: number; q: string }): Promise<CohortHit[]> {
+      // Sin consulta no se consulta: un `contains: ""` devolvería la cohorte
+      // entera (ciento y pico de nombres) en una pantalla que no la pide.
+      const q = input.q.trim();
+      if (q === "") return [];
+
+      const or: Prisma.PresentationWhereInput[] = [
+        { member: { fullName: { contains: q } } },
+        { member: { dni: { contains: q } } },
+      ];
+      const n = Number(q);
+      if (Number.isInteger(n) && n > 0) {
+        or.push({ member: { memberships: { some: { bookId: input.bookId, memberNumber: n } } } });
+      }
+
+      const rows = await db.presentation.findMany({
+        where: { processId: input.processId, OR: or },
+        orderBy: { member: { fullName: "asc" } },
+        take: 10,
+        select: {
+          id: true,
+          status: true,
+          submittedAt: true,
+          member: {
+            select: {
+              id: true, fullName: true, dni: true,
+              memberships: { where: { bookId: input.bookId }, select: { memberNumber: true } },
+            },
+          },
+        },
+      });
+      return rows.map((r) => ({
+        presentationId: r.id,
+        status: r.status,
+        submittedAt: r.submittedAt,
+        memberId: r.member.id,
+        fullName: r.member.fullName,
+        dni: r.member.dni,
+        memberNumber: r.member.memberships[0]?.memberNumber ?? null,
+      }));
+    },
   };
 
   /** La fila que necesitan las cuatro decisiones. Una sola consulta y un solo
@@ -810,6 +891,27 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
    *  Dos preguntas, como `editabilityOf` del lado del vecino: el estado del
    *  proceso y el de la presentación. Compartida por las tres decisiones que la
    *  necesitan para que no puedan divergir. */
+  /** ¿El MOSTRADOR puede tocar esta presentación?
+   *
+   *  La regla es exactamente la del vecino en la web —`editabilityOf`, que
+   *  decide con el estado de la presentación y el de su proceso—; lo único que
+   *  cambia es a quién le habla el cartel. Los textos del wizard tutean al
+   *  socio ("Tu re-empadronamiento ya fue resuelto…") y en el panel se leen
+   *  como un error del sistema. Traducir el mensaje sin duplicar la regla es lo
+   *  que garantiza que el formulario del mostrador no acepte un documento para
+   *  algo que después va a rechazar. */
+  function counterEditability(row: {
+    status: PresentationStatus;
+    process: { status: ReregistrationStatus };
+  }): Ok | Err {
+    const editable = editabilityOf({ status: row.status, processStatus: row.process.status });
+    if (editable.ok) return editable;
+    return {
+      ok: false,
+      error: editable.error === PROCESS_CLOSED ? IN_PERSON_CLOSED : IN_PERSON_NOT_EDITABLE,
+    };
+  }
+
   function decidable(row: { status: PresentationStatus; process: { status: string } }): Ok | Err {
     if (row.process.status === "closed") return { ok: false, error: PROCESS_FINISHED };
     if (!(DECIDABLE_STATUSES as readonly string[]).includes(row.status)) {

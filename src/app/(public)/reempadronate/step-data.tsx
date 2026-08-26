@@ -25,6 +25,7 @@ import { useRef } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Input } from "@/components/ui/input";
+import { CIVIL_STATUS_OPTIONS, NEIGHBOURHOOD_OPTIONS } from "@/lib/members/card-options";
 import { cn } from "@/lib/utils";
 import { StreetPicker } from "../asociate/street-picker";
 import { Field, NavButtons } from "../asociate/wizard-ui";
@@ -35,26 +36,12 @@ import {
   type StreetOption,
 } from "./wizard-shared";
 
-// Las MISMAS opciones que el modo carga del panel (`carga-form.tsx`): lo que el
-// vecino elige acá termina, al validarse, en la misma columna que tipea el
-// operador. Dos listas distintas darían "Soltero/a" y "Soltero" conviviendo en
-// el padrón.
-const CIVIL_STATUSES = [
-  "Soltero/a",
-  "Casado/a",
-  "Divorciado/a",
-  "Viudo/a",
-  "Separado/a",
-  "Unión convivencial",
-];
-const NEIGHBOURHOODS = [
-  "Ciudadela",
-  "Pueyrredón",
-  "Standard",
-  "Roca",
-  "General Mosconi",
-  "Laprida",
-];
+// Las MISMAS opciones que el modo carga del panel y que la carga presencial:
+// lo que el vecino elige acá termina, al validarse, en la misma columna que
+// tipea el operador. Tres listas distintas darían "Soltero/a" y "Soltero"
+// conviviendo en el padrón, así que hay UNA sola (`@/lib/members/card-options`).
+const CIVIL_STATUSES = [...CIVIL_STATUS_OPTIONS];
+const NEIGHBOURHOODS = [...NEIGHBOURHOOD_OPTIONS];
 
 export function StepData({
   draft,
