@@ -2,9 +2,12 @@
 //
 // Viven fuera de `page.tsx` por el mismo motivo que `health-panels.tsx`: la
 // página abre sesión y lee Prisma, así que no se puede renderizar en un test.
-// Acá no hay nada de eso —entran datos serializables, sale marcado— y
+// Acá entran datos serializables y sale marcado, y
 // `tests/reregistration-board-screen.test.ts` los renderiza con
-// `renderToStaticMarkup`.
+// `renderToStaticMarkup`. Una salvedad desde la Task 13: la tarjeta del aviso
+// de cartelera importa su server action, que arrastra el singleton de Prisma,
+// así que ese test mockea `@/lib/prisma`. Ningún componente de este archivo
+// consulta la base — el arrastre es del import, no de la lógica.
 //
 // El orden de la pantalla no es estético. Un tablero que obliga a auditar seis
 // bloques para descubrir que no pasa nada se deja de mirar (la lección de
@@ -27,7 +30,9 @@ import {
   BOARD_NOTICE_KIND_LABELS, PRESENTATION_STATUS_LABELS, PROCESS_STATUS_LABELS,
 } from "@/lib/members/labels";
 import { emailUsable } from "@/lib/reregistration/rules";
+import { civilDayOf } from "@/lib/treasury/periods";
 import { cn } from "@/lib/utils";
+import { BoardNoticeCard } from "./avisos/board-notice-card";
 import { daysLeftLabel } from "./process-stepper";
 
 const NUM = "font-mono tabular-nums";
@@ -238,6 +243,30 @@ export function classifyNotice(input: {
   return "no_trace";
 }
 
+/** El rebote POSTERIOR al envío masivo: el caso borde del §8 del diseño.
+ *
+ *  Es distinto de "no tiene casilla" aunque `classifyNotice` los junte a los dos
+ *  en `board`, y la diferencia importa: a éste el correo LE SALIÓ, así que
+ *  cuando se armó el lote de cartelera tenía casilla utilizable y no entró en
+ *  ningún cartel. Hoy no está notificado por ninguna vía y el plazo le corre
+ *  igual. Los otros —los que nunca tuvieron dirección— ya están en la nómina
+ *  impresa.
+ *
+ *  Las tres condiciones son necesarias: casilla NO utilizable (rebotó), una
+ *  dirección cargada (si nunca la hubo, no hay rebote posterior que valga) y
+ *  rastro de un envío de ESTA instancia (es lo que prueba que estaba adentro del
+ *  grupo del correo y no del grupo del cartel).
+ *
+ *  Pura y exportada: de acá cuelga que un vecino quede sin notificar. */
+export function bouncedAfterSend(input: {
+  email: string | null;
+  emailStatus: EmailStatus;
+  notices: Array<{ status: NotificationStatus }>;
+}): boolean {
+  if (emailUsable(input) || input.email === null) return false;
+  return input.notices.some((n) => n.status === "sent" || n.status === "delivered");
+}
+
 export type UnnotifiedRow = {
   memberId: number;
   /** Número del socio en el libro que se depura. `null` si no tiene membresía
@@ -321,6 +350,9 @@ export type BoardNoticeRow = {
   kind: BoardNoticeKind;
   postedAt: Date | null;
   dueAt: Date | null;
+  /** Destinatarios del cartel: los CONGELADOS si ya se fijó, los vivos si no.
+   *  Lo resuelve `boardNotices.load` — la pantalla no cuenta por su cuenta. */
+  recipients: number;
 };
 
 /** A cuánta gente alcanza el cartel de la sede, y DE DÓNDE sale ese número.
@@ -354,11 +386,20 @@ export function boardAudience(input: { auditDetail: unknown; liveCount: number }
   return { count: input.liveCount, fromBatch: false };
 }
 
-export function BoardNoticesPanel({ notices, audience }: {
+export function BoardNoticesPanel({ notices, audience, today, todayIso, canPost, coverageWarning }: {
   notices: BoardNoticeRow[];
   /** Los destinatarios del cartel: el lote que se generó si quedó asentado, o
    *  el conteo en vivo si no. Ver `boardAudience`. */
   audience: BoardAudience;
+  /** El reloj del SERVIDOR. `now >= dueAt` se resuelve acá y no en el navegador
+   *  del operador: de esa fecha cuelga la validez de una baja. */
+  today: Date;
+  /** "YYYY-MM-DD" del día civil argentino de hoy: default y tope del campo. */
+  todayIso: string;
+  /** Sólo display; la action vuelve a resolver `requireSuperadmin`. */
+  canPost: boolean;
+  /** Aviso preventivo de la tabla de feriados (`coverageNotice`). */
+  coverageWarning: string | null;
 }) {
   const { count, fromBatch } = audience;
   return (
@@ -384,27 +425,30 @@ export function BoardNoticesPanel({ notices, audience }: {
         )
       }
     >
-      {/* TODO (M6 Task 13): el circuito completo —PDF imprimible, asiento de la
-          fecha de fijación por lote y el pase a fehaciente al cumplirse los 20
-          días hábiles— llega con la Task 13. Acá el aviso sólo se LISTA: sin esa
-          pantalla no hay forma de fijarlo, y ofrecer un botón que no hace nada
-          sería peor que no ofrecer ninguno. */}
       {notices.length === 0 ? (
         <EmptyState size="list" description="No hay ningún aviso de cartelera en este proceso." />
       ) : (
-        <ul className="list-none space-y-2 p-0">
+        <ul className="list-none space-y-3 p-0">
           {notices.map((n) => (
-            <li key={n.id} className="rounded-md border p-3 text-sm">
-              <span className="font-medium">{BOARD_NOTICE_KIND_LABELS[n.kind]}</span>
-              {" — "}
-              {n.postedAt === null ? (
-                <span className="text-warning">sin fijar</span>
-              ) : (
-                <>
-                  fijado el <span className={NUM}>{formatDateAR(n.postedAt)}</span>
-                  {n.dueAt && <> · fehaciente el <span className={NUM}>{formatDateAR(n.dueAt)}</span></>}
-                </>
-              )}
+            <li key={n.id}>
+              <BoardNoticeCard
+                notice={{
+                  id: n.id,
+                  kindLabel: BOARD_NOTICE_KIND_LABELS[n.kind],
+                  recipients: n.recipients,
+                  postedAtLabel: n.postedAt === null ? null : formatDateAR(n.postedAt),
+                  dueAtLabel: n.dueAt === null ? null : formatDateAR(n.dueAt),
+                  // El derivado de la spec §8: sin cron, y comparando DÍA CIVIL
+                  // contra día civil — el día en que se cumple el plazo ya está
+                  // cumplido, porque el vigésimo día hábil se contó entero.
+                  fulfilled:
+                    n.dueAt !== null &&
+                    civilDayOf(today).getTime() >= civilDayOf(n.dueAt).getTime(),
+                }}
+                todayIso={todayIso}
+                canPost={canPost}
+                coverageWarning={coverageWarning}
+              />
             </li>
           ))}
         </ul>

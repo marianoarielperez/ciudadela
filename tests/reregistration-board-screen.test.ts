@@ -1,10 +1,19 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Desde la Task 13 el panel de cartelera renderiza la tarjeta del aviso, y la
+// tarjeta importa su server action, que arrastra `@/lib/audit` → `@/lib/prisma`
+// — que TIRA al evaluarse si falta `DATABASE_URL`. Es la trampa que el proyecto
+// ya tiene documentada; acá se resuelve como en `reregistration-service.test.ts`:
+// el singleton se reemplaza por un objeto vacío. Ningún componente de este
+// archivo consulta la base, así que el doble no tiene que hacer nada.
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import {
-  boardAudience, BoardNoticesPanel, chipVariant, classifyNotice, CounterChips, nextStep,
-  ProcessVerdict, UnnotifiedPanel, type ProcessCountersView, type UnnotifiedRow,
+  boardAudience, BoardNoticesPanel, bouncedAfterSend, chipVariant, classifyNotice, CounterChips,
+  nextStep, ProcessVerdict, UnnotifiedPanel, type BoardNoticeRow, type ProcessCountersView,
+  type UnnotifiedRow,
 } from "@/app/admin/reempadronamiento/board-panels";
 import { daysLeftLabel, ProcessStepper, type StepperProcess } from "@/app/admin/reempadronamiento/process-stepper";
 import type { PresentationStatus } from "@/generated/prisma/client";
@@ -307,10 +316,48 @@ describe("boardAudience", () => {
   });
 });
 
+/** Lo que la tarjeta necesita y este bloque no está probando: el reloj del
+ *  servidor, el día por defecto del campo y las dos banderas de display. Se
+ *  esparce para que agregar una prop nueva no obligue a tocar cada caso. */
+const boardChrome = {
+  today: new Date("2026-10-05T12:00:00Z"),
+  todayIso: "2026-10-05",
+  canPost: true,
+  coverageWarning: null,
+};
+
+describe("bouncedAfterSend", () => {
+  const sent = [{ status: "sent" as const }];
+
+  it("es el que TENÍA casilla, se le mandó, y rebotó después", () => {
+    expect(bouncedAfterSend({ email: "a@b.com", emailStatus: "bounced", notices: sent })).toBe(true);
+  });
+
+  it("el que nunca tuvo casilla NO es un rebote posterior: ya está en el cartel", () => {
+    // Éste entró en el lote de cartelera cuando se convocó. Ofrecerle "pasar a
+    // cartelera" sería mandarlo dos veces a la misma pared.
+    expect(bouncedAfterSend({ email: null, emailStatus: "none", notices: [] })).toBe(false);
+  });
+
+  it("sin rastro de envío no hay rebote posterior que valga", () => {
+    // Rebotó ANTES de que saliera el lote: nunca se le intentó un correo en
+    // esta instancia, así que le tocó el cartel como a los demás sin casilla.
+    expect(bouncedAfterSend({ email: "a@b.com", emailStatus: "bounced", notices: [] })).toBe(false);
+    expect(
+      bouncedAfterSend({ email: "a@b.com", emailStatus: "bounced", notices: [{ status: "failed" }] }),
+    ).toBe(false);
+  });
+
+  it("la casilla que sigue sirviendo no es un caso de cartelera", () => {
+    expect(bouncedAfterSend({ email: "a@b.com", emailStatus: "verified", notices: sent })).toBe(false);
+  });
+});
+
 describe("BoardNoticesPanel", () => {
   it("presenta el número del lote como lo que es", () => {
     const html = render(createElement(BoardNoticesPanel, {
       notices: [], audience: { count: 100, fromBatch: true },
+      ...boardChrome,
     }));
 
     expect(html).toContain("El cartel se generó para");
@@ -321,9 +368,85 @@ describe("BoardNoticesPanel", () => {
   it("sin el asiento del lote, avisa que el número es el del padrón de hoy", () => {
     const html = render(createElement(BoardNoticesPanel, {
       notices: [], audience: { count: 96, fromBatch: false },
+      ...boardChrome,
     }));
 
     expect(html).toContain("A hoy");
     expect(html).toContain("puede ser menor que la nómina");
+  });
+
+  // ── La tarjeta del aviso (Task 13) ─────────────────────────────────────────
+  // Una tarjeta por CARTEL, nunca una fila por socio. Lo que se fija acá es que
+  // los dos estados del aviso se lean distinto y que el PDF esté en los dos: un
+  // cartel que no se puede reimprimir es un cartel que no se puede reemplazar
+  // cuando se moja.
+
+  const notice = (over: Partial<BoardNoticeRow> = {}): BoardNoticeRow => ({
+    id: 33, kind: "first_instance", postedAt: null, dueAt: null, recipients: 100, ...over,
+  });
+
+  it("sin fijar ofrece imprimir y asentar la fijación", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [notice()], audience: { count: 100, fromBatch: true }, ...boardChrome,
+    }));
+
+    expect(html).toContain("/api/admin/reempadronamiento/avisos/33/pdf");
+    expect(html).toContain("Asentar fijación");
+    expect(html).toContain("Sin fijar");
+    // El default y el tope del campo salen del día civil ARGENTINO del
+    // servidor, no del reloj del navegador del operador.
+    expect(html).toContain('value="2026-10-05"');
+    expect(html).toContain('max="2026-10-05"');
+  });
+
+  it("fijado muestra el plazo y NO vuelve a ofrecer asentarlo", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [notice({ postedAt: new Date("2026-10-02T12:00:00Z"), dueAt: new Date("2026-11-02T12:00:00Z") })],
+      audience: { count: 100, fromBatch: true },
+      ...boardChrome,
+    }));
+
+    expect(html).toContain("02/10/2026");
+    expect(html).toContain("02/11/2026");
+    // La fecha se asienta UNA vez: ofrecer el formulario otra vez sería ofrecer
+    // correr el plazo de cien vecinos.
+    expect(html).not.toContain("Asentar fijación");
+    // Todavía no se cumplió: el 05/10 el plazo sigue corriendo.
+    expect(html).toContain("En cartelera");
+    expect(html).not.toContain("Cumplido");
+  });
+
+  it("cumplido el plazo, el derivado se prende sin ningún cron", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [notice({ postedAt: new Date("2026-10-02T12:00:00Z"), dueAt: new Date("2026-11-02T12:00:00Z") })],
+      audience: { count: 100, fromBatch: true },
+      ...boardChrome,
+      // El día EN QUE se cumple ya cuenta como cumplido: el vigésimo día hábil
+      // se contó entero.
+      today: new Date("2026-11-02T12:00:00Z"),
+    }));
+
+    expect(html).toContain("Cumplido");
+    expect(html).toContain("quedó fehaciente el");
+  });
+
+  it("sin permiso, el botón se dibuja apagado y dice por qué", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [notice()], audience: { count: 100, fromBatch: true },
+      ...boardChrome, canPost: false,
+    }));
+
+    expect(html).toContain("Solo el superadmin puede asentar la fijación");
+    // Pero imprimir sigue estando: es trabajo de mostrador.
+    expect(html).toContain("/api/admin/reempadronamiento/avisos/33/pdf");
+  });
+
+  it("el faltante de feriados se avisa ANTES de imprimir cien nombres", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [notice()], audience: { count: 100, fromBatch: true },
+      ...boardChrome, coverageWarning: "No hay feriados cargados para 2028.",
+    }));
+
+    expect(html).toContain("No hay feriados cargados para 2028.");
   });
 });

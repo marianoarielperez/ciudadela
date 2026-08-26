@@ -28,9 +28,11 @@ import type { NotificationType } from "@/generated/prisma/client";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { PRESENTATIONS_BASE } from "@/lib/admin/presentation-queue";
 import { requireAdmin, requireSuperadmin } from "@/lib/auth/require-admin";
+import { boardNotices, coverageNotice } from "@/lib/board/notice";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { formatDateAR } from "@/lib/format";
 import { PROCESS_STATUS_LABELS } from "@/lib/members/labels";
+import { civilDayOf } from "@/lib/treasury/periods";
 import { prisma } from "@/lib/prisma";
 import { canPrepareClose, hasExpired } from "@/lib/reregistration/rules";
 import {
@@ -135,7 +137,7 @@ export default async function ReempadronamientoPage() {
   const noticeType: NotificationType = onSecond ? "reregistration_second" : "reregistration_first";
   const deadline = onSecond ? process.secondEndsAt : process.firstEndsAt;
 
-  const [counters, liveKey, rows, notices, batchEntry] = await Promise.all([
+  const [counters, liveKey, rows, notices, holidayRows, batchEntry] = await Promise.all([
     reregistration.counters(process.id),
     configReader.getString(CONFIG_KEYS.reregistrationProcessId),
     prisma.presentation.findMany({
@@ -175,6 +177,9 @@ export default async function ReempadronamientoPage() {
       orderBy: { id: "asc" },
       select: { id: true, kind: true, postedAt: true, dueAt: true },
     }),
+    // El calendario de feriados, para AVISAR antes de que el operador asiente
+    // una fijación cuyo plazo se iría a un año sin cargar. Son ~32 filas.
+    prisma.holiday.findMany({ select: { date: true } }),
     // El asiento de la instancia en curso: de ahí sale el TAMAÑO DEL LOTE de
     // cartelera que efectivamente se generó (`detail.boardCount`). Va por el
     // índice `[entity, entityId]` de `audit_log`, igual que el aviso de
@@ -221,6 +226,22 @@ export default async function ReempadronamientoPage() {
     auditDetail: batchEntry?.detail ?? null,
     liveCount: verdicts.filter((v) => v.verdict === "board").length,
   });
+
+  // Cuánta gente lleva CADA cartel. Sale de `boardNotices.load`, que es el que
+  // sabe la regla: nómina congelada si el aviso ya se fijó, viva si no. La
+  // pantalla no la vuelve a escribir — son dos o tres avisos por proceso, así
+  // que el costo de una consulta por aviso es irrelevante y la alternativa era
+  // duplicar el criterio acá.
+  const noticeRows = await Promise.all(
+    notices.map(async (n) => ({
+      ...n,
+      recipients: (await boardNotices.load(n.id))?.recipients.length ?? 0,
+    })),
+  );
+  const holidays = holidayRows.map((h) => h.date);
+  // El día civil ARGENTINO de hoy en "YYYY-MM-DD": a las 21:00 de acá el reloj
+  // UTC del server ya está en el día siguiente, y ese sería el default del campo.
+  const todayIso = civilDayOf(now).toISOString().slice(0, 10);
 
   // `hasExpired` y no una comparación propia: es el único comparador de plazos
   // del módulo, y compara día civil contra día civil (el día del vencimiento el
@@ -300,7 +321,16 @@ export default async function ReempadronamientoPage() {
         />
       )}
 
-      <BoardNoticesPanel notices={notices} audience={audience} />
+      <BoardNoticesPanel
+        notices={noticeRows}
+        audience={audience}
+        today={now}
+        todayIso={todayIso}
+        // Sólo display: `postBoardNoticeAction` vuelve a resolver
+        // `requireSuperadmin` contra la fila viva de `User`.
+        canPost={superadmin}
+        coverageWarning={coverageNotice(holidays, now)}
+      />
 
       <Section id="fases" title="Acciones de fase">
         {process.status === "first_instance" ? (

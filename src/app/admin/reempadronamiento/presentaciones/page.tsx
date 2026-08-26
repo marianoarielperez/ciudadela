@@ -40,12 +40,14 @@ import {
 } from "@/lib/admin/presentation-queue";
 import { presentationStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { boardNotices } from "@/lib/board/notice";
 import { formatDateTimeAR } from "@/lib/format";
 import { PRESENTATION_STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { LIVE_PROCESS_STATUSES } from "@/lib/reregistration/service";
 import { cn } from "@/lib/utils";
-import { classifyNotice, type NoticeVerdict } from "../board-panels";
+import { AddToBoardChip } from "../avisos/board-notice-card";
+import { bouncedAfterSend, classifyNotice, type NoticeVerdict } from "../board-panels";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Presentaciones — SIGeV" };
@@ -262,6 +264,15 @@ async function MissingView({ process, empty }: {
   const noticeType: NotificationType =
     process.secondEndsAt !== null ? "reregistration_second" : "reregistration_first";
 
+  // Quién sigue esperando el cartel de la sede en un aviso COMPLEMENTARIO. Sale
+  // del dominio (`kind: "other"`), no de una regla escrita otra vez acá: lo que
+  // la fila ofrece tiene que ser exactamente lo que la action acepta.
+  const pendingBoard = new Set(
+    (await boardNotices.listRecipients({ processId: process.id, kind: "other" })).map(
+      (r) => r.memberId,
+    ),
+  );
+
   const rows = await prisma.presentation.findMany({
     where: { processId: process.id, status: "pending" },
     select: {
@@ -301,6 +312,17 @@ async function MissingView({ process, empty }: {
         emailStatus: row.member.emailStatus,
         notices: row.member.notifications,
       }),
+      // El rebote POSTERIOR al envío masivo: le salió el correo, la casilla
+      // rebotó después y por eso no entró en ningún cartel. Hoy no está
+      // notificado por ninguna vía y el plazo le corre igual. Las dos
+      // condiciones tienen que darse: que el hecho sea ése (`bouncedAfterSend`)
+      // y que el dominio efectivamente lo espere en un aviso complementario.
+      lateBounce:
+        bouncedAfterSend({
+          email: row.member.email,
+          emailStatus: row.member.emailStatus,
+          notices: row.member.notifications,
+        }) && pendingBoard.has(row.member.id),
     }))
     .sort((a, b) => (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER));
 
@@ -327,7 +349,18 @@ async function MissingView({ process, empty }: {
                       "llamalo" es una instrucción sin número. */}
                   {row.phone && <span className={cn(NUM, "text-muted-foreground")}>{row.phone}</span>}
                 </span>
-                <Badge variant={NOTICE_VARIANT[row.verdict]}>{NOTICE_TEXT[row.verdict]}</Badge>
+                <span className="flex flex-wrap items-center gap-2">
+                  <Badge variant={NOTICE_VARIANT[row.verdict]}>
+                    {row.lateBounce ? "el correo le rebotó después del envío" : NOTICE_TEXT[row.verdict]}
+                  </Badge>
+                  {row.lateBounce && (
+                    <AddToBoardChip
+                      processId={process.id}
+                      memberId={row.memberId}
+                      memberName={row.fullName}
+                    />
+                  )}
+                </span>
               </CardContent>
             </Card>
           </li>
