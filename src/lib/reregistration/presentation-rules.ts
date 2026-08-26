@@ -133,17 +133,24 @@ export function presentationDocsComplete(docs: Array<{ type: DocumentType }>): O
  *  El email es OBLIGATORIO por decisión del operador (decisión 4): el
  *  re-empadronamiento constituye el domicilio electrónico del Art. 5° ter, que
  *  es la vía por la que la asociación notifica. Sin él, la observación y la
- *  baja no tendrían dónde llegar. */
+ *  baja no tendrían dónde llegar.
+ *
+ *  Los mensajes están redactados SIN posesivo ("Falta el barrio", no "Falta tu
+ *  barrio") porque los leen dos personas distintas: el vecino en el paso 2 del
+ *  wizard —donde el encabezado ya dice "Tus datos", así que el posesivo no
+ *  agregaba nada— y el OPERADOR en la carga presencial, donde "tu barrio" le
+ *  habla a quien no es. Es el precio de que la regla sea una sola, y es más
+ *  barato que tener dos listas de campos obligatorios que puedan divergir. */
 export function presentationDataComplete(data: PresentationData): Ok | Err {
-  if (!data.birthDate) return { ok: false, error: "Falta tu fecha de nacimiento." };
-  if (!data.civilStatus) return { ok: false, error: "Falta tu estado civil." };
-  if (!data.nationality) return { ok: false, error: "Falta tu nacionalidad." };
-  if (!data.occupation) return { ok: false, error: "Falta tu ocupación." };
-  if (!data.streetId && !data.streetText) return { ok: false, error: "Falta tu calle." };
-  if (!data.streetNumber) return { ok: false, error: "Falta la altura de tu domicilio." };
-  if (!data.neighborhood) return { ok: false, error: "Falta tu barrio." };
-  if (!data.phone) return { ok: false, error: "Falta tu teléfono." };
-  if (!data.email) return { ok: false, error: "Falta tu email." };
+  if (!data.birthDate) return { ok: false, error: "Falta la fecha de nacimiento." };
+  if (!data.civilStatus) return { ok: false, error: "Falta el estado civil." };
+  if (!data.nationality) return { ok: false, error: "Falta la nacionalidad." };
+  if (!data.occupation) return { ok: false, error: "Falta la ocupación." };
+  if (!data.streetId && !data.streetText) return { ok: false, error: "Falta la calle." };
+  if (!data.streetNumber) return { ok: false, error: "Falta la altura del domicilio." };
+  if (!data.neighborhood) return { ok: false, error: "Falta el barrio." };
+  if (!data.phone) return { ok: false, error: "Falta el teléfono." };
+  if (!data.email) return { ok: false, error: "Falta el email." };
   return { ok: true };
 }
 

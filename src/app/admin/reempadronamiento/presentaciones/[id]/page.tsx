@@ -17,6 +17,8 @@
 // resuelve contra la fila viva de `User`.
 import { notFound } from "next/navigation";
 
+import { streetLabel } from "@/app/(public)/asociate/wizard-shared";
+
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
@@ -253,7 +255,11 @@ type Row = { label: string; declared: string; current: string; differs: boolean 
  *  la altura. Partido en dos filas, una calle igual con la altura cambiada se
  *  ve como "todo igual salvo un número suelto". */
 function address(x: Sided): string {
-  const street = x.street?.name ?? x.streetText ?? "";
+  // `streetLabel` normaliza el formato del catálogo catastral, que viene con el
+  // espacio antes de la coma ("Pizarro , Francisco"). Es la misma función que
+  // usan el wizard y `/mi/datos`: sin ella, el mismo domicilio se lee distinto
+  // en dos pantallas y la comparación de esta parece una diferencia.
+  const street = x.street ? streetLabel(x.street.name) : x.streetText ?? "";
   const parts = [street.trim(), (x.streetNumber ?? "").trim()].filter(Boolean);
   return parts.join(" ");
 }

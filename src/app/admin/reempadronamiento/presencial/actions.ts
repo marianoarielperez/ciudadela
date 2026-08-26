@@ -21,6 +21,7 @@
 //     del formulario público.
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { audit } from "@/lib/audit";
@@ -41,7 +42,10 @@ const BASE = "/admin/reempadronamiento/presencial";
 const DOC_TYPES = ["dni_front", "dni_back", "annex"] as const satisfies readonly DocumentType[];
 const BAD_BIRTH_DATE = "La fecha de nacimiento no es válida.";
 
-export type InPersonState = { error?: string; ok?: boolean; warning?: string };
+/** El registro exitoso NO vuelve por acá: termina en un `redirect` al buscador
+ *  con el resultado en la URL (ver el final de `registerInPersonAction`). Este
+ *  estado es sólo para el rechazo. */
+export type InPersonState = { error?: string };
 export type InPersonUploadState = { error?: string; uploaded?: string };
 
 async function clientIp(): Promise<string> {
@@ -140,7 +144,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // El schema valida FORMA y ANCHOS (los de las columnas). Qué campos son
 // obligatorios lo decide `presentationDataComplete` adentro del dominio, que es
 // la regla compartida con el wizard: acá todo entra opcional para que el
-// operador pueda guardar el mensaje del dominio —"Falta tu barrio"— en vez de
+// operador pueda ver el mensaje del dominio —"Falta el barrio"— en vez de
 // dos validaciones distintas diciendo cosas parecidas.
 const registerSchema = z.object({
   processId: z.coerce.number().int().positive(),
@@ -254,14 +258,22 @@ export async function registerInPersonAction(
   revalidatePath(PRESENTATIONS_BASE);
   revalidatePath("/admin/reempadronamiento");
 
-  if (result.firstSubmission && !mailed) {
-    return {
-      ok: true,
-      warning:
-        "Se registró la presentación, pero no salió el correo de constancia. " +
-        "Revisá que la dirección esté bien escrita: es el domicilio electrónico por el que se le " +
-        "va a notificar cualquier observación.",
-    };
-  }
-  return { ok: true };
+  // ── Por qué esto termina en un `redirect` y no en un `{ ok: true }` ────────
+  // Al pasar a `submitted`, ESTA ruta deja de mostrar el formulario: su estado
+  // vacío pasa a decir "ya está presentada". Y toda server action devuelve el
+  // árbol re-renderizado de la ruta actual, así que el mensaje de éxito que
+  // viviera en el formulario se iría con él en el mismo instante en que la
+  // carga sale bien: el operador leería algo que parece un rechazo justo
+  // después de acertar (medido en el navegador, 26/08/2026).
+  //
+  // Así que se vuelve al BUSCADOR, que es donde el operador tiene que estar
+  // —atrás hay otro vecino esperando— con el resultado en la URL. `registrada`
+  // lleva el id para poder enlazar la presentación; `correo=falla` es el aviso
+  // de que la constancia no salió, que es accionable (la dirección puede estar
+  // mal tipeada y es el domicilio electrónico del socio).
+  //
+  // Fuera de cualquier `try`: `redirect()` señaliza con una excepción.
+  const query = new URLSearchParams({ registrada: String(result.presentationId) });
+  if (result.firstSubmission && !mailed) query.set("correo", "falla");
+  redirect(`${BASE}?${query.toString()}`);
 }

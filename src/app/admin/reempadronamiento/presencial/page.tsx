@@ -139,12 +139,36 @@ export default async function PresencialPage(props: { searchParams: Promise<Sear
     );
   }
 
+  // El resultado del último registro, que vuelve por la URL: la action redirige
+  // acá en vez de contestarle al formulario, porque el formulario ya no existe
+  // cuando la presentación pasa a `submitted` (ver el comentario largo al final
+  // de `registerInPersonAction`).
+  const registered = Number(one(sp.registrada));
+  const mailFailed = one(sp.correo) === "falla";
+
   const q = (one(sp.q) ?? "").trim();
   const hits = q === "" ? [] : await presentations.searchCohort({ processId: process.id, bookId: process.bookId, q });
 
   return (
     <div className="space-y-6">
       {header}
+      {Number.isInteger(registered) && registered > 0 && (
+        <>
+          <FormMessage kind="success" box role="status">
+            Se registró la presentación. Queda en la cola para que otra persona la valide:{" "}
+            <Link className={INLINE_LINK} href={`${PRESENTATIONS_BASE}/${registered}`}>
+              verla en la cola
+            </Link>
+            . Podés seguir con el próximo vecino.
+          </FormMessage>
+          {mailFailed && (
+            <FormMessage kind="warning" box role="status">
+              No salió el correo de constancia. Revisá que la dirección esté bien escrita: es el
+              domicilio electrónico por el que se le va a notificar cualquier observación.
+            </FormMessage>
+          )}
+        </>
+      )}
       {/* GET y no una server action: la búsqueda es una lectura, y con la
           consulta en la URL el operador puede volver atrás desde el formulario
           sin retipearla. */}

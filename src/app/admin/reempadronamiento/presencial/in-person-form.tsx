@@ -149,14 +149,11 @@ export function InPersonForm(props: {
           </div>
         </div>
 
+        {/* Sólo el rechazo se muestra acá: el registro exitoso NO vuelve a esta
+            pantalla —termina en un redirect al buscador con el resultado en la
+            URL—, porque al pasar a `submitted` esta ruta deja de renderizar el
+            formulario y el mensaje se iría con él. */}
         {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
-        {state.warning && <FormMessage kind="warning" box>{state.warning}</FormMessage>}
-        {state.ok && !state.warning && (
-          <FormMessage kind="success" box>
-            Se registró la presentación de {props.memberName}. Queda en la cola para que otra
-            persona la valide.
-          </FormMessage>
-        )}
 
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" size="lg" className="min-h-11 px-4" disabled={pending}>

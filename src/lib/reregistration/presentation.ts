@@ -129,8 +129,8 @@ export const OBSERVATION_MAX = 500;
 export const ALREADY_DECIDED =
   "Otro administrador ya resolvió esta presentación. Actualizá la pantalla para ver cómo quedó.";
 export const PRESENTATION_NOT_FOUND = "La presentación no existe.";
-export const NOT_DECIDABLE =
-  "Esta presentación no está esperando una decisión: revisá en qué estado quedó.";
+export const NOT_SUBMITTED_YET =
+  "Ese socio todavía no presentó su re-empadronamiento, así que no hay nada que decidir.";
 export const PROCESS_FINISHED =
   "El proceso de re-empadronamiento ya está cerrado: sus presentaciones no se pueden modificar.";
 export const OBSERVATION_REQUIRED =
@@ -745,7 +745,12 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
       const row = await decisionRow(input.presentationId);
       if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
       if (row.process.status === "closed") return { ok: false, error: PROCESS_FINISHED };
-      if (row.status !== "rejected") return { ok: false, error: NOT_DECIDABLE };
+      // Misma distinción que en `decidable`: `pending` es "nunca se presentó";
+      // cualquier otro estado distinto de `rejected` es que alguien ya movió
+      // esta presentación desde que la pantalla se dibujó.
+      if (row.status !== "rejected") {
+        return { ok: false, error: row.status === "pending" ? NOT_SUBMITTED_YET : ALREADY_DECIDED };
+      }
 
       const { count } = await db.presentation.updateMany({
         where: { id: row.id, status: { in: ["rejected"] } },
@@ -914,10 +919,16 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
 
   function decidable(row: { status: PresentationStatus; process: { status: string } }): Ok | Err {
     if (row.process.status === "closed") return { ok: false, error: PROCESS_FINISHED };
-    if (!(DECIDABLE_STATUSES as readonly string[]).includes(row.status)) {
-      return { ok: false, error: NOT_DECIDABLE };
-    }
-    return { ok: true };
+    if ((DECIDABLE_STATUSES as readonly string[]).includes(row.status)) return { ok: true };
+    // Los dos "no" NO dicen lo mismo, y la diferencia es la que el operador
+    // necesita. `pending` es una fila que nació al convocar y nadie tocó: no
+    // hay nada que decidir. Cualquier otro estado significa que ALGUIEN YA
+    // DECIDIÓ —y en una cola compartida, ese alguien es casi siempre el otro
+    // administrador que tenía la misma presentación abierta—. Decirle "no está
+    // esperando una decisión" a quien acaba de apretar Validar sobre una
+    // pantalla de hace tres minutos lo manda a buscar un error de sistema en
+    // vez de a recargar.
+    return { ok: false, error: row.status === "pending" ? NOT_SUBMITTED_YET : ALREADY_DECIDED };
   }
 }
 

@@ -30,6 +30,7 @@ import { MemberEmailConflictError } from "@/lib/members/write";
 import {
   ALREADY_DECIDED,
   makePresentations,
+  NOT_SUBMITTED_YET,
   OBSERVATION_MAX,
   type PresentationData,
 } from "@/lib/reregistration/presentation";
@@ -294,10 +295,25 @@ describe("validate", () => {
     expect(writer.calls).toHaveLength(0);
   });
 
-  it("no valida una presentación que nunca se envió", async () => {
+  it("no valida una presentación que nunca se envió, y lo dice SIN culpar a otro admin", async () => {
     const db = fakeDb([row({ status: "pending", submittedAt: null })]);
     const res = await presentations(db).validate({ presentationId: 1, actorId: 9 });
     expect(res.ok).toBe(false);
+    // "Otro administrador ya resolvió" mandaría al operador a recargar una
+    // pantalla que dice exactamente lo mismo. Los dos "no" no son el mismo no.
+    if (!res.ok) expect(res.error).toBe(NOT_SUBMITTED_YET);
+  });
+
+  it("la que otro admin ya resolvió lo dice CON esas palabras, aunque la pantalla venga vieja", async () => {
+    // El caso real del cerrojo: la pantalla se dibujó con la presentación en
+    // `submitted`, el otro administrador la validó mientras esta persona la
+    // leía, y el POST llega tarde. La pre-guarda lo atrapa antes que el
+    // `updateMany`, y tiene que decir lo mismo que diría el `updateMany`.
+    for (const status of ["validated", "rejected", "withdrawn"] as const) {
+      const db = fakeDb([row({ status })]);
+      const res = await presentations(db).validate({ presentationId: 1, actorId: 9 });
+      expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
+    }
   });
 
   it("sí valida una observada: es lo que la etapa A del cierre tiene que poder resolver", async () => {
@@ -378,7 +394,7 @@ describe("observe", () => {
   it("CERROJO: la que otro admin ya validó no se puede observar", async () => {
     const db = fakeDb([row({ status: "validated" })]);
     const res = await presentations(db).observe({ presentationId: 1, actorId: 9, note: "algo" });
-    expect(res.ok).toBe(false);
+    expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
   });
 });
 
@@ -405,7 +421,7 @@ describe("reject / unreject", () => {
   it("no se puede revivir algo que no está rechazado", async () => {
     const db = fakeDb([row({ status: "validated" })]);
     const res = await presentations(db).unreject({ presentationId: 1, actorId: 9 });
-    expect(res.ok).toBe(false);
+    expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
   });
 });
 
