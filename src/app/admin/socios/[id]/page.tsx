@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BookMarked } from "lucide-react";
 import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
@@ -111,6 +112,9 @@ export default async function SocioPage(props: {
   const grid = buildPeriodGrid(account.fees, receiptByPayment, currentPeriod());
 
   const openMembership = member.memberships.find((m) => m.book.status === "open");
+  // Prisma no promete un orden en la relación: el bloque "Libros" los ordena
+  // acá, del más viejo al más nuevo.
+  const bookEntries = [...member.memberships].sort((a, b) => a.book.number - b.book.number);
   // Misma función que usa la server action como guarda: la ficha no decide nada
   // por su cuenta sobre a quién se le puede mandar el acceso (spec §8: el envío
   // se ofrece "desde carga de fichas o ficha").
@@ -213,40 +217,72 @@ export default async function SocioPage(props: {
           ]}
           panels={{
             ficha: (
-              <Card>
-                <CardHeader><CardTitle>Datos personales</CardTitle></CardHeader>
-                <CardContent>
-                  <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <Field label="DNI" value={member.dni} />
-                    <Field label="Fecha de nacimiento" value={member.birthDate ? formatDateAR(member.birthDate) : null} />
-                    <Field label="Estado civil" value={member.civilStatus} />
-                    <Field label="Nacionalidad" value={member.nationality} />
-                    <Field label="Ocupación" value={member.occupation} />
-                    <Field label="Teléfono" value={member.phone} />
-                    <Field label="Domicilio" value={address || null} />
-                    <Field label="Barrio" value={member.neighborhood} />
-                    <Field label="Email" value={member.email ? `${member.email} (${EMAIL_STATUS_LABELS[member.emailStatus]})` : null} />
-                    {/* El único flag de la ficha que se corrige desde acá: tres
-                        caminos lo suben y ninguno lo bajaba. Ocupa dos celdas
-                        porque lleva la explicación de qué significa. */}
-                    <div className="col-span-2 md:col-span-1">
-                      <dt className="text-xs uppercase text-muted-foreground">Débito automático</dt>
-                      <dd className="mt-1">
-                        <AutoDebitForm memberId={member.id} autoDebit={member.autoDebit} />
-                      </dd>
-                    </div>
-                    <Field label="Fecha de ingreso" value={formatDateAR(member.joinedAt)} />
-                    <Field label="Fecha de egreso" value={member.leftAt ? formatDateAR(member.leftAt) : null} />
-                    {member.withdrawalReason && <Field label="Motivo de baja" value={REASON_LABELS[member.withdrawalReason]} />}
-                    {member.status === "suspended" && (
-                      <Field
-                        label="Suspendido"
-                        value={`${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "?"} — ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "?"}`}
-                      />
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader><CardTitle>Datos personales</CardTitle></CardHeader>
+                  <CardContent>
+                    <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                      <Field label="DNI" value={member.dni} />
+                      <Field label="Fecha de nacimiento" value={member.birthDate ? formatDateAR(member.birthDate) : null} />
+                      <Field label="Estado civil" value={member.civilStatus} />
+                      <Field label="Nacionalidad" value={member.nationality} />
+                      <Field label="Ocupación" value={member.occupation} />
+                      <Field label="Teléfono" value={member.phone} />
+                      <Field label="Domicilio" value={address || null} />
+                      <Field label="Barrio" value={member.neighborhood} />
+                      <Field label="Email" value={member.email ? `${member.email} (${EMAIL_STATUS_LABELS[member.emailStatus]})` : null} />
+                      {/* El único flag de la ficha que se corrige desde acá: tres
+                          caminos lo suben y ninguno lo bajaba. Ocupa dos celdas
+                          porque lleva la explicación de qué significa. */}
+                      <div className="col-span-2 md:col-span-1">
+                        <dt className="text-xs uppercase text-muted-foreground">Débito automático</dt>
+                        <dd className="mt-1">
+                          <AutoDebitForm memberId={member.id} autoDebit={member.autoDebit} />
+                        </dd>
+                      </div>
+                      <Field label="Fecha de ingreso" value={formatDateAR(member.joinedAt)} />
+                      <Field label="Fecha de egreso" value={member.leftAt ? formatDateAR(member.leftAt) : null} />
+                      {member.withdrawalReason && <Field label="Motivo de baja" value={REASON_LABELS[member.withdrawalReason]} />}
+                      {member.status === "suspended" && (
+                        <Field
+                          label="Suspendido"
+                          value={`${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "?"} — ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "?"}`}
+                        />
+                      )}
+                    </dl>
+                  </CardContent>
+                </Card>
+
+                {/* En qué libros está asentada esta persona. Con un solo libro es
+                    una línea, pero después del re-empadronamiento son dos números
+                    distintos para el mismo socio (REG-29: la antigüedad no se
+                    reinicia), y la ficha es donde se pregunta "¿qué número tenía
+                    antes?". El más viejo primero: se lee como historia. */}
+                <Card size="sm">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <BookMarked className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Libros
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    {bookEntries.length === 0 ? (
+                      <EmptyState size="card" description="No está asentado en ningún libro." />
+                    ) : (
+                      bookEntries.map((m) => (
+                        <p key={m.id} className="text-sm">
+                          Libro <span className="font-mono tabular-nums">{m.book.number}</span>
+                          {" · N° "}
+                          <span className="font-mono tabular-nums">{m.memberNumber}</span>
+                          {m.book.status === "closed" && (
+                            <span className="text-muted-foreground"> · cerrado</span>
+                          )}
+                        </p>
+                      ))
                     )}
-                  </dl>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </div>
             ),
             cuenta: (
               <AccountSection
