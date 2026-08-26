@@ -1,7 +1,7 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
 import type { MemberRequestType, PaymentType } from "@/generated/prisma/client";
-import { formatARS, formatDateTimeAR } from "@/lib/format";
+import { formatARS, formatDateAR, formatDateTimeAR } from "@/lib/format";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 // Los dos son módulos puros (sin Prisma): importarlos acá no arrastra el cliente
@@ -583,5 +583,80 @@ ${noteHtml}
   return {
     message: { subject: `Tu solicitud de ${kind} fue ${verdict} — Vecinal Ciudadela`, text, html },
     summary: `solicitud de ${kind} ${verdict}`,
+  };
+}
+
+/** Convocatoria al re-empadronamiento del Art. 9° bis (M6, 1ª instancia).
+ *
+ *  Sale de una sola vez a TODA la cohorte de adherentes vigentes —hoy 124— y es
+ *  el correo que abre un plazo estatutario de treinta días del que cuelga la
+ *  condición de socio. Por eso dice tres cosas y en este orden: qué resolvió la
+ *  Comisión, hasta cuándo hay tiempo (con la fecha escrita, no "en 30 días") y
+ *  por dónde se hace. La alternativa presencial va SIEMPRE: el Art. 9° bis a)
+ *  admite las dos vías y buena parte del padrón no usa la web.
+ *
+ *  No saluda por nombre y la plantilla ni siquiera lo recibe: el mensaje es el
+ *  mismo para los ciento y pico, se arma UNA vez y se manda a todos. Nada de lo
+ *  que dice es un dato personal, así que un correo que llegue a la casilla
+ *  equivocada no revela nada de nadie. */
+export function reregistrationCallEmail(opts: { url: string; firstEndsAt: Date }): Rendered {
+  const until = formatDateAR(opts.firstEndsAt);
+  const title = "Re-empadronamiento de socios adherentes";
+  return {
+    subject: `${title} — tenés tiempo hasta el ${until}`,
+    text: `La Comisión Directiva de la ${ORG} convocó el re-empadronamiento de los socios adherentes (Art. 9° bis del estatuto).
+
+Figurás en el padrón como socio adherente, así que para conservar tu condición de socio tenés que ratificar tus datos antes del ${until} inclusive.
+
+Podés hacerlo de dos maneras:
+
+1. Por internet, en este enlace:
+
+${opts.url}
+
+2. En persona, acercándote a la sede vecinal con tu DNI.
+
+Te vamos a pedir tus datos actualizados y una foto o copia de tu DNI. Es un trámite corto y no tiene ningún costo.
+
+Si ya te re-empadronaste, ignorá este correo.${SIGNATURE}`,
+    html: layout(title, `<p>La Comisión Directiva de la ${esc(ORG)} convocó el <strong>re-empadronamiento de los socios adherentes</strong> (Art. 9° bis del estatuto).</p>
+<p>Figurás en el padrón como socio adherente, así que para conservar tu condición de socio tenés que ratificar tus datos <strong>antes del ${esc(until)}</strong> inclusive.</p>
+${button(opts.url, "Re-empadronarme")}
+<p>También podés hacerlo <strong>en persona</strong>, acercándote a la sede vecinal con tu DNI.</p>
+<p>Te vamos a pedir tus datos actualizados y una foto o copia de tu DNI. Es un trámite corto y no tiene ningún costo.</p>
+<p>Si ya te re-empadronaste, ignorá este correo.</p>`),
+  };
+}
+
+/** Segunda instancia del Art. 9° bis (M6): el aviso con APERCIBIMIENTO.
+ *
+ *  Va sólo a quien no se presentó en los primeros treinta días, y es la última
+ *  notificación antes de que la Comisión resuelva la baja. Tiene que decir con
+ *  todas las letras qué está en juego —el estatuto exige el apercibimiento para
+ *  que la baja sea oponible— y al mismo tiempo no sonar a intimación de estudio
+ *  jurídico: del otro lado hay un vecino que probablemente no abrió el correo
+ *  anterior. De ahí el orden: primero que todavía está a tiempo y cómo, y recién
+ *  después la consecuencia de no hacerlo. */
+export function reregistrationSecondEmail(opts: { url: string; secondEndsAt: Date }): Rendered {
+  const until = formatDateAR(opts.secondEndsAt);
+  const title = "Último plazo para re-empadronarte";
+  return {
+    subject: `${title} — hasta el ${until}`,
+    text: `Todavía no registramos tu re-empadronamiento, así que la ${ORG} te concede un último plazo: tenés tiempo hasta el ${until} inclusive.
+
+Podés hacerlo por internet, en este enlace:
+
+${opts.url}
+
+O en persona, acercándote a la sede vecinal con tu DNI.
+
+Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, bajo apercibimiento de baja (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.
+
+Si ya te re-empadronaste en estos días, ignorá este correo.${SIGNATURE}`,
+    html: layout(title, `<p>Todavía no registramos tu re-empadronamiento, así que la ${esc(ORG)} te concede un último plazo: tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>
+${button(opts.url, "Re-empadronarme")}
+<p>También podés hacerlo <strong>en persona</strong>, acercándote a la sede vecinal con tu DNI.</p>
+<p>Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, <strong>bajo apercibimiento de baja</strong> (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.</p>
+<p>Si ya te re-empadronaste en estos días, ignorá este correo.</p>`),
   };
 }
