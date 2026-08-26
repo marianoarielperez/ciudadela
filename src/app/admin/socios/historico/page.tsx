@@ -31,6 +31,7 @@ import {
 } from "@/lib/members/history";
 import { CATEGORY_LABELS, REASON_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
+import { appealWindowOpen } from "@/lib/reregistration/withdrawals";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +119,17 @@ function PersonCard({ row, now }: { row: HistoryRow; now: Date }) {
             </>
           )}
         </p>
+        {/* La ventana de recurso del Art. 9° bis d), mientras siga abierta. Acá
+            —y no sólo en la ficha— porque el Histórico es la lista donde el
+            operador busca a quien viene a preguntar por su baja: si el plazo
+            corre, tiene que verse antes de abrir la ficha. Quién decide si sigue
+            abierta es `appealWindowOpen`, que comparte el comparador de plazos
+            del módulo (el último día lo tiene entero). */}
+        {appealWindowOpen(row.appealUntil) && row.appealUntil && (
+          <FormMessage kind="neutral" role="none">
+            {`Baja recurrible hasta el ${formatDateAR(row.appealUntil)} inclusive.`}
+          </FormMessage>
+        )}
       </CardContent>
     </Card>
   );

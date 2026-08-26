@@ -60,6 +60,10 @@ import {
  *  que nada falle. */
 export const POST_AUDIT_ACTION = "board_notice_post";
 export const OTHER_AUDIT_ACTION = "board_notice_other";
+/** El cartel de BAJAS se abre desde la pantalla de cierre y tiene asiento
+ *  propio: no es el mismo acto que sumar un rebote a un cartel complementario,
+ *  y el día que alguien audite las bajas del Libro 1 tiene que poder separarlos. */
+export const WITHDRAWAL_NOTICE_AUDIT_ACTION = "board_notice_withdrawal";
 export const PDF_AUDIT_ACTION = "board_notice_pdf";
 export const NOTICE_AUDIT_ENTITY = "board_notice";
 

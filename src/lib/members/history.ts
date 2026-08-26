@@ -141,6 +141,12 @@ export type HistoryRow = {
   pendingFees: number;
   rejectedUntil: Date | null;
   reentryBlocked: boolean;
+  /** Hasta cuándo puede recurrir la baja por no haberse re-empadronado
+   *  (Art. 9° bis inc. d), o `null` si nunca se le declaró una o si todavía no
+   *  quedó notificada fehacientemente. `null` NO significa "ya venció": el
+   *  Histórico decide eso con `appealWindowOpen`, que es quien sabe que el
+   *  último día del plazo el vecino lo tiene entero. */
+  appealUntil: Date | null;
   memberships: Array<{ bookNumber: number; memberNumber: number }>;
 };
 
@@ -154,8 +160,9 @@ export type HistoryPage = {
 /** 50 por página, como el padrón: las 279 fichas quedan en 6 páginas. */
 export const HISTORY_PAGE_SIZE = 50;
 
-type RawHistoryMember = Omit<HistoryRow, "pendingFees" | "memberships"> & {
+type RawHistoryMember = Omit<HistoryRow, "pendingFees" | "memberships" | "appealUntil"> & {
   memberships: Array<{ memberNumber: number; book: { number: number } }>;
+  presentations: Array<{ appealUntil: Date | null }>;
   _count: { fees: number };
 };
 
@@ -190,6 +197,17 @@ export async function fetchHistoryPage(
       // socio en la misma consulta. Sin ella habría que hacer un `groupBy`
       // aparte por página de ids.
       _count: { select: { fees: { where: { status: "pending" } } } },
+      // La ventana de recurso de una baja por no re-empadronarse. `take: 1`
+      // sobre las que YA tienen fecha estampada: es una fila por proceso, y la
+      // que importa es la última. Va en la misma consulta y no en una aparte por
+      // socio, que serían 50 idas a la base por página — mismo argumento que el
+      // `_count` de las cuotas.
+      presentations: {
+        where: { appealUntil: { not: null } },
+        orderBy: { id: "desc" },
+        take: 1,
+        select: { appealUntil: true },
+      },
     },
     // Alfabético por apellido, que es como se busca a una persona en el
     // mostrador. El desempate por `id` no es decorativo: con sólo `fullName`,
@@ -202,9 +220,10 @@ export async function fetchHistoryPage(
   });
 
   return {
-    rows: (rows as unknown as RawHistoryMember[]).map(({ _count, memberships, ...rest }) => ({
+    rows: (rows as unknown as RawHistoryMember[]).map(({ _count, memberships, presentations, ...rest }) => ({
       ...rest,
       pendingFees: _count.fees,
+      appealUntil: presentations[0]?.appealUntil ?? null,
       memberships: memberships.map((m) => ({
         bookNumber: m.book.number,
         memberNumber: m.memberNumber,

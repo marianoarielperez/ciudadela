@@ -187,6 +187,10 @@ function member(over: Record<string, unknown> = {}) {
     rejectedUntil: null,
     reentryBlocked: false,
     memberships: [{ memberNumber: 1, book: { number: 1 } }],
+    // La ventana de recurso del Art. 9° bis d): `take: 1` sobre las
+    // presentaciones que ya tienen fecha estampada, así que lo normal es la
+    // lista vacía (nadie tiene una baja recurrible corriendo).
+    presentations: [],
     _count: { fees: 34 },
     ...over,
   };
@@ -228,6 +232,25 @@ describe("fetchHistoryPage", () => {
       { bookNumber: 1, memberNumber: 1 },
       { bookNumber: 2, memberNumber: 4 },
     ]);
+  });
+
+  it("trae la ventana de recurso de la última baja recurrible, o null", async () => {
+    // La consulta pide sólo las que YA tienen fecha estampada y la más reciente:
+    // una baja notificada por cartelera no arranca su plazo hasta que el cartel
+    // cumple los veinte días hábiles, y hasta entonces la columna está vacía.
+    const { db, findMany } = makeDb([
+      member({ presentations: [{ appealUntil: new Date("2026-12-02T12:00:00Z") }] }),
+      member({ id: 285, presentations: [] }),
+    ]);
+    const { rows } = await fetchHistoryPage(db, {}, 1);
+    expect(findMany.mock.calls[0][0].select.presentations).toEqual({
+      where: { appealUntil: { not: null } },
+      orderBy: { id: "desc" },
+      take: 1,
+      select: { appealUntil: true },
+    });
+    expect(rows[0].appealUntil).toEqual(new Date("2026-12-02T12:00:00Z"));
+    expect(rows[1].appealUntil).toBeNull();
   });
 
   it("busca por nombre O por DNI", async () => {

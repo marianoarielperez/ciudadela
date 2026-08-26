@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormMessage } from "@/components/admin/form-message";
 import { AutoDebitForm } from "./auto-debit-form";
+import { appealWindowOpen } from "@/lib/reregistration/withdrawals";
 import { confirmAddressAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +59,7 @@ export default async function SocioPage(props: {
   // El valor vigente de la cuota no depende del socio: se pide EN PARALELO con
   // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
   // cada render (mismo criterio que la ruta hermana `[accion]`).
-  const [member, feeValue, subscriptions] = await Promise.all([
+  const [member, feeValue, subscriptions, appeal] = await Promise.all([
     // `include` sin `select` explícito: Prisma ya devuelve todas las columnas
     // escalares del socio, `addressPendingReview` incluida, así que el aviso de
     // constatación de más abajo lee `member.addressPendingReview` sin sumar
@@ -96,6 +97,17 @@ export default async function SocioPage(props: {
       where: { memberId },
       orderBy: { createdAt: "desc" },
       select: { preapprovalId: true, status: true, amount: true, linkedManually: true },
+    }),
+    // La VENTANA DE RECURSO de una baja por no re-empadronarse (Art. 9° bis d).
+    // Es una fila por proceso y sólo la escribe la etapa de bajas; se pide la
+    // más reciente con fecha estampada. La ficha es la pantalla donde el
+    // operador atiende al vecino que viene a preguntar, así que es donde tiene
+    // que estar: sin esto, el plazo para recurrir vive sólo en un correo que el
+    // socio puede no haber recibido.
+    prisma.presentation.findFirst({
+      where: { memberId, appealUntil: { not: null } },
+      orderBy: { id: "desc" },
+      select: { appealUntil: true, withdrawalNotifiedAt: true },
     }),
   ]);
   if (!member) notFound();
@@ -143,6 +155,21 @@ export default async function SocioPage(props: {
           {debitPending === 1
             ? " — mientras siga vivo, se le va a seguir cobrando."
             : " — mientras sigan vivos, se le va a seguir cobrando."}
+        </FormMessage>
+      )}
+
+      {/* La ventana de recurso del Art. 9° bis d), mientras sigue abierta. En
+          NEUTRO y no en ámbar: no es un problema ni una tarea pendiente del
+          operador, es un derecho del vecino que todavía corre y que hay que
+          poder contestarle en el mostrador. El último día lo tiene entero — lo
+          decide `appealWindowOpen`, que comparte el comparador de plazos del
+          módulo. */}
+      {appealWindowOpen(appeal?.appealUntil ?? null) && appeal?.appealUntil && (
+        <FormMessage kind="neutral" box>
+          {`Baja recurrible hasta el ${formatDateAR(appeal.appealUntil)} inclusive: el socio puede recurrir esta baja ante la primera asamblea ordinaria (Art. 9° bis inc. d).`}
+          {appeal.withdrawalNotifiedAt && (
+            ` Se lo notificó fehacientemente el ${formatDateAR(appeal.withdrawalNotifiedAt)}.`
+          )}
         </FormMessage>
       )}
 

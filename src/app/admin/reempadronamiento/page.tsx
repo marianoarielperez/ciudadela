@@ -350,20 +350,28 @@ export default async function ReempadronamientoPage() {
           </FormMessage>
         )}
 
-        {/* TODO (M6 fase 6C): la pantalla de cierre —checklist, bajas por lote y
-            migración al libro nuevo— llega con esa fase. Hasta entonces el
-            control queda inerte a propósito: enlazarlo hoy sería un 404, y un
-            botón que no hace nada es peor que uno que dice por qué no. */}
+        {/* El cierre es de superadmin y sólo con la 2ª instancia VENCIDA. Las dos
+            condiciones se dibujan acá y las dos se vuelven a resolver del otro
+            lado: la ruta con `requireSuperadmin` y cada action además contra la
+            fila viva del proceso. Un botón deshabilitado no autoriza nada. */}
         <div className="flex flex-wrap items-center gap-3 border-t pt-4">
-          <Button type="button" variant="outline" size="lg" className="min-h-11 px-4" disabled>
-            Preparar cierre
-          </Button>
+          {superadmin && canClose ? (
+            <Button asChild variant="outline" size="lg" className="min-h-11 px-4">
+              <Link href="/admin/reempadronamiento/cierre">Preparar cierre</Link>
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" size="lg" className="min-h-11 px-4" disabled>
+              Preparar cierre
+            </Button>
+          )}
           <FormMessage kind="neutral" as="span" role="none">
-            {canClose
-              ? "El plazo ya venció; la pantalla de cierre del libro todavía no está disponible."
-              : process.secondEndsAt
-                ? `Se habilita al vencer la segunda instancia (${formatDateAR(process.secondEndsAt)}).`
-                : "Se habilita al vencer la segunda instancia."}
+            {!superadmin
+              ? "El cierre del libro lo prepara un superadministrador."
+              : canClose
+                ? "Checklist, bajas por no re-empadronarse y migración al libro nuevo."
+                : process.secondEndsAt
+                  ? `Se habilita al vencer la segunda instancia (${formatDateAR(process.secondEndsAt)}).`
+                  : "Se habilita al vencer la segunda instancia."}
           </FormMessage>
         </div>
       </Section>

@@ -9,7 +9,13 @@
 // archivo empieza donde ese termina: la etapa A (checklist) y la etapa C
 // (migración) del diseño §9. La aritmética de días hábiles no está ni acá ni
 // allá: es de la cartelera y vive en `src/lib/board/business-days.ts`.
-import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
+import type {
+  MemberCategory,
+  MemberStatus,
+  NotificationStatus,
+  NotificationType,
+  NotificationVia,
+} from "@/generated/prisma/client";
 import { civilDayOf } from "@/lib/treasury/periods";
 
 /** Una fila del libro viejo tal como la lee el caller para planificar. */
@@ -140,3 +146,46 @@ const BLOCKING_KINDS: readonly ClosePrecondition["kind"][] = [
 export function closeBlockers(pre: ClosePrecondition[]): ClosePrecondition[] {
   return pre.filter((p) => p.count > 0 && BLOCKING_KINDS.includes(p.kind));
 }
+
+/** Tope de convocados por lote de bajas. No sale del estatuto: sale del reloj, y
+ *  es el mismo argumento (y el mismo número) que el lote de cesantía por mora.
+ *
+ *  Cada baja del lote llama a `withdrawWithDebits`, que después del commit
+ *  cancela el débito automático en Mercado Pago —medido en ~1,2 s—. El lote
+ *  corre en serie dentro de una server action detrás de un Nginx con
+ *  `proxy_read_timeout`: uno que se pasa deja las bajas asentadas y pierde el
+ *  informe, que es lo único que dice a quién le quedó el débito vivo y a quién
+ *  no se pudo notificar.
+ *
+ *  Acá los adherentes NO pueden adherir débito (la categoría no lo habilita),
+ *  así que serán casi cero llamadas de red; el tope se mantiene igual porque el
+ *  camino tiene que quedar cubierto y porque veinticinco nombres ya son una
+ *  lista larga para leer antes de quitarle a alguien la condición de socio.
+ *
+ *  Vive en este módulo PURO y no en `withdrawals.ts` por una razón muy concreta:
+ *  la pantalla del lote es un componente de cliente, y `withdrawals.ts` arrastra
+ *  Prisma y el mailer. El número que la pantalla usa para cortar la selección
+ *  tiene que ser el MISMO que el que la acción revalida, así que no puede
+ *  copiarse: tiene que poder importarse desde los dos lados. */
+export const WITHDRAWAL_BATCH_MAX = 25;
+
+/** Una notificación cursada, tal como va al anexo del acta (REG-23). Es lo que
+ *  hace oponible la resolución: qué se le dijo al vecino, por qué vía y cuándo.
+ *
+ *  El tipo vive acá —puro, sin Prisma— porque lo consumen el dominio que lo
+ *  arma y la pantalla de cliente que lo dibuja. */
+export type NoticeTrace = {
+  type: NotificationType;
+  via: NotificationVia;
+  /** El estado importa y no es decorado: una fila `failed` registra un INTENTO,
+   *  no una acreditación (Art. 5° quater). El anexo no puede afirmar que a
+   *  alguien se lo notificó cuando el correo no salió. */
+  status: NotificationStatus;
+  /** Correo: la fecha del envío. Cartelera: la fecha en que el cartel se fijó. */
+  at: Date;
+  /** CUÁNDO QUEDÓ FEHACIENTE, que no es lo mismo según la vía. Por correo, al
+   *  enviarse. Por cartelera, al CUMPLIRSE los veinte días hábiles (`boardTo`),
+   *  nunca al fijarse el cartel. De esta fecha cuelga la ventana de recurso.
+   *  `null` en un cartel que todavía no se asentó. */
+  effectiveAt: Date | null;
+};

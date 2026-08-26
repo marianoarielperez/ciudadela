@@ -33,9 +33,7 @@ import type {
   BoardNoticeKind,
   Prisma,
   MemberCategory,
-  NotificationStatus,
   NotificationType,
-  NotificationVia,
   PresentationStatus,
   PrismaClient,
 } from "@/generated/prisma/client";
@@ -47,26 +45,18 @@ import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import type { WithdrawInput, DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import { withdrawWithDebits } from "@/lib/members/withdraw-with-debits";
 import { prisma } from "@/lib/prisma";
-import type { ClosePrecondition } from "./close";
+import type { ClosePrecondition, NoticeTrace } from "./close";
+import { WITHDRAWAL_BATCH_MAX } from "./close";
 import { appealUntil, COHORT_CATEGORY, COHORT_STATUSES, emailUsable, hasExpired } from "./rules";
 
-/** Tope de convocados por lote. No sale del estatuto: sale del reloj, y es el
- *  mismo argumento (y el mismo número) que el lote de cesantía por mora.
- *
- *  Cada baja de este lote llama a `withdrawWithDebits`, que después del commit
- *  cancela el débito automático en Mercado Pago —medido en ~1,2 s—. El lote
- *  corre en serie dentro de una server action detrás de un Nginx con
- *  `proxy_read_timeout`: un lote que se pasa deja las bajas asentadas y pierde
- *  el informe, que es lo único que dice a quién le quedó el débito vivo y a
- *  quién no se pudo notificar.
- *
- *  Acá los adherentes NO pueden adherir débito (la categoría no lo habilita),
- *  así que serán casi cero llamadas de red; el tope se mantiene igual porque el
- *  camino tiene que quedar cubierto y porque veinticinco nombres ya son una
- *  lista larga para leer antes de expulsar a alguien. Se define local y no se
- *  importa de tesorería: son dos dominios, y el día que uno de los dos tope
- *  cambie no tiene por qué arrastrar al otro. */
-export const WITHDRAWAL_BATCH_MAX = 25;
+/** El tope del lote y el tipo del anexo viven en el módulo PURO `./close` y se
+ *  re-exportan desde acá por comodidad del servidor. No pueden vivir en este
+ *  archivo: la pantalla del lote es un componente de CLIENTE y este módulo
+ *  arrastra Prisma y el mailer. El número con el que la pantalla corta la
+ *  selección tiene que ser el mismo que el que esta acción revalida, así que
+ *  tiene que poder importarse desde los dos lados. */
+export { WITHDRAWAL_BATCH_MAX } from "./close";
+export type { NoticeTrace } from "./close";
 
 /** REG-15 (Art. 9 inc. c): cuatro cuotas atrasadas habilitan la cesantía por
  *  mora, y sólo sobre socios activos y colaboradores —el adherente aporta
@@ -119,23 +109,6 @@ const PROCESS_NOTICE_TYPES = [
   "presentation_observed",
   "presentation_rejected",
 ] as const satisfies readonly NotificationType[];
-
-/** Una notificación cursada, tal como va al anexo del acta. */
-export type NoticeTrace = {
-  type: NotificationType;
-  via: NotificationVia;
-  /** El estado importa y no es decorado: una fila `failed` registra un INTENTO,
-   *  no una acreditación (Art. 5° quater). El anexo no puede afirmar que a
-   *  alguien se lo notificó cuando el correo no salió. */
-  status: NotificationStatus;
-  /** Correo: la fecha del envío. Cartelera: la fecha en que el cartel se fijó. */
-  at: Date;
-  /** CUÁNDO QUEDÓ FEHACIENTE, que no es lo mismo según la vía. Por correo, al
-   *  enviarse. Por cartelera, al CUMPLIRSE los veinte días hábiles (`boardTo`),
-   *  nunca al fijarse el cartel. De esta fecha cuelga la ventana de recurso.
-   *  `null` en un cartel que todavía no se asentó. */
-  effectiveAt: Date | null;
-};
 
 /** Un convocado al que le falta desenlace, con todo lo que el acta necesita
  *  decir de él. */
