@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
-  classifyNotice, CounterChips, nextStep, ProcessVerdict, UnnotifiedPanel,
-  type ProcessCountersView, type UnnotifiedRow,
+  boardAudience, BoardNoticesPanel, classifyNotice, CounterChips, nextStep, ProcessVerdict,
+  UnnotifiedPanel, type ProcessCountersView, type UnnotifiedRow,
 } from "@/app/admin/reempadronamiento/board-panels";
 import { daysLeftLabel, ProcessStepper, type StepperProcess } from "@/app/admin/reempadronamiento/process-stepper";
 import type { PresentationStatus } from "@/generated/prisma/client";
@@ -48,6 +48,21 @@ describe("daysLeftLabel", () => {
   });
 });
 
+/** El `<li>` que quedó marcado como etapa en curso, ACOTADO a ese elemento.
+ *
+ *  Partir por `aria-current="step"` y mirar todo el resto del documento no
+ *  alcanza: el resto contiene TODAS las etapas siguientes, así que la aserción
+ *  pasaba igual con la marca corrida una etapa —bastaba con que el texto
+ *  buscado apareciera más abajo—. Y ése es exactamente el modo de falla que
+ *  este archivo existe para impedir (de la etapa cuelga una baja). El corte va
+ *  del `<li` que trae la marca hasta su `</li>`: adentro de una etapa no hay
+ *  otra anidada. */
+function currentStage(html: string): string {
+  const item = html.split("<li").find((chunk) => chunk.includes('aria-current="step"'));
+  expect(item, "ninguna etapa quedó marcada como actual").toBeDefined();
+  return (item as string).split("</li>")[0];
+}
+
 describe("ProcessStepper", () => {
   it("marca la etapa en curso y muestra los días que faltan", () => {
     const html = render(createElement(ProcessStepper, { process: process(), daysLeft: 24 }));
@@ -60,7 +75,7 @@ describe("ProcessStepper", () => {
     expect(html).toContain("Cerrado");
     // Exactamente una etapa en curso, y es la primera instancia.
     expect(html.match(/aria-current="step"/g)).toHaveLength(1);
-    const current = html.split('aria-current="step"')[1];
+    const current = currentStage(html);
     expect(current).toContain("1ª instancia");
     expect(current).toContain("Faltan 24 días");
     // Las fechas asentadas, en la tipografía tabular del proyecto.
@@ -84,7 +99,7 @@ describe("ProcessStepper", () => {
       daysLeft: 6,
     }));
 
-    const current = html.split('aria-current="step"')[1];
+    const current = currentStage(html);
     expect(current).toContain("2ª instancia");
     expect(current).toContain("Faltan 6 días");
     expect(html).toContain("hasta el 11/10/2026");
@@ -96,7 +111,7 @@ describe("ProcessStepper", () => {
       daysLeft: null,
     }));
 
-    const current = html.split('aria-current="step"')[1];
+    const current = currentStage(html);
     expect(current).toContain("Cerrado");
     expect(html).not.toContain("Faltan");
     expect(html).not.toContain("Vence hoy");
@@ -214,6 +229,19 @@ describe("UnnotifiedPanel", () => {
     expect(html).toContain("no salió");
   });
 
+  it("no le atribuye una causa al que no dejó rastro de envío", () => {
+    // El que no dejó rastro puede ser un bloqueado por la lista de permitidos,
+    // un diferido por el tope… o un adherente al que le CARGARON el correo
+    // durante el plazo, que es lo que este módulo busca que pase y a quien
+    // nunca se le intentó un envío: a él le tocó el cartel. Afirmar "no salió
+    // por el tope" manda al operador a buscar una avería que no existe.
+    const html = render(createElement(UnnotifiedPanel, { rows, instanceLabel: "la convocatoria" }));
+
+    expect(html).toContain("no hay ningún rastro de envío");
+    expect(html).not.toContain("EMAIL_ALLOWLIST");
+    expect(html).not.toContain("tope de envíos");
+  });
+
   it("dice que estos NO entran en el cartel de la sede", () => {
     const html = render(createElement(UnnotifiedPanel, { rows, instanceLabel: "la convocatoria" }));
     expect(html).toContain("NO entran en el cartel");
@@ -224,5 +252,51 @@ describe("UnnotifiedPanel", () => {
 
     expect(html).toContain("Todos los convocados con casilla recibieron el aviso de la convocatoria.");
     expect(html).not.toContain('role="alert"');
+  });
+});
+
+describe("boardAudience", () => {
+  // El lote de cartelera se arma UNA vez y se imprime. Contarlo en vivo sobre
+  // el padrón da un número que BAJA solo a medida que los socios cargan su
+  // correo —que es el objetivo del módulo—, y termina por debajo de la nómina
+  // que está fijada en la pared de la sede.
+  it("el conteo sale del LOTE asentado, no del padrón de hoy", () => {
+    expect(boardAudience({ auditDetail: { boardCount: 100, cohortSize: 124 }, liveCount: 96 }))
+      .toEqual({ count: 100, fromBatch: true });
+  });
+
+  it("un cero asentado es un cero, no un dato que falta", () => {
+    expect(boardAudience({ auditDetail: { boardCount: 0 }, liveCount: 4 }))
+      .toEqual({ count: 0, fromBatch: true });
+  });
+
+  it("sin asiento utilizable cae al conteo en vivo Y LO DECLARA", () => {
+    // `detail` es un Json de Prisma: puede ser null, un número, un arreglo o
+    // traer basura. Ninguna de esas formas puede terminar en un número
+    // inventado en pantalla.
+    for (const auditDetail of [null, undefined, 3, "100", [1, 2], {}, { boardCount: "cien" }, { boardCount: -1 }, { boardCount: 1.5 }]) {
+      expect(boardAudience({ auditDetail, liveCount: 96 })).toEqual({ count: 96, fromBatch: false });
+    }
+  });
+});
+
+describe("BoardNoticesPanel", () => {
+  it("presenta el número del lote como lo que es", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [], audience: { count: 100, fromBatch: true },
+    }));
+
+    expect(html).toContain("El cartel se generó para");
+    expect(html).toContain(">100<");
+    expect(html).not.toContain("A hoy");
+  });
+
+  it("sin el asiento del lote, avisa que el número es el del padrón de hoy", () => {
+    const html = render(createElement(BoardNoticesPanel, {
+      notices: [], audience: { count: 96, fromBatch: false },
+    }));
+
+    expect(html).toContain("A hoy");
+    expect(html).toContain("puede ser menor que la nómina");
   });
 });

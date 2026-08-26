@@ -40,9 +40,15 @@ const STAGE_OF: Record<ReregistrationStatus, StageKey> = {
 
 const ORDER: StageKey[] = ["called", "first", "second", "closing", "closed"];
 
-/** Los días restantes en palabras. Exportada porque la usan también el veredicto
- *  y las acciones de fase: si el cartel de la línea dijera "faltan 3 días" y el
+/** Los días restantes en palabras. Está exportada y la usan, además de esta
+ *  línea, el VEREDICTO del tablero (`board-panels.tsx`) y el texto del botón de
+ *  las acciones de fase (`page.tsx` la arma y se la pasa a
+ *  `SecondInstanceForm`): si el cartel de la línea dijera "falta 1 día" y el
  *  botón dijera otra cosa, el operador no sabría a cuál creerle.
+ *
+ *  No es hipotético: el botón la reimplementaba a mano —`faltan ${n} días`— y
+ *  decía "faltan 1 días" al lado de "Falta 1 día", y "faltan 0 días" el día del
+ *  vencimiento, que es justo el día que el socio todavía tiene entero.
  *
  *  El 0 es "vence hoy" y NO "faltan 0 días": el día del vencimiento el socio lo
  *  tiene entero (es la misma lectura de `hasExpired`, que recién da vencido al

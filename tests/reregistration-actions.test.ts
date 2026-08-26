@@ -11,7 +11,7 @@
 // acta → ejecutar → COMPENSAR si falla. Un acta creada para un proceso que el
 // servicio rechazó es un asiento fantasma en un libro que la asociación
 // presenta ante la IGJ.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth/require-admin", () => ({ requireSuperadmin: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
@@ -29,6 +29,11 @@ vi.mock("@/lib/members/minute-form", async (orig) => ({
 }));
 vi.mock("@/lib/reregistration/service", () => ({
   LIVE_PROCESS_STATUSES: ["preparing", "first_instance", "second_instance", "closing"],
+  // Los nombres de las acciones de auditoría son los REALES: el tablero lee el
+  // asiento por ese string para saber a cuánta gente se le imprimió el cartel.
+  CALL_AUDIT_ACTION: "reregistration_call",
+  SECOND_AUDIT_ACTION: "reregistration_second",
+  PROCESS_AUDIT_ENTITY: "reregistration_process",
   reregistration: { activate: vi.fn(), startSecond: vi.fn() },
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
@@ -114,6 +119,16 @@ function secondForm(over: Record<string, string> = {}): FormData {
   for (const [k, v] of Object.entries({ processId: "3", ...over })) fd.set(k, v);
   return fd;
 }
+
+// EL RELOJ SE CONGELA. La convocatoria ya no acepta cualquier fecha: rechaza la
+// futura y la tan vieja que el plazo de treinta días nacería vencido. Sin fijar
+// "hoy", este archivo pasaría o fallaría según el día en que se corra, y las
+// fechas de los casos —todas alrededor del 01/09/2026— dejarían de significar
+// lo mismo. Sólo se falsea `Date`: no hay temporizadores en este camino y
+// falsearlos colgaría los `await`.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-09-01T15:00:00Z")); // 12:00 en Argentina
+afterAll(() => { vi.useRealTimers(); });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -235,6 +250,35 @@ describe("callProcessAction — camino feliz", () => {
 
     expect(state?.error).toBe("La fecha de la convocatoria no existe en el calendario.");
     expect(resolveMinuteId).not.toHaveBeenCalled();
+  });
+
+  it("rechaza una fecha futura: no se convoca lo que todavía no se resolvió", async () => {
+    // Sin tope, un año mal tipeado creaba un proceso con el plazo ya vencido y
+    // sin ninguna pantalla para cancelarlo.
+    const state = await callProcessAction({}, callForm({ calledAt: "2026-09-02" }));
+
+    expect(state?.error).toContain("entre 2020 y hoy");
+    expect(resolveMinuteId).not.toHaveBeenCalled();
+    expect(reregistration.activate).not.toHaveBeenCalled();
+  });
+
+  it("rechaza la fecha tan vieja que el proceso nacería vencido", async () => {
+    // 01/07/2026 + 30 días corridos = 31/07: la primera instancia ya habría
+    // vencido el día de la convocatoria.
+    const state = await callProcessAction({}, callForm({ calledAt: "2026-07-01" }));
+
+    expect(state?.error).toContain("ya estaría vencido");
+    expect(state?.error).toContain("31/07/2026");
+    expect(resolveMinuteId).not.toHaveBeenCalled();
+  });
+
+  it("acepta una convocatoria de días atrás cuyo plazo todavía corre", async () => {
+    // El acta puede cargarse unos días después de la reunión: eso no es un
+    // error, y el plazo sigue vivo.
+    const state = await callProcessAction({}, callForm({ calledAt: "2026-08-25" }));
+
+    expect(state?.error).toBeUndefined();
+    expect(reregistration.activate).toHaveBeenCalled();
   });
 
   it("pasa las dos fechas opcionales cuando vienen", async () => {

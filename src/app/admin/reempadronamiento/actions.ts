@@ -34,13 +34,18 @@ import { audit } from "@/lib/audit";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 import { parseCivilDate } from "@/lib/dates";
+import { formatDateAR } from "@/lib/format";
 import { parseForm } from "@/lib/forms";
 import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
 } from "@/lib/members/minute-form";
 import { requireOpenBook } from "@/lib/members/service";
 import { prisma } from "@/lib/prisma";
-import { LIVE_PROCESS_STATUSES, reregistration } from "@/lib/reregistration/service";
+import { firstEndsAt, hasExpired } from "@/lib/reregistration/rules";
+import {
+  CALL_AUDIT_ACTION, LIVE_PROCESS_STATUSES, PROCESS_AUDIT_ENTITY, reregistration, SECOND_AUDIT_ACTION,
+} from "@/lib/reregistration/service";
+import { civilDayOf } from "@/lib/treasury/periods";
 
 export type CallState = { error?: string };
 export type SecondState = { error?: string; ok?: boolean };
@@ -77,10 +82,36 @@ export async function callProcessAction(_prev: CallState, formData: FormData): P
   const parsed = parseForm(callSchema, formData);
   if (!parsed.ok) return { error: parsed.error };
 
+  // ── El TOPE de la fecha de convocatoria ───────────────────────────────────
+  // El regex del schema es sólo de forma. Sin tope, un año mal tipeado —el
+  // pasado en vez de éste— crea un proceso NACIDO VENCIDO: salen ciento y pico
+  // de correos anunciando un plazo que ya pasó, la acción de abrir la segunda
+  // instancia queda habilitada de entrada y no hay ninguna pantalla para
+  // cancelar un proceso. Se acota con la misma guarda compartida con la que ya
+  // se acota la fecha del ACTA en este mismo formulario (`parseMinuteDate`).
+  //
+  // Arriba, HOY: la Comisión no puede convocar algo que todavía no resolvió, y
+  // de esta fecha arranca el plazo de treinta días.
+  const today = civilDayOf();
   const called = parseCivilDate(parsed.data.calledAt, {
+    minYear: 2020,
+    maxDate: today,
     invalidError: "La fecha de la convocatoria no existe en el calendario.",
+    rangeError:
+      "La fecha de la convocatoria tiene que estar entre 2020 y hoy: no se puede convocar algo que todavía no se resolvió.",
   });
   if (!called.ok) return { error: called.error };
+  // Abajo, el plazo mismo, que ninguna cota de año atrapa: una fecha de hace más
+  // de treinta días deja la primera instancia vencida antes de empezar. Se arma
+  // con `firstEndsAt` —la misma función con la que el servicio asienta el
+  // plazo— y se pregunta con `hasExpired`, el único comparador de plazos del
+  // módulo: acá no se escribe una comparación propia.
+  const ends = firstEndsAt(called.value);
+  if (hasExpired(ends, today)) {
+    return {
+      error: `Con esa fecha el plazo de la primera instancia ya estaría vencido (venció el ${formatDateAR(ends)}). Revisá la fecha de la convocatoria.`,
+    };
+  }
   // Las dos opcionales se validan igual: una fecha imposible ("31/02") que
   // `civilDateUtc` rueda en silencio quedaría asentada como otro día, y de la
   // oficialización IGJ cuelga la cuenta regresiva de los 90 días del Art. 40.
@@ -145,8 +176,8 @@ export async function callProcessAction(_prev: CallState, formData: FormData): P
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actorId,
-    action: "reregistration_call",
-    entity: "reregistration_process",
+    action: CALL_AUDIT_ACTION,
+    entity: PROCESS_AUDIT_ENTITY,
     entityId: result.processId,
     // SIN NOMBRES NI DIRECCIONES (Ley 25.326): números de socio y conteos. Los
     // ids de los que quedaron sin aviso van igual porque son el rastro de a
@@ -208,8 +239,8 @@ export async function startSecondAction(_prev: SecondState, formData: FormData):
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actor.actorId,
-    action: "reregistration_second",
-    entity: "reregistration_process",
+    action: SECOND_AUDIT_ACTION,
+    entity: PROCESS_AUDIT_ENTITY,
     entityId: result.processId,
     detail: {
       secondEndsAt: result.secondEndsAt.toISOString(),

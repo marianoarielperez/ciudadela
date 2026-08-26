@@ -206,12 +206,15 @@ export function CounterChips({ byStatus }: { byStatus: Record<PresentationStatus
  *  - `sent`: quedó acreditado el envío (Art. 5° quater).
  *  - `failed`: se intentó y el SMTP lo rechazó. El mailer ya dejó la fila con el
  *    código; es lo único reintentable.
- *  - `no_trace`: tenía casilla y NO hay ninguna fila. O lo frenó
- *    `EMAIL_ALLOWLIST` (entorno de prueba: la guarda andando, no un fallo) o lo
- *    difirió el tope de correos. Y el diferido es el que queda en tierra de
- *    nadie: NO cae a la cartelera —la cartelera se arma con los que no tienen
- *    casilla— así que si nadie mira esta lista, ese vecino no se entera de nada
- *    con el plazo corriendo.
+ *  - `no_trace`: tiene casilla HOY y NO hay ninguna fila de esta instancia. Son
+ *    tres situaciones distintas y desde acá no se distinguen: lo frenó
+ *    `EMAIL_ALLOWLIST` (entorno de prueba: la guarda andando, no un fallo), lo
+ *    difirió el tope de correos, o no tenía casilla cuando salió el lote y se
+ *    la cargaron después —que es lo que este módulo busca que pase, y a ése le
+ *    tocó el cartel—. El diferido es el que queda en tierra de nadie: NO cae a
+ *    la cartelera —la cartelera se armó con los que no tenían casilla— así que
+ *    si nadie mira esta lista, ese vecino no se entera de nada con el plazo
+ *    corriendo. Por eso la fila se muestra igual y SIN afirmar una causa.
  *
  *  Es una función pura y exportada porque de acá cuelga una baja: el test la
  *  recorre caso por caso. */
@@ -240,9 +243,18 @@ export type UnnotifiedRow = {
   verdict: Exclude<NoticeVerdict, "board" | "sent">;
 };
 
+/** El motivo que se muestra al lado de cada nombre.
+ *
+ *  `no_trace` NO nombra una causa, porque la pantalla no la sabe: lo único que
+ *  le consta es que no hay ninguna fila de envío. Puede haberlo frenado
+ *  `EMAIL_ALLOWLIST`, puede haberlo diferido el tope de correos… o el socio
+ *  puede no haber tenido casilla cuando salió el lote y habérsela cargado
+ *  después —que es JUSTO lo que este módulo busca que pase—: a ése le tocó el
+ *  cartel de la sede y nunca se le intentó un correo. Afirmar "no salió por el
+ *  tope" lo mandaba al operador a buscar una avería que no existe. */
 const VERDICT_TEXT: Record<UnnotifiedRow["verdict"], string> = {
   failed: "el envío falló",
-  no_trace: "no salió (tope de envíos o EMAIL_ALLOWLIST)",
+  no_trace: "no salió: no hay ningún rastro de envío",
 };
 
 export function UnnotifiedPanel({ rows, instanceLabel }: {
@@ -256,8 +268,9 @@ export function UnnotifiedPanel({ rows, instanceLabel }: {
       title="Convocados sin aviso por correo"
       hint={
         <>
-          Tienen casilla cargada, así que NO entran en el cartel de la sede — el cartel se arma con
-          los que no tienen. Si nadie los atiende, se quedan sin enterarse con el plazo corriendo.
+          Hoy tienen casilla cargada y no hay constancia de que les haya llegado el aviso. Los que
+          ya la tenían al convocar NO entran en el cartel de la sede —el cartel se armó con los que
+          no tenían—, así que si nadie los atiende se quedan sin enterarse con el plazo corriendo.
         </>
       }
     >
@@ -303,23 +316,65 @@ export type BoardNoticeRow = {
   dueAt: Date | null;
 };
 
-export function BoardNoticesPanel({ notices, withoutMailbox }: {
+/** A cuánta gente alcanza el cartel de la sede, y DE DÓNDE sale ese número.
+ *
+ *  El lote de cartelera se arma UNA sola vez —al convocar y al abrir la 2ª
+ *  instancia—, con los que en ESE momento no tenían casilla utilizable, y se
+ *  imprime y se fija en la pared. Contarlo en vivo sobre el padrón da un número
+ *  que BAJA solo: el objetivo del módulo es que los socios carguen su correo, y
+ *  a cada uno al que se lo cargan durante el plazo desaparece de la cuenta
+ *  aunque su nombre esté en la nómina fijada en la sede. Hoy 100 de 124 no
+ *  tienen casilla, así que la deriva no es teórica.
+ *
+ *  El único registro durable del lote que existe hoy es el asiento de auditoría
+ *  de la convocatoria / de la apertura (`detail.boardCount`, escrito con el
+ *  conteo que devolvió el servicio). Si no está —`audit()` es best-effort— se
+ *  cae al conteo en vivo, pero entonces la pantalla DICE que es el de hoy en
+ *  vez de hacerlo pasar por el lote.
+ *
+ *  Pura y exportada: el asiento llega como `Json` de Prisma, que puede ser
+ *  cualquier cosa, y de leerlo mal sale un número inventado en pantalla. */
+export type BoardAudience = { count: number; fromBatch: boolean };
+
+export function boardAudience(input: { auditDetail: unknown; liveCount: number }): BoardAudience {
+  const detail = input.auditDetail;
+  if (typeof detail === "object" && detail !== null && !Array.isArray(detail)) {
+    const value = (detail as Record<string, unknown>).boardCount;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      return { count: value, fromBatch: true };
+    }
+  }
+  return { count: input.liveCount, fromBatch: false };
+}
+
+export function BoardNoticesPanel({ notices, audience }: {
   notices: BoardNoticeRow[];
-  /** Cohortados sin casilla utilizable: los destinatarios del cartel. Se cuenta
-   *  en vivo porque el aviso todavía no tiene filas de notificación — nacen
-   *  recién al asentar la fijación. */
-  withoutMailbox: number;
+  /** Los destinatarios del cartel: el lote que se generó si quedó asentado, o
+   *  el conteo en vivo si no. Ver `boardAudience`. */
+  audience: BoardAudience;
 }) {
+  const { count, fromBatch } = audience;
   return (
     <Section
       id="cartelera"
       title="Cartelera"
       hint={
-        <>
-          <span className={NUM}>{withoutMailbox}</span>{" "}
-          {withoutMailbox === 1 ? "convocado no tiene" : "convocados no tienen"} casilla utilizable:
-          se los notifica por el cartel de la sede (20 días hábiles, REG-10).
-        </>
+        fromBatch ? (
+          <>
+            El cartel se generó para <span className={NUM}>{count}</span>{" "}
+            {count === 1 ? "convocado sin casilla" : "convocados sin casilla"} utilizable: se los
+            notifica por el cartel de la sede (20 días hábiles, REG-10). Es el tamaño del lote que
+            se imprimió, y no baja si después se les carga el correo.
+          </>
+        ) : (
+          <>
+            A hoy, <span className={NUM}>{count}</span>{" "}
+            {count === 1 ? "convocado no tiene" : "convocados no tienen"} casilla utilizable: se los
+            notifica por el cartel de la sede (20 días hábiles, REG-10). El asiento del lote no
+            está, así que este número es el del padrón de hoy y puede ser menor que la nómina que se
+            fijó en la sede.
+          </>
+        )
       }
     >
       {/* TODO (M6 Task 13): el circuito completo —PDF imprimible, asiento de la

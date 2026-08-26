@@ -31,12 +31,15 @@ import { formatDateAR } from "@/lib/format";
 import { PROCESS_STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { canPrepareClose, hasExpired } from "@/lib/reregistration/rules";
-import { LIVE_PROCESS_STATUSES, reregistration } from "@/lib/reregistration/service";
 import {
-  BoardNoticesPanel, classifyNotice, CounterChips, ProcessVerdict, Section, UnnotifiedPanel,
-  type UnnotifiedRow,
+  CALL_AUDIT_ACTION, LIVE_PROCESS_STATUSES, PROCESS_AUDIT_ENTITY, reregistration,
+  SECOND_AUDIT_ACTION,
+} from "@/lib/reregistration/service";
+import {
+  boardAudience, BoardNoticesPanel, classifyNotice, CounterChips, ProcessVerdict, Section,
+  UnnotifiedPanel, type UnnotifiedRow,
 } from "./board-panels";
-import { ProcessStepper } from "./process-stepper";
+import { daysLeftLabel, ProcessStepper } from "./process-stepper";
 import { SecondInstanceForm } from "./second-instance-form";
 
 export const dynamic = "force-dynamic";
@@ -63,7 +66,7 @@ export default async function ReempadronamientoPage() {
     orderBy: { id: "desc" },
     select: {
       id: true, bookId: true, status: true, calledAt: true, firstEndsAt: true, secondEndsAt: true,
-      igjApprovedAt: true, estimatedElectionAt: true, callMinuteId: true,
+      igjApprovedAt: true, estimatedElectionAt: true, callMinuteId: true, createdAt: true,
       book: { select: { number: true } },
     },
   });
@@ -130,7 +133,7 @@ export default async function ReempadronamientoPage() {
   const noticeType: NotificationType = onSecond ? "reregistration_second" : "reregistration_first";
   const deadline = onSecond ? process.secondEndsAt : process.firstEndsAt;
 
-  const [counters, liveKey, rows, notices] = await Promise.all([
+  const [counters, liveKey, rows, notices, batchEntry] = await Promise.all([
     reregistration.counters(process.id),
     configReader.getString(CONFIG_KEYS.reregistrationProcessId),
     prisma.presentation.findMany({
@@ -141,7 +144,25 @@ export default async function ReempadronamientoPage() {
         member: {
           select: {
             id: true, fullName: true, email: true, emailStatus: true,
-            notifications: { where: { type: noticeType }, select: { status: true } },
+            // ACOTADAS A ESTE PROCESO. `Notification` no tiene columna de
+            // proceso, así que sin este piso el re-empadronamiento del Libro 2
+            // leería el aviso que ese mismo socio recibió en el del Libro 1
+            // —mismo `type`— y lo daría por avisado: el panel diría "todos los
+            // convocados con casilla recibieron el aviso" sin que se hubiera
+            // mandado uno solo. Falso negativo silencioso en el único panel que
+            // existe para que no haya falsos negativos, y justo en el segundo
+            // proceso, que es un requisito explícito del cliente.
+            //
+            // El piso es `createdAt` y NO `calledAt`: `calledAt` es una fecha
+            // CIVIL a mediodía UTC —las 09:00 de acá— y además puede ser
+            // anterior (es la fecha del acta), así que un aviso salido a las
+            // 08:00 del mismo día quedaría por debajo del piso y se perdería.
+            // `createdAt` es el instante en que se escribió la fila del proceso,
+            // y TODO aviso suyo sale después de ese commit.
+            notifications: {
+              where: { type: noticeType, sentAt: { gte: process.createdAt } },
+              select: { status: true },
+            },
             memberships: { where: { bookId: process.bookId }, select: { memberNumber: true } },
           },
         },
@@ -151,6 +172,19 @@ export default async function ReempadronamientoPage() {
       where: { processId: process.id },
       orderBy: { id: "asc" },
       select: { id: true, kind: true, postedAt: true, dueAt: true },
+    }),
+    // El asiento de la instancia en curso: de ahí sale el TAMAÑO DEL LOTE de
+    // cartelera que efectivamente se generó (`detail.boardCount`). Va por el
+    // índice `[entity, entityId]` de `audit_log`, igual que el aviso de
+    // solicitud revivida en `/admin/solicitudes/[id]`.
+    prisma.auditLog.findFirst({
+      where: {
+        action: onSecond ? SECOND_AUDIT_ACTION : CALL_AUDIT_ACTION,
+        entity: PROCESS_AUDIT_ENTITY,
+        entityId: String(process.id),
+      },
+      orderBy: { id: "desc" },
+      select: { detail: true },
     }),
   ]);
 
@@ -178,7 +212,13 @@ export default async function ReempadronamientoPage() {
       fullName: v.member.fullName,
       verdict: v.verdict as UnnotifiedRow["verdict"],
     }));
-  const withoutMailbox = verdicts.filter((v) => v.verdict === "board").length;
+  // Los destinatarios del cartel salen del LOTE asentado, no del padrón vivo:
+  // a cada adherente al que le cargan el correo durante el plazo el conteo en
+  // vivo lo descuenta, y la nómina impresa que está en la pared no cambia.
+  const audience = boardAudience({
+    auditDetail: batchEntry?.detail ?? null,
+    liveCount: verdicts.filter((v) => v.verdict === "board").length,
+  });
 
   // `hasExpired` y no una comparación propia: es el único comparador de plazos
   // del módulo, y compara día civil contra día civil (el día del vencimiento el
@@ -245,7 +285,7 @@ export default async function ReempadronamientoPage() {
         />
       )}
 
-      <BoardNoticesPanel notices={notices} withoutMailbox={withoutMailbox} />
+      <BoardNoticesPanel notices={notices} audience={audience} />
 
       <Section id="fases" title="Acciones de fase">
         {process.status === "first_instance" ? (
@@ -254,7 +294,10 @@ export default async function ReempadronamientoPage() {
             superadmin={superadmin}
             expired={expired}
             deadlineLabel={formatDateAR(process.firstEndsAt)}
-            daysLeftLabel={counters.daysLeft === null ? "" : `faltan ${counters.daysLeft} días`}
+            // LA MISMA función que la línea de proceso y el veredicto. Escrita
+            // a mano acá decía "faltan 1 días" y "faltan 0 días" — y el 0 no es
+            // "faltan 0": ese día el socio lo tiene entero.
+            daysLeftLabel={counters.daysLeft === null ? "" : daysLeftLabel(counters.daysLeft)}
           />
         ) : (
           <FormMessage kind="neutral" role="none">

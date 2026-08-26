@@ -72,6 +72,18 @@ export const LIVE_PROCESS_STATUSES = [
   "closing",
 ] as const satisfies readonly ReregistrationStatus[];
 
+/** Las dos acciones de auditoría del módulo y la entidad que las agrupa.
+ *
+ *  Se nombran acá, y no como literales en cada llamador, porque el asiento se
+ *  ESCRIBE en un lado y se LEE en otro: el tablero saca de `detail.boardCount`
+ *  el tamaño del lote de cartelera que efectivamente se generó (contarlo en
+ *  vivo sobre el padrón da un número que baja solo). Si el string se
+ *  desincroniza, el dato desaparece de la pantalla sin que nada falle — mismo
+ *  motivo por el que `APPROVED_AFTER_EXPIRY_ACTION` vive en `applications/query.ts`. */
+export const CALL_AUDIT_ACTION = "reregistration_call";
+export const SECOND_AUDIT_ACTION = "reregistration_second";
+export const PROCESS_AUDIT_ENTITY = "reregistration_process";
+
 /** Las seis claves del enum, para que los contadores nunca lleguen a la
  *  pantalla con un estado ausente en vez de un cero. */
 const PRESENTATION_STATUSES = [
