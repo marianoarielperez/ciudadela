@@ -7,7 +7,8 @@ import { makeMailer } from "@/lib/email";
 import {
   boardDigestEmail,
   feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
-  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite, receiptEmail,
+  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite,
+  presentationObservedEmail, presentationReceivedEmail, receiptEmail,
   reregistrationCallEmail, reregistrationSecondEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
@@ -52,6 +53,8 @@ describe("templates", () => {
       passwordResetEmail({ url: "https://x/r/t" }),
       reregistrationCallEmail({ url: "https://x/reempadronate", firstEndsAt: EXPIRES }),
       reregistrationSecondEmail({ url: "https://x/reempadronate", secondEndsAt: EXPIRES }),
+      presentationReceivedEmail({ url: "https://x/reempadronate/retomar/t", submittedAt: EXPIRES }),
+      presentationObservedEmail({ url: "https://x/reempadronate/retomar/t", observation: "Falta el dorso" }),
     ];
     for (const m of rendered) {
       expect(m.subject).toContain("Vecinal Ciudadela");
@@ -405,11 +408,53 @@ describe("templates", () => {
     }
   });
 
+  // La constancia es la PRUEBA del plazo: es lo que el socio puede mostrar si
+  // alguna vez se discute si se presentó dentro de los treinta días. Por eso
+  // lleva fecha Y hora, y por eso dice que hay que guardarla.
+  it("la constancia lleva la fecha y hora del envío y el enlace de retorno", () => {
+    const m = presentationReceivedEmail({
+      url: "https://x/reempadronate/retomar/tok",
+      submittedAt: EXPIRES,
+    });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate/retomar/tok");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("15:40");
+      expect(body).toContain("constancia");
+      // No nombra al socio, y la plantilla no puede recibir el nombre: el
+      // enlace ya es el secreto, y un dedazo en la dirección no puede regalar
+      // el nombre de quien se re-empadronó (Ley 25.326).
+      expect(body).not.toContain("Hola ");
+    }
+    expect(presentationReceivedEmail.length).toBe(1);
+  });
+
+  // La observación es lo único que le dice al vecino qué corregir: el texto del
+  // operador viaja TAL CUAL. Y tiene que decir que el plazo sigue corriendo,
+  // que es la diferencia entre subsanar a tiempo y una baja.
+  it("la observación lleva el pedido textual del operador y avisa que el plazo corre", () => {
+    const m = presentationObservedEmail({
+      url: "https://x/reempadronate/retomar/tok",
+      observation: "La foto del dorso salió movida & no se lee el domicilio",
+    });
+    expect(m.text).toContain("La foto del dorso salió movida & no se lee el domicilio");
+    // En el HTML el texto del operador se escapa como todo lo que entra desde
+    // la base: un "&" suelto rompería el markup.
+    expect(m.html).toContain("movida &amp; no se lee");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate/retomar/tok");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("sigue corriendo");
+    }
+  });
+
   it("las plantillas del re-empadronamiento escapan la url en el html", () => {
     const url = "https://x/reempadronate?a=1&b=2";
     for (const m of [
       reregistrationCallEmail({ url, firstEndsAt: EXPIRES }),
       reregistrationSecondEmail({ url, secondEndsAt: EXPIRES }),
+      presentationReceivedEmail({ url, submittedAt: EXPIRES }),
+      presentationObservedEmail({ url, observation: "Falta el dorso" }),
     ]) {
       expect(m.html).toContain("a=1&amp;b=2");
       expect(m.html).not.toContain("a=1&b=2");

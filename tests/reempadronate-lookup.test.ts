@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
     member: { findUnique: vi.fn() },
     configuration: { findUnique: vi.fn() },
     reregistrationProcess: { findUnique: vi.fn() },
+    // El `claim` de la llave: es lo único que la action escribe, y sólo en el
+    // camino positivo.
+    presentation: { updateMany: vi.fn() },
   },
   verifyTurnstile: vi.fn(),
   limiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
@@ -51,15 +54,17 @@ function form(entries: Record<string, string>): FormData {
 function memberRow(over: {
   category?: string;
   status?: string;
+  email?: string | null;
   presentation?: { status: string; email: string | null } | null;
 }) {
   const p = over.presentation === undefined ? { status: "pending", email: null } : over.presentation;
   return {
     id: 42,
     fullName: "Castillo Nestor",
+    email: over.email === undefined ? null : over.email,
     category: over.category ?? "adherent",
     status: over.status ?? "active",
-    presentations: p === null ? [] : [p],
+    presentations: p === null ? [] : [{ id: 5, ...p }],
   };
 }
 
@@ -78,6 +83,7 @@ beforeEach(() => {
     status: "first_instance",
   });
   mocks.prisma.member.findUnique.mockResolvedValue(null);
+  mocks.prisma.presentation.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("lookupAction — guardas", () => {
@@ -148,6 +154,9 @@ describe("lookupAction — guardas", () => {
     const arg = mocks.prisma.member.findUnique.mock.calls[0][0];
     expect(arg.where).toEqual({ dni: "28456757" });
     expect(arg.select.presentations.where).toEqual({ processId: PROCESS_ID });
+    // Sin fila de cohorte no hay nada que escribir: el camino negativo no toca
+    // la base más allá de la lectura.
+    expect(mocks.prisma.presentation.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -160,13 +169,57 @@ describe("lookupAction — veredictos", () => {
     expect(res).toEqual({
       kind: "eligible",
       maskedName: maskedName("Castillo Nestor"),
-      // La Task 11 lo reemplaza por el token real de la presentación.
-      presentationToken: "",
+      // La LLAVE de la presentación: 256 bits en base64url. Es lo único que
+      // dirige los pasos 2 a 4, y por eso ninguna action recibe jamás un id.
+      presentationToken: expect.stringMatching(/^[\w-]{40,}$/),
+      // La ficha no tenía email, así que no hay nada que precargar.
+      email: "",
     });
     // La garantía que importa: el nombre completo del padrón no viaja al
     // navegador de quien tipeó el DNI, ni siquiera adentro de otro campo.
     expect(JSON.stringify(res)).not.toContain("Castillo Nestor");
     expect(JSON.stringify(res)).not.toContain("Nestor");
+
+    // La llave se escribe SÓLO sobre una presentación editable: si la Comisión
+    // la validó entre el veredicto y el claim, no se entrega ninguna.
+    const claim = mocks.prisma.presentation.updateMany.mock.calls[0][0];
+    expect(claim.where.id).toBe(5);
+    expect(claim.where.status).toEqual({ in: ["pending", "observed"] });
+    // Se persiste el HASH y jamás el crudo: 64 hex de sha256.
+    expect(claim.data.resumeTokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(claim.data.resumeTokenHash).not.toBe(
+      (res as { presentationToken: string }).presentationToken,
+    );
+  });
+
+  // La ÚNICA precarga del camino del DNI (decisión 8). Todo lo demás se tipea
+  // de cero: precargar la fecha de nacimiento o el domicilio se los mostraría a
+  // quien tipeó un documento ajeno.
+  it("precarga el email, y NADA más del padrón", async () => {
+    mocks.prisma.member.findUnique.mockResolvedValue(
+      memberRow({ email: "vecino@ejemplo.com", presentation: { status: "pending", email: null } }),
+    );
+
+    const res = await lookupAction(IDLE, form({ dni: "28456757" }));
+
+    expect(res).toEqual({
+      kind: "eligible",
+      maskedName: maskedName("Castillo Nestor"),
+      presentationToken: expect.any(String),
+      email: "vecino@ejemplo.com",
+    });
+  });
+
+  it("si la Comisión resolvió la presentación en el medio, no se entrega llave", async () => {
+    mocks.prisma.member.findUnique.mockResolvedValue(memberRow({}));
+    // El `updateMany` del claim no encuentra fila editable.
+    mocks.prisma.presentation.updateMany.mockResolvedValue({ count: 0 });
+
+    // Sin llave no hay trámite posible, así que contesta el cartel genérico
+    // —el mismo que ve todo el mundo— y no uno propio.
+    expect(await lookupAction(IDLE, form({ dni: "28456757" }))).toStrictEqual({
+      kind: "not_found",
+    });
   });
 
   it("una presentación observada también pasa: se subsana por el wizard", async () => {
@@ -177,6 +230,9 @@ describe("lookupAction — veredictos", () => {
     const res = await lookupAction(IDLE, form({ dni: "28456757" }));
 
     expect(res.kind).toBe("eligible");
+    // Se prefiere el email de la PRESENTACIÓN —el que el propio vecino declaró
+    // y viene a corregir— antes que el de la ficha.
+    expect(res).toMatchObject({ email: "x@y.com" });
   });
 
   it("una presentación ya enviada no es un rechazo: va a la pantalla de estado", async () => {

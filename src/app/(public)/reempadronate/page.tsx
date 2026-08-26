@@ -57,16 +57,28 @@ export default async function ReempadronatePage() {
     );
   }
 
-  // Cacheada (tag `config`), a diferencia de la guarda de arriba: esto es
-  // DISPLAY —el teléfono y el email que se imprimen en el cartel genérico— y no
-  // decide si el trámite se puede hacer. Mismo criterio que /ubicacion.
-  const contact = await getContactInfo();
+  // El contacto va cacheado (tag `config`), a diferencia de la guarda de
+  // arriba: esto es DISPLAY —el teléfono y el email que se imprimen en el
+  // cartel genérico— y no decide si el trámite se puede hacer. Mismo criterio
+  // que /ubicacion.
+  //
+  // `loadOrder` viaja junto al nombre de la calle porque el combo del paso 2
+  // reusa `searchStreets`, que matchea también el código catastral —"1906"
+  // encuentra "Hernandez , Jose"— y ordena los empates por ese número.
+  const [contact, streets] = await Promise.all([
+    getContactInfo(),
+    prisma.street.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, loadOrder: true },
+    }),
+  ]);
 
   return (
     <main className="mx-auto w-full max-w-xl px-4 py-8 sm:py-12">
       <ReempadronateWizard
         siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? ""}
         contact={contact}
+        streets={streets}
       />
     </main>
   );

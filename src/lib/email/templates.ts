@@ -668,3 +668,78 @@ ${button(opts.url, "Re-empadronarme")}
 <p>Si ya te avisamos que tu re-empadronamiento quedó aprobado, ignorá este correo. Si te pedimos que corrijas algo, entrá por el enlace y completalo antes de esa fecha: mientras no esté aprobado, el plazo sigue corriendo.</p>`),
   };
 }
+
+/** LA CONSTANCIA del re-empadronamiento (M6 §5.3). Hace dos cosas a la vez, y
+ *  las dos importan:
+ *
+ *  1. Es el ACUSE con fecha y hora. `submittedAt` es lo único que acredita que
+ *     el socio se presentó dentro de los treinta días del Art. 9° bis, y de eso
+ *     cuelga su condición de socio: el correo se lo deja por escrito en su
+ *     buzón, que es lo que puede mostrar si alguna vez se discute el plazo. Por
+ *     eso lleva la hora y no sólo el día.
+ *  2. Lleva el ENLACE, que es la única forma de volver a ver la presentación.
+ *     El wizard entrega su llave contra un DNI —que no es autenticación—, así
+ *     que el acceso con datos vive acá: el buzón es lo que demuestra que la
+ *     presentación es suya.
+ *
+ *  No saluda por nombre a propósito: el enlace ya es un secreto y el nombre no
+ *  agrega nada que el destinatario no sepa, pero sí se lo regalaría a quien
+ *  reciba el correo por un dedazo en la dirección (Ley 25.326, docs/08). Mismo
+ *  criterio que `verificationEmail`. */
+export function presentationReceivedEmail(opts: { url: string; submittedAt: Date }): Rendered {
+  const when = formatDateTimeAR(opts.submittedAt);
+  const title = "Recibimos tu re-empadronamiento";
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `La ${ORG} recibió tu re-empadronamiento el ${when}.
+
+Guardá este correo: es la constancia de que te presentaste dentro del plazo.
+
+La Comisión Directiva va a revisar lo que cargaste. Si falta o hay que corregir algo, te vamos a escribir a esta misma dirección.
+
+Con este enlace podés volver a ver tu re-empadronamiento:
+
+${opts.url}
+
+Es un enlace personal: no se lo pases a nadie.${SIGNATURE}`,
+    html: layout(title, `<p>La ${esc(ORG)} recibió tu re-empadronamiento el <strong>${esc(when)}</strong>.</p>
+<p>Guardá este correo: es la constancia de que te presentaste dentro del plazo.</p>
+<p>La Comisión Directiva va a revisar lo que cargaste. Si falta o hay que corregir algo, te vamos a escribir a esta misma dirección.</p>
+${button(opts.url, "Ver mi re-empadronamiento")}
+<p>Es un enlace personal: no se lo pases a nadie.</p>`),
+  };
+}
+
+/** La OBSERVACIÓN: la Comisión revisó la presentación y necesita una
+ *  corrección (M6 §5.4, decisión 13 — las observaciones van siempre por email).
+ *
+ *  El texto de la observación lo escribe el operador y viaja tal cual: es lo
+ *  único que le dice al vecino qué tiene que arreglar, y resumirlo o
+ *  reformatearlo sería cambiarle el pedido. Va escapado en el HTML como todo lo
+ *  que entra desde la base.
+ *
+ *  Dice que el plazo SIGUE CORRIENDO porque es verdad y porque callarlo sería
+ *  la diferencia entre subsanar a tiempo y una baja: mientras la presentación
+ *  no esté validada, el Art. 9° bis cuenta igual. */
+export function presentationObservedEmail(opts: { url: string; observation: string }): Rendered {
+  const title = "Tenemos que pedirte una corrección";
+  return {
+    subject: `${title} en tu re-empadronamiento — Vecinal Ciudadela`,
+    text: `Revisamos tu re-empadronamiento en la ${ORG} y necesitamos que corrijas lo siguiente:
+
+${opts.observation}
+
+Entrá por este enlace, corregilo y volvé a enviarlo:
+
+${opts.url}
+
+Vas a encontrar tus datos como los cargaste: sólo tenés que cambiar lo que te pedimos.
+
+Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.${SIGNATURE}`,
+    html: layout(title, `<p>Revisamos tu re-empadronamiento en la ${esc(ORG)} y necesitamos que corrijas lo siguiente:</p>
+<p style="border-left:3px solid #0079BC;padding-left:12px;margin:16px 0">${esc(opts.observation)}</p>
+${button(opts.url, "Corregir mi re-empadronamiento")}
+<p>Vas a encontrar tus datos como los cargaste: sólo tenés que cambiar lo que te pedimos.</p>
+<p>Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`),
+  };
+}

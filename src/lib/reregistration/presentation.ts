@@ -25,133 +25,28 @@
 // El cliente de Prisma se INYECTA: el módulo se prueba entero sin base. El
 // singleton se arma al final del archivo, como en `applications/service.ts`.
 import { randomBytes } from "node:crypto";
-import type {
-  DocumentType,
-  PresentationStatus,
-  PrismaClient,
-  ReregistrationStatus,
-} from "@/generated/prisma/client";
+import type { DocumentType, PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hashToken } from "@/lib/tokens";
-import { wizardOpen } from "./rules";
+// Las reglas puras viven aparte para que el WIZARD (cliente) pueda importarlas
+// sin arrastrar el cliente de Prisma al navegador. Se re-exportan acá para que
+// el server siga teniendo una sola puerta.
+import {
+  DATA_FIELDS,
+  EDITABLE_STATUSES,
+  editabilityOf,
+  LINK_DEAD,
+  NOT_EDITABLE,
+  presentationDataComplete,
+  presentationDocsComplete,
+  SETTLED_STATUSES,
+  type PresentationData,
+  type PresentationView,
+} from "./presentation-rules";
 
-/** Tope de anexos por presentación (mismo número que el alta web). Lo APLICA la
- *  action contando las filas ya guardadas; acá vive el número para que la
- *  pantalla y el server citen el mismo. */
-export const PRESENTATION_MAX_ANNEXES = 2;
+export * from "./presentation-rules";
 
-/** Los estados desde los que el VECINO todavía puede tocar su presentación.
- *
- *  Se enumeran en vez de escribir `!== "validated"`: un estado nuevo en el enum
- *  queda afuera hasta que alguien decida a mano que entra, y fallar hacia
- *  "no se puede editar" es un cartel, mientras que fallar al revés sería dejar
- *  reabrir por la web algo que la Comisión ya resolvió. */
-export const EDITABLE_STATUSES = [
-  "pending",
-  "observed",
-] as const satisfies readonly PresentationStatus[];
-
-/** Los estados en los que la presentación YA está presentada y no hay nada que
- *  volver a enviar. Un segundo `submit` sobre uno de éstos contesta ok
- *  idempotente en vez de un error que asustaría al vecino que hizo doble clic. */
-const SETTLED_STATUSES = ["submitted", "validated"] as const satisfies readonly PresentationStatus[];
-
-const LINK_DEAD =
-  "No encontramos tu re-empadronamiento: el enlace puede estar incompleto o haber sido reemplazado por uno más nuevo. Revisá el último correo que te mandamos.";
-const NOT_EDITABLE =
-  "Tu re-empadronamiento ya fue resuelto por la Comisión, así que no se puede modificar desde acá. Si necesitás corregir algo, acercate a la sede vecinal.";
-const PROCESS_CLOSED =
-  "El plazo del re-empadronamiento venció y ya no se pueden recibir presentaciones por la web. Acercate a la sede vecinal.";
-
-/** Los datos declarados de la ficha, sin el nombre.
- *
- *  El nombre NO está y no es un olvido: es el ancla de identidad de la ficha, y
- *  con una identificación tan liviana como un DNI dejarlo editar permitiría
- *  apropiarse de la ficha de otro. Las correcciones de nombre se hacen en la
- *  sede (decisión 9). */
-export type PresentationData = {
-  birthDate: Date | null;
-  civilStatus: string | null;
-  nationality: string | null;
-  occupation: string | null;
-  streetId: number | null;
-  streetText: string | null;
-  streetNumber: string | null;
-  neighborhood: string | null;
-  phone: string | null;
-  email: string | null;
-};
-
-const DATA_FIELDS = [
-  "birthDate",
-  "civilStatus",
-  "nationality",
-  "occupation",
-  "streetId",
-  "streetText",
-  "streetNumber",
-  "neighborhood",
-  "phone",
-  "email",
-] as const satisfies readonly (keyof PresentationData)[];
-
-export type PresentationView = {
-  id: number;
-  memberId: number;
-  status: PresentationStatus;
-  observation: string | null;
-  submittedAt: Date | null;
-  validatedAt: Date | null;
-  processId: number;
-  processStatus: ReregistrationStatus;
-  data: PresentationData;
-  /** Con repetidos: `annex` puede aparecer hasta PRESENTATION_MAX_ANNEXES veces. */
-  uploadedTypes: DocumentType[];
-};
-
-type Ok = { ok: true };
 type Err = { ok: false; error: string };
-
-/** Completitud documental del re-empadronamiento. PURA a propósito: la
- *  consumen la pantalla (para habilitar "Continuar" y decir qué falta) y el
- *  envío (que no puede confiar en el cliente). Que sea la misma función en las
- *  dos puntas es lo que garantiza que el botón no habilite algo que el server
- *  va a rechazar.
- *
- *  NO se reusa `requiredDocsComplete` de las solicitudes de alta: aquella pide
- *  el anexo cuando la CATEGORÍA pedida es colaborador, y acá no se pide ninguna
- *  categoría — la cohorte es toda adherente y el anexo del domicilio es el
- *  respaldo del Art. 5.3, siempre opcional. Compartir la función obligaría a
- *  inventarle una categoría a la presentación.
- *
- *  Devuelve UN pendiente por vez, en el orden en que la pantalla los pide: el
- *  mensaje va debajo del botón y dos reclamos juntos se leen como un muro. */
-export function presentationDocsComplete(docs: Array<{ type: DocumentType }>): Ok | Err {
-  const types = new Set(docs.map((d) => d.type));
-  if (!types.has("dni_front")) return { ok: false, error: "Falta la foto del frente del DNI." };
-  if (!types.has("dni_back")) return { ok: false, error: "Falta la foto del dorso del DNI." };
-  return { ok: true };
-}
-
-/** Completitud de la ficha declarada. Misma lógica de una-por-vez que la de
- *  documentos, y misma razón de ser: la usa el paso 4 para habilitar el envío y
- *  el server para aceptarlo.
- *
- *  El email es OBLIGATORIO por decisión del operador (decisión 4): el
- *  re-empadronamiento constituye el domicilio electrónico del Art. 5° ter, que
- *  es la vía por la que la asociación notifica. Sin él, la observación y la
- *  baja no tendrían dónde llegar. */
-export function presentationDataComplete(data: PresentationData): Ok | Err {
-  if (!data.birthDate) return { ok: false, error: "Falta tu fecha de nacimiento." };
-  if (!data.civilStatus) return { ok: false, error: "Falta tu estado civil." };
-  if (!data.nationality) return { ok: false, error: "Falta tu nacionalidad." };
-  if (!data.occupation) return { ok: false, error: "Falta tu ocupación." };
-  if (!data.streetId && !data.streetText) return { ok: false, error: "Falta tu calle." };
-  if (!data.streetNumber) return { ok: false, error: "Falta la altura de tu domicilio." };
-  if (!data.phone) return { ok: false, error: "Falta tu teléfono." };
-  if (!data.email) return { ok: false, error: "Falta tu email." };
-  return { ok: true };
-}
 
 type Db = Pick<PrismaClient, "presentation" | "document">;
 
@@ -209,6 +104,25 @@ export function makePresentations(db: Db) {
     return docs.map((d) => d.type);
   }
 
+  /** Lectura sin efectos, en una función local para que `openForEdit` la llame
+   *  sin pasar por `this` (un método desestructurado perdería el receptor). */
+  async function viewByToken(raw: string): Promise<PresentationView | null> {
+    const row = await rowByToken(raw);
+    if (!row) return null;
+    return {
+      id: row.id,
+      memberId: row.memberId,
+      status: row.status,
+      observation: row.observation,
+      submittedAt: row.submittedAt,
+      validatedAt: row.validatedAt,
+      processId: row.process.id,
+      processStatus: row.process.status,
+      data: pickData(row),
+      uploadedTypes: await docTypesOf(row.id),
+    };
+  }
+
   return {
     /** La llave que sostiene la sesión del wizard, entregada al confirmar el
      *  nombre enmascarado del paso 1.
@@ -244,10 +158,8 @@ export function makePresentations(db: Db) {
     }): Promise<({ ok: true; presentationId: number }) | Err> {
       const row = await rowByToken(input.token);
       if (!row) return { ok: false, error: LINK_DEAD };
-      if (!(EDITABLE_STATUSES as readonly string[]).includes(row.status)) {
-        return { ok: false, error: NOT_EDITABLE };
-      }
-      if (!wizardOpen(row.process)) return { ok: false, error: PROCESS_CLOSED };
+      const editable = editabilityOf({ status: row.status, processStatus: row.process.status });
+      if (!editable.ok) return editable;
 
       // UPDATE condicional por estado (patrón `tokens.consume`): entre la
       // lectura de arriba y esta escritura el operador puede haber validado la
@@ -281,10 +193,8 @@ export function makePresentations(db: Db) {
           firstSubmission: false,
         };
       }
-      if (!(EDITABLE_STATUSES as readonly string[]).includes(row.status)) {
-        return { ok: false, error: NOT_EDITABLE };
-      }
-      if (!wizardOpen(row.process)) return { ok: false, error: PROCESS_CLOSED };
+      const editable = editabilityOf({ status: row.status, processStatus: row.process.status });
+      if (!editable.ok) return editable;
 
       const data = pickData(row);
       const complete = presentationDataComplete(data);
@@ -326,21 +236,24 @@ export function makePresentations(db: Db) {
      *  consume: es la llave de la presentación mientras viva, no un vale de un
      *  solo uso, así que el escáner de enlaces de un cliente de correo que abra
      *  la URL antes que la persona no rompe nada. */
-    async findByToken(raw: string): Promise<PresentationView | null> {
-      const row = await rowByToken(raw);
-      if (!row) return null;
-      return {
-        id: row.id,
-        memberId: row.memberId,
-        status: row.status,
-        observation: row.observation,
-        submittedAt: row.submittedAt,
-        validatedAt: row.validatedAt,
-        processId: row.process.id,
-        processStatus: row.process.status,
-        data: pickData(row),
-        uploadedTypes: await docTypesOf(row.id),
-      };
+    findByToken(raw: string): Promise<PresentationView | null> {
+      return viewByToken(raw);
+    },
+
+    /** La presentación de un token, ya verificada como editable. Es lo que usa
+     *  la subida de documentos: necesita el id para nombrar la carpeta y no
+     *  puede aceptar un archivo para algo que la Comisión ya resolvió o para un
+     *  proceso cuyo plazo venció. Comparte `editabilityOf` con las otras dos
+     *  escrituras, así que las tres abren y cierran juntas. */
+    async openForEdit(raw: string): Promise<({ ok: true; view: PresentationView }) | Err> {
+      const view = await viewByToken(raw);
+      if (!view) return { ok: false, error: LINK_DEAD };
+      const editable = editabilityOf({
+        status: view.status,
+        processStatus: view.processStatus,
+      });
+      if (!editable.ok) return editable;
+      return { ok: true, view };
     },
 
     /** Acuñar SIN tocar la base. Es la primera mitad del reenvío por correo: si

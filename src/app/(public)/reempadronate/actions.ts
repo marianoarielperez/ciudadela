@@ -20,11 +20,19 @@
 // 25/08/2026): re-empadronarse no ofrece pagar, ni adherir débito, ni cambiar
 // montos. Nada de este archivo toca el circuito de plata.
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { z } from "zod";
-import { reregistrationLookupLimiter } from "@/lib/auth/rate-limiter";
+import { publicTokenLimiter, reregistrationLookupLimiter, reregistrationResendLimiter } from "@/lib/auth/rate-limiter";
+import { audit } from "@/lib/audit";
+import { parseCivilDate } from "@/lib/dates";
+import { documentStore, MAX_DOCUMENT_BYTES } from "@/lib/documents/storage";
+import { mailer } from "@/lib/email";
+import { presentationReceivedEmail } from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
 import { prisma } from "@/lib/prisma";
 import { openWizardProcess } from "@/lib/reregistration/current";
+import { civilTodayAr } from "@/lib/applications/wizard";
+import { presentations, PRESENTATION_MAX_ANNEXES } from "@/lib/reregistration/presentation";
 import { lookupVerdict } from "@/lib/reregistration/rules";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -33,13 +41,14 @@ import { verifyTurnstile } from "@/lib/turnstile";
 // propio tipo estructural equivalente en `wizard-shared.ts`.
 type LookupState =
   | { kind: "idle" }
-  | { kind: "eligible"; maskedName: string; presentationToken: string }
+  | { kind: "eligible"; maskedName: string; presentationToken: string; email: string }
   | { kind: "already_submitted"; canResend: boolean }
   | { kind: "not_found" }
   | { kind: "error"; error: string };
 
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
+const BAD_BIRTH_DATE = "La fecha de nacimiento no es válida.";
 const PROCESS_CLOSED =
   "En este momento no hay un proceso de re-empadronamiento en curso. Si creés que sí, acercate a la sede vecinal.";
 
@@ -114,9 +123,13 @@ export async function lookupAction(_prev: LookupState, formData: FormData): Prom
       fullName: true,
       category: true,
       status: true,
+      // El email de la ficha viaja porque es la ÚNICA precarga que el paso 2
+      // hace por el camino del DNI (decisión 8). Ver el comentario del
+      // veredicto `eligible`, que explica por qué es el único dato que sale.
+      email: true,
       presentations: {
         where: { processId: activeProcess.id },
-        select: { status: true, email: true },
+        select: { id: true, status: true, email: true },
         // La unique (`processId`, `memberId`) ya garantiza que hay a lo sumo
         // una; el take es para que el tipo sea el que es.
         take: 1,
@@ -135,28 +148,448 @@ export async function lookupAction(_prev: LookupState, formData: FormData): Prom
     presentation: member?.presentations[0] ?? null,
   });
 
+  const row = member?.presentations[0] ?? null;
+
   switch (verdict.kind) {
-    case "eligible":
+    case "eligible": {
+      // La LLAVE de la sesión. Se acuña acá —y no al guardar el paso 2— porque
+      // desde este punto todo lo que el vecino haga se dirige con ella: el
+      // formulario nunca manda un id de presentación, así que el cliente no
+      // puede apuntar a la de otro (mismo criterio que el token de retome de
+      // ASOCIATE en los pasos 4 y 5).
+      //
+      // Rota en cada entrega, y eso tiene una consecuencia que hay que decir:
+      // si el vecino tenía una presentación OBSERVADA y un enlace vivo en su
+      // correo, este claim lo mata. Es el precio de que viva una sola llave, y
+      // el reenvío del paso 1 —o el correo de la próxima observación— le da una
+      // nueva. El riesgo de fondo es el ACEPTADO por la decisión 8: el DNI no
+      // es autenticación, así que quien tipee uno ajeno se lleva una llave. Lo
+      // acotan el captcha, el cupo de 5/15 min y que por este camino la
+      // pantalla no precargue NADA guardado salvo el email.
+      const claimed = row ? await presentations.claim({ presentationId: row.id }) : null;
+      // Sin llave no hay trámite posible: pasa si la Comisión resolvió la
+      // presentación entre el veredicto y el claim. Se contesta el cartel
+      // genérico, que es el mismo que ve todo el mundo.
+      if (!claimed) return { kind: "not_found" };
       return {
         kind: "eligible",
         maskedName: verdict.maskedName,
-        // Vacío a propósito: el token de la presentación lo acuña la Task 11
-        // junto con el paso 2 (patrón `mintResumeToken → enviar → commit` de
-        // `applications/service.ts`). Acá todavía no hay nada que retomar, y
-        // acuñarlo antes dejaría un token vivo colgado de una presentación que
-        // nadie empezó.
-        presentationToken: "",
+        presentationToken: claimed.raw,
+        // La ÚNICA precarga por este camino (decisión 8): el email. Todo lo
+        // demás se tipea de cero, porque precargar la fecha de nacimiento o el
+        // domicilio se los mostraría a quien tipeó un DNI ajeno. Se prefiere el
+        // de la presentación —el que el propio vecino declaró y está por
+        // corregir— y si no, el de la ficha.
+        email: row?.email ?? member?.email ?? "",
       };
+    }
     case "already_submitted":
       return {
         kind: "already_submitted",
         // Si la presentación no dejó email no hay a dónde reenviar el enlace, y
         // la pantalla tiene que decirlo en vez de ofrecer un botón que no puede
-        // funcionar. La action de reenvío la suma la Task 11
-        // (`reregistrationResendLimiter` ya está reservado).
-        canResend: Boolean(member?.presentations[0]?.email),
+        // funcionar.
+        canResend: Boolean(row?.email),
       };
     case "not_found":
       return { kind: "not_found" };
+  }
+}
+
+// ── Pasos 2 a 4: operan sobre una presentación que YA existe ─────────────────
+//
+// Acá no hay Turnstile, y es la misma decisión que en los pasos 4 y 5 de
+// ASOCIATE: el captcha ya se pagó en el paso 1, y estas tres actions se
+// autentican con la LLAVE de la presentación, que son 256 bits de `randomBytes`
+// y no se enumeran. El precedente del proyecto está en CLAUDE.md: las rutas que
+// se abren con un token de un solo uso no llevan captcha porque el token ya es
+// la barrera. Lo que las protege es otra cosa:
+//
+//   1. La LLAVE dice sobre qué presentación se opera. Nunca llega un id por el
+//      formulario: el cliente no puede apuntar a la presentación de otro.
+//   2. El ESTADO —de la presentación y de SU proceso— dice qué se puede hacer.
+//      Lo decide `editabilityOf`, la misma función para las tres.
+//   3. El cupo por IP (`publicTokenLimiter`) raciona el martilleo de los POST.
+//
+// Y todo lo que el botón habilita se revalida en el server con la MISMA función
+// pura: un POST armado a mano no pasa por ningún botón.
+
+const DOC_TYPES = ["dni_front", "dni_back", "annex"] as const;
+
+const LINK_DEAD =
+  "No encontramos tu re-empadronamiento: el enlace puede estar incompleto o haber sido reemplazado por uno más nuevo. Volvé a empezar desde la página de re-empadronamiento.";
+
+type SaveState = { error?: string; saved?: true };
+type UploadState = { error?: string; uploaded?: { type: string; count: number } };
+type SubmitState = { error?: string; done?: { submittedAt: string; mailed: boolean } };
+type ResendState = { error?: string; done?: boolean };
+
+// Respuesta única del reenvío: la misma exista o no la presentación.
+const RESEND_DONE: ResendState = { done: true };
+
+/** Los datos del paso 2 (§5.2). El NOMBRE no está: es el ancla de identidad de
+ *  la ficha y con un DNI por toda credencial, dejarlo editar permitiría
+ *  apropiarse de la ficha de otro. Las correcciones de nombre van por la sede.
+ *
+ *  Los anchos son los de `Member`/`Presentation`, no números elegidos acá: un
+ *  string más largo que la columna termina en un error de base y no en un
+ *  mensaje que el vecino pueda entender. */
+const dataSchema = z.object({
+  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ingresá tu fecha de nacimiento"),
+  civilStatus: z
+    .string()
+    .min(1, "Elegí tu estado civil")
+    .max(40, "El estado civil no puede superar los 40 caracteres"),
+  nationality: z
+    .string()
+    .min(1, "Ingresá tu nacionalidad")
+    .max(60, "La nacionalidad no puede superar los 60 caracteres"),
+  occupation: z
+    .string()
+    .min(1, "Ingresá tu ocupación")
+    .max(80, "La ocupación no puede superar los 80 caracteres"),
+  streetId: z.coerce
+    .number({ error: "Elegí tu calle del listado." })
+    .int()
+    .positive("Elegí tu calle del listado."),
+  streetNumber: z
+    .string()
+    .min(1, "Ingresá la altura")
+    .max(10, "La altura no puede superar los 10 caracteres"),
+  neighborhood: z
+    .string()
+    .min(1, "Elegí tu barrio")
+    .max(60, "El barrio no puede superar los 60 caracteres"),
+  phone: z
+    .string()
+    .min(6, "Ingresá tu teléfono")
+    .max(40, "El teléfono no puede superar los 40 caracteres"),
+  email: z.email("Ingresá un email válido").max(191, "El email no puede superar los 191 caracteres"),
+  emailConfirm: z.string().min(1, "Repetí tu email"),
+});
+
+function baseUrl(): string {
+  return process.env.AUTH_URL ?? "http://localhost:3000";
+}
+
+/** La URL de retorno de una presentación. En una sola función porque la arman
+ *  la constancia, el reenvío y —en la task siguiente— el correo de observación:
+ *  mandar el token a una ruta equivocada le daría al vecino un enlace muerto.
+ *  Mismo criterio que `verifyUrl` en las plantillas. */
+function resumeUrl(raw: string): string {
+  return `${baseUrl()}/reempadronate/retomar/${raw}`;
+}
+
+// Los errores de nodemailer traen `envelope` y el `response` del SMTP, o sea la
+// dirección en claro, y el log de PM2 no está cubierto por los cuidados de
+// docs/08 (Ley 25.326). Al log va sólo el código.
+function codeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && "code" in e
+    ? String((e as { code: unknown }).code)
+    : "unknown";
+}
+
+/** El cupo de los POST con llave. Se consulta ANTES de tocar la base, igual que
+ *  en ASOCIATE. */
+async function tokenBudget(): Promise<string | null> {
+  const ip = await clientIp();
+  return publicTokenLimiter.check(ip) ? null : TOO_MANY;
+}
+
+export async function savePresentationDataAction(
+  _prev: SaveState,
+  formData: FormData,
+): Promise<SaveState> {
+  const overBudget = await tokenBudget();
+  if (overBudget) return { error: overBudget };
+
+  const token = String(formData.get("token") ?? "");
+  if (!token) return { error: LINK_DEAD };
+
+  const parsed = parseForm(dataSchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const data = parsed.data;
+
+  // La confirmación del email existe por lo mismo que en ASOCIATE: un dedazo en
+  // la dirección no se nota hasta que la constancia no llega, y acá esa
+  // dirección ES el domicilio electrónico del Art. 5° ter — la vía por la que
+  // se notifica una observación y, llegado el caso, la baja.
+  const email = data.email.toLowerCase();
+  if (email !== data.emailConfirm.toLowerCase()) {
+    return { error: "Los dos emails no coinciden: revisá el tipeo." };
+  }
+
+  // El día civil ARGENTINO, no el UTC del server: a las 21:30 de acá el server
+  // ya está en el día siguiente y una fecha de hoy se rechazaría por futura.
+  const birth = parseCivilDate(data.birthDate, {
+    invalidError: BAD_BIRTH_DATE,
+    maxDate: civilTodayAr(),
+    rangeError: BAD_BIRTH_DATE,
+  });
+  if (!birth.ok) return { error: birth.error };
+
+  const saved = await presentations.saveData({
+    token,
+    data: {
+      birthDate: birth.value,
+      civilStatus: data.civilStatus,
+      nationality: data.nationality,
+      occupation: data.occupation,
+      // El domicilio del re-empadronamiento sale SIEMPRE del catálogo
+      // catastral: la cohorte es de adherentes, que por el Art. 5 viven en el
+      // barrio. `streetText` se limpia por si la ficha traía una calle libre de
+      // la carga desde papel.
+      streetId: data.streetId,
+      streetText: null,
+      streetNumber: data.streetNumber,
+      neighborhood: data.neighborhood,
+      phone: data.phone,
+      email,
+    },
+  });
+  if (!saved.ok) return { error: saved.error };
+  return { saved: true };
+}
+
+export async function uploadPresentationDocumentAction(
+  _prev: UploadState,
+  formData: FormData,
+): Promise<UploadState> {
+  const overBudget = await tokenBudget();
+  if (overBudget) return { error: overBudget };
+
+  const token = String(formData.get("token") ?? "");
+  if (!token) return { error: LINK_DEAD };
+  const open = await presentations.openForEdit(token);
+  if (!open.ok) return { error: open.error };
+  const presentationId = open.view.id;
+
+  const docType = String(formData.get("docType") ?? "");
+  if (!(DOC_TYPES as readonly string[]).includes(docType)) {
+    return { error: "Tipo de documento inválido." };
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Elegí un archivo." };
+  // El tope se chequea acá ADEMÁS de en el store: sin esto, un archivo de 30 MB
+  // se lee entero a memoria antes de que nadie lo rechace.
+  if (file.size > MAX_DOCUMENT_BYTES) {
+    return { error: "El archivo supera el máximo de 10 MB. Probá con una foto de menor calidad." };
+  }
+
+  // El tope de anexos vive acá y no en el store: el store no sabe de wizard, y
+  // los otros dos tipos se REEMPLAZAN (re-subir el frente no acumula versiones).
+  // Se cuenta contra la base y no contra `open.view.uploadedTypes` por lo mismo
+  // que en ASOCIATE: dos subidas simultáneas leen la misma vista.
+  if (docType === "annex") {
+    const annexes = await prisma.document.count({
+      where: { ownerType: "presentation", ownerId: presentationId, type: "annex" },
+    });
+    if (annexes >= PRESENTATION_MAX_ANNEXES) {
+      return {
+        error: `Ya subiste los ${PRESENTATION_MAX_ANNEXES} archivos permitidos. Si necesitás cambiar uno, acercate a la sede.`,
+      };
+    }
+  }
+
+  try {
+    await documentStore.savePresentationDocument({
+      presentationId,
+      type: docType as (typeof DOC_TYPES)[number],
+      data: Buffer.from(await file.arrayBuffer()),
+    });
+  } catch (e) {
+    // El store tira mensajes en castellano para lo que el vecino PUEDE arreglar
+    // (formato no admitido, archivo vacío o de más de 10 MB). Un fallo del
+    // sistema de archivos trae `code` y su mensaje lleva la ruta absoluta de
+    // UPLOADS_DIR: ese va al log, nunca a la pantalla.
+    const code = codeOf(e);
+    if (code !== "unknown") {
+      console.error(
+        "[reempadronate] falló el guardado del documento",
+        presentationId,
+        "code:",
+        code,
+      );
+      return { error: "No pudimos guardar el archivo. Probá de nuevo en unos minutos." };
+    }
+    return { error: e instanceof Error ? e.message : "No pudimos guardar el archivo." };
+  }
+
+  const count = await prisma.document.count({
+    where: { ownerType: "presentation", ownerId: presentationId },
+  });
+  return { uploaded: { type: docType, count } };
+}
+
+/** El envío: la declaración jurada del paso 4.
+ *
+ *  Lo que pasa DESPUÉS del envío es lo delicado. La constancia rota la llave
+ *  —la que viajó por la URL durante toda la sesión muere, y el enlace del
+ *  correo pasa a ser el único vivo— y esa rotación va en el orden acuñar →
+ *  ENVIAR → persistir. Al revés, un rebote del SMTP dejaría al vecino sin
+ *  ninguna llave: sin la vieja, que ya habríamos pisado, y sin la nueva, que
+ *  nunca llegó. Es la misma lección que documenta `deliverResumeLink` en
+ *  ASOCIATE, y acá pesa más: la presentación YA está asentada y el vecino tiene
+ *  derecho a volver a verla. */
+export async function submitPresentationAction(
+  _prev: SubmitState,
+  formData: FormData,
+): Promise<SubmitState> {
+  const overBudget = await tokenBudget();
+  if (overBudget) return { error: overBudget };
+
+  const token = String(formData.get("token") ?? "");
+  if (!token) return { error: LINK_DEAD };
+
+  // La declaración jurada no es decorativa: es lo que el socio firma. Si el
+  // checkbox no vino, no hay declaración y no hay envío.
+  if (String(formData.get("oath") ?? "") !== "on") {
+    return {
+      error: "Para enviar tu re-empadronamiento tenés que confirmar la declaración jurada.",
+    };
+  }
+
+  const sent = await presentations.submit({ token });
+  if (!sent.ok) return { error: sent.error };
+
+  // Segundo envío (doble clic, reintento del navegador, o una presentación que
+  // la Comisión ya validó): la pantalla dice lo mismo, pero NO se manda otra
+  // constancia ni se rota la llave. Rotarla mataría el enlace que el vecino ya
+  // tiene en el buzón sin darle nada a cambio.
+  if (!sent.firstSubmission) {
+    return { done: { submittedAt: sent.submittedAt.toISOString(), mailed: false } };
+  }
+
+  let mailed = false;
+  try {
+    const { raw, hash } = presentations.mintResumeToken();
+    await mailer.sendToMember({
+      // `to` explícito: la constancia va a la casilla DECLARADA en la
+      // presentación, que puede no ser la de la ficha —de hecho la enorme
+      // mayoría del padrón no tiene ninguna—. La Notification cuelga igual del
+      // socio, que es lo que le da carácter fehaciente (Art. 5° quater).
+      memberId: sent.memberId,
+      to: sent.email,
+      type: "presentation_received",
+      message: presentationReceivedEmail({ url: resumeUrl(raw), submittedAt: sent.submittedAt }),
+      summary: "constancia de re-empadronamiento",
+    });
+    // Sólo si el correo SALIÓ: acá es donde la llave nueva reemplaza a la que
+    // viajó por la URL.
+    await presentations.commitResumeToken(sent.presentationId, hash);
+    mailed = true;
+  } catch (e) {
+    // Best-effort: la presentación YA está enviada y `submittedAt` ya es la
+    // prueba del plazo. Un SMTP caído no puede convertirse en "no pudimos
+    // recibirla". La llave vieja sigue viva, así que el vecino conserva el
+    // camino de vuelta que ya tenía abierto en esta pestaña.
+    console.error("[reempadronate] falló la constancia", sent.presentationId, "code:", codeOf(e));
+  }
+
+  // El asiento va DESPUÉS del commit y SIN IP: es un acto público y anónimo,
+  // como el alta web (diseño §12). Al detalle van ids y flags, nunca el DNI, el
+  // email ni el domicilio (Ley 25.326).
+  await audit({
+    action: "presentation_submit",
+    entity: "presentation",
+    entityId: sent.presentationId,
+    detail: { channel: "web", mailed },
+  });
+
+  return { done: { submittedAt: sent.submittedAt.toISOString(), mailed } };
+}
+
+/** Reenvío del enlace de una presentación ya enviada.
+ *
+ *  Formulario público y anónimo con un DNI adentro: vale la misma regla que el
+ *  reenvío de ASOCIATE —la respuesta NO puede decir si ese DNI tiene una
+ *  presentación—, y se sostiene en los mismos tres frentes:
+ *
+ *    1. El texto: una sola respuesta para el DNI con presentación, el que no
+ *       tiene y el que ni existe.
+ *    2. El tiempo: la búsqueda, la rotación y el SMTP van dentro de `after()`,
+ *       o sea después de contestar. Sin eso, el que tiene presentación tarda lo
+ *       que tarda Brevo y el que no vuelve al instante: la diferencia se mide
+ *       desde afuera y convierte el formulario en un verificador de socios.
+ *    3. El cupo: se consulta y se registra ANTES de mirar si la presentación
+ *       existe, para que el intento de más conteste igual en los dos casos.
+ *
+ *  Y por eso la pantalla NO muestra la dirección, ni siquiera enmascarada: este
+ *  mismo formulario vive también en la página del enlace muerto, donde el DNI
+ *  se tipea de cero y una dirección parcial sería justamente el dato que la
+ *  anti-enumeración no puede entregar. */
+export async function resendPresentationLinkAction(
+  _prev: ResendState,
+  formData: FormData,
+): Promise<ResendState> {
+  const ip = await clientIp();
+
+  const captcha = await verifyTurnstile(String(formData.get("cf-turnstile-response") ?? ""), ip);
+  if (!captcha) return { error: NO_CAPTCHA };
+
+  const parsed = parseForm(schema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const dni = parsed.data.dni;
+
+  // El cupo es POR DNI PEDIDO y no por IP: lo que raciona es la inundación del
+  // buzón de un vecino identificable, y el techo por origen no lo protege si
+  // quien molesta rota de IP. Se consulta y se registra SIEMPRE, exista o no la
+  // presentación: contar sólo los pedidos que terminan en envío haría que el
+  // techo mismo revele si ese DNI se presentó.
+  if (!reregistrationResendLimiter.allows(dni)) return { error: TOO_MANY };
+  reregistrationResendLimiter.record(dni);
+
+  after(() => deliverPresentationLink(dni));
+  return RESEND_DONE;
+}
+
+/** Todo lo que toca la presentación corre acá, después de responder. Nada de lo
+ *  que pase adentro puede cambiar lo que ve el visitante: ni el resultado, ni
+ *  el tiempo. Los errores se registran y se comen. */
+async function deliverPresentationLink(dni: string): Promise<void> {
+  let target: { id: number; memberId: number; email: string; submittedAt: Date } | null = null;
+  try {
+    const process = await openWizardProcess(prisma);
+    if (process === null) return;
+    const row = await prisma.presentation.findFirst({
+      where: {
+        processId: process.id,
+        member: { dni },
+        // Sólo las que YA se presentaron: es el enlace de la constancia. Una
+        // `pending` no tiene nada que mostrar, y el camino para empezarla es el
+        // paso 1 con el DNI.
+        status: { in: ["submitted", "validated", "observed"] },
+        email: { not: null },
+        submittedAt: { not: null },
+      },
+      select: { id: true, memberId: true, email: true, submittedAt: true },
+    });
+    if (!row?.email || !row.submittedAt) return;
+    target = { id: row.id, memberId: row.memberId, email: row.email, submittedAt: row.submittedAt };
+
+    // Acuñar → ENVIAR → persistir. Al revés, un rebote le mata al vecino el
+    // enlace que ya tenía y no le deja ninguno: es el error que ASOCIATE pagó y
+    // documentó, y el caso más probable no es el SMTP caído sino la dirección
+    // mal tipeada, que Brevo va a rechazar SIEMPRE.
+    const { raw, hash } = presentations.mintResumeToken();
+    await mailer.sendToMember({
+      memberId: target.memberId,
+      to: target.email,
+      type: "presentation_received",
+      message: presentationReceivedEmail({
+        url: resumeUrl(raw),
+        submittedAt: target.submittedAt,
+      }),
+      summary: "reenvío del enlace del re-empadronamiento",
+    });
+    await presentations.commitResumeToken(target.id, hash);
+  } catch (e) {
+    console.error(
+      "[reempadronate] falló el reenvío del enlace",
+      target?.id ?? "?",
+      "code:",
+      codeOf(e),
+    );
   }
 }
