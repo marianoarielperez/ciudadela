@@ -241,7 +241,7 @@ export async function observePresentationAction(
   if (!parsed.ok) return { error: parsed.error };
   const { presentationId, note } = parsed.data;
 
-  const result = await presentations.observe({ presentationId, actorId: actor.actorId, note });
+  const result = await presentations.observe({ presentationId, note });
   if (!result.ok) return { error: result.error };
 
   // El correo de la observación, con la LLAVE rotada en el orden acuñar →
@@ -324,7 +324,7 @@ export async function rejectPresentationAction(
   if (!parsed.ok) return { error: parsed.error };
   const { presentationId, note } = parsed.data;
 
-  const result = await presentations.reject({ presentationId, actorId: actor.actorId, note });
+  const result = await presentations.reject({ presentationId, note });
   if (!result.ok) return { error: result.error };
 
   // EL AVISO AL SOCIO. Antes el rechazo no mandaba nada y el vecino se quedaba
@@ -401,7 +401,7 @@ export async function unrejectPresentationAction(
   if (!parsed.ok) return { error: parsed.error };
   const { presentationId } = parsed.data;
 
-  const result = await presentations.unreject({ presentationId, actorId: actor.actorId });
+  const result = await presentations.unreject({ presentationId });
   if (!result.ok) return { error: result.error };
 
   await audit({

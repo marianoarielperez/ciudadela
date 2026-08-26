@@ -29,9 +29,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { PRESENTATION_STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
-import {
-  EDITABLE_STATUSES, presentations, PRESENTATION_MAX_ANNEXES,
-} from "@/lib/reregistration/presentation";
+import { EDITABLE_STATUSES, presentations } from "@/lib/reregistration/presentation";
 import { wizardOpen } from "@/lib/reregistration/rules";
 import { LIVE_PROCESS_STATUSES } from "@/lib/reregistration/service";
 import { cn } from "@/lib/utils";
@@ -353,7 +351,6 @@ async function MemberForm({ process, memberId }: {
         defaultStreetId={streetId}
         defaultStreetText={streetText}
         uploaded={uploaded}
-        maxAnnexes={PRESENTATION_MAX_ANNEXES}
       />
     </div>
   );

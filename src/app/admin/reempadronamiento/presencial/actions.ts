@@ -194,7 +194,6 @@ export async function registerInPersonAction(
   const result = await presentations.registerInPerson({
     processId: d.processId,
     memberId: d.memberId,
-    actorId: actor.actorId,
     data: {
       birthDate: birth.value,
       civilStatus: d.civilStatus ?? null,

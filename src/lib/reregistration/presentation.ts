@@ -153,6 +153,18 @@ export const IN_PERSON_NOT_EDITABLE =
   "Esa presentación ya está enviada o resuelta: no se puede volver a cargar desde el mostrador.";
 export const IN_PERSON_CLOSED =
   "El plazo del re-empadronamiento ya no admite presentaciones nuevas.";
+/** LA CARRERA DEL MOSTRADOR, que NO es una doble decisión.
+ *
+ *  Dos operadores cargando al mismo vecino a la vez: el `updateMany` del
+ *  segundo no encuentra la fila editable y hasta acá contestaba
+ *  `ALREADY_DECIDED` — "otro administrador ya resolvió esta presentación"—, que
+ *  describe algo que no pasó. Nadie resolvió nada: la REGISTRARON. El operador
+ *  salía a buscar en la cola una decisión inexistente y no se enteraba de lo
+ *  único accionable, que es que la media ficha que acaba de tipear no se
+ *  guardó y el vecino que tiene enfrente ya está presentado. */
+export const IN_PERSON_RACE =
+  "Otro administrador acaba de registrar esta presentación, así que lo que cargaste recién no se " +
+  "guardó. Buscala en la cola de presentaciones para ver con qué datos quedó.";
 
 /** Marca interna del cerrojo. Viaja como excepción porque el `updateMany` que
  *  lo detecta vive DENTRO de la transacción de `validate` y tiene que voltearla
@@ -613,6 +625,22 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
     // por un `update` a secas: entre la lectura y la escritura hay una decisión
     // humana, y en una cola compartida eso son minutos en los que el otro
     // administrador puede haber resuelto la misma presentación.
+    //
+    // ── Quién decidió: sólo `validate` lo recibe ─────────────────────────────
+    // `validate` toma `actorId` porque la tabla tiene dónde ponerlo
+    // (`validatedById`, con su FK a `User`) y porque de esa fila cuelga el acto
+    // que copia datos al padrón. Las otras cuatro NO lo reciben, y es a
+    // propósito: `presentations` no tiene columna para el que observa, el que
+    // rechaza, el que revierte ni el que carga desde el mostrador, así que un
+    // parámetro `actorId` ahí prometía una atribución que la fila no guarda —el
+    // llamador se lo pasaba y el dominio lo tiraba—. La trazabilidad de esas
+    // cuatro vive donde vive la de todo acto sensible del panel: en
+    // `audit_log`, con el `userId`, la acción y el id de la presentación.
+    //
+    // El día que la Comisión decida que el sistema tiene que IMPEDIR los cuatro
+    // ojos —que quien registra una presencial no pueda validarla— eso vuelve
+    // como columna con su migración, no como un parámetro que se descarta: sin
+    // fila no hay contra qué comparar al validar.
 
     /** VALIDAR: el acto que vuelca la presentación a la ficha del socio.
      *
@@ -706,7 +734,6 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
      *  existe en ningún lado, con el plazo del Art. 9° bis corriendo. */
     async observe(input: {
       presentationId: number;
-      actorId: number;
       note: string;
     }): Promise<ObserveResult> {
       const note = input.note.trim();
@@ -746,7 +773,6 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
      *  Art. 9° bis corriéndole en contra. */
     async reject(input: {
       presentationId: number;
-      actorId: number;
       note?: string;
     }): Promise<RejectResult> {
       const note = input.note?.trim() ?? "";
@@ -779,7 +805,7 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
      *  presentación donde el socio puede subsanarla, que es el estado del que
      *  hay camino de vuelta. NO manda correo: el aviso lo da una observación
      *  posterior, con su nota. */
-    async unreject(input: { presentationId: number; actorId: number }): Promise<DecisionResult> {
+    async unreject(input: { presentationId: number }): Promise<DecisionResult> {
       const row = await decisionRow(input.presentationId);
       if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
       if (row.process.status === "closed") return { ok: false, error: PROCESS_FINISHED };
@@ -812,7 +838,6 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
     async registerInPerson(input: {
       processId: number;
       memberId: number;
-      actorId: number;
       data: PresentationData;
       now?: Date;
     }): Promise<InPersonResult> {
@@ -842,7 +867,9 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
         where: { id: row.id, status: { in: [...EDITABLE_STATUSES] } },
         data: { ...input.data, status: "submitted", channel: "in_person", submittedAt },
       });
-      if (count !== 1) return { ok: false, error: ALREADY_DECIDED };
+      // NO es `ALREADY_DECIDED`: acá el que ganó la carrera no decidió nada,
+      // registró. Ver `IN_PERSON_RACE`.
+      if (count !== 1) return { ok: false, error: IN_PERSON_RACE };
       return {
         ok: true,
         presentationId: row.id,

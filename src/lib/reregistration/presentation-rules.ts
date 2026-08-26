@@ -28,6 +28,38 @@ type Err = { ok: false; error: string };
  *  pantalla y el server citen el mismo. */
 export const PRESENTATION_MAX_ANNEXES = 2;
 
+/** ¿Esta ranura de documentos admite otro archivo, y qué pasa si lo admite?
+ *
+ *  Son DOS preguntas distintas y confundirlas rompió el formulario del
+ *  mostrador: ahí `full = uploaded >= max` apagaba el campo y el botón apenas
+ *  entraba el frente del DNI, así que el operador que escaneaba el dorso movido
+ *  —se da cuenta al ver la vista previa, con el vecino todavía enfrente— no
+ *  tenía forma de rehacerlo desde ninguna pantalla del panel. El servidor
+ *  siempre lo soportó, y hasta había una etiqueta "Reemplazar" que era código
+ *  inalcanzable.
+ *
+ *  La distinción, que es la que el wizard público ya tenía bien:
+ *
+ *   - `replaces`: la ranura guarda UN archivo y volver a subir PISA el
+ *     anterior. Es lo que hace `saveOwned` en `documents/storage.ts`, que borra
+ *     el documento previo del mismo tipo salvo para `annex`. Una ranura así
+ *     nunca se llena: siempre entra uno más, porque el que entra es el mismo.
+ *   - `full`: no entran más archivos y el control SÍ se bloquea. Sólo le pasa
+ *     al anexo, que acumula hasta `PRESENTATION_MAX_ANNEXES`.
+ *
+ *  Vive acá y no adentro del formulario porque el criterio de "acumula o
+ *  reemplaza" es el del STORE, no el de una pantalla: quien lo decide de verdad
+ *  es `saveOwned`, y una copia por formulario es exactamente cómo se coló este
+ *  bug. El wizard público llega al mismo resultado por construcción —sólo le
+ *  pasa `full` a la ranura del anexo—, así que las dos puntas coinciden. */
+export function documentSlotFill(input: { type: DocumentType; uploaded: number }): {
+  replaces: boolean;
+  full: boolean;
+} {
+  const replaces = input.type !== "annex";
+  return { replaces, full: !replaces && input.uploaded >= PRESENTATION_MAX_ANNEXES };
+}
+
 /** Los estados desde los que el VECINO todavía puede tocar su presentación.
  *
  *  Se enumeran en vez de escribir `!== "validated"`: un estado nuevo en el enum

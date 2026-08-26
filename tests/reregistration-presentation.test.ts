@@ -20,6 +20,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import type { DocumentType, PresentationStatus } from "@/generated/prisma/client";
 import {
+  documentSlotFill,
   makePresentations,
   presentationDataComplete,
   presentationDocsComplete,
@@ -137,6 +138,31 @@ describe("presentationDocsComplete", () => {
 
   it("el tope de anexos es 2", () => {
     expect(PRESENTATION_MAX_ANNEXES).toBe(2);
+  });
+});
+
+// La distinción que el wizard público tenía bien y el formulario del mostrador
+// no: "esta ranura YA TIENE archivo" (que permite REEMPLAZARLO) no es lo mismo
+// que "no entran más archivos" (que sí bloquea). El mostrador las confundía y
+// apagaba el campo apenas subía el frente, así que el operador que escaneaba el
+// dorso movido no tenía forma de rehacerlo desde ninguna pantalla del panel.
+describe("documentSlotFill", () => {
+  it("el frente y el dorso NUNCA se llenan: volver a subirlos REEMPLAZA", () => {
+    // Y es literal: `saveOwned` busca el documento anterior del mismo tipo y lo
+    // borra, salvo para `annex`. El server siempre soportó el reemplazo.
+    for (const type of ["dni_front", "dni_back"] as const) {
+      expect(documentSlotFill({ type, uploaded: 0 }).full).toBe(false);
+      expect(documentSlotFill({ type, uploaded: 1 }).full).toBe(false);
+      expect(documentSlotFill({ type, uploaded: 1 }).replaces).toBe(true);
+    }
+  });
+
+  it("el anexo ACUMULA, y sólo él se llena al llegar al tope", () => {
+    expect(documentSlotFill({ type: "annex", uploaded: 0 }).replaces).toBe(false);
+    expect(documentSlotFill({ type: "annex", uploaded: 1 }).full).toBe(false);
+    expect(documentSlotFill({ type: "annex", uploaded: PRESENTATION_MAX_ANNEXES }).full).toBe(true);
+    // Defensivo: si la base trajera más de los que entran, sigue lleno.
+    expect(documentSlotFill({ type: "annex", uploaded: 99 }).full).toBe(true);
   });
 });
 

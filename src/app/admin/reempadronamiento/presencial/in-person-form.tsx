@@ -26,6 +26,12 @@ import { DOCUMENT_TYPE_LABELS } from "@/lib/applications/labels";
 import {
   civilStatusOptions, NATIONALITY_OPTIONS, NEIGHBOURHOOD_OPTIONS,
 } from "@/lib/members/card-options";
+// Las reglas PURAS del re-empadronamiento: se pueden importar desde un
+// componente de cliente sin arrastrar el cliente de Prisma al bundle.
+import {
+  documentSlotFill, PRESENTATION_MAX_ANNEXES,
+} from "@/lib/reregistration/presentation-rules";
+import type { DocumentType } from "@/generated/prisma/client";
 import {
   registerInPersonAction, uploadInPersonDocumentAction,
   type InPersonState, type InPersonUploadState,
@@ -53,7 +59,6 @@ export function InPersonForm(props: {
   defaultStreetText: string | null;
   /** Cuántos documentos de cada tipo ya están cargados. */
   uploaded: { dni_front: number; dni_back: number; annex: number };
-  maxAnnexes: number;
 }) {
   const [state, formAction, pending] = useActionState<InPersonState, FormData>(
     registerInPersonAction,
@@ -87,7 +92,6 @@ export function InPersonForm(props: {
             presentationId={props.presentationId}
             docType="annex"
             uploaded={props.uploaded.annex}
-            max={props.maxAnnexes}
           />
         </div>
       </section>
@@ -171,19 +175,27 @@ export function InPersonForm(props: {
 /** Una ranura de documento. Formulario propio por tipo —y no un solo `<form>`
  *  con tres `<input type="file">`— porque cada archivo se guarda por separado y
  *  el operador escanea de a uno: con un envío único, un formato rechazado en el
- *  tercero le haría volver a elegir los tres. */
-function DocumentSlot({ presentationId, docType, uploaded, max = 1 }: {
+ *  tercero le haría volver a elegir los tres.
+ *
+ *  REEMPLAZAR NO ES LO MISMO QUE LLENAR. Acá el campo se apagaba apenas entraba
+ *  el frente del DNI, así que el operador que escaneaba el dorso movido —se da
+ *  cuenta al ver la vista previa, con el vecino todavía enfrente— se quedaba
+ *  sin salida: el server siempre soportó el reemplazo y hasta había una
+ *  etiqueta "Reemplazar" que era código inalcanzable. La distinción la decide
+ *  `documentSlotFill`, la misma función pura para las tres ranuras, y no un
+ *  booleano escrito acá: sólo el anexo se llena. */
+function DocumentSlot({ presentationId, docType, uploaded }: {
   presentationId: number;
-  docType: "dni_front" | "dni_back" | "annex";
+  docType: DocumentType & ("dni_front" | "dni_back" | "annex");
   uploaded: number;
-  max?: number;
 }) {
   const [state, formAction, pending] = useActionState<InPersonUploadState, FormData>(
     uploadInPersonDocumentAction,
     {},
   );
   const inputId = `file-${docType}`;
-  const full = uploaded >= max;
+  const { full, replaces } = documentSlotFill({ type: docType, uploaded });
+  const loaded = uploaded > 0;
 
   return (
     <form action={formAction} className="space-y-2 rounded-md border p-3">
@@ -194,9 +206,9 @@ function DocumentSlot({ presentationId, docType, uploaded, max = 1 }: {
         <span className="text-xs text-muted-foreground">
           {uploaded === 0
             ? "sin cargar"
-            : max > 1
-              ? `${uploaded} de ${max} cargados`
-              : "cargado"}
+            : replaces
+              ? "cargado"
+              : `${uploaded} de ${PRESENTATION_MAX_ANNEXES} cargados`}
         </span>
       </div>
       <Input
@@ -207,10 +219,24 @@ function DocumentSlot({ presentationId, docType, uploaded, max = 1 }: {
         className="min-h-11"
         disabled={full}
       />
+      {/* El cartel del tope, sólo cuando de verdad hay uno: un control apagado
+          sin explicación es el mismo callejón que había antes, con otra cara. */}
+      {full && (
+        <FormMessage kind="neutral" role="none">
+          Ya hay {PRESENTATION_MAX_ANNEXES} anexos cargados, que es el máximo.
+        </FormMessage>
+      )}
+      {/* Y la salida del escaneo fallado, dicha con todas las letras: el
+          operador no tiene por qué adivinar que subir de nuevo pisa lo anterior. */}
+      {loaded && replaces && (
+        <FormMessage kind="neutral" role="none">
+          Si salió mal, elegí otro archivo y reemplazalo: el anterior se borra.
+        </FormMessage>
+      )}
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       {state.uploaded && <FormMessage kind="success" role="status">Archivo guardado.</FormMessage>}
       <Button type="submit" variant="outline" className="min-h-11" disabled={pending || full}>
-        {pending ? "Subiendo…" : uploaded > 0 && max === 1 ? "Reemplazar" : "Subir"}
+        {pending ? "Subiendo…" : loaded && replaces ? "Reemplazar" : "Subir"}
       </Button>
     </form>
   );

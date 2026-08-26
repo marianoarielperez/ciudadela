@@ -29,6 +29,7 @@ import type { DocumentType, PresentationStatus } from "@/generated/prisma/client
 import { MemberEmailConflictError } from "@/lib/members/write";
 import {
   ALREADY_DECIDED,
+  IN_PERSON_RACE,
   makePresentations,
   NOT_SUBMITTED_YET,
   OBSERVATION_MAX,
@@ -381,7 +382,7 @@ describe("validate", () => {
 describe("observe", () => {
   it("sin nota no observa: ese texto es lo único que le llega al vecino", async () => {
     const db = fakeDb([row()]);
-    const res = await presentations(db).observe({ presentationId: 1, actorId: 9, note: "   " });
+    const res = await presentations(db).observe({ presentationId: 1, note: "   " });
     expect(res.ok).toBe(false);
     expect(db.rows[0].status).toBe("submitted");
   });
@@ -390,7 +391,6 @@ describe("observe", () => {
     const db = fakeDb([row()]);
     const res = await presentations(db).observe({
       presentationId: 1,
-      actorId: 9,
       note: "  El dorso del DNI salió movido.  ",
     });
     expect(res.ok).toBe(true);
@@ -402,7 +402,6 @@ describe("observe", () => {
     const db = fakeDb([row()]);
     const res = await presentations(db).observe({
       presentationId: 1,
-      actorId: 9,
       note: "x".repeat(OBSERVATION_MAX + 1),
     });
     expect(res.ok).toBe(false);
@@ -410,7 +409,7 @@ describe("observe", () => {
 
   it("CERROJO: la que otro admin ya validó no se puede observar", async () => {
     const db = fakeDb([row({ status: "validated" })]);
-    const res = await presentations(db).observe({ presentationId: 1, actorId: 9, note: "algo" });
+    const res = await presentations(db).observe({ presentationId: 1, note: "algo" });
     expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
   });
 });
@@ -420,7 +419,6 @@ describe("reject / unreject", () => {
     const db = fakeDb([row()]);
     const res = await presentations(db).reject({
       presentationId: 1,
-      actorId: 9,
       note: "No es el titular.",
     });
     expect(res.ok).toBe(true);
@@ -430,14 +428,14 @@ describe("reject / unreject", () => {
 
   it("el rechazo es reversible: vuelve a observada", async () => {
     const db = fakeDb([row({ status: "rejected" })]);
-    const res = await presentations(db).unreject({ presentationId: 1, actorId: 9 });
+    const res = await presentations(db).unreject({ presentationId: 1 });
     expect(res.ok).toBe(true);
     expect(db.rows[0].status).toBe("observed");
   });
 
   it("no se puede revivir algo que no está rechazado", async () => {
     const db = fakeDb([row({ status: "validated" })]);
-    const res = await presentations(db).unreject({ presentationId: 1, actorId: 9 });
+    const res = await presentations(db).unreject({ presentationId: 1 });
     expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
   });
 });
@@ -448,7 +446,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: { ...DATA, email: null },
     });
     expect(res.ok).toBe(false);
@@ -460,7 +457,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: { ...DATA, neighborhood: null },
     });
     expect(res.ok).toBe(false);
@@ -473,7 +469,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: DATA,
     });
     expect(res.ok).toBe(false);
@@ -485,7 +480,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: DATA,
     });
     expect(res.ok).toBe(true);
@@ -501,7 +495,6 @@ describe("registerInPerson", () => {
     await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: DATA,
     });
     expect(db.rows[0].submittedAt).toEqual(first);
@@ -512,7 +505,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 999,
-      actorId: 9,
       data: DATA,
     });
     expect(res.ok).toBe(false);
@@ -523,7 +515,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: DATA,
     });
     expect(res.ok).toBe(false);
@@ -534,7 +525,6 @@ describe("registerInPerson", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: DATA,
     });
     expect(res.ok).toBe(false);
@@ -580,7 +570,6 @@ describe("cerrojo: el otro admin gana ENTRE la lectura y la escritura", () => {
     const db = fakeDb([row()], { raceTo: "validated" });
     const res = await presentations(db).observe({
       presentationId: 1,
-      actorId: 9,
       note: "El dorso salió movido.",
     });
 
@@ -593,7 +582,6 @@ describe("cerrojo: el otro admin gana ENTRE la lectura y la escritura", () => {
     const db = fakeDb([row()], { raceTo: "validated" });
     const res = await presentations(db).reject({
       presentationId: 1,
-      actorId: 9,
       note: "No es el titular.",
     });
 
@@ -607,7 +595,7 @@ describe("cerrojo: el otro admin gana ENTRE la lectura y la escritura", () => {
     // medio pudo además observarla con su nota. Esta segunda escritura no tiene
     // nada que deshacer.
     const db = fakeDb([row({ status: "rejected" })], { raceTo: "observed" });
-    const res = await presentations(db).unreject({ presentationId: 1, actorId: 9 });
+    const res = await presentations(db).unreject({ presentationId: 1 });
 
     expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
   });
@@ -621,7 +609,6 @@ describe("cerrojo: el otro admin gana ENTRE la lectura y la escritura", () => {
     const res = await presentations(db).registerInPerson({
       processId: 3,
       memberId: 42,
-      actorId: 9,
       data: DATA,
     });
 
@@ -630,6 +617,24 @@ describe("cerrojo: el otro admin gana ENTRE la lectura y la escritura", () => {
     expect(db.rows[0].email).toBeNull();
     expect(db.rows[0].channel).toBeNull();
     expect(db.rows[0].submittedAt).toBeNull();
+  });
+
+  it("y lo dice con SU mensaje: nadie resolvió nada, la registraron", async () => {
+    // La carrera del mostrador NO es una doble decisión. "Otro administrador ya
+    // resolvió esta presentación" manda al operador a buscar en la cola una
+    // decisión que no existe, y le esconde lo único que importa: que lo que
+    // acaba de tipear no se guardó.
+    const db = fakeDb([row({ status: "pending", submittedAt: null, channel: null })], {
+      raceTo: "submitted",
+    });
+    const res = await presentations(db).registerInPerson({ processId: 3, memberId: 42, data: DATA });
+
+    expect(res).toEqual({ ok: false, error: IN_PERSON_RACE });
+    expect(IN_PERSON_RACE).not.toBe(ALREADY_DECIDED);
+    expect(IN_PERSON_RACE).toMatch(/registr/i);
+    expect(IN_PERSON_RACE).not.toMatch(/resolvió/i);
+    // Y le dice qué pasó con su trabajo, que es lo accionable.
+    expect(IN_PERSON_RACE).toMatch(/no se guard/i);
   });
 });
 

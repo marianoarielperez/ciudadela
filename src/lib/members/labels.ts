@@ -38,6 +38,7 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   request_accepted: "Solicitud aceptada", request_rejected: "Solicitud rechazada",
   board_digest: "Resumen para la cartelera",
   presentation_received: "Presentación recibida", presentation_observed: "Presentación observada",
+  presentation_rejected: "Presentación rechazada",
   generic: "Aviso",
 };
 export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
