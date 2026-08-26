@@ -53,6 +53,23 @@ describe("reentryVerdict", () => {
       .toEqual({ kind: "deceased" });
   });
 
+  // La otra mitad del orden. Los dos casos de arriba prueban que el
+  // fallecimiento gana sobre lo que viene DESPUÉS de él en la lista; estos dos
+  // prueban que gana también sobre los bloqueos, que son los que estaban
+  // ANTES hasta el arreglo. Sin ellos, mover esa línea una posición más abajo
+  // dejaría la tabla entera en verde.
+  it("el fallecimiento gana sobre el bloqueo definitivo", () => {
+    expect(reentryVerdict(input({ withdrawalReason: "death", reentryBlocked: true })))
+      .toEqual({ kind: "deceased" });
+  });
+
+  it("el fallecimiento gana sobre el rechazo con plazo vigente", () => {
+    expect(reentryVerdict(input({
+      withdrawalReason: "death",
+      rejectedUntil: new Date("2027-01-01T12:00:00Z"),
+    }))).toEqual({ kind: "deceased" });
+  });
+
   it("bloquea para siempre al que tiene el flag de reingreso", () => {
     expect(reentryVerdict(input({ reentryBlocked: true }))).toEqual({ kind: "blocked_forever" });
   });
@@ -72,6 +89,30 @@ describe("reentryVerdict", () => {
       rejectedUntil: new Date("2027-01-01T12:00:00Z"),
       pendingFees: 9,
     }))).toEqual({ kind: "blocked_forever" });
+  });
+
+  // La ficha anulada por duplicado no es una persona que "puede reasociarse":
+  // su gemela viva está en el padrón y el wizard la manda a la sede
+  // (`eligibility.ts:71`, mismo trato que el fallecimiento). Decir "Puede
+  // reasociarse" acá es prometer una puerta que el sistema tiene cerrada.
+  it("no aplica a la ficha anulada por duplicado", () => {
+    expect(reentryVerdict(input({ withdrawalReason: "duplicate_annulment" })))
+      .toEqual({ kind: "annulled" });
+  });
+
+  it("la anulación por duplicado gana sobre la deuda y sobre el rechazo con fecha", () => {
+    expect(reentryVerdict(input({
+      withdrawalReason: "duplicate_annulment",
+      rejectedUntil: new Date("2027-01-01T12:00:00Z"),
+      pendingFees: 5,
+    }))).toEqual({ kind: "annulled" });
+  });
+
+  // Al revés que el fallecimiento: acá la persona está VIVA, así que si además
+  // tiene el reingreso bloqueado eso es lo que hay que mostrar.
+  it("el bloqueo definitivo gana sobre la anulación por duplicado", () => {
+    expect(reentryVerdict(input({ withdrawalReason: "duplicate_annulment", reentryBlocked: true })))
+      .toEqual({ kind: "blocked_forever" });
   });
 
   it("devuelve la fecha desde la que puede reintentar (REG-05)", () => {

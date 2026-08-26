@@ -44,12 +44,18 @@ const BASE = "/admin/socios/historico";
  *  lleva chip — la pregunta no aplica, y un "no corresponde" en cada tarjeta
  *  del padrón sería ruido en las dos terceras partes de la lista. El fallecido
  *  tampoco: la pregunta no aplica igual que en el vigente, y el dato ya está en
- *  la línea de abajo ("egreso · Fallecimiento"). */
+ *  la línea de abajo ("egreso · Fallecimiento"). La ficha anulada por duplicado
+ *  va por el mismo camino y por el mismo motivo: no es una persona que pueda
+ *  reasociarse —su gemela viva está en el padrón y el wizard la manda a la sede,
+ *  `eligibility.ts:71`— y su línea de abajo ya dice "Anulación por duplicado".
+ *  Lo que no podía seguir es el chip verde: la pantalla no puede decir "sí"
+ *  donde la puerta real dice "no". */
 function reentryChip(v: ReentryVerdict, pendingFees: number):
   { variant: BadgeVariant; text: string } | null {
   switch (v.kind) {
     case "member":
     case "deceased":
+    case "annulled":
       return null;
     case "blocked_forever":
       return { variant: "destructive", text: "No puede reingresar" };

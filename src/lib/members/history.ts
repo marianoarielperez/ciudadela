@@ -25,6 +25,7 @@ export type ReentryVerdict =
   | { kind: "member" }                     // vigente: no aplica
   | { kind: "deceased" }                   // fallecido: la pregunta no aplica
   | { kind: "blocked_forever" }            // expulsión / reentryBlocked
+  | { kind: "annulled" }                   // ficha anulada por duplicado: la real es otra
   | { kind: "blocked_until"; until: Date } // rejectedUntil futuro (REG-05)
   | { kind: "must_settle" }                // cesante con cuotas pendientes (REG-16)
   | { kind: "clear" };                     // puede reingresar por el proceso común
@@ -44,8 +45,17 @@ export type ReentryVerdict =
  *     solo flag. Hay fichas viejas —import, arreglos a mano— con el motivo
  *     puesto y el flag en `false`; mirar sólo el flag reabriría la puerta en
  *     silencio.
- *  4. Un rechazo con plazo vigente (REG-05) es un "todavía no", con fecha.
- *  5. REG-16: lo que bloquea es la DEUDA VIVA de la cuenta corriente, no la
+ *  4. La ficha anulada por duplicado tampoco es un caso de reingreso: no es una
+ *     persona, es un renglón repetido del libro, y su gemela viva está en el
+ *     padrón. La puerta real la manda a la sede igual que al fallecido
+ *     (`eligibility.ts:71`), así que la pantalla no puede decir "Puede
+ *     reasociarse" — sería prometer una puerta que el wizard tiene cerrada, y
+ *     encima la misma persona figuraría dos veces, una sin chip y otra en verde.
+ *     Va DESPUÉS del bloqueo definitivo y no antes, al revés que el
+ *     fallecimiento: acá la persona está viva, así que si además tiene el
+ *     reingreso bloqueado eso es lo que hay que mostrar.
+ *  5. Un rechazo con plazo vigente (REG-05) es un "todavía no", con fecha.
+ *  6. REG-16: lo que bloquea es la DEUDA VIVA de la cuenta corriente, no la
  *     marca histórica `debtAtWithdrawal` —que dice que el socio debía el día de
  *     la baja, no que siga debiendo—. Por eso la marca ni siquiera es un dato de
  *     entrada de esta función: quien pagó todo queda libre aunque siga marcada.
@@ -64,6 +74,9 @@ export function reentryVerdict(input: {
   if (input.reentryBlocked || input.withdrawalReason === "expulsion") {
     return { kind: "blocked_forever" };
   }
+  // Alineado con `eligibility.ts:71`, que trata la anulación por duplicado igual
+  // que el fallecimiento: desvío a la sede, nunca alta por la web.
+  if (input.withdrawalReason === "duplicate_annulment") return { kind: "annulled" };
   if (input.rejectedUntil && input.rejectedUntil > input.now) {
     return { kind: "blocked_until", until: input.rejectedUntil };
   }
