@@ -672,17 +672,27 @@ segunda fuente de verdad). Apta para `migrate deploy` sobre la base con socios r
   Un fallecido y una ficha anulada por duplicado **no** muestran el chip verde de
   "puede reasociarse": la pantalla no puede decir que sí donde el alta dice que no.
 - **Una baja no deja solicitudes pendientes vivas.** `memberService.withdraw`
-  cancela, en su misma transacción, las `member_requests` `pending` del socio: una
-  solicitud de un socio dado de baja no tenía ninguna salida —seguía en la bandeja
-  y en la campanita, aplicarla la rechazaban las reglas estatutarias y el socio ya
-  no podía retirarla porque `requireMember` le cierra el panel—. Va en el servicio
-  y no en la pantalla, por el mismo motivo que `debtAtWithdrawal`: lo llevan por
-  igual la baja individual, el lote de cesantía por mora y las bajas en lote del
-  re-empadronamiento, que son las que multiplicarían el hueco. La solicitud que se
-  está **aplicando** queda exceptuada (`sparedRequestId`, que pasa `withdrawAction`
+  cierra, en su misma transacción, las `member_requests` `pending` del socio: a una
+  solicitud de un socio dado de baja sólo le quedaba **el rechazo** —seguía contando
+  en el badge de la pestaña "De socios" y en la tarjeta del tablero, aplicarla la
+  rechazaban las reglas estatutarias y el socio ya no podía retirarla porque
+  `requireMember` le cierra el panel—, y rechazarla le mandaba un correo que decía
+  "rechazada" sobre algo que nadie rechazó. Va en el servicio y no en la pantalla,
+  por el mismo motivo que `debtAtWithdrawal`: hoy lo llevan por igual la baja
+  individual y el lote de cesantía por mora, y lo heredarán las bajas en lote del
+  re-empadronamiento cuando lleguen (fase 6C). La solicitud que se está
+  **aplicando** queda exceptuada (`sparedRequestId`, que pasa `withdrawAction`
   cuando la baja viene de la bandeja): `markAccepted` corre después del commit y
-  filtra por `pending`, así que sin la excepción la solicitud terminaba "cancelada"
-  en vez de "aceptada" y perdía el vínculo con el acta.
+  filtra por `pending`, así que sin la excepción la solicitud terminaba cerrada por
+  la baja en vez de "aceptada" y perdía el vínculo con el acta.
+- **Y el cierre tiene estado propio: `superseded` ("Sin efecto").** Reusar
+  `cancelled` —el retiro voluntario del socio— hacía que la bandeja redactara
+  "Retirada por el socio el …" sobre una solicitud que cerró una cesantía por mora:
+  un panel que documenta decisiones estatutarias no puede afirmar un hecho que no
+  ocurrió, y en la base los dos casos eran indistinguibles. La migración
+  `member_request_superseded_status` sólo ensancha el `ENUM` de
+  `member_requests.status`; la bandeja dice "Quedó sin efecto por la baja del
+  socio", y `/mi/solicitudes` aclara que no hace falta que el socio haga nada.
 
 **Una inserción no planificada, disparada por datos reales del operador** (Task 4b):
 el importador del padrón **no tenía caso para "expulsión"** y la mapeaba a `other`,
@@ -696,7 +706,7 @@ planilla. Y se cerraron los dos agujeros que abrió el propio arreglo: una expul
 para resolver con acta) y `import-padron --update-existing` **no puede apagar** un
 `reentryBlocked` puesto por acta desde el panel.
 
-2620 tests, build y lint limpios.
+2622 tests, build y lint limpios.
 
 **Pendiente del operador, accionable:** correr `scripts/fix-withdrawal-reasons.ts`
 en el VPS (bloque copiable en `.superpowers/sdd/task-4b-report.md`). En la base
