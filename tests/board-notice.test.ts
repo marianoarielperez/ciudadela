@@ -74,6 +74,12 @@ type World = {
   cohort: Array<{
     member: MemberRow;
     status: PresentationStatus;
+    /** El proceso al que pertenece la presentación. Viaja por fila —y no como
+     *  constante del doble— porque el barrido de la ventana de recurso lo lleva
+     *  en su `where`: sintetizarlo acá dejaría esa cláusula sin probar, y una
+     *  presentación de OTRO proceso del mismo vecino se llevaría una fecha
+     *  fehaciente que no le corresponde. Por defecto, el proceso 1. */
+    processId?: number;
     withdrawalNotifiedAt?: Date | null;
     appealUntil?: Date | null;
   }>;
@@ -171,7 +177,7 @@ function fakeDb(world: World) {
           const hits = world.cohort.filter((c) =>
             matchesWhere(
               {
-                processId: 1,
+                processId: c.processId ?? 1,
                 memberId: c.member.id,
                 status: c.status,
                 withdrawalNotifiedAt: c.withdrawalNotifiedAt ?? null,
@@ -183,9 +189,12 @@ function fakeDb(world: World) {
           return { count: hits.length };
         },
       ),
-      findMany: vi.fn(async ({ where }: { where: { status: { in: PresentationStatus[] } } }) =>
+      // La nómina también se filtra con el `where` TAL CUAL: lleva `processId`
+      // además del estado, y una presentación de otro proceso no puede entrar a
+      // un cartel de éste.
+      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
         world.cohort
-          .filter((c) => where.status.in.includes(c.status))
+          .filter((c) => matchesWhere({ processId: c.processId ?? 1, status: c.status }, where))
           .map((c) => ({
             member: {
               id: c.member.id,
@@ -630,6 +639,42 @@ describe("post del cartel de BAJAS", () => {
     await board(world).board.post({ noticeId: 9, postedAt: POSTED, holidays: HOLIDAYS });
     expect(world.cohort[1].withdrawalNotifiedAt ?? null).toBeNull();
     expect(world.cohort[1].appealUntil ?? null).toBeNull();
+  });
+
+  it("no sale de la nómina de ESTE cartel ni de ESTE proceso", async () => {
+    // Las dos acotaciones del barrido, en un solo caso, porque las dos dejan la
+    // misma víctima: una fecha fehaciente estampada sobre alguien a quien este
+    // cartel no notificó, y con ella una ventana de recurso que arranca sin que
+    // el vecino se haya enterado de nada.
+    //
+    //   · `memberId: { in: recipients }` — el socio 3 quedó de baja pero tiene
+    //     casilla utilizable, así que NO entra al cartel (se le notifica por
+    //     correo). Su nombre no está en el papel de la pared.
+    //   · `processId` — el socio 1 sí entra al cartel de este proceso, pero
+    //     además arrastra una presentación suya del proceso anterior, también
+    //     `withdrawn` y sin notificar. Fijar el cartel del Libro 2 no puede
+    //     estamparle una ventana de recurso sobre la baja del Libro 1.
+    const world: World = {
+      notices: [{ id: 9, processId: 1, kind: "withdrawal", postedAt: null, dueAt: null }],
+      covered: [],
+      cohort: [
+        { member: member(1), status: "withdrawn" },
+        { member: member(1), status: "withdrawn", processId: 2 },
+        { member: member(3, { email: "a@b.com", emailStatus: "verified" }), status: "withdrawn" },
+      ],
+    };
+
+    const result = await board(world).board.post({ noticeId: 9, postedAt: POSTED, holidays: HOLIDAYS });
+    expect(result.ok).toBe(true);
+
+    // El destinatario real sí queda notificado.
+    expect(world.cohort[0].withdrawalNotifiedAt ?? null).not.toBeNull();
+    // Su presentación del otro proceso, intacta.
+    expect(world.cohort[1].withdrawalNotifiedAt ?? null).toBeNull();
+    expect(world.cohort[1].appealUntil ?? null).toBeNull();
+    // Y el que se notifica por correo, intacto: su plazo arranca al enviarse.
+    expect(world.cohort[2].withdrawalNotifiedAt ?? null).toBeNull();
+    expect(world.cohort[2].appealUntil ?? null).toBeNull();
   });
 
   it("no le corre la ventana a quien ya tenía su fecha fehaciente", async () => {

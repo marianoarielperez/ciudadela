@@ -171,6 +171,10 @@ function fakeDb(world: World) {
 
   const shape = (p: PresentationRow) => ({
     id: p.id,
+    processId: p.processId,
+    // La fila del proceso viaja embebida porque `notifyWithdrawal` la pide para
+    // acotar las notificaciones que el correo de baja va a AFIRMAR.
+    process: processRow === null ? null : { createdAt: processRow.createdAt },
     memberId: p.memberId,
     status: p.status,
     withdrawalNotifiedAt: p.withdrawalNotifiedAt,
@@ -434,6 +438,38 @@ describe("declareBatch", () => {
     expect(w.presentations[2].status).toBe("withdrawn");
   });
 
+  it("si la baja sale y la presentación no se marca, va a `unstamped` y NO a `failures`", async () => {
+    // El balde más raro y el más grave: la persona YA dejó de ser socia (la
+    // transacción de la baja commiteó) pero su presentación quedó en el estado
+    // viejo. Consecuencia concreta: no entra a la nómina del cartel de bajas
+    // —que se arma con `status: "withdrawn"`— y `notifyWithdrawal` la descarta
+    // por lo mismo, así que nadie le va a notificar nada y su ventana de recurso
+    // no arranca nunca. Meterlo en `failures` diría que la baja falló sobre
+    // alguien que sí quedó de baja, y el operador lo reintentaría.
+    const w = world();
+    const { sut, db, audited } = makeSut(w);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const real = db.presentation.updateMany.getMockImplementation()!;
+    db.presentation.updateMany.mockImplementation(
+      async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        if (args.where.id === 2) throw new Error("base caída a mitad de camino");
+        return real(args);
+      },
+    );
+
+    const out = await sut.declareBatch({ processId: 1, presentationIds: [1, 2, 3], minuteId: 7, actorId: 4 });
+
+    // La baja SÍ salió: el socio 20 está declarado y auditado como los demás.
+    expect(out.declared).toEqual([1, 2, 3]);
+    expect(out.failures).toEqual([]);
+    expect(out.unstamped).toEqual([2]);
+    // Y la presentación quedó como estaba: eso es lo que lo deja fuera de todo.
+    expect(w.presentations.map((p) => p.status)).toEqual(["withdrawn", "observed", "withdrawn"]);
+    // Un fallo de este paso no puede frenar el lote ni saltearse el asiento.
+    expect(audited).toHaveLength(3);
+    spy.mockRestore();
+  });
+
   it("rechaza por su nombre lo que dejó de corresponder entre la pantalla y el botón", async () => {
     const { sut, calls } = makeSut({
       presentations: [
@@ -568,6 +604,121 @@ describe("notifyWithdrawal", () => {
     await expect(sut.notifyWithdrawal({ presentationId: 2, budget })).resolves.toBe("deferred");
     expect(sent).toHaveLength(1);
     expect(w.presentations[1].withdrawalNotifiedAt).toBeNull();
+  });
+});
+
+/** Una fila de notificación por correo del proceso, ya enviada. */
+function emailNotice(memberId: number, type: string, over: Partial<NoticeRow> = {}): NoticeRow {
+  return {
+    memberId, type, via: "email", status: "sent",
+    sentAt: d(2026, 9, 2), boardFrom: null, boardTo: null, boardNotice: null,
+    ...over,
+  };
+}
+
+describe("el correo de baja dice sólo lo que efectivamente se cursó", () => {
+  // ── Por qué esto importa ───────────────────────────────────────────────────
+  // El correo es el documento que hace oponible la resolución, y la pantalla
+  // NO impide declararle la baja a quien no tiene ninguna notificación cursada
+  // (la decisión es de la Comisión, no del software: sólo se le marca en rojo).
+  // Si el texto afirmara siempre "te avisamos dos veces", el papel con el que
+  // se defiende la baja abriría con una afirmación falsa y verificable contra
+  // la propia base — y es lo primero que leería un recurso ante la asamblea.
+  function sutFor(notices: NoticeRow[]) {
+    return makeSut({
+      presentations: [
+        presentation(1, member(10, { email: "a@b.com", emailStatus: "verified" }), { status: "withdrawn" }),
+      ],
+      notices,
+    });
+  }
+  const bodyOf = (sent: Array<Record<string, unknown>>) =>
+    (sent[0].message as { text: string; html: string });
+
+  it("con las dos instancias notificadas dice que se le avisó dos veces", async () => {
+    const { sut, sent } = sutFor([
+      emailNotice(10, "reregistration_first"),
+      emailNotice(10, "reregistration_second", { sentAt: d(2026, 10, 5) }),
+    ]);
+    await sut.notifyWithdrawal({ presentationId: 1 });
+    expect(bodyOf(sent).text).toContain("dos veces");
+    expect(bodyOf(sent).html).toContain("dos veces");
+  });
+
+  it("con una sola instancia notificada nombra ESA y no habla de dos", async () => {
+    const { sut, sent } = sutFor([emailNotice(10, "reregistration_first")]);
+    await sut.notifyWithdrawal({ presentationId: 1 });
+    expect(bodyOf(sent).text).not.toContain("dos veces");
+    expect(bodyOf(sent).text).toContain("la convocatoria");
+  });
+
+  it("sin ninguna notificación cursada no afirma haber avisado nada", async () => {
+    const { sut, sent } = sutFor([]);
+    await sut.notifyWithdrawal({ presentationId: 1 });
+    const body = bodyOf(sent);
+    expect(body.text).not.toContain("dos veces");
+    expect(body.text).not.toContain("Te habíamos");
+    expect(body.html).not.toContain("Te habíamos");
+    // Y sigue diciendo lo único que sí es cierto: por qué se resolvió la baja.
+    expect(body.text).toContain("Art. 9° bis");
+  });
+
+  it("un aviso que NO salió no cuenta como aviso cursado", async () => {
+    // Una fila `failed` registra un INTENTO. El anexo del acta ya la lee así
+    // (`status !== "failed"`), y el correo tiene que leerla igual: si contara,
+    // el texto afirmaría un aviso que el vecino nunca recibió.
+    const { sut, sent } = sutFor([
+      emailNotice(10, "reregistration_first", { status: "failed" }),
+      emailNotice(10, "reregistration_second", { sentAt: d(2026, 10, 5) }),
+    ]);
+    await sut.notifyWithdrawal({ presentationId: 1 });
+    expect(bodyOf(sent).text).not.toContain("dos veces");
+    expect(bodyOf(sent).text).toContain("último plazo");
+  });
+});
+
+describe("listUnnotifiedWithdrawals", () => {
+  // La lista que faltaba. Sin ella, quien queda dado de baja SIN notificar
+  // desaparece de todas las pantallas apenas se recarga: la lista de pendientes
+  // filtra por socios vigentes y él ya no lo es, y un bloqueo por
+  // `EMAIL_ALLOWLIST` ni siquiera escribe fila de notificación. Esto es lo que
+  // hace que se lo pueda volver a encontrar y reintentar.
+  it("son los declarados de baja SIN fecha fehaciente, y nadie más", async () => {
+    const { sut } = makeSut({
+      presentations: [
+        // De baja y sin notificar: con casilla (se le puede reintentar el correo).
+        presentation(1, member(10, { email: "a@b.com", emailStatus: "verified", status: "withdrawn" }), {
+          status: "withdrawn",
+        }),
+        // De baja y sin notificar, sin casilla: va al cartel de la sede.
+        presentation(2, member(20, { status: "withdrawn" }), { status: "withdrawn" }),
+        // De baja y YA notificado: su ventana de recurso está corriendo.
+        presentation(3, member(30, { status: "withdrawn" }), {
+          status: "withdrawn",
+          withdrawalNotifiedAt: d(2026, 11, 2),
+          appealUntil: d(2026, 12, 2),
+        }),
+        // Sin baja declarada: no hay nada que notificarle.
+        presentation(4, member(40), { status: "pending" }),
+      ],
+    });
+
+    const rows = await sut.listUnnotifiedWithdrawals(1);
+    expect(rows.map((r) => r.presentationId)).toEqual([1, 2]);
+    expect(rows[0]).toMatchObject({ memberId: 10, fullName: "Socio 10", byEmail: true });
+    expect(rows[1]).toMatchObject({ memberId: 20, byEmail: false });
+  });
+
+  it("no filtra por socio vigente: el dado de baja ya no lo es", async () => {
+    // El defecto que esta lista existe para arreglar. `listPendingWithdrawals`
+    // acota a adherentes vigentes —y tiene que hacerlo—, así que la persona a la
+    // que se le declaró la baja sale de ahí en cuanto se recarga la pantalla.
+    const { sut } = makeSut({
+      presentations: [
+        presentation(1, member(10, { category: "active", status: "withdrawn" }), { status: "withdrawn" }),
+      ],
+    });
+    expect((await sut.listUnnotifiedWithdrawals(1)).map((r) => r.memberId)).toEqual([10]);
   });
 });
 

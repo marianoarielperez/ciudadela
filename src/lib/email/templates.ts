@@ -888,8 +888,44 @@ ${deadlineHtml}
  *  muriera en la primera pantalla mandaría al vecino a pelearse con el sitio en
  *  vez de a la sede. Misma razón por la que `presentationRejectedEmail` ni
  *  recibe una url. */
-export function withdrawalDeclaredEmail(opts: { appealUntil: Date }): Rendered {
+/** Qué avisos se le cursaron EFECTIVAMENTE antes de la baja. No es decorado:
+ *  ver el comentario de la frase de abajo. */
+export type WithdrawalNoticesServed = {
+  /** La convocatoria al re-empadronamiento (Art. 9° bis). */
+  first: boolean;
+  /** El último plazo, que es el que lleva el apercibimiento de baja. */
+  second: boolean;
+};
+
+/** La primera frase del cuerpo: qué se le avisó antes de resolver la baja.
+ *
+ *  Se CONDICIONA a lo que efectivamente se le cursó, y no es un escrúpulo de
+ *  redacción. La pantalla del lote marca en rojo a quien no tiene ninguna
+ *  notificación cursada pero NO impide declararle la baja —esa decisión es de
+ *  la Comisión, no del software—, así que un texto fijo que dijera siempre "te
+ *  avisamos dos veces" haría que el documento con el que la asociación sostiene
+ *  la resolución abriera con una afirmación falsa y verificable contra su
+ *  propia base. Y es lo primero que leería un recurso ante la asamblea. */
+function noticedSentence(n: WithdrawalNoticesServed): string {
+  if (n.first && n.second) {
+    return "Te habíamos avisado dos veces —la convocatoria y el último plazo— y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).";
+  }
+  if (n.first) {
+    return "Te habíamos notificado la convocatoria al re-empadronamiento y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).";
+  }
+  if (n.second) {
+    return "Te habíamos notificado el último plazo para re-empadronarte y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).";
+  }
+  // Ningún aviso acreditado: se dice el hecho y su fundamento, y nada más.
+  return "El trámite no llegó a quedar aprobado dentro del plazo del Art. 9° bis, así que la Comisión resolvió la baja en los términos de su inciso c).";
+}
+
+export function withdrawalDeclaredEmail(opts: {
+  appealUntil: Date;
+  notified: WithdrawalNoticesServed;
+}): Rendered {
   const until = formatDateAR(opts.appealUntil);
+  const noticed = noticedSentence(opts.notified);
   // Sin nombrar a la vecinal: el asunto ya lo lleva de sufijo, y "Tu baja
   // como socio de la Vecinal Ciudadela — Vecinal Ciudadela" es lo que salía.
   const title = "Tu baja como socio";
@@ -897,13 +933,13 @@ export function withdrawalDeclaredEmail(opts: { appealUntil: Date }): Rendered {
     subject: `${title} — Vecinal Ciudadela`,
     text: `La Comisión Directiva de la ${ORG} resolvió declarar tu baja como socio adherente por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.
 
-Te habíamos avisado dos veces —la convocatoria y el último plazo— y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).
+${noticed}
 
 Si no estás de acuerdo, podés recurrir esta resolución ante la primera asamblea ordinaria (Art. 9° bis inciso d). Tenés tiempo para presentar el recurso hasta el ${until} inclusive: acercate a la sede vecinal y dejalo por escrito.
 
 Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.${SIGNATURE}`,
     html: layout(title, `<p>La Comisión Directiva de la ${esc(ORG)} resolvió <strong>declarar tu baja como socio adherente</strong> por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.</p>
-<p>Te habíamos avisado dos veces —la convocatoria y el último plazo— y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del <strong>Art. 9° bis inciso c)</strong>.</p>
+<p>${esc(noticed)}</p>
 <p>Si no estás de acuerdo, <strong>podés recurrir</strong> esta resolución ante la primera asamblea ordinaria (Art. 9° bis inciso d). Tenés tiempo para presentar el recurso <strong>hasta el ${esc(until)}</strong> inclusive: acercate a la sede vecinal y dejalo por escrito.</p>
 <p>Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.</p>`),
   };

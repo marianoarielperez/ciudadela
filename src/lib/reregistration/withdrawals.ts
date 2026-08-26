@@ -78,6 +78,12 @@ export const ARREARS_CATEGORIES_MIRROR: readonly MemberCategory[] = ["active", "
  *  dato de la pantalla sin que nada falle. */
 export const WITHDRAWAL_AUDIT_ACTION = "reregistration_withdrawal";
 export const WITHDRAWAL_AUDIT_ENTITY = "member";
+/** El REINTENTO de la notificación de una baja ya declarada. Asiento propio y
+ *  no el mismo de la baja: la baja se declara una sola vez y el reintento puede
+ *  correr muchas, y el día que alguien tenga que probar cuándo quedó notificado
+ *  un vecino —que es de lo que cuelga su ventana de recurso— tiene que poder
+ *  separar los dos actos. */
+export const WITHDRAWAL_RETRY_AUDIT_ACTION = "reregistration_withdrawal_retry";
 
 /** Los estados de presentación que la etapa de bajas puede convertir en
  *  `withdrawn`.
@@ -125,6 +131,23 @@ export type PendingWithdrawal = {
    *  ni en ninguna. */
   byEmail: boolean;
   notices: NoticeTrace[];
+};
+
+/** Una baja YA declarada a la que todavía no se le notificó nada.
+ *
+ *  Es una lista distinta de `PendingWithdrawal` y no una variante suya: aquélla
+ *  acota a adherentes VIGENTES —tiene que hacerlo, es a quién le falta
+ *  desenlace— y esta persona ya dejó de serlo, así que sale de aquella consulta
+ *  en cuanto la pantalla se recarga. Sin esta lista, quien queda de baja sin
+ *  notificar no aparece en ningún lado. */
+export type UnnotifiedWithdrawal = {
+  presentationId: number;
+  memberId: number;
+  fullName: string;
+  memberNumber: number | null;
+  /** Tiene casilla utilizable: se le puede REINTENTAR el correo. Si no, su vía
+   *  es el cartel de la sede y el reintento no le cambia nada. */
+  byEmail: boolean;
 };
 
 /** El resultado del lote, con los tres baldes del molde REG-34 más uno.
@@ -320,6 +343,62 @@ export function makeWithdrawals(deps: Deps) {
         }))
         // Por número de socio, que es como se busca a alguien en el padrón de
         // papel y como se va a leer el anexo del acta. Los sin número al final.
+        .sort(
+          (a, b) =>
+            (a.memberNumber ?? Number.MAX_SAFE_INTEGER) - (b.memberNumber ?? Number.MAX_SAFE_INTEGER),
+        );
+    },
+
+    /** Las bajas YA declaradas que siguen SIN notificar, con nombre.
+     *
+     *  Existe por un agujero concreto y medido: cuando el correo de baja no
+     *  sale —falla el SMTP, o lo bloquea `EMAIL_ALLOWLIST`, que hoy sigue
+     *  definida en producción— no se escribe ninguna fila de notificación, la
+     *  persona ya no es socia vigente y por lo tanto desaparece de
+     *  `listPendingWithdrawals`. El nombre de quien quedó de baja sin notificar
+     *  no quedaba en ningún lado: ni en la base, ni en la pantalla, ni en el
+     *  estado del formulario. Sin poder encontrarla, no hay reintento posible.
+     *
+     *  El acotamiento es `withdrawalNotifiedAt: null` y NO el estado del socio:
+     *  esta persona ya está dada de baja: filtrar por vigentes la escondería,
+     *  que es exactamente el defecto que esta lista arregla. Sale de la lista
+     *  sola cuando se le estampa la fecha fehaciente, por cualquiera de las dos
+     *  vías (el correo acá, la fijación del cartel en `boardNotices.post`). */
+    async listUnnotifiedWithdrawals(processId: number): Promise<UnnotifiedWithdrawal[]> {
+      const process = await deps.db.reregistrationProcess.findUnique({
+        where: { id: processId },
+        select: { bookId: true },
+      });
+      if (!process) return [];
+
+      const rows = await deps.db.presentation.findMany({
+        where: { processId, status: "withdrawn", withdrawalNotifiedAt: null },
+        select: {
+          id: true,
+          memberId: true,
+          member: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              emailStatus: true,
+              memberships: { where: { bookId: process.bookId }, select: { memberNumber: true } },
+            },
+          },
+        },
+        orderBy: { memberId: "asc" },
+      });
+
+      return rows
+        .map((r) => ({
+          presentationId: r.id,
+          memberId: r.memberId,
+          fullName: r.member.fullName,
+          memberNumber: r.member.memberships[0]?.memberNumber ?? null,
+          // La misma función que decide la nómina del cartel, así que nadie
+          // puede caer en las dos listas ni en ninguna.
+          byEmail: emailUsable(r.member),
+        }))
         .sort(
           (a, b) =>
             (a.memberNumber ?? Number.MAX_SAFE_INTEGER) - (b.memberNumber ?? Number.MAX_SAFE_INTEGER),
@@ -563,6 +642,13 @@ export function makeWithdrawals(deps: Deps) {
           id: true,
           status: true,
           withdrawalNotifiedAt: true,
+          // El proceso viaja para acotar las notificaciones que el correo va a
+          // AFIRMAR: sin el piso de `createdAt` se leerían los avisos que ese
+          // vecino recibió en el libro anterior (mismo acotamiento que el anexo
+          // del acta, y por eso se comparte `noticesByMember` en vez de
+          // reescribir el `where`).
+          processId: true,
+          process: { select: { createdAt: true } },
           member: { select: { id: true, email: true, emailStatus: true } },
         },
       });
@@ -577,12 +663,29 @@ export function makeWithdrawals(deps: Deps) {
       // La fecha se calcula ANTES de mandar porque el correo la NOMBRA: el
       // vecino tiene que leer exactamente el día que queda registrado.
       const until = appealUntil(at);
+
+      // QUÉ SE LE CURSÓ DE VERDAD. El correo de baja abre diciendo qué avisos
+      // recibió antes, y la pantalla NO impide declararle la baja a quien no
+      // tiene ninguno —esa decisión es de la Comisión, no del software—, así
+      // que el texto no puede darlos por hechos: el documento con el que se
+      // sostiene la baja abriría con una afirmación falsa y verificable contra
+      // la propia base. Se lee con la MISMA función que arma el anexo del acta
+      // y con el mismo criterio de `status`: una fila `failed` registra un
+      // intento, no un aviso recibido.
+      const traces = (await noticesByMember(row.processId, row.process.createdAt, [row.member.id]))
+        .get(row.member.id) ?? [];
+      const served = traces.filter((t) => t.status !== "failed");
+      const notified = {
+        first: served.some((t) => t.type === "reregistration_first"),
+        second: served.some((t) => t.type === "reregistration_second"),
+      };
+
       try {
         await deps.mailer.sendToMember({
           memberId: row.member.id,
           to: row.member.email,
           type: "withdrawal_declared",
-          message: withdrawalDeclaredEmail({ appealUntil: until }),
+          message: withdrawalDeclaredEmail({ appealUntil: until, notified }),
           summary: "baja declarada por no re-empadronarse",
         });
       } catch (e) {
