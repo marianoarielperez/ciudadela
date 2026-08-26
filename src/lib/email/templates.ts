@@ -660,11 +660,11 @@ O en persona, acercándote a la sede vecinal con tu DNI.
 
 Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, bajo apercibimiento de baja (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.
 
-Si ya te re-empadronaste en estos días, ignorá este correo.${SIGNATURE}`,
+Si ya te avisamos que tu re-empadronamiento quedó aprobado, ignorá este correo. Si te pedimos que corrijas algo, entrá por el enlace y completalo antes de esa fecha: mientras no esté aprobado, el plazo sigue corriendo.${SIGNATURE}`,
     html: layout(title, `<p>Todavía no tenemos aprobado tu re-empadronamiento, así que la ${esc(ORG)} te concede un último plazo: tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>
 ${button(opts.url, "Re-empadronarme")}
 <p>También podés hacerlo <strong>en persona</strong>, acercándote a la sede vecinal con tu DNI.</p>
 <p>Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, <strong>bajo apercibimiento de baja</strong> (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.</p>
-<p>Si ya te re-empadronaste en estos días, ignorá este correo.</p>`),
+<p>Si ya te avisamos que tu re-empadronamiento quedó aprobado, ignorá este correo. Si te pedimos que corrijas algo, entrá por el enlace y completalo antes de esa fecha: mientras no esté aprobado, el plazo sigue corriendo.</p>`),
   };
 }
