@@ -31,6 +31,21 @@ describe("mapWithdrawalReason", () => {
     expect(mapWithdrawalReason("-").reason).toBeNull();
     expect(mapWithdrawalReason(null).reason).toBeNull();
   });
+  // REG-04 (Art. 5 inc. 2): el expulsado NO puede reingresar jamás. Sin este
+  // caso el motivo caía en `other` y la puerta del wizard —que bloquea por
+  // `reentryBlocked || withdrawalReason === "expulsion"`— lo dejaba pasar.
+  // El libro de papel escribe el motivo a mano, así que se contemplan las
+  // formas que efectivamente aparecen: participio en masculino y femenino, el
+  // sustantivo con y sin tilde, y el motivo dentro de una frase más larga.
+  it("maps every spelling of an expulsion", () => {
+    for (const raw of [
+      "Expulsado", "Expulsada", "Expulsión", "Expulsion", "EXPULSADO",
+      "  expulsado  ", "Expulsado por acta 12", "Anulada por expulsión",
+    ]) {
+      expect(mapWithdrawalReason(raw)).toEqual({ reason: "expulsion" });
+    }
+  });
+
   it("falls back to other with warning", () => {
     const r = mapWithdrawalReason("texto raro");
     expect(r.reason).toBe("other");
@@ -70,6 +85,34 @@ describe("mapPadronRow", () => {
     expect(m.warnings.some((w) => w.includes("sin DNI"))).toBe(true);
     expect(m.warnings.some((w) => w.includes("sin fecha_egreso"))).toBe(true);
   });
+  // Defensa en profundidad: el motivo se puede editar después desde el panel,
+  // el flag no se apaga solo. La puerta del wizard mira las DOS señales
+  // (`eligibility.ts:64`), así que el import tiene que dejar puestas las dos.
+  it("marks an expelled member as blocked for reentry", () => {
+    const m = mapPadronRow({ ...base, activo: "No", motivo_baja: "Expulsado",
+      fecha_egreso: new Date(Date.UTC(2024, 4, 10)) });
+    expect(m.member.withdrawalReason).toBe("expulsion");
+    expect(m.member.reentryBlocked).toBe(true);
+    expect(m.warnings).toEqual([]);
+  });
+
+  it("leaves reentryBlocked off for every other reason", () => {
+    for (const motivo of ["Mora", "Fallecido", "Domiciliada en Gasoducto", "texto raro", "-"]) {
+      const m = mapPadronRow({ ...base, activo: "No", motivo_baja: motivo,
+        fecha_egreso: new Date(Date.UTC(2024, 4, 10)) });
+      expect(m.member.reentryBlocked).toBe(false);
+    }
+  });
+
+  // Una ficha VIGENTE no arrastra ni motivo ni bloqueo, pase lo que pase en la
+  // columna: `activo=Si` con un motivo escrito es un dato sucio del libro, no
+  // una expulsión (y el bloqueo quedaría invisible en la ficha de un socio).
+  it("never blocks a member that is still active", () => {
+    const m = mapPadronRow({ ...base, activo: "Si", motivo_baja: "Expulsado" });
+    expect(m.member.withdrawalReason).toBeNull();
+    expect(m.member.reentryBlocked).toBe(false);
+  });
+
   it("throws on unknown category or activo flag", () => {
     expect(() => mapPadronRow({ ...base, categoria_socio: "Vitalicio" })).toThrow();
     expect(() => mapPadronRow({ ...base, activo: "quizas" })).toThrow();

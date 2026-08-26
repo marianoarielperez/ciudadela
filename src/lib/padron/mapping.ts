@@ -40,6 +40,8 @@ export type MemberImportData = {
   category: MemberCategory;
   status: MemberStatus;
   withdrawalReason: WithdrawalReason | null;
+  /** REG-04: la expulsión prende el flag además del motivo. Ver `mapPadronRow`. */
+  reentryBlocked: boolean;
   joinedAt: Date;
   leftAt: Date | null;
   debtAtWithdrawal: boolean;
@@ -59,6 +61,13 @@ export function mapWithdrawalReason(raw: string | null | undefined): { reason: W
   if (v === "" || v === "-") return { reason: null };
   if (/^mora$/i.test(v)) return { reason: "arrears" };
   if (/^fallecid[oa]$/i.test(v)) return { reason: "death" };
+  // REG-04 (Art. 5 inc. 2): la expulsión no se puede perder en `other`, porque es
+  // el ÚNICO motivo que cierra el reingreso para siempre y la puerta del wizard
+  // lo decide por este valor (`eligibility.ts:64`). El motivo lo escribe a mano
+  // quien lleva el libro, así que se aceptan el participio en los dos géneros y
+  // el sustantivo con y sin tilde, y se busca dentro de la frase —igual que el
+  // cambio de domicilio de abajo— para tomar también "Anulada por expulsión".
+  if (/expulsad[oa]|expulsi[oó]n/i.test(v)) return { reason: "expulsion" };
   if (/domicili|gasoducto|standard|bols/i.test(v)) return { reason: "moved_away" };
   return { reason: "other", warning: `motivo_baja no mapeado: "${v}" (queda como "other")` };
 }
@@ -105,6 +114,16 @@ export function mapPadronRow(row: RawPadronRow): MappedRow {
       category,
       status,
       withdrawalReason: status === "withdrawn" ? reason : null,
+      // Defensa en profundidad (REG-04). El motivo es editable desde el panel y
+      // `checkEligibility` mira las DOS señales —`reentryBlocked` O el motivo—:
+      // si alguien le cambia el motivo a una ficha de expulsado, el flag es lo
+      // único que sobrevive. Mismo criterio que `memberService.withdraw`
+      // (`service.ts:109`), que también lo prende al asentar la expulsión.
+      // Con `--update-existing` el flag sigue al Excel igual que el motivo: no
+      // agrega una clase de daño nueva —esa corrida ya pisaba `withdrawalReason`
+      // con lo que diga el archivo— pero sí exige que el Excel diga "Expulsado"
+      // en la fila del expulsado, que es justo lo que este cambio arregla.
+      reentryBlocked: status === "withdrawn" && reason === "expulsion",
       joinedAt: excelDateToCivilUtc(row.fecha_ingreso),
       leftAt: row.fecha_egreso ? excelDateToCivilUtc(row.fecha_egreso) : null,
       debtAtWithdrawal: yes(row.deuda_tesoreria),
