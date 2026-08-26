@@ -1,8 +1,9 @@
 // Etiquetas es-AR de los enums del padrón. Un solo lugar: el listado, la ficha y
 // la exportación tienen que nombrar lo mismo que el Libro en papel.
 import type {
-  EmailStatus, MemberCategory, MemberRequestStatus, MemberRequestType, MemberStatus,
-  MinuteType, MovementType, NotificationStatus, NotificationType, WithdrawalReason,
+  BoardNoticeKind, EmailStatus, MemberCategory, MemberRequestStatus, MemberRequestType,
+  MemberStatus, MinuteType, MovementType, NotificationStatus, NotificationType,
+  PresentationChannel, PresentationStatus, ReregistrationStatus, WithdrawalReason,
 } from "@/generated/prisma/client";
 
 export const CATEGORY_LABELS: Record<MemberCategory, string> = {
@@ -35,7 +36,9 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   fee_reminder: "Recordatorio de cuota", arrears_alert: "Aviso de mora",
   receipt: "Recibo", payment_rejected: "Pago rechazado",
   request_accepted: "Solicitud aceptada", request_rejected: "Solicitud rechazada",
-  board_digest: "Resumen para la cartelera", generic: "Aviso",
+  board_digest: "Resumen para la cartelera",
+  presentation_received: "Presentación recibida", presentation_observed: "Presentación observada",
+  generic: "Aviso",
 };
 export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
   sent: "Enviada", delivered: "Entregada", bounced: "Rebotada",
@@ -67,4 +70,34 @@ export const REQUEST_STATUS_BADGE_VARIANT: Record<
   // "Sin efecto" no es una negativa de la Comisión: comparte el gris de
   // `cancelled` (cerrada sin decisión) y no el rojo de `rejected`.
   superseded: "secondary",
+};
+
+// ── Módulo 6: re-empadronamiento (Art. 9° bis) ───────────────────────────────
+// Viven acá y no en un archivo aparte porque nombran el mismo hecho que el
+// resto del padrón: quién sigue siendo socio. La bandeja del panel, el listado
+// de faltantes y el cartel de la sede tienen que decir todos lo mismo.
+
+// `pending` es la fila que nace sola al convocar: el socio todavía no hizo
+// nada, así que la etiqueta describe la AUSENCIA ("Sin presentar") y no un
+// trámite en curso — decirle "Pendiente" haría creer que hay algo que revisar.
+// `withdrawn` es el final del que nunca se presentó: la baja ya está declarada.
+export const PRESENTATION_STATUS_LABELS: Record<PresentationStatus, string> = {
+  pending: "Sin presentar", submitted: "Presentada", observed: "Observada",
+  validated: "Validada", rejected: "Rechazada", withdrawn: "Baja declarada",
+};
+
+export const PRESENTATION_CHANNEL_LABELS: Record<PresentationChannel, string> = {
+  web: "Por la web", in_person: "En el mostrador",
+};
+
+export const PROCESS_STATUS_LABELS: Record<ReregistrationStatus, string> = {
+  preparing: "En preparación", first_instance: "Primera instancia",
+  second_instance: "Segunda instancia", closing: "En cierre", closed: "Cerrado",
+};
+
+// Qué cartel es. "Bajas declaradas" es el del Art. 9° bis in fine: el que
+// publica la nómina de quienes no se presentaron.
+export const BOARD_NOTICE_KIND_LABELS: Record<BoardNoticeKind, string> = {
+  first_instance: "Citación (1° instancia)", second_instance: "Citación (2° instancia)",
+  withdrawal: "Bajas declaradas", other: "Otro",
 };
