@@ -144,6 +144,20 @@ describe("findScheduleConflict (capacidad 3: aulas)", () => {
   });
 });
 
+describe("findScheduleConflict (espacio desconocido: falla cerrado)", () => {
+  // Mismo criterio que el `Object.hasOwn` de buildWeeklyGrid, pero del lado de
+  // la ESCRITURA: un espacio que no está en ROOM_CAPACITY no puede resolver a
+  // "capacidad ilimitada". Sin el `?? 1`, `capacity` es `undefined`, ningún
+  // camino matchea y la función devuelve null: solapes libres.
+  const ghost = (over: Record<string, unknown> = {}) =>
+    slot({ room: "basement", weekdays: [1], startTime: "18:00", endTime: "19:30", ...over });
+
+  it("un espacio fuera de ROOM_CAPACITY se trata como capacidad 1", () => {
+    const hit = findScheduleConflict(ghost({ id: undefined }), [ghost({ id: 1 })]);
+    expect(hit).toMatchObject({ kind: "overlap" });
+  });
+});
+
 describe("buildWeeklyGrid", () => {
   it("agrupa por salón y día, ordena por hora y excluye inactivas", () => {
     const grid = buildWeeklyGrid([

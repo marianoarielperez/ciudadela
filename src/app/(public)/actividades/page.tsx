@@ -5,13 +5,20 @@ import { getActivitiesForYear, getActivityYears } from "@/lib/activities/query";
 import { buildDailyAgenda, initialAgendaDay } from "@/lib/activities/rules";
 import {
   activitiesYearHref,
+  currentWeekdayAR,
   currentYearAR,
   resolveActivitiesYear,
 } from "@/lib/activities/year-param";
-import { currentWeekdayAR } from "@/lib/dates";
 import { SITE, siteBaseUrl } from "@/lib/site";
 import { ActivityCard } from "./activity-card";
 import { DayTabs } from "./day-tabs";
+
+// Explícito, como en las tres rutas de /admin/actividades: esta página depende
+// del DÍA argentino (el chip "Hoy" y el día que trae elegido el selector del
+// celular). Hoy ya es dinámica de hecho porque espera `searchParams`, pero eso
+// es un efecto de borde del `?anio=`: si mañana se saca el parámetro, la ruta
+// se prerenderiza sin avisar y "Hoy" queda congelado en el día del build.
+export const dynamic = "force-dynamic";
 
 const DESCRIPTION = "Calendario semanal de actividades de la sede: salones, cocina y aulas.";
 

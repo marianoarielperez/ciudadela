@@ -3,10 +3,8 @@
 // criterio que MemberTabs — no navega, es una vista de la misma página). El
 // día inicial llega del servidor calculado con hora argentina.
 import { useState } from "react";
-import type { AgendaEntry } from "@/lib/activities/rules";
+import type { AgendaDay } from "@/lib/activities/rules";
 import { ActivityCard } from "./activity-card";
-
-type AgendaDay = { day: number; label: string; entries: AgendaEntry[] };
 
 export function DayTabs({ agenda, initialDay }: { agenda: AgendaDay[]; initialDay: number }) {
   const [selected, setSelected] = useState(initialDay);

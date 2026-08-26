@@ -47,6 +47,11 @@ export function timeToMinutes(hhmm: string): number | null {
 // Capacidad física de cada espacio: los salones y la cocina son un ambiente
 // único; "Aulas" son tres aulas sin identificar, así que hasta tres
 // actividades activas pueden convivir en el mismo horario.
+//
+// Ojo si algún día otro espacio pasa a tener capacidad > 1: el mensaje de
+// rechazo de `src/app/admin/actividades/actions.ts` tiene el sustantivo
+// "aulas" escrito a mano ("Las 3 aulas ya están ocupadas de…"), así que subirle
+// la capacidad a un segundo espacio obliga a reescribir ese texto primero.
 export const ROOM_CAPACITY: Record<RoomKey, number> = {
   historic: 1,
   glass: 1,
@@ -64,9 +69,9 @@ export type ScheduleConflict =
   | { kind: "overlap"; other: ActivitySlot }
   | { kind: "full"; capacity: number; startTime: string; endTime: string };
 
-// Reemplaza a findOverlap: misma regla estricta de solape (compartir el borde
-// exacto es válido) generalizada por capacidad. Con capacidad 1 el resultado
-// es el de siempre — la primera actividad pisada—; con capacidad N el
+// Decide si una actividad candidata entra en su espacio: regla estricta de
+// solape (compartir el borde exacto es válido) generalizada por capacidad. Con
+// capacidad 1 devuelve la primera actividad pisada; con capacidad N el
 // candidato entra salvo que en algún instante de su rango ya haya N activas
 // en simultáneo EN EL MISMO DÍA, y en ese caso se informa la ventana ocupada
 // para que el operador sepa qué franja tiene que esquivar.
@@ -85,7 +90,13 @@ export function findScheduleConflict(
     const oEnd = timeToMinutes(other.endTime);
     return oStart !== null && oEnd !== null && start < oEnd && oStart < end;
   });
-  const capacity = ROOM_CAPACITY[candidate.room];
+  // `?? 1` y no el valor pelado: `room` está tipado, pero si algún día llega un
+  // espacio que no está en ROOM_CAPACITY el lookup da `undefined`, ningún `if`
+  // matchea y la función devuelve `null` — o sea, solapes ILIMITADOS en un
+  // espacio desconocido. El camino de LECTURA ya falla cerrado con el
+  // `Object.hasOwn` de `buildWeeklyGrid`; el de ESCRITURA no puede ser más
+  // permisivo que el de lectura. Sin capacidad conocida, la mínima: 1.
+  const capacity = ROOM_CAPACITY[candidate.room] ?? 1;
   if (capacity === 1) {
     return overlapping.length > 0 ? { kind: "overlap", other: overlapping[0] } : null;
   }
@@ -164,6 +175,11 @@ export type AgendaEntry = {
   endTime: string;
 };
 
+// Un día de la agenda pública. Se exporta —en vez de quedar implícito en el
+// retorno de buildDailyAgenda— porque DayTabs lo recibe como prop y tenía su
+// propia copia del tipo: dos definiciones que podían divergir en silencio.
+export type AgendaDay = { day: number; label: string; entries: AgendaEntry[] };
+
 // Reproyección día-primero de buildWeeklyGrid para el calendario público. La
 // grilla por espacio es la vista del que administra la sede; el vecino
 // pregunta "¿qué hay el martes?" y "¿a qué hora?", y el espacio recién le
@@ -172,9 +188,7 @@ export type AgendaEntry = {
 //
 // Mismo contrato implícito que buildWeeklyGrid: recibe las actividades de UN
 // solo año, no filtra por año.
-export function buildDailyAgenda(
-  activities: ActivitySlot[],
-): Array<{ day: number; label: string; entries: AgendaEntry[] }> {
+export function buildDailyAgenda(activities: ActivitySlot[]): AgendaDay[] {
   const grid = buildWeeklyGrid(activities);
   return WEEKDAYS.map(([day, label]) => ({
     day,
