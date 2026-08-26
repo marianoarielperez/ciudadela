@@ -68,12 +68,25 @@ export type MigrationEntry = {
  *  `padron/mapping.ts` (vía `excelDateToCivilUtc`) y `members/service.ts` /
  *  `applications/record.ts` (vía `minute.date`, que parsea con
  *  `parseCivilDate`); `card-edit.ts` la tiene fuera de su lista blanca—, así
- *  que `civilDayOf` es hoy la identidad. Pero si mañana una fila entra con hora
- *  de reloj, comparar instantes ordenaría dos ingresos del MISMO día por la
- *  hora en que se cargaron y pisaría el desempate por número viejo, y un
- *  ingreso de las 23 de acá —que en UTC ya es el día siguiente— se leería un
- *  día más nuevo de lo que es. Es la misma razón por la que los plazos se
- *  comparan con `hasExpired` y no con un `>` crudo. */
+ *  que `civilDayOf` es hoy la identidad. Lo que compra es UNA sola cosa, y para
+ *  el día en que alguna fila entre con hora de reloj: COLAPSAR EN EMPATE los
+ *  ingresos del mismo día, para que el desempate lo decida el número del libro
+ *  anterior —que es el criterio acordado— y no la hora en que un operador cargó
+ *  la ficha, que no dice nada de la antigüedad.
+ *
+ *  Lo que NO compra, y conviene dejarlo escrito porque tienta pensar lo
+ *  contrario: el día civil no puede dar vuelta dos ingresos. Argentina es UTC-3
+ *  FIJA (sin horario de verano), así que pasar del instante al día civil es
+ *  monótono —restar tres horas y truncar—: si un instante es anterior a otro,
+ *  su día civil nunca es posterior. Un ingreso de las 23 de acá, que en UTC ya
+ *  cayó al día siguiente, no se "lee más nuevo" comparando instantes: sigue
+ *  siendo posterior a todo lo de ese día y anterior a todo lo del que sigue.
+ *  La única diferencia con comparar instantes es DÓNDE se pierde la hora, y ahí
+ *  está el punto: la ventana del empate va de las 00:00 a las 23:59
+ *  ARGENTINAS, no las UTC — ese ingreso de las 23 empata con el de las 09 de la
+ *  mañana del mismo día de acá, y no con los del día UTC en el que cayó. Es la
+ *  misma razón por la que los plazos se comparan con `hasExpired` y no con un
+ *  `>` crudo. */
 export function planMigration(members: MigrationCandidate[]): MigrationEntry[] {
   // Decorar-ordenar-desdecorar: `civilDayOf` arma un `Intl.DateTimeFormat` por
   // llamada, y dentro del comparador se ejecutaría O(n log n) veces por socio.

@@ -73,14 +73,33 @@ describe("planMigration — orden por antigüedad (REG-28)", () => {
     expect(plan.map((p) => p.oldNumber)).toEqual([100, 200, 300]);
   });
 
-  it("keeps a genuinely earlier civil day ahead of a later one written at midnight", () => {
-    // 09/05 a las 12:00 UTC (09:00 AR) es anterior al 10/05, aunque su instante
-    // sea POSTERIOR al de un 10/05 escrito a las 03:00 UTC.
+  it("draws the tie window at ARGENTINE midnight, not at UTC midnight", () => {
+    // El día civil no puede dar vuelta dos ingresos (UTC-3 fija: pasar al día
+    // civil es monótono); lo único que hace es decidir QUIÉNES empatan, y la
+    // ventana es de las 00:00 a las 23:59 de acá. Este caso ejerce los dos
+    // bordes a la vez:
+    //  - el 1 y el 2 comparten fecha UTC (10/05) y NO empatan, porque el 1 es
+    //    el 09/05 a las 22:00 AR;
+    //  - el 2 y el 3 tienen fechas UTC distintas y SÍ empatan, porque los dos
+    //    son del 10/05 argentino — y entonces decide el número viejo, aunque el
+    //    instante del 3 sea posterior.
     const plan = planMigration([
-      row({ memberId: 1, joinedAt: new Date("2026-05-10T03:00:00Z"), oldNumber: 10 }),
-      row({ memberId: 2, joinedAt: d(2026, 5, 9), oldNumber: 999 }),
+      row({ memberId: 3, joinedAt: new Date("2026-05-11T02:00:00Z"), oldNumber: 50 }), // 10/05 23:00 AR
+      row({ memberId: 2, joinedAt: new Date("2026-05-10T20:00:00Z"), oldNumber: 90 }), // 10/05 17:00 AR
+      row({ memberId: 1, joinedAt: new Date("2026-05-10T01:00:00Z"), oldNumber: 400 }), // 09/05 22:00 AR
     ]);
-    expect(plan[0].memberId).toBe(2);
+    expect(plan.map((p) => p.memberId)).toEqual([1, 3, 2]);
+  });
+
+  it("falls back to memberId when the day AND the old number are both equal", () => {
+    // Inalcanzable con datos reales —el schema tiene `@@unique([bookId,
+    // memberNumber])`—, pero sin este tercer criterio el comparador devolvería
+    // 0 y el `sort` estable de JS dejaría el resultado atado al orden en que
+    // vino la consulta. Se ejerce en los dos órdenes de entrada.
+    const a = row({ memberId: 7, joinedAt: d(2015, 4, 4), oldNumber: 50 });
+    const b = row({ memberId: 9, joinedAt: d(2015, 4, 4), oldNumber: 50 });
+    expect(planMigration([a, b]).map((p) => p.memberId)).toEqual([7, 9]);
+    expect(planMigration([b, a]).map((p) => p.memberId)).toEqual([7, 9]);
   });
 
   it("is dense: 1..N with no gaps, however holed the old numbering was", () => {
@@ -185,16 +204,20 @@ describe("closeBlockers — qué frena el cierre y qué sólo se mira", () => {
   });
 
   it("covers every kind of the union", () => {
-    // Tabla exhaustiva: si mañana se agrega un `kind`, este caso obliga a
-    // decidir a mano de qué lado cae en vez de heredar un default silencioso.
-    const table: Array<[ClosePrecondition["kind"], boolean]> = [
-      ["unresolved_presentations", true],
-      ["cohort_not_terminal", true],
-      ["arrears_candidates", false],
-      ["board_in_progress", false],
-    ];
-    for (const [kind, blocks] of table) {
-      expect(closeBlockers([{ kind, count: 3 }]).length === 1).toBe(blocks);
+    // Tabla exhaustiva DE VERDAD: es un `Record` indexado por la unión, así que
+    // agregar un `kind` no compila hasta que alguien escriba acá de qué lado
+    // cae (y un `kind` que ya no exista tampoco, por el chequeo de propiedades
+    // sobrantes del literal). Un `Array<[kind, boolean]>` compilaba igual con la
+    // fila nueva faltando, que es justo la garantía que le da sentido a
+    // enumerar las que bloquean en vez de derivarlas por descarte.
+    const blocksClose: Record<ClosePrecondition["kind"], boolean> = {
+      unresolved_presentations: true,
+      cohort_not_terminal: true,
+      arrears_candidates: false,
+      board_in_progress: false,
+    };
+    for (const kind of Object.keys(blocksClose) as Array<ClosePrecondition["kind"]>) {
+      expect(closeBlockers([{ kind, count: 3 }]).length === 1).toBe(blocksClose[kind]);
     }
   });
 });
