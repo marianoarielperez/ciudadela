@@ -32,7 +32,7 @@ tienen actividades visibles. La grilla se lee por día: **de lunes a sábado** (
 vecinal no abre los domingos), y en cada día las actividades ordenadas por hora
 con su nombre, horario y espacio. En el escritorio son seis columnas, la semana
 de un vistazo, con el día de hoy marcado; en el celular es un selector de día
-—uno por vez— que abre en el día de hoy.
+—uno por vez— que abre en el día de hoy, o en lunes si se entra un domingo.
 
 La carga es desde `/admin/actividades` (nombre, espacio, días de la semana,
 horario, año, visible en el sitio público sí/no). El alta se rechaza cuando el
