@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
-  boardAudience, BoardNoticesPanel, classifyNotice, CounterChips, nextStep, ProcessVerdict,
-  UnnotifiedPanel, type ProcessCountersView, type UnnotifiedRow,
+  boardAudience, BoardNoticesPanel, chipVariant, classifyNotice, CounterChips, nextStep,
+  ProcessVerdict, UnnotifiedPanel, type ProcessCountersView, type UnnotifiedRow,
 } from "@/app/admin/reempadronamiento/board-panels";
 import { daysLeftLabel, ProcessStepper, type StepperProcess } from "@/app/admin/reempadronamiento/process-stepper";
 import type { PresentationStatus } from "@/generated/prisma/client";
@@ -183,6 +183,33 @@ describe("CounterChips", () => {
     expect(html).toContain("Rechazada");
     expect(html).toContain("Baja declarada");
     expect(html).toContain(">112<");
+  });
+});
+
+describe("chipVariant — la regla del cero", () => {
+  it("un contador en CERO nunca se pinta", () => {
+    // "Rechazada 0" en rojo es una alarma que dice que no pasó nada, y una
+    // alarma así enseña a ignorar el tablero (4C §veredicto). El color queda
+    // para lo que efectivamente hay.
+    expect(chipVariant("rejected", 0)).toBe("outline");
+    expect(chipVariant("submitted", 0)).toBe("outline");
+    expect(chipVariant("validated", 0)).toBe("outline");
+  });
+
+  it("con algo adentro, cada estado recupera su color", () => {
+    expect(chipVariant("rejected", 2)).toBe("destructive");
+    expect(chipVariant("submitted", 5)).toBe("default");
+    expect(chipVariant("validated", 5)).toBe("success");
+  });
+
+  it("la pantalla en blanco no tiene ni una pastilla de alarma", () => {
+    const zeros = {
+      pending: 0, submitted: 0, observed: 0, validated: 0, rejected: 0, withdrawn: 0,
+    } satisfies Record<PresentationStatus, number>;
+    const html = render(createElement(CounterChips, { byStatus: zeros }));
+
+    expect(html).not.toContain("text-destructive");
+    expect(html).not.toContain("text-success");
   });
 });
 

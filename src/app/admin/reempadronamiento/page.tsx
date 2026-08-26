@@ -25,6 +25,7 @@ import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NotificationType } from "@/generated/prisma/client";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { requireAdmin, requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { formatDateAR } from "@/lib/format";
@@ -229,14 +230,14 @@ export default async function ReempadronamientoPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Reempadronamiento"
-        breadcrumb={[{ label: "Reempadronamiento" }]}
-      >
+      {/* Sin miga: es una sección de primer nivel y la miga de un solo ítem
+          repetía el título. Las otras secciones de primer nivel del panel no la
+          llevan, y la rama de estado vacío de esta misma pantalla tampoco. */}
+      <PageHeader title="Reempadronamiento">
         <p className="text-sm text-muted-foreground">
           Libro N° <span className={NUM}>{process.book.number}</span> ·{" "}
           {PROCESS_STATUS_LABELS[process.status]} ·{" "}
-          <Link className="text-primary hover:underline" href={`/admin/actas/${process.callMinuteId}`}>
+          <Link className={INLINE_LINK} href={`/admin/actas/${process.callMinuteId}`}>
             acta de convocatoria
           </Link>
           {process.igjApprovedAt && <> · oficialización IGJ el <span className={NUM}>{formatDateAR(process.igjApprovedAt)}</span></>}
@@ -247,9 +248,13 @@ export default async function ReempadronamientoPage() {
       {/* La divergencia entre el proceso vivo y la clave de configuración no es
           cosmética: de esa clave dependen la suspensión de ASOCIATE y el botón
           REEMPADRONATE del sitio público. Si el aviso aparece, el vecino no ve
-          el wizard aunque el plazo le esté corriendo. */}
+          el wizard aunque el plazo le esté corriendo.
+
+          Va con `role="none"`, como el veredicto de acá abajo: es el ESTADO de
+          la pantalla al abrirla y no la respuesta a una acción, así que un
+          `alert` interrumpiría al lector de pantalla en cada recarga. */}
       {!keyMatches && (
-        <FormMessage kind="error" box>
+        <FormMessage kind="error" box role="none">
           El sitio público no está apuntando a este proceso (la clave{" "}
           <code>{CONFIG_KEYS.reregistrationProcessId}</code> dice{" "}
           <code>{liveKey ?? "nada"}</code>). Mientras siga así, ASOCIATE no queda suspendido y el

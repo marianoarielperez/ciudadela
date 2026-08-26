@@ -171,8 +171,11 @@ const CHIP_VARIANT: Record<PresentationStatus, ChipVariant> = {
 
 /** Un contador en CERO nunca se pinta: "Rechazada 0" en rojo es una alarma que
  *  dice que no pasó nada, y el proyecto ya corrigió tres veces esa clase de
- *  ruido (4C §veredicto). El color queda para lo que efectivamente hay. */
-function chipVariant(status: PresentationStatus, count: number): ChipVariant {
+ *  ruido (4C §veredicto). El color queda para lo que efectivamente hay.
+ *
+ *  Exportada para poder fijarla en el test: es una regla de producto —la única
+ *  del tablero que quedaba sin test— y fue un defecto real, cazado a mano. */
+export function chipVariant(status: PresentationStatus, count: number): ChipVariant {
   return count === 0 ? "outline" : CHIP_VARIANT[status];
 }
 
@@ -284,7 +287,10 @@ export function UnnotifiedPanel({ rows, instanceLabel }: {
         // decirle al operador "quedaron 12 sin aviso" sin decirle CUÁLES es
         // ordenarle una tarea sin darle los medios (mismo criterio que la
         // bandeja de altas con los fallos parciales de un lote).
-        <FormMessage kind="warning" box as="div">
+        // `role="none"` como el veredicto de arriba: esta lista es el ESTADO de
+        // la pantalla al abrirla, no la respuesta a una acción, y un `alert`
+        // interrumpiría al lector de pantalla en cada recarga.
+        <FormMessage kind="warning" box as="div" role="none">
           <p className="font-medium">
             <span className={NUM}>{rows.length}</span>{" "}
             {rows.length === 1 ? "convocado quedó" : "convocados quedaron"} sin el aviso de {instanceLabel}:

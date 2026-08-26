@@ -15,6 +15,7 @@ import Link from "next/link";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { LIVE_APPLICATION_STATUSES } from "@/lib/applications/service";
 import { formatDateAR } from "@/lib/format";
@@ -107,7 +108,7 @@ export default async function ConvocarPage() {
               {openApplications === 1 ? "solicitud de alta en curso" : "solicitudes de alta en curso"}.
               ASOCIATE queda suspendido al convocar; {openApplications === 1 ? "rechazala" : "rechazalas"}{" "}
               a mano desde{" "}
-              <Link className="underline" href="/admin/solicitudes">Solicitudes</Link>.
+              <Link className={INLINE_LINK} href="/admin/solicitudes">Solicitudes</Link>.
             </FormMessage>
           )}
 
