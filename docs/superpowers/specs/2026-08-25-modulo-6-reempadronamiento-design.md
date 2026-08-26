@@ -182,6 +182,11 @@ Ruta `/reempadronate`. Visible/activo solo con proceso en `first_instance` o
 48px, mobile-first), stepper con `AnsweredTrail`, `StreetPicker`, subida con magic
 bytes, Turnstile, patrón de guardas de `asociate/actions.ts`.
 
+**El wizard NO tiene ningún paso de pago** (decisión del operador, 25/08/2026):
+a diferencia de ASOCIATE, acá no se ofrece pagar, ni adherir débito, ni cambiar
+monto — nada que toque el circuito de pagos. El adherente solo se re-empadrona.
+`step-payment` y toda referencia a Mercado Pago quedan explícitamente fuera.
+
 ### 5.1 Paso 1 — Identificación
 
 Input: **DNI** (+ Turnstile). Rate limit nuevo `reregistrationLookupLimiter`
