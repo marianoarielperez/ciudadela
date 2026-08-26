@@ -222,17 +222,23 @@ describe("lookupAction — veredictos", () => {
     });
   });
 
-  it("una presentación observada también pasa: se subsana por el wizard", async () => {
+  // El agujero que este caso cierra: entrar por el paso 1 acuña una llave nueva
+  // y ROTA la anterior. Si el DNI reabriera una observada, cualquiera que
+  // tipeara ese número le mataría al socio el enlace del buzón —con el plazo de
+  // subsanación corriendo— y podría pisarle lo cargado. Se subsana SÓLO por el
+  // enlace del correo.
+  it("una presentación observada NO se reabre tipeando el DNI: estado + reenvío", async () => {
     mocks.prisma.member.findUnique.mockResolvedValue(
       memberRow({ presentation: { status: "observed", email: "x@y.com" } }),
     );
 
-    const res = await lookupAction(IDLE, form({ dni: "28456757" }));
-
-    expect(res.kind).toBe("eligible");
-    // Se prefiere el email de la PRESENTACIÓN —el que el propio vecino declaró
-    // y viene a corregir— antes que el de la ficha.
-    expect(res).toMatchObject({ email: "x@y.com" });
+    expect(await lookupAction(IDLE, form({ dni: "28456757" }))).toEqual({
+      kind: "already_submitted",
+      canResend: true,
+    });
+    // Y lo que importa de verdad: NO se acuñó ninguna llave, así que el enlace
+    // que el vecino tiene en el correo sigue vivo.
+    expect(mocks.prisma.presentation.updateMany).not.toHaveBeenCalled();
   });
 
   it("una presentación ya enviada no es un rechazo: va a la pantalla de estado", async () => {

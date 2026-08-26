@@ -158,14 +158,16 @@ export async function lookupAction(_prev: LookupState, formData: FormData): Prom
       // puede apuntar a la de otro (mismo criterio que el token de retome de
       // ASOCIATE en los pasos 4 y 5).
       //
-      // Rota en cada entrega, y eso tiene una consecuencia que hay que decir:
-      // si el vecino tenía una presentación OBSERVADA y un enlace vivo en su
-      // correo, este claim lo mata. Es el precio de que viva una sola llave, y
-      // el reenvío del paso 1 —o el correo de la próxima observación— le da una
-      // nueva. El riesgo de fondo es el ACEPTADO por la decisión 8: el DNI no
-      // es autenticación, así que quien tipee uno ajeno se lleva una llave. Lo
-      // acotan el captcha, el cupo de 5/15 min y que por este camino la
-      // pantalla no precargue NADA guardado salvo el email.
+      // Rota en cada entrega, y por eso `lookupVerdict` no deja entrar por acá
+      // a una presentación OBSERVADA: si lo hiciera, cualquiera que tipeara ese
+      // DNI —que no es autenticación— le mataría al vecino el enlace vivo que
+      // tiene en el buzón, justo mientras le corre el plazo para subsanar, y de
+      // paso podría pisarle lo cargado. La observada se reabre SÓLO por el
+      // enlace del correo. Por este camino queda entonces una presentación
+      // `pending`, donde no hay ni enlace que matar ni datos que pisar; el
+      // riesgo residual es el ACEPTADO por la decisión 8 y lo acotan el
+      // captcha, el cupo de 5/15 min y que la pantalla no precargue NADA
+      // guardado salvo el email.
       const claimed = row ? await presentations.claim({ presentationId: row.id }) : null;
       // Sin llave no hay trámite posible: pasa si la Comisión resolvió la
       // presentación entre el veredicto y el claim. Se contesta el cartel
@@ -183,6 +185,11 @@ export async function lookupAction(_prev: LookupState, formData: FormData): Prom
         email: row?.email ?? member?.email ?? "",
       };
     }
+    // Enviada, validada u OBSERVADA: las tres van a la misma pantalla de
+    // estado, sin ningún dato cargado, con el reenvío del enlace como única
+    // puerta. No se distinguen entre sí a propósito: quién está observado es
+    // algo que el vecino lee en SU correo, no algo que conteste un formulario
+    // público donde el DNI es toda la credencial.
     case "already_submitted":
       return {
         kind: "already_submitted",

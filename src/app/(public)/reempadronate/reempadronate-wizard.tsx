@@ -490,10 +490,19 @@ function NotFoundPanel({ contact, onRetry }: { contact: ContactInfo; onRetry: ()
   );
 }
 
-/** Ya hay una presentación de este proceso para ese DNI. No es un rechazo: no
- *  hay nada que volver a cargar. NO se muestra ningún dato de la presentación
+/** Ya hay una presentación de este proceso para ese DNI: enviada, validada u
+ *  OBSERVADA. No es un rechazo. NO se muestra ningún dato de la presentación
  *  —el DNI no autentica—: para verla o corregirla está el enlace que viajó al
- *  email cuando se recibió, y el formulario de acá lo reenvía. */
+ *  email cuando se recibió, y el formulario de acá lo reenvía.
+ *
+ *  Los tres estados se ven IGUAL y eso es deliberado. Una observada no se reabre
+ *  tipeando el DNI —entrar por el paso 1 acuña una llave nueva y mata la
+ *  anterior, así que un tercero le robaría al socio el enlace del buzón con el
+ *  plazo de subsanación corriendo—, y tampoco se le dice acá que está
+ *  observada: qué le pidieron corregir viaja en SU correo, que es lo único que
+ *  acredita que es él. Por eso el texto habla del enlace y del plazo sin
+ *  afirmar que el trámite esté esperando sin nada que hacer: tiene que ser
+ *  verdadero para los tres estados. */
 function AlreadySubmittedPanel({
   canResend,
   siteKey,
@@ -521,12 +530,12 @@ function AlreadySubmittedPanel({
       </h1>
       <FormMessage kind="success" box className="mt-5">
         <span className="block">
-          Ya recibimos una presentación de este re-empadronamiento con ese documento. No hace falta
-          que la vuelvas a cargar.
+          Ya recibimos una presentación de este re-empadronamiento con ese documento. Desde acá no se
+          vuelve a empezar: tu trámite sigue por el enlace que te mandamos por email.
         </span>
         <span className="mt-2 block">
           {canResend
-            ? "Al recibirla te enviamos por email el enlace para verla. Si no lo encontrás, te lo reenviamos acá abajo."
+            ? "Con ese enlace ves cómo va y, si la Comisión te pidió corregir algo, lo corregís ahí mismo antes de la fecha que te indicamos en ese correo. Si no lo encontrás, te lo reenviamos acá abajo."
             : "Si necesitás ver o corregir algo, acercate a la sede vecinal con tu documento."}
         </span>
       </FormMessage>

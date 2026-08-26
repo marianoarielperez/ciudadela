@@ -157,7 +157,18 @@ export type LookupVerdict =
  *  pero no es adherente" ni de "le declararon la baja". El cartel de la
  *  pantalla es genérico y este tipo lo garantiza: `not_found` no lleva motivo
  *  ni id. `already_submitted` sí se separa porque no es un rechazo — el socio
- *  ya se presentó y va a la pantalla de estado de su propia presentación. */
+ *  ya se presentó y va a la pantalla de estado de su propia presentación, que
+ *  no muestra ningún dato cargado y le ofrece que le reenviemos el enlace.
+ *
+ *  Y por eso `observed` va AHÍ y no a `eligible`. Es la garantía que cierra el
+ *  agujero: entrar por el paso 1 acuña una llave nueva y ROTA la anterior, así
+ *  que si el DNI reabriera una presentación observada, cualquiera que tipeara
+ *  ese número —que no es una contraseña— mataría el enlace que el socio tiene
+ *  en el buzón justo cuando le corre el plazo para subsanar, y de paso podría
+ *  pisarle lo cargado. El acceso a datos ya cargados es SIEMPRE por el enlace
+ *  del correo (diseño M6 §5.4, primera línea): el buzón es lo único que
+ *  acredita que es él. Editable la presentación sigue siéndolo —`observed`
+ *  está en `EDITABLE_STATUSES`—; lo que cambia es por dónde se entra. */
 export function lookupVerdict(input: {
   member: { id: number; fullName: string; category: MemberCategory; status: MemberStatus } | null;
   presentation: { status: PresentationStatus } | null;
@@ -169,8 +180,8 @@ export function lookupVerdict(input: {
   if (presentation === null) return { kind: "not_found" };
   switch (presentation.status) {
     case "pending":
-    case "observed": // observada = hay que subsanar, y se subsana por el wizard
       return { kind: "eligible", memberId: member.id, maskedName: maskedName(member.fullName) };
+    case "observed": // se subsana por el ENLACE del correo, nunca tipeando el DNI
     case "submitted":
     case "validated":
       return { kind: "already_submitted" };

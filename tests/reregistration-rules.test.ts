@@ -151,11 +151,15 @@ describe("lookupVerdict — paso 1 del wizard", () => {
     });
   });
 
-  it("eligible when the cohort row is observed (subsanación)", () => {
+  // El DNI NO reabre una presentación observada. Es una decisión de SEGURIDAD,
+  // no una molestia: la entrada por DNI acuña una llave nueva y mata la
+  // anterior, así que un tercero que tipeara ese documento le robaría al socio
+  // el enlace que tiene en el buzón —justo cuando le corre el plazo para
+  // corregir— y podría pisarle lo cargado. La subsanación se abre SIEMPRE por
+  // el enlace del correo: el buzón es lo que acredita que es él.
+  it("already_submitted when the presentation is observed (only the emailed link reopens it)", () => {
     expect(lookupVerdict({ member, presentation: withStatus("observed") })).toEqual({
-      kind: "eligible",
-      memberId: 42,
-      maskedName: "N***** C.",
+      kind: "already_submitted",
     });
   });
 
