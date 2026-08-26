@@ -28,7 +28,11 @@
 // de pantallas ni de `next/cache`, y sus tests corren sin base. La auditoría
 // del cierre —estricta, porque el asiento ES la señal ante la IGJ— vive en la
 // action, DESPUÉS del commit, con el patrón `auditAfterCommit` del modo carga.
-import type { MemberCategory, MemberStatus, PrismaClient } from "@/generated/prisma/client";
+import type { PrismaClient } from "@/generated/prisma/client";
+// Del módulo de ENUMS generado, que exporta el objeto y el tipo con el mismo
+// nombre y no evalúa ningún cliente: la foto del cierre recorre TODAS las
+// combinaciones del enum, así que necesita los valores en runtime.
+import { MemberCategory, MemberStatus } from "@/generated/prisma/enums";
 import { CONFIG_KEYS } from "@/lib/config-keys";
 import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { prisma } from "@/lib/prisma";
@@ -295,18 +299,42 @@ export function makeCloseBook(deps: Deps) {
             // ── 2. La foto: estado y categoría VIVOS de cada persona, en TODAS
             // las membresías del libro que se cierra — también las de las bajas
             // históricas. Es lo que hace consultable el libro cerrado para
-            // siempre (REG-36). Fila por fila y en serie: son ~278 updates
-            // cortos, entran holgados en los 5 s del timeout.
-            const rows = await bookMemberships(tx, process.bookId);
-            for (const row of rows) {
-              await tx.membership.update({
-                where: { id: row.id },
-                data: {
-                  statusAtClose: row.member.status,
-                  categoryAtClose: row.member.category,
-                },
-              });
+            // siempre (REG-36).
+            //
+            // POR COMBINACIÓN, no por fila. El plan de esta tarea prescribía un
+            // update por membresía y afirmaba que 278 filas entraban holgadas
+            // en los 5 s del timeout; MEDIDO contra la MariaDB real del
+            // entorno local, las 279 vueltas de ida y vuelta se comieron el
+            // timeout enteras (P2028 a los ~5,05 s) y el cierre abortaba
+            // siempre — la lección de la 4B, medir antes de suponer, una vez
+            // más. La foto son a lo sumo 18 sentencias: una por combinación
+            // estado × categoría, y se recorren TODAS las combinaciones del
+            // enum —no sólo las presentes en una lectura previa— para que cada
+            // fila reciba su foto con el valor que tiene EN LA BASE en este
+            // instante: el `updateMany` matchea por el estado vivo y escribe
+            // ese mismo estado.
+            for (const status of Object.values(MemberStatus)) {
+              for (const category of Object.values(MemberCategory)) {
+                await tx.membership.updateMany({
+                  where: { bookId: process.bookId, member: { status, category } },
+                  data: { statusAtClose: status, categoryAtClose: category },
+                });
+              }
             }
+            // Completitud, y falla CERRADA: si algún día el schema suma un
+            // valor que estas listas generadas aún no traen (un cliente viejo
+            // contra una base nueva), quedarían filas sin foto — mejor abortar
+            // el cierre entero que cerrar un libro con la foto a medias.
+            const unphotographed = await tx.membership.count({
+              where: { bookId: process.bookId, statusAtClose: null },
+            });
+            if (unphotographed > 0) {
+              throw new CloseAborted(
+                `${unphotographed} ${unphotographed === 1 ? "membresía quedó" : "membresías quedaron"} sin foto al cerrar. No se cerró nada.`,
+              );
+            }
+
+            const rows = await bookMemberships(tx, process.bookId);
 
             // ── 3. El libro viejo se cierra con su acta…
             await tx.book.update({
@@ -378,7 +406,14 @@ export function makeCloseBook(deps: Deps) {
               newBookNumber: newBook.number,
               withdrawnCount,
             };
-          });
+          },
+          // Techo EXPLÍCITO y con margen sobre el default de 5 s. La
+          // transacción entera son ~25 sentencias cortas —la foto por
+          // combinación, dos createMany, un puñado de lecturas— y en el
+          // entorno local cierra en menos de un segundo; el margen es para el
+          // VPS compartido, porque acá un timeout no es un reintento barato:
+          // es el operador apretando de nuevo el botón más grave del panel.
+          { timeout: 15_000 });
         } catch (e) {
           if (e instanceof CloseAborted) return { ok: false as const, error: e.message };
           // Un fallo técnico (la base, un unique inesperado) no puede llegar a

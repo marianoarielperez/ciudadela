@@ -113,6 +113,34 @@ function matchesPresentation(state: State, row: FakePresentation, where: Record<
   return true;
 }
 
+function matchesMembership(state: State, row: FakeMembership, where: Record<string, unknown>): boolean {
+  for (const [key, cond] of Object.entries(where)) {
+    if (key === "bookId") {
+      if (!matchScalar(row.bookId, cond)) return false;
+    } else if (key === "statusAtClose") {
+      // El único uso es `statusAtClose: null` (la guarda de completitud de la
+      // foto); cualquier otra forma revienta antes que mentir.
+      if (cond !== null) throw new Error(`condición no soportada por el doble: statusAtClose ${JSON.stringify(cond)}`);
+      if (row.statusAtClose !== null) return false;
+    } else if (key === "member") {
+      const member = state.members.find((m) => m.id === row.memberId);
+      if (!member) return false;
+      for (const [mk, mc] of Object.entries(cond as Record<string, unknown>)) {
+        if (mk === "category") {
+          if (!matchScalar(member.category, mc)) return false;
+        } else if (mk === "status") {
+          if (!matchScalar(member.status, mc)) return false;
+        } else {
+          throw new Error(`campo no soportado por el doble: member.${mk}`);
+        }
+      }
+    } else {
+      throw new Error(`campo no soportado por el doble: ${key}`);
+    }
+  }
+  return true;
+}
+
 function makeDb(state: State) {
   let nextId = 1000;
   const models = {
@@ -167,12 +195,13 @@ function makeDb(state: State) {
             };
           });
       },
-      update: async ({ where, data }: { where: { id: number }; data: Record<string, unknown> }) => {
-        const m = state.memberships.find((x) => x.id === where.id);
-        if (!m) throw new Error("membresía inexistente");
-        Object.assign(m, data);
-        return m;
+      updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const rows = state.memberships.filter((m) => matchesMembership(state, m, where));
+        for (const m of rows) Object.assign(m, data);
+        return { count: rows.length };
       },
+      count: async ({ where }: { where: Record<string, unknown> }) =>
+        state.memberships.filter((m) => matchesMembership(state, m, where)).length,
       createMany: async ({ data }: { data: Array<{ bookId: number; memberId: number; memberNumber: number }> }) => {
         for (const d of data) {
           // Los DOS uniques del schema, hechos cumplir: [bookId, memberNumber]
