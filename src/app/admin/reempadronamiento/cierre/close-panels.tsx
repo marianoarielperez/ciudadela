@@ -47,34 +47,54 @@ export function Section({ id, title, hint, children }: {
  *
  *  Cada fila lleva además a DÓNDE se resuelve. Un bloqueante sin salida es un
  *  cartel que dice "no podés seguir" y deja al operador buscando el botón. */
-type Line = { label: string; done: string; href: string; hrefLabel: string };
+type Line = {
+  /** El texto que sigue al número. Van los DOS: el checklist tiene filas que en
+   *  el padrón real valen 1 —hoy los cesanteables por mora son 7, pero una sola
+   *  presentación sin resolver es lo más común de todo—, y "1 presentaciones
+   *  esperando decisión" es la clase de detalle que le hace perder autoridad a
+   *  una pantalla que dice que va a expulsar socios. Lo cazó el navegador. */
+  one: string;
+  many: string;
+  done: string;
+  href: string;
+  hrefLabel: string;
+};
 
 const LINES: Record<ClosePrecondition["kind"], Line> = {
   unresolved_presentations: {
-    label: "presentaciones esperando decisión de la Comisión",
+    one: "presentación esperando decisión de la Comisión",
+    many: "presentaciones esperando decisión de la Comisión",
     done: "No queda ninguna presentación esperando decisión.",
     href: PRESENTATIONS_BASE,
     hrefLabel: "resolvelas en la cola",
   },
   cohort_not_terminal: {
-    label: "convocados sin desenlace: siguen siendo adherentes vigentes y no tienen su re-empadronamiento validado",
+    one: "convocado sin desenlace: sigue siendo adherente vigente y no tiene su re-empadronamiento validado",
+    many: "convocados sin desenlace: siguen siendo adherentes vigentes y no tienen su re-empadronamiento validado",
     done: "Todos los convocados tienen desenlace.",
     href: "#bajas",
     hrefLabel: "declaralos de baja acá abajo",
   },
   arrears_candidates: {
-    label: "socios activos o colaboradores en condición de cesantía por mora",
+    one: "socio activo o colaborador en condición de cesantía por mora",
+    many: "socios activos o colaboradores en condición de cesantía por mora",
     done: "No hay ningún socio en condición de cesantía por mora.",
     href: "/admin/tesoreria/deudores",
     hrefLabel: "decidilo en Deudores antes de cerrar si corresponde",
   },
   board_in_progress: {
-    label: "avisos de cartelera todavía en curso",
+    one: "aviso de cartelera todavía en curso",
+    many: "avisos de cartelera todavía en curso",
     done: "No hay ningún aviso de cartelera en curso.",
     href: "/admin/reempadronamiento#cartelera",
     hrefLabel: "mirá el tablero",
   },
 };
+
+function labelFor(kind: ClosePrecondition["kind"], count: number): string {
+  const line = LINES[kind];
+  return count === 1 ? line.one : line.many;
+}
 
 /** El veredicto de DOS NIVELES del cierre, el mismo patrón de `/admin/salud`:
  *  lo que FRENA en rojo, lo que hay que mirar antes de seguir en neutro.
@@ -107,7 +127,7 @@ export function CloseVerdict({ preconditions, blockers }: {
         <ul className="mt-2 space-y-1">
           {blockers.map((b) => (
             <li key={b.kind}>
-              <span className={NUM}>{b.count}</span> {LINES[b.kind].label} —{" "}
+              <span className={NUM}>{b.count}</span> {labelFor(b.kind, b.count)} —{" "}
               <Link className={INLINE_LINK} href={LINES[b.kind].href}>
                 {LINES[b.kind].hrefLabel}
               </Link>
@@ -121,7 +141,7 @@ export function CloseVerdict({ preconditions, blockers }: {
           <ul className="mt-1 space-y-1">
             {warnings.map((w) => (
               <li key={w.kind}>
-                <span className={NUM}>{w.count}</span> {LINES[w.kind].label} —{" "}
+                <span className={NUM}>{w.count}</span> {labelFor(w.kind, w.count)} —{" "}
                 <Link className={INLINE_LINK} href={LINES[w.kind].href}>
                   {LINES[w.kind].hrefLabel}
                 </Link>
@@ -170,7 +190,7 @@ export function CloseChecklist({ preconditions, blockers }: {
               <span className="text-muted-foreground">{line.done}</span>
             ) : (
               <span>
-                <span className={NUM}>{p.count}</span> {line.label}.{" "}
+                <span className={NUM}>{p.count}</span> {labelFor(p.kind, p.count)}.{" "}
                 <Link className={INLINE_LINK} href={line.href}>
                   {line.hrefLabel}
                 </Link>

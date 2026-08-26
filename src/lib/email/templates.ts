@@ -890,7 +890,9 @@ ${deadlineHtml}
  *  recibe una url. */
 export function withdrawalDeclaredEmail(opts: { appealUntil: Date }): Rendered {
   const until = formatDateAR(opts.appealUntil);
-  const title = "Tu baja como socio de la Vecinal Ciudadela";
+  // Sin nombrar a la vecinal: el asunto ya lo lleva de sufijo, y "Tu baja
+  // como socio de la Vecinal Ciudadela — Vecinal Ciudadela" es lo que salía.
+  const title = "Tu baja como socio";
   return {
     subject: `${title} — Vecinal Ciudadela`,
     text: `La Comisión Directiva de la ${ORG} resolvió declarar tu baja como socio adherente por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.

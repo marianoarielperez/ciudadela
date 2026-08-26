@@ -275,11 +275,18 @@ export async function declareWithdrawalsAction(
   // querystring no tiene dónde poner los motivos, y esos avisos son lo único que
   // dice a quién se le declaró la baja sin notificarle. El `revalidatePath` es lo
   // que hace que la lista ya no ofrezca a los que sí salieron.
+  //
+  // `blocked` CUENTA acá, y no es un detalle de entorno de prueba: la
+  // `EMAIL_ALLOWLIST` sigue definida en producción hasta el lanzamiento
+  // (docs/07), así que hoy un lote real dejaría a casi todos sin su correo de
+  // baja y el operador se iría sin enterarse. Un bloqueo no es un fallo de
+  // envío, pero sí es una persona sin notificar.
   const somethingToSay =
     failures.length > 0 ||
     debitFailures.length > 0 ||
     unstamped.length > 0 ||
     notices.failed.length > 0 ||
+    notices.blocked > 0 ||
     notices.deferred > 0;
   if (somethingToSay) {
     return {

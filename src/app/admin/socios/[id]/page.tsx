@@ -167,8 +167,13 @@ export default async function SocioPage(props: {
       {appealWindowOpen(appeal?.appealUntil ?? null) && appeal?.appealUntil && (
         <FormMessage kind="neutral" box>
           {`Baja recurrible hasta el ${formatDateAR(appeal.appealUntil)} inclusive: el socio puede recurrir esta baja ante la primera asamblea ordinaria (Art. 9° bis inc. d).`}
+          {/* Sin tiempo verbal: por cartelera la fecha fehaciente se estampa al
+              asentar la fijación y cae VEINTE DÍAS HÁBILES DESPUÉS, así que
+              mientras el cartel corre "se lo notificó" afirmaría algo que
+              todavía no pasó. "Notificación fehaciente el ..." es verdadero
+              antes y después. */}
           {appeal.withdrawalNotifiedAt && (
-            ` Se lo notificó fehacientemente el ${formatDateAR(appeal.withdrawalNotifiedAt)}.`
+            ` Notificación fehaciente el ${formatDateAR(appeal.withdrawalNotifiedAt)}.`
           )}
         </FormMessage>
       )}
