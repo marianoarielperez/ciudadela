@@ -26,6 +26,7 @@ import type { BoardNoticeKind, PresentationStatus } from "@/generated/prisma/cli
 import { BOARD_BUSINESS_DAYS, businessDayEnd } from "@/lib/board/business-days";
 import { coverageNotice, effectiveKind, makeBoardNotices } from "@/lib/board/notice";
 import { civilDateUtc } from "@/lib/dates";
+import { appealUntil } from "@/lib/reregistration/rules";
 
 const d = civilDateUtc;
 
@@ -67,8 +68,15 @@ type NoticeRow = {
 
 type World = {
   notices: NoticeRow[];
-  /** Presentaciones del proceso: socio + estado. */
-  cohort: Array<{ member: MemberRow; status: PresentationStatus }>;
+  /** Presentaciones del proceso: socio + estado. Las dos columnas de la baja
+   *  viajan porque el cartel de BAJAS, al asentarse, las escribe: de ellas
+   *  cuelga la ventana de recurso del Art. 9° bis d). */
+  cohort: Array<{
+    member: MemberRow;
+    status: PresentationStatus;
+    withdrawalNotifiedAt?: Date | null;
+    appealUntil?: Date | null;
+  }>;
   /** Filas de cartelera ya escritas: `[memberId, kind]`. */
   covered: Array<{ memberId: number; kind: BoardNoticeKind }>;
   process?: { id: number; bookId: number; secondEndsAt: Date | null } | null;
@@ -91,6 +99,12 @@ function matchesWhere(row: Record<string, unknown>, where: Record<string, unknow
     // `===` diría que no.
     if (expected instanceof Date) {
       return actual instanceof Date && actual.getTime() === expected.getTime();
+    }
+    // `null` en el `where` es "esta columna está vacía", no "es exactamente
+    // null": una fila del doble puede no llevar la clave.
+    if (expected === null) return actual === null || actual === undefined;
+    if (expected !== null && typeof expected === "object" && "in" in (expected as object)) {
+      return ((expected as { in: unknown[] }).in).includes(actual);
     }
     return actual === expected;
   });
@@ -148,6 +162,27 @@ function fakeDb(world: World) {
       ),
     },
     presentation: {
+      // EL BARRIDO DE LA VENTANA DE RECURSO SE PRUEBA ACÁ. El `where` viaja tal
+      // cual: si de producción desapareciera el `withdrawalNotifiedAt: null` o
+      // el `status: "withdrawn"`, esta línea pisaría igual filas que no
+      // corresponden y el test se pondría rojo — que es exactamente su trabajo.
+      updateMany: vi.fn(
+        async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+          const hits = world.cohort.filter((c) =>
+            matchesWhere(
+              {
+                processId: 1,
+                memberId: c.member.id,
+                status: c.status,
+                withdrawalNotifiedAt: c.withdrawalNotifiedAt ?? null,
+              },
+              where,
+            ),
+          );
+          for (const c of hits) Object.assign(c, data);
+          return { count: hits.length };
+        },
+      ),
       findMany: vi.fn(async ({ where }: { where: { status: { in: PresentationStatus[] } } }) =>
         world.cohort
           .filter((c) => where.status.in.includes(c.status))
@@ -554,5 +589,106 @@ describe("coverageNotice", () => {
     const message = coverageNotice([...HOLIDAYS, new Date("2026-10-12T00:00:00Z")], FROM);
     expect(message).not.toBeNull();
     expect(message).toContain("canónico");
+  });
+});
+
+describe("post del cartel de BAJAS", () => {
+  const POSTED = d(2026, 10, 2); // viernes 02/10/2026
+
+  function withdrawalWorld(over: Partial<World["cohort"][number]> = {}): World {
+    return {
+      notices: [{ id: 9, processId: 1, kind: "withdrawal", postedAt: null, dueAt: null }],
+      covered: [],
+      cohort: [
+        { member: member(1), status: "withdrawn", ...over },
+        // Sigue vigente: NO se le puede estampar ninguna ventana de recurso.
+        { member: member(2), status: "pending" },
+      ],
+    };
+  }
+
+  it("estampa la fecha fehaciente y la ventana de recurso de TODO el lote", async () => {
+    const world = withdrawalWorld();
+    const { board: b } = board(world);
+
+    const result = await b.post({ noticeId: 9, postedAt: POSTED, holidays: HOLIDAYS });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // LA REGLA DEL MÓDULO: por cartelera la notificación es fehaciente al
+    // CUMPLIRSE los veinte días hábiles, no al fijarse el cartel. Estampar la
+    // fijación le comería al vecino veinte días hábiles de su plazo de defensa.
+    expect(result.dueAt).toEqual(d(2026, 11, 2));
+    expect(world.cohort[0].withdrawalNotifiedAt).toEqual(result.dueAt);
+    expect(world.cohort[0].appealUntil).toEqual(appealUntil(result.dueAt));
+    // Y son exactamente los 30 días corridos del Art. 9° bis d).
+    expect(world.cohort[0].appealUntil).toEqual(d(2026, 12, 2));
+  });
+
+  it("no le estampa nada a quien no quedó de baja", async () => {
+    const world = withdrawalWorld();
+    await board(world).board.post({ noticeId: 9, postedAt: POSTED, holidays: HOLIDAYS });
+    expect(world.cohort[1].withdrawalNotifiedAt ?? null).toBeNull();
+    expect(world.cohort[1].appealUntil ?? null).toBeNull();
+  });
+
+  it("no le corre la ventana a quien ya tenía su fecha fehaciente", async () => {
+    // Es el caso del que quedó notificado por correo: su plazo ya arrancó, y
+    // pisarlo con la fecha del cartel se lo estiraría (o se lo acortaría) sin
+    // que nadie lo decida.
+    const already = d(2026, 10, 1);
+    const world = withdrawalWorld({ withdrawalNotifiedAt: already, appealUntil: d(2026, 10, 31) });
+    await board(world).board.post({ noticeId: 9, postedAt: POSTED, holidays: HOLIDAYS });
+    expect(world.cohort[0].withdrawalNotifiedAt).toEqual(already);
+    expect(world.cohort[0].appealUntil).toEqual(d(2026, 10, 31));
+  });
+
+  it("los otros carteles no tocan ninguna ventana de recurso", async () => {
+    const world: World = {
+      notices: [{ id: 5, processId: 1, kind: "first_instance", postedAt: null, dueAt: null }],
+      covered: [],
+      cohort: [{ member: member(1), status: "withdrawn" }],
+    };
+    await board(world).board.post({ noticeId: 5, postedAt: POSTED, holidays: HOLIDAYS });
+    expect(world.cohort[0].withdrawalNotifiedAt ?? null).toBeNull();
+  });
+});
+
+describe("openWithdrawalNotice", () => {
+  const declared: World["cohort"] = [{ member: member(1), status: "withdrawn" }];
+
+  it("crea el cartel de bajas cuando hay a quién notificar", async () => {
+    const world: World = { notices: [], covered: [], cohort: declared };
+    const result = await board(world).board.openWithdrawalNotice(1);
+    expect(result).toEqual({ ok: true, noticeId: 1, recipients: 1 });
+    expect(world.notices[0]).toMatchObject({ kind: "withdrawal", postedAt: null });
+  });
+
+  it("reutiliza el que está sin fijar y NO el que ya se colgó", async () => {
+    const open: World = {
+      notices: [{ id: 4, processId: 1, kind: "withdrawal", postedAt: null, dueAt: null }],
+      covered: [], cohort: declared,
+    };
+    expect(await board(open).board.openWithdrawalNotice(1)).toMatchObject({ ok: true, noticeId: 4 });
+
+    // Un cartel ya fijado tiene la nómina CONGELADA y su plazo corriendo:
+    // sumarle un nombre sería escribirlo en un papel que ya está en la pared.
+    const posted: World = {
+      notices: [{ id: 4, processId: 1, kind: "withdrawal", postedAt: d(2026, 10, 2), dueAt: d(2026, 11, 2) }],
+      covered: [], cohort: declared,
+    };
+    const result = await board(posted).board.openWithdrawalNotice(1);
+    expect(result).toMatchObject({ ok: true, noticeId: 5 });
+  });
+
+  it("no abre un cartel de cero destinatarios", async () => {
+    const world: World = {
+      notices: [], covered: [],
+      // Con casilla utilizable: se le notificó por correo, no va al cartel.
+      cohort: [{ member: member(1, { email: "a@b.com", emailStatus: "verified" }), status: "withdrawn" }],
+    };
+    const result = await board(world).board.openWithdrawalNotice(1);
+    expect(result.ok).toBe(false);
+    expect(world.notices).toEqual([]);
   });
 });

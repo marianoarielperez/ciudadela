@@ -860,3 +860,49 @@ ${deadlineHtml}
 <p>Si el plazo vence sin que vuelvas a presentarte, vas a figurar como no re-empadronado y la Comisión Directiva puede declarar tu baja como socio (Art. 9° bis del estatuto).</p>`),
   };
 }
+
+/** LA BAJA DECLARADA (M6 §9 etapa B, Art. 9° bis inc. c).
+ *
+ *  Es la notificación más grave que manda el sistema: le dice a un vecino que
+ *  dejó de ser socio de la asociación. Y es además el punto de partida de un
+ *  plazo —desde que queda fehaciente le corren treinta días corridos para
+ *  recurrir ante la primera asamblea ordinaria (Art. 9° bis d)—, así que el
+ *  correo TIENE que nombrar la fecha: es lo único de este mensaje que el vecino
+ *  no puede averiguar solo, y de ella depende su derecho de defensa.
+ *
+ *  El orden está invertido respecto de los otros correos del módulo, y a
+ *  propósito. En la convocatoria, la observación y el rechazo primero va qué
+ *  hacer y recién al final la consecuencia, porque el vecino todavía está a
+ *  tiempo. Acá la consecuencia YA OCURRIÓ: empezar por "podés recurrir" sobre
+ *  alguien que no sabe que lo dieron de baja sería incomprensible. Primero el
+ *  hecho y su fundamento, después qué puede hacer al respecto y hasta cuándo.
+ *
+ *  No saluda por nombre y la plantilla ni siquiera lo recibe, igual que la
+ *  convocatoria: un dedazo en la dirección declarada no puede regalarle a un
+ *  tercero el nombre de quien perdió la condición de socio (Ley 25.326,
+ *  docs/08). Lo que sí dice, porque es lo que hace oponible la resolución, es
+ *  cuál es la causal y de qué artículo sale.
+ *
+ *  Tampoco lleva enlace: no hay ninguna pantalla donde interponer un recurso
+ *  —el Art. 9° bis d) lo dirige a la ASAMBLEA, no a la web— y un botón que
+ *  muriera en la primera pantalla mandaría al vecino a pelearse con el sitio en
+ *  vez de a la sede. Misma razón por la que `presentationRejectedEmail` ni
+ *  recibe una url. */
+export function withdrawalDeclaredEmail(opts: { appealUntil: Date }): Rendered {
+  const until = formatDateAR(opts.appealUntil);
+  const title = "Tu baja como socio de la Vecinal Ciudadela";
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `La Comisión Directiva de la ${ORG} resolvió declarar tu baja como socio adherente por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.
+
+Te habíamos avisado dos veces —la convocatoria y el último plazo— y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).
+
+Si no estás de acuerdo, podés recurrir esta resolución ante la primera asamblea ordinaria (Art. 9° bis inciso d). Tenés tiempo para presentar el recurso hasta el ${until} inclusive: acercate a la sede vecinal y dejalo por escrito.
+
+Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.${SIGNATURE}`,
+    html: layout(title, `<p>La Comisión Directiva de la ${esc(ORG)} resolvió <strong>declarar tu baja como socio adherente</strong> por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.</p>
+<p>Te habíamos avisado dos veces —la convocatoria y el último plazo— y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del <strong>Art. 9° bis inciso c)</strong>.</p>
+<p>Si no estás de acuerdo, <strong>podés recurrir</strong> esta resolución ante la primera asamblea ordinaria (Art. 9° bis inciso d). Tenés tiempo para presentar el recurso <strong>hasta el ${esc(until)}</strong> inclusive: acercate a la sede vecinal y dejalo por escrito.</p>
+<p>Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.</p>`),
+  };
+}

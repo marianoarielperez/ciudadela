@@ -39,7 +39,7 @@ import type {
 import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { BOARD_NOTICE_KIND_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
-import { emailUsable } from "@/lib/reregistration/rules";
+import { appealUntil, emailUsable } from "@/lib/reregistration/rules";
 import { civilDayOf } from "@/lib/treasury/periods";
 import {
   BOARD_BUSINESS_DAYS,
@@ -229,9 +229,13 @@ async function listRecipientsWith(db: Tx, input: ListRecipientsInput): Promise<B
  *
  *  Se escribe una vez porque lo usan dos cosas —abrir el cartel y saber si ya
  *  está abierto para no volver a ofrecerlo— y no pueden divergir. */
-function findOpenOther(db: Tx, processId: number): Promise<{ id: number } | null> {
+function findOpenNotice(
+  db: Tx,
+  processId: number,
+  kind: BoardNoticeKind,
+): Promise<{ id: number } | null> {
   return db.boardNotice.findFirst({
-    where: { processId, kind: "other", postedAt: null },
+    where: { processId, kind, postedAt: null },
     orderBy: { id: "asc" },
     select: { id: true },
   });
@@ -273,7 +277,46 @@ export function makeBoardNotices(deps: Deps) {
      *  aviso es viva hasta que se fija, sumarlo no escribe ninguna fila y el
      *  chip no tendría de dónde enterarse de que el trabajo ya está hecho. */
     async openOtherNoticeId(processId: number): Promise<number | null> {
-      return (await findOpenOther(deps.db, processId))?.id ?? null;
+      return (await findOpenNotice(deps.db, processId, "other"))?.id ?? null;
+    },
+
+    /** El cartel de BAJAS del proceso (M6 §9 etapa B): lo abre —o devuelve el
+     *  que ya está abierto— para los declarados de baja sin casilla utilizable,
+     *  que en este padrón son la enorme mayoría.
+     *
+     *  No nace con la convocatoria como los otros dos: su nómina no existe hasta
+     *  que la Comisión declara las bajas, así que se crea a pedido cuando el
+     *  operador terminó los lotes. Reutiliza el que esté SIN FIJAR —un cartel ya
+     *  colgado tiene la nómina congelada y su plazo corriendo, así que sumarle un
+     *  nombre sería escribirlo en un papel que ya está en la pared— y por lo
+     *  demás calca `openOther`: mismo mutex por proceso, misma verificación de
+     *  que haya a quién notificar.
+     *
+     *  Un cartel de cero destinatarios no se crea: sería una tarjeta que el
+     *  operador tiene que "fijar" para nadie, y asentarla estamparía una fecha
+     *  fehaciente sobre una nómina vacía. */
+    async openWithdrawalNotice(processId: number): Promise<
+      { ok: true; noticeId: number; recipients: number } | { ok: false; error: string }
+    > {
+      return mutex.run(`board-withdrawal:${processId}`, async () => {
+        const recipients = await listRecipientsWith(deps.db, { processId, kind: "withdrawal" });
+        if (recipients.length === 0) {
+          return {
+            ok: false as const,
+            error:
+              "No hay ninguna baja declarada que necesite el cartel de la sede: o todavía no declaraste ninguna, " +
+              "o a todos los declarados se les pudo notificar por correo, o ya están cubiertos por un cartel de este proceso.",
+          };
+        }
+        const open = await findOpenNotice(deps.db, processId, "withdrawal");
+        if (open) return { ok: true as const, noticeId: open.id, recipients: recipients.length };
+
+        const created = await deps.db.boardNotice.create({
+          data: { processId, kind: "withdrawal" },
+          select: { id: true },
+        });
+        return { ok: true as const, noticeId: created.id, recipients: recipients.length };
+      });
     },
 
     /** El aviso entero, para la tarjeta y para el PDF. `null` si no existe. */
@@ -424,6 +467,38 @@ export function makeBoardNotices(deps: Deps) {
               payloadSummary: `cartelera — ${BOARD_NOTICE_KIND_LABELS[notice.kind]}`,
             })),
           });
+
+          // ── EL CARTEL DE BAJAS ARRANCA LA VENTANA DE RECURSO ───────────────
+          // Y ésta es la diferencia que hace todo el módulo: por correo la
+          // notificación es fehaciente AL ENVIARSE, pero por cartelera lo es al
+          // CUMPLIRSE los veinte días hábiles (Art. 5° ter: "con idéntico
+          // efecto"), nunca al fijarse el papel. De ahí que la fecha que se
+          // estampa sea `dueAt` y no `day`: estampar la fijación le comería al
+          // vecino veinte días hábiles de su plazo de defensa.
+          //
+          // Se estampa acá y no en una acción aparte porque asentar la fijación
+          // ES el acto que da por notificada a toda la nómina: si el barrido
+          // viviera en otro botón, un operador que asienta y se va dejaría a
+          // cien vecinos con la baja notificada y sin ninguna ventana de recurso
+          // registrada. Va DENTRO de la misma transacción por lo mismo: no puede
+          // quedar la fila de acreditación escrita y la ventana sin arrancar.
+          //
+          // `withdrawalNotifiedAt: null` viaja en el `where`, y no es paranoia:
+          // a quien ya quedó notificado por otra vía no se le puede correr una
+          // ventana que ya está corriendo. Y `status: "withdrawn"` también, para
+          // que un cartel armado sobre una nómina vieja no le estampe una
+          // ventana de recurso a alguien a quien no se le declaró ninguna baja.
+          if (notice.kind === "withdrawal") {
+            await tx.presentation.updateMany({
+              where: {
+                processId: notice.processId,
+                memberId: { in: recipients.map((r) => r.memberId) },
+                status: "withdrawn",
+                withdrawalNotifiedAt: null,
+              },
+              data: { withdrawalNotifiedAt: dueAt, appealUntil: appealUntil(dueAt) },
+            });
+          }
         }
 
         return { ok: true, dueAt, stamped: recipients.length };
@@ -456,7 +531,7 @@ export function makeBoardNotices(deps: Deps) {
           };
         }
 
-        const open = await findOpenOther(deps.db, input.processId);
+        const open = await findOpenNotice(deps.db, input.processId, "other");
         if (open) return { ok: true as const, noticeId: open.id };
 
         const created = await deps.db.boardNotice.create({
