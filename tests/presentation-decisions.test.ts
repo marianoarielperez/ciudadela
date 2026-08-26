@@ -117,7 +117,19 @@ function member(over: Partial<MemberRow> = {}): MemberRow {
  *  módulo no puede pasar un test mutando el objeto que le prestamos. */
 function fakeDb(
   rows: Row[],
-  opts: { docs?: Array<{ ownerId: number; type: DocumentType }>; members?: MemberRow[] } = {},
+  opts: {
+    docs?: Array<{ ownerId: number; type: DocumentType }>;
+    members?: MemberRow[];
+    /** LA CARRERA DE VERDAD: el otro administrador gana ENTRE la lectura y la
+     *  escritura. La fila se lee todavía decidible —así que la pre-guarda la
+     *  deja pasar— y para cuando llega el `updateMany` ya está en este estado.
+     *
+     *  Sin esto, todos los casos del cerrojo llegan con la fila ya resuelta y
+     *  los atrapa `decidable()`: el `updateMany` condicionado por estado, que
+     *  es LO QUE cierra la carrera real, nunca se ejecuta en el caso que
+     *  importa y se puede borrar sin que un solo test se ponga rojo. */
+    raceTo?: PresentationStatus;
+  } = {},
 ) {
   const docs = opts.docs ?? [
     { ownerId: 1, type: "dni_front" as DocumentType },
@@ -143,7 +155,12 @@ function fakeDb(
               r.memberId === where.processId_memberId.memberId
             : r.id === where.id,
         );
-        return found ? shape(found) : null;
+        if (!found) return null;
+        // `shape` copia, así que el llamador se lleva el estado de ANTES de la
+        // carrera: exactamente lo que ve una pantalla que leyó a tiempo.
+        const seen = shape(found);
+        if (opts.raceTo) found.status = opts.raceTo;
+        return seen;
       },
     ),
     updateMany: vi.fn(
@@ -521,6 +538,98 @@ describe("registerInPerson", () => {
       data: DATA,
     });
     expect(res.ok).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EL CERROJO, en el caso que de verdad lo necesita
+// ─────────────────────────────────────────────────────────────────────────────
+// Los casos llamados "cerrojo" de más arriba llegan con la fila YA resuelta, así
+// que los atrapa `decidable()` —la pre-guarda— y el `updateMany` condicionado
+// por estado ni siquiera se ejecuta. Eso deja sin cubrir justo la escritura que
+// cierra la carrera: borrarle el `status: { in: … }` a las cinco no ponía rojo
+// ni un test, y en producción una observación pisaría en silencio una
+// presentación ya validada, devolviéndola a "observada".
+//
+// Acá la fila se lee TODAVÍA decidible (la pre-guarda la deja pasar) y para
+// cuando llega el UPDATE ya la movió el otro administrador. Es la ventana de
+// milisegundos entre el SELECT y el UPDATE, que en una cola compartida por dos
+// personas es un evento real y no una hipótesis.
+describe("cerrojo: el otro admin gana ENTRE la lectura y la escritura", () => {
+  it("validate no escribe NADA en la ficha del socio y vuelve atrás", async () => {
+    const db = fakeDb([row()], { raceTo: "validated" });
+    const writer = fakeWriter();
+    const res = await presentations(db, writer).validate({ presentationId: 1, actorId: 9 });
+
+    expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
+    // LO QUE IMPORTA: la transacción volvió atrás sin tocar el padrón. El
+    // `updateMany` devolvió 0, `AlreadyDecidedError` voltea la transacción
+    // ENTERA y el escritor de fichas no llegó a ser llamado ni una vez.
+    expect(writer.calls).toHaveLength(0);
+    // Y la decisión del que ganó quedó intacta: ni nuestro actor ni nuestra
+    // fecha se escribieron encima.
+    expect(db.rows[0].status).toBe("validated");
+    expect(db.rows[0].validatedById).toBeNull();
+    expect(db.rows[0].validatedAt).toBeNull();
+  });
+
+  it("observe no devuelve a «observada» una presentación ya validada", async () => {
+    // El escenario que el módulo dice cerrar: el otro administrador validó y
+    // volcó los datos al padrón, y esta observación —disparada un instante
+    // antes— la desharía en silencio.
+    const db = fakeDb([row()], { raceTo: "validated" });
+    const res = await presentations(db).observe({
+      presentationId: 1,
+      actorId: 9,
+      note: "El dorso salió movido.",
+    });
+
+    expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
+    expect(db.rows[0].status).toBe("validated");
+    expect(db.rows[0].observation).toBeNull();
+  });
+
+  it("reject no pisa una presentación ya validada", async () => {
+    const db = fakeDb([row()], { raceTo: "validated" });
+    const res = await presentations(db).reject({
+      presentationId: 1,
+      actorId: 9,
+      note: "No es el titular.",
+    });
+
+    expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
+    expect(db.rows[0].status).toBe("validated");
+    expect(db.rows[0].observation).toBeNull();
+  });
+
+  it("unreject no revive lo que el otro admin ya movió", async () => {
+    // Los dos apretaron "Volver a observada" y el otro llegó primero; entre
+    // medio pudo además observarla con su nota. Esta segunda escritura no tiene
+    // nada que deshacer.
+    const db = fakeDb([row({ status: "rejected" })], { raceTo: "observed" });
+    const res = await presentations(db).unreject({ presentationId: 1, actorId: 9 });
+
+    expect(res).toEqual({ ok: false, error: ALREADY_DECIDED });
+  });
+
+  it("registerInPerson no pisa la presentación que el otro mostrador acaba de registrar", async () => {
+    // Dos operadores cargando al mismo vecino a la vez. El segundo no puede
+    // sobreescribir los datos que el primero acaba de asentar.
+    const db = fakeDb([row({ status: "pending", submittedAt: null, channel: null, email: null })], {
+      raceTo: "submitted",
+    });
+    const res = await presentations(db).registerInPerson({
+      processId: 3,
+      memberId: 42,
+      actorId: 9,
+      data: DATA,
+    });
+
+    expect(res.ok).toBe(false);
+    // Ni una sola de las diez columnas declaradas se escribió encima.
+    expect(db.rows[0].email).toBeNull();
+    expect(db.rows[0].channel).toBeNull();
+    expect(db.rows[0].submittedAt).toBeNull();
   });
 });
 
