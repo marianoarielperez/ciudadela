@@ -42,11 +42,14 @@ const BASE = "/admin/socios/historico";
 /** El chip de reingreso, en palabras. El color nunca es el único canal: cada
  *  veredicto se lee entero aunque el badge se vea gris. El socio vigente no
  *  lleva chip — la pregunta no aplica, y un "no corresponde" en cada tarjeta
- *  del padrón sería ruido en las dos terceras partes de la lista. */
+ *  del padrón sería ruido en las dos terceras partes de la lista. El fallecido
+ *  tampoco: la pregunta no aplica igual que en el vigente, y el dato ya está en
+ *  la línea de abajo ("egreso · Fallecimiento"). */
 function reentryChip(v: ReentryVerdict, pendingFees: number):
   { variant: BadgeVariant; text: string } | null {
   switch (v.kind) {
     case "member":
+    case "deceased":
       return null;
     case "blocked_forever":
       return { variant: "destructive", text: "No puede reingresar" };

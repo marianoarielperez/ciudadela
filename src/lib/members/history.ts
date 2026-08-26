@@ -23,6 +23,7 @@ import { paginate } from "@/lib/admin/pagination";
 
 export type ReentryVerdict =
   | { kind: "member" }                     // vigente: no aplica
+  | { kind: "deceased" }                   // fallecido: la pregunta no aplica
   | { kind: "blocked_forever" }            // expulsión / reentryBlocked
   | { kind: "blocked_until"; until: Date } // rejectedUntil futuro (REG-05)
   | { kind: "must_settle" }                // cesante con cuotas pendientes (REG-16)
@@ -33,14 +34,18 @@ export type ReentryVerdict =
  *
  *  1. El socio vigente (activo o suspendido: el suspendido sigue siendo socio,
  *     REG-17) no es un caso de reingreso, tenga o no deuda.
- *  2. `reentryBlocked || withdrawalReason === "expulsion"` es el DOBLE criterio
+ *  2. El fallecimiento sale ANTES que todo bloqueo porque la pregunta "¿puede
+ *     reasociarse?" no aplica a una persona fallecida —no es que la respuesta
+ *     sea "sí"—, y esta lista la lee el mostrador a veces con un familiar
+ *     enfrente: reclamarle deuda a un muerto es peor que decir "puede volver".
+ *  3. `reentryBlocked || withdrawalReason === "expulsion"` es el DOBLE criterio
  *     de `canReadmit` (`src/lib/members/rules.ts:45`), y por el mismo motivo:
  *     la prohibición del expulsado es absoluta, así que no puede colgar de un
  *     solo flag. Hay fichas viejas —import, arreglos a mano— con el motivo
  *     puesto y el flag en `false`; mirar sólo el flag reabriría la puerta en
  *     silencio.
- *  3. Un rechazo con plazo vigente (REG-05) es un "todavía no", con fecha.
- *  4. REG-16: lo que bloquea es la DEUDA VIVA de la cuenta corriente, no la
+ *  4. Un rechazo con plazo vigente (REG-05) es un "todavía no", con fecha.
+ *  5. REG-16: lo que bloquea es la DEUDA VIVA de la cuenta corriente, no la
  *     marca histórica `debtAtWithdrawal` —que dice que el socio debía el día de
  *     la baja, no que siga debiendo—. Por eso la marca ni siquiera es un dato de
  *     entrada de esta función: quien pagó todo queda libre aunque siga marcada.
@@ -54,6 +59,8 @@ export function reentryVerdict(input: {
   now: Date;
 }): ReentryVerdict {
   if (input.status === "active" || input.status === "suspended") return { kind: "member" };
+  // Antes que todo lo demás: a un fallecido tampoco hay que decirle "debe saldar".
+  if (input.withdrawalReason === "death") return { kind: "deceased" };
   if (input.reentryBlocked || input.withdrawalReason === "expulsion") {
     return { kind: "blocked_forever" };
   }

@@ -39,6 +39,20 @@ describe("reentryVerdict", () => {
     expect(reentryVerdict(input({ status: "active", pendingFees: 12 }))).toEqual({ kind: "member" });
   });
 
+  // La pregunta del mostrador NO APLICA a una persona fallecida: la respuesta
+  // no es "sí". Por eso sale antes que todos los bloqueos y no después.
+  it("no aplica a la persona fallecida", () => {
+    expect(reentryVerdict(input({ withdrawalReason: "death" }))).toEqual({ kind: "deceased" });
+  });
+
+  // El caso que prueba el ORDEN: si el fallecimiento se evaluara después de la
+  // deuda, la pantalla le reclamaría al familiar del mostrador que salde 34
+  // cuotas para reingresar.
+  it("el fallecimiento gana sobre la deuda viva", () => {
+    expect(reentryVerdict(input({ withdrawalReason: "death", pendingFees: 34 })))
+      .toEqual({ kind: "deceased" });
+  });
+
   it("bloquea para siempre al que tiene el flag de reingreso", () => {
     expect(reentryVerdict(input({ reentryBlocked: true }))).toEqual({ kind: "blocked_forever" });
   });
