@@ -269,6 +269,15 @@ model Membership {
   book         Book   @relation(fields: [bookId], references: [id])
   memberNumber Int    @map("member_number")
 
+  // Foto del socio AL CERRAR el libro. Nullable porque un libro abierto no
+  // tiene foto todavia y porque nadie las escribe hasta el cierre (REG-36): un
+  // libro cerrado es un documento inmutable, asi que la categoria y el estado
+  // que tenia la persona ese dia se congelan aca en vez de leerse de la ficha
+  // viva, que despues sigue cambiando. Mientras esten en null, las pantallas
+  // de Libros caen a los datos vivos.
+  statusAtClose   MemberStatus?   @map("status_at_close")
+  categoryAtClose MemberCategory? @map("category_at_close")
+
   @@unique([bookId, memberNumber])
   @@unique([memberId, bookId])
   @@map("memberships")
