@@ -80,8 +80,7 @@ Marco del sitio intacto: `main.mx-auto.max-w-5xl.px-4.py-10`, tokens de
   para modo oscuro; los valores exactos se fijan en implementación contra los
   tokens existentes.
 - Se conservan: selector de año (chips), redirect canónico de `?anio=`,
-  empty state (rediseñado con el ícono de la sección), metadata/canonical,
-  sitemap y la caché por tag.
+  empty state, metadata/canonical, sitemap y la caché por tag.
 
 ## Componentes y datos
 

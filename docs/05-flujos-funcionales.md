@@ -26,17 +26,22 @@ tipografía simple, accesible (población de todas las edades).
 
 ### Actividades (`/actividades`) — Módulo 2
 
-Calendario semanal de los dos salones de la sede (Salón Histórico y Salón
-Vidriado) con selector de año — solo se listan los años que tienen actividades
-visibles. La grilla se lee por día: los siete días de la semana, y en cada uno
-las actividades ordenadas por hora con su nombre, horario y salón. En el celular
-los días sin actividades se resumen en una línea al pie en vez de ocupar una
-tarjeta cada uno.
+Calendario semanal de los **cuatro espacios** de la sede (Salón Histórico, Salón
+Vidriado, Cocina y Aulas) con selector de año — solo se listan los años que
+tienen actividades visibles. La grilla se lee por día: **de lunes a sábado** (la
+vecinal no abre los domingos), y en cada día las actividades ordenadas por hora
+con su nombre, horario y espacio. En el escritorio son seis columnas, la semana
+de un vistazo, con el día de hoy marcado; en el celular es un selector de día
+—uno por vez— que abre en el día de hoy.
 
-La carga es desde `/admin/actividades` (nombre, salón, días de la semana,
-horario, año, visible en el sitio público sí/no). El alta que se superpone con
-otra actividad visible del mismo salón y año se rechaza nombrando a la que ya
-estaba.
+La carga es desde `/admin/actividades` (nombre, espacio, días de la semana,
+horario, año, visible en el sitio público sí/no). El alta se rechaza cuando el
+espacio ya no tiene lugar en esa franja, y eso depende de su **capacidad**:
+Salón Histórico, Salón Vidriado y Cocina son un ambiente único y admiten **una**
+actividad por vez, así que el rechazo nombra a la que ya estaba; Aulas son
+**tres** aulas físicas sin identificar y admiten tres actividades en simultáneo,
+así que recién la cuarta se rechaza, informando la franja horaria ocupada en
+lugar de una actividad.
 
 ## 2. ASOCIATE (wizard público)
 
@@ -403,7 +408,7 @@ La pestaña de cuenta corriente muestra:
 ## 6. Panel admin — Noticias, Actividades, Actas, Configuración
 
 - Noticias: ABM con editor visual básico e imagen de portada, borrador/publicada.
-- Actividades: ABM del calendario de salones (ver `/actividades` en §1).
+- Actividades: ABM del calendario de espacios (ver `/actividades` en §1).
 - Actas: ABM (tipo, número, fecha, descripción) + vista de movimientos asociados.
 - Configuración (solo superadmin): interruptor de ASOCIATE (`asociate_activo`),
   datos de contacto (teléfono y email que muestra el sitio público), los **textos

@@ -468,7 +468,8 @@ model Activity {
   id        Int      @id @default(autoincrement())
   name      String   @db.VarChar(120)
   room      Room
-  // Array JSON de enteros 1–7 (lunes=1). Validado por zod en el alta.
+  // Array JSON de enteros 1–6 (lunes=1 … sábado=6; la vecinal no abre los
+  // domingos). Validado por zod en el alta.
   weekdays  Json
   // "HH:MM" hora de PARED local, sin conversión a UTC: es un horario
   // recurrente, no un instante (excepción documentada, spec §2).

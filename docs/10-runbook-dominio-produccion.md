@@ -372,6 +372,15 @@ aplicada al único bloque destructivo del documento.
 Y volvé el código al commit anterior (`git log --oneline -5` antes de tirar del
 pull te da a cuál).
 
+> **Ojo con volver el código atrás desde el calendario de actividades.** Volver
+> a un commit anterior a los cuatro espacios sólo es seguro **mientras no exista
+> ninguna actividad de Cocina ni de Aulas**. En cuanto se cargue la primera, el
+> código viejo arma la grilla con `historic` y `glass` nada más y esa fila le
+> hace devolver **500 a `/actividades`**; el enum tampoco se revierte limpio con
+> filas así en la base. Si ya hay actividades en esos dos espacios y necesitás
+> volver atrás igual, primero borralas (o pasalas a un salón) desde
+> `/admin/actividades`.
+
 ### 4.2 Rearmar la base desde cero (lo que se hizo el 22/08/2026)
 
 **Cuándo se usa**: sólo para la **carga fundacional**, cuando lo que hay en el VPS
