@@ -139,3 +139,50 @@ export async function fetchPadronPage(
     pageSize: PADRON_PAGE_SIZE,
   };
 }
+
+// ── Resumen del libro abierto (chips del listado) ─────────────────────────────
+//
+// Los cinco números que el listado muestra arriba de los filtros. NO se
+// recalculan con los filtros puestos: son el resumen del LIBRO, no del
+// resultado. Si bajaran al filtrar, el operador perdería la única referencia
+// contra la que compara lo que está mirando ("38 de 160", no "38 de 38").
+//
+// Una sola pasada, y el `groupBy` cruza estado × categoría a propósito: los
+// chips se leen como un DESGLOSE —"160 vigentes = 36 activos + 124 adherentes",
+// que es como la asociación cuenta su padrón— y eso obliga a contar activos y
+// adherentes DENTRO de los vigentes. Con dos conteos sueltos (uno por estado,
+// otro por categoría) "Activos" se llevaría también a las bajas de categoría
+// activa y la suma dejaría de cerrar contra "Vigentes".
+export type PadronDb = Pick<PrismaClient, "member">;
+
+export type PadronCounts = {
+  vigentes: number; activos: number; adherentes: number;
+  suspendidos: number; bajas: number;
+};
+
+export async function fetchPadronCounts(db: PadronDb): Promise<PadronCounts> {
+  const groups = await db.member.groupBy({
+    by: ["status", "category"],
+    // El libro CERRADO tiene sus propios socios (REG-29: la misma persona con
+    // otro número). Sin este `where` el padrón vigente los contaría a todos.
+    where: { memberships: { some: { book: { status: "open" } } } },
+    _count: true,
+  });
+
+  const counts: PadronCounts = {
+    vigentes: 0, activos: 0, adherentes: 0, suspendidos: 0, bajas: 0,
+  };
+  for (const g of groups) {
+    const n = typeof g._count === "number" ? g._count : 0;
+    // "Vigente" es del padrón, no del enum: el suspendido sigue siendo socio
+    // (REG-17), así que suma acá y además en su propio chip.
+    if (g.status === "active" || g.status === "suspended") {
+      counts.vigentes += n;
+      if (g.category === "active") counts.activos += n;
+      if (g.category === "adherent") counts.adherentes += n;
+    }
+    if (g.status === "suspended") counts.suspendidos += n;
+    if (g.status === "withdrawn") counts.bajas += n;
+  }
+  return counts;
+}

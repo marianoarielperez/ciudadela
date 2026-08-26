@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  fetchPadron, fetchPadronPage, PADRON_PAGE_SIZE, padronWhere, parsePadronFilters,
-  parsePadronPage,
+  fetchPadron, fetchPadronCounts, fetchPadronPage, PADRON_PAGE_SIZE, padronWhere,
+  parsePadronFilters, parsePadronPage,
 } from "@/lib/members/query";
 
 describe("parsePadronFilters", () => {
@@ -120,5 +120,60 @@ describe("fetchPadronPage", () => {
     const res = await fetchPadronPage(db, { q: "nadie" }, 1);
     expect(res).toMatchObject({ total: 0, page: 1, pageCount: 1, rows: [] });
     expect((findMany.mock.calls[0] ?? [{}])[0].skip).toBe(0);
+  });
+});
+
+// ── Resumen del libro abierto (chips del listado) ─────────────────────────────
+//
+// Los cinco números se leen como un DESGLOSE ("160 vigentes = 36 activos + 124
+// adherentes"), y por eso el groupBy cruza estado × categoría en vez de contar
+// cada eje por separado: con dos conteos sueltos, "Activos" se llevaría también
+// a las bajas de categoría activa y la suma dejaría de cerrar.
+describe("fetchPadronCounts", () => {
+  type Group = { status: string; category: string; _count: number };
+  function fakeDb(groups: Group[]) {
+    const groupBy = vi.fn<(args: Record<string, unknown>) => Promise<Group[]>>(async () => groups);
+    return { db: { member: { groupBy } } as never, groupBy };
+  }
+
+  it("counts the open book once, crossing status and category", async () => {
+    const { db, groupBy } = fakeDb([]);
+    await fetchPadronCounts(db);
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    const [arg] = groupBy.mock.calls[0] ?? [{}];
+    expect(arg.by).toEqual(["status", "category"]);
+    // El resumen es del libro ABIERTO: sin este `where`, los socios que
+    // quedaron en libros cerrados sumarían en los chips del padrón vigente.
+    expect(arg.where).toEqual({ memberships: { some: { book: { status: "open" } } } });
+  });
+
+  it("derives the five numbers: vigentes = active + suspended, and the breakdown lives inside them", async () => {
+    const { db } = fakeDb([
+      { status: "active", category: "active", _count: 36 },
+      { status: "active", category: "adherent", _count: 122 },
+      { status: "suspended", category: "adherent", _count: 2 },
+      { status: "withdrawn", category: "active", _count: 40 },
+      { status: "withdrawn", category: "adherent", _count: 78 },
+    ]);
+    expect(await fetchPadronCounts(db)).toEqual({
+      vigentes: 160, activos: 36, adherentes: 124, suspendidos: 2, bajas: 118,
+    });
+  });
+
+  it("ignores categories that are neither active nor adherent, without losing them from vigentes", async () => {
+    const { db } = fakeDb([
+      { status: "active", category: "honorary", _count: 3 },
+      { status: "suspended", category: "cadet", _count: 1 },
+    ]);
+    expect(await fetchPadronCounts(db)).toEqual({
+      vigentes: 4, activos: 0, adherentes: 0, suspendidos: 1, bajas: 0,
+    });
+  });
+
+  it("reports zeros on an empty book instead of throwing", async () => {
+    const { db } = fakeDb([]);
+    expect(await fetchPadronCounts(db)).toEqual({
+      vigentes: 0, activos: 0, adherentes: 0, suspendidos: 0, bajas: 0,
+    });
   });
 });
