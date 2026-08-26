@@ -48,6 +48,7 @@ import {
   canStartSecond,
   COHORT_CATEGORY,
   COHORT_STATUSES,
+  emailUsable,
   firstEndsAt,
   hasExpired,
   secondEndsAt,
@@ -81,21 +82,6 @@ const PRESENTATION_STATUSES = [
   "rejected",
   "withdrawn",
 ] as const satisfies readonly PresentationStatus[];
-
-/** El criterio de "casilla utilizable" del proyecto: sin dirección o con rebote
- *  registrado no se manda nada, y esos son exactamente los que van a la
- *  cartelera.
- *
- *  Y NO está escrito una sola vez: ésta es la sexta copia en `src/lib` —las
- *  otras cinco están en `admin/health.ts:286`, `treasury/debtors.ts:110`,
- *  `treasury/reminder.ts:184`, `treasury/receipt-email.ts:60` y
- *  `members/member-requests/notify.ts:53`, más algunas pantallas—. Es deuda
- *  conocida, no una decisión: unificarla toca el núcleo de dinero y excede este
- *  módulo. Lo que sí se sostiene acá es que la FORMA sea idéntica a las otras,
- *  para que el día que se unifique sea un reemplazo mecánico. */
-function emailUsable(m: { email: string | null; emailStatus: EmailStatus }): boolean {
-  return Boolean(m.email) && m.emailStatus !== "bounced";
-}
 
 // Sólo el CÓDIGO del fallo, nunca la dirección: el error de nodemailer trae el
 // `envelope` y el `response` del SMTP con el correo del vecino en claro, y este

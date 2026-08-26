@@ -37,7 +37,8 @@ describe("navForRoles", () => {
   it("keeps every live section for superadmin, in stable order", () => {
     const hrefs = navForRoles(["superadmin", "admin"]).flatMap((g) => g.items.map((i) => i.href));
     expect(hrefs).toEqual([
-      "/admin", "/admin/solicitudes", "/admin/socios", "/admin/tesoreria", "/admin/actas",
+      "/admin", "/admin/solicitudes", "/admin/reempadronamiento", "/admin/socios",
+      "/admin/tesoreria", "/admin/actas",
       "/admin/noticias", "/admin/actividades", "/admin/salud", "/admin/padron-electoral",
       "/admin/configuracion",
     ]);

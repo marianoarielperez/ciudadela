@@ -13,6 +13,7 @@
 // que nadie las mezcle: este archivo no importa feriados y no tiene que
 // hacerlo.
 import type {
+  EmailStatus,
   MemberCategory,
   MemberStatus,
   PresentationStatus,
@@ -118,6 +119,30 @@ export function isCohortMember(m: { category: MemberCategory; status: MemberStat
     m.category === COHORT_CATEGORY &&
     (COHORT_STATUSES as readonly MemberStatus[]).includes(m.status)
   );
+}
+
+/** El criterio de "casilla utilizable" del proyecto: sin dirección o con rebote
+ *  registrado no se manda nada, y esos son exactamente los que van a la
+ *  cartelera.
+ *
+ *  Vive ACÁ, en el módulo puro, y no en `service.ts`, porque lo comparten el
+ *  servicio (para decidir a quién escribirle) y el TABLERO del panel (para
+ *  decidir a quién le faltó el aviso y a quién le toca el cartel). Si cada uno
+ *  escribiera su versión, un cohortado podría aparecer a la vez en las dos
+ *  listas, o en ninguna. Y no puede vivir en `service.ts`: ese módulo evalúa el
+ *  cliente de Prisma al cargarse, así que un componente que lo importara para
+ *  esto se volvería intesteable sin base (`@/lib/prisma` tira si falta
+ *  `DATABASE_URL`) — la trampa que el proyecto ya documenta.
+ *
+ *  Y NO está escrito una sola vez en todo `src/lib`: ésta es la sexta copia
+ *  —las otras cinco están en `admin/health.ts:286`, `treasury/debtors.ts:110`,
+ *  `treasury/reminder.ts:184`, `treasury/receipt-email.ts:60` y
+ *  `members/member-requests/notify.ts:53`, más algunas pantallas—. Es deuda
+ *  conocida, no una decisión: unificarla toca el núcleo de dinero y excede este
+ *  módulo. Lo que sí se sostiene es que la FORMA sea idéntica a las otras, para
+ *  que el día que se unifique sea un reemplazo mecánico. */
+export function emailUsable(m: { email: string | null; emailStatus: EmailStatus }): boolean {
+  return Boolean(m.email) && m.emailStatus !== "bounced";
 }
 
 /** Paso 1 del wizard. El caller busca por DNI y pasa lo hallado (o null). */
