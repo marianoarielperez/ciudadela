@@ -25,7 +25,10 @@
 // El cliente de Prisma se INYECTA: el módulo se prueba entero sin base. El
 // singleton se arma al final del archivo, como en `applications/service.ts`.
 import { randomBytes } from "node:crypto";
-import type { DocumentType, PrismaClient } from "@/generated/prisma/client";
+import type {
+  DocumentType, EmailStatus, Member, PresentationStatus, Prisma, PrismaClient, ReregistrationStatus,
+} from "@/generated/prisma/client";
+import { makeMemberWriter, MemberWriteError, sameAddress } from "@/lib/members/write";
 import { prisma } from "@/lib/prisma";
 import { hashToken } from "@/lib/tokens";
 // Las reglas puras viven aparte para que el WIZARD (cliente) pueda importarlas
@@ -39,6 +42,7 @@ import {
   NOT_EDITABLE,
   presentationDataComplete,
   presentationDocsComplete,
+  PROCESS_CLOSED,
   SETTLED_STATUSES,
   type PresentationData,
   type PresentationView,
@@ -46,9 +50,266 @@ import {
 
 export * from "./presentation-rules";
 
+type Ok = { ok: true };
 type Err = { ok: false; error: string };
 
-type Db = Pick<PrismaClient, "presentation" | "document">;
+type Db = Pick<PrismaClient, "presentation" | "document" | "member" | "$transaction">;
+
+/** El cliente de la transacción en curso, con lo que el escritor de fichas
+ *  necesita. Prisma no expone `$transaction` sobre él (está en su `DenyList`),
+ *  así que el tipo se arma a mano y no con un `Pick<PrismaClient, …>`. */
+type Tx = Omit<PrismaClient, "$transaction" | "$connect" | "$disconnect" | "$on" | "$use" | "$extends">;
+
+/** Lo único que este módulo usa del escritor de fichas. Se inyecta —y se pide
+ *  como una FÁBRICA sobre el cliente de la transacción— por dos motivos que van
+ *  juntos:
+ *
+ *   1. `memberWriter.updateMember` abre SU PROPIA transacción sobre el
+ *      singleton. Llamarlo desde adentro de la nuestra abriría una segunda
+ *      transacción independiente: el cerrojo de la presentación y la escritura
+ *      de la ficha dejarían de ser atómicos, que es justo lo que no puede pasar
+ *      —un email en conflicto tiene que dejar la presentación SIN validar—.
+ *      Fabricándolo sobre `tx` (ver `writerOn`), las tres escrituras del
+ *      escritor —ficha, revocación de tokens, cuenta de acceso— caen adentro de
+ *      la nuestra y un rechazo vuelve todo atrás.
+ *   2. El test puede afirmar QUÉ patch se le entregó a la ficha sin base. */
+export type MemberWriterLike = {
+  updateMember(
+    memberId: number,
+    data: Prisma.MemberUncheckedUpdateInput,
+  ): Promise<{
+    member: Member;
+    revokedTokens: number;
+    accountEmailMove: { from: string; to: string } | null;
+    accountEmailUpdated: boolean;
+  }>;
+};
+
+export type PresentationDeps = {
+  writerFor?: (tx: Tx) => MemberWriterLike;
+  now?: () => Date;
+};
+
+/** El escritor de fichas real, atado al cliente de la TRANSACCIÓN en curso.
+ *
+ *  `makeMemberWriter` pide un `$transaction` porque su contrato es "esto corre
+ *  todo junto o no corre"; acá ese "todo junto" ya lo garantiza la transacción
+ *  de afuera, así que se le pasa uno que simplemente ejecuta el callback con el
+ *  mismo `tx`. No es un atajo: es la única forma de reusar el escritor —con sus
+ *  invariantes de tokens y de cuenta de acceso— sin abrir una segunda
+ *  transacción. `write.ts` no se toca. */
+function writerOn(tx: Tx): MemberWriterLike {
+  return makeMemberWriter({
+    member: tx.member,
+    actionToken: tx.actionToken,
+    user: tx.user,
+    $transaction: ((fn: (c: Tx) => unknown) => fn(tx)) as never,
+  });
+}
+
+/** Los estados desde los que la Comisión puede resolver una presentación.
+ *
+ *  `observed` está adentro —y no sólo `submitted`— porque la etapa A del cierre
+ *  tiene que poder resolver lo que quedó observado sin subsanar (diseño §5.4):
+ *  si no, esas filas no tendrían salida y bloquearían el cierre del libro.
+ *  `pending` NO está: no hay nada que revisar en una fila que nació sola al
+ *  convocar, y validarla volcaría a la ficha diez columnas vacías. */
+export const DECIDABLE_STATUSES = ["submitted", "observed"] as const satisfies readonly PresentationStatus[];
+
+/** Tope de la nota de observación. Es el ancho de la columna
+ *  (`Presentation.observation`, VarChar(500)): sin este chequeo MariaDB corta
+ *  en silencio y al vecino le llega la mitad de lo que hay que corregir. */
+export const OBSERVATION_MAX = 500;
+
+/** El mensaje del CERROJO. Es una cola compartida: dos administradores pueden
+ *  abrir la misma presentación y decidir distinto con segundos de diferencia.
+ *  La segunda decisión no puede pisar a la primera en silencio, así que el
+ *  `updateMany` lleva el estado esperado en el WHERE y un `count: 0` termina
+ *  acá — el mismo cerrojo que usan las decisiones de la bandeja de altas. */
+export const ALREADY_DECIDED =
+  "Otro administrador ya resolvió esta presentación. Actualizá la pantalla para ver cómo quedó.";
+export const PRESENTATION_NOT_FOUND = "La presentación no existe.";
+export const NOT_DECIDABLE =
+  "Esta presentación no está esperando una decisión: revisá en qué estado quedó.";
+export const PROCESS_FINISHED =
+  "El proceso de re-empadronamiento ya está cerrado: sus presentaciones no se pueden modificar.";
+export const OBSERVATION_REQUIRED =
+  "Escribí qué tiene que corregir el socio: ese texto es lo único que le llega en el correo.";
+export const OBSERVATION_TOO_LONG = `La observación no puede superar los ${OBSERVATION_MAX} caracteres.`;
+/** El choque de la dirección de acceso, redactado para ESTA pantalla.
+ *
+ *  `MEMBER_WRITE_ERRORS.emailConflict` existe y dice lo mismo, pero termina en
+ *  "cargale otra al socio" — que es lo que se hace en el modo carga y acá no se
+ *  puede: el operador no edita la presentación del vecino. Las dos salidas
+ *  reales son pedirle otra dirección (observando) o desarmar el conflicto desde
+ *  la ficha, y eso es lo que el mensaje tiene que decir. */
+export const VALIDATE_EMAIL_CONFLICT =
+  "Ese email ya es la dirección de acceso de otra cuenta del sistema, así que no se puede volcar " +
+  "a esta ficha. No se validó nada: observá la presentación para pedirle otra dirección al socio, " +
+  "o resolvé el conflicto desde su ficha.";
+export const IN_PERSON_NOT_IN_COHORT =
+  "Ese socio no fue convocado a este proceso, así que no tiene presentación que cargar.";
+export const IN_PERSON_NOT_EDITABLE =
+  "Esa presentación ya está enviada o resuelta: no se puede volver a cargar desde el mostrador.";
+export const IN_PERSON_CLOSED =
+  "El plazo del re-empadronamiento ya no admite presentaciones nuevas.";
+
+/** Marca interna del cerrojo. Viaja como excepción porque el `updateMany` que
+ *  lo detecta vive DENTRO de la transacción de `validate` y tiene que voltearla
+ *  entera: un `return` desde ahí commitearía lo que ya se hubiera escrito. */
+class AlreadyDecidedError extends Error {}
+
+/** El `select` de las decisiones: los diez datos declarados más lo que hace
+ *  falta para decidir y para avisar. Uno solo para las cinco operaciones, así
+ *  que ninguna puede mirar un subconjunto distinto del resto. */
+const PRESENTATION_SELECT = {
+  id: true,
+  memberId: true,
+  status: true,
+  observation: true,
+  submittedAt: true,
+  birthDate: true,
+  civilStatus: true,
+  nationality: true,
+  occupation: true,
+  streetId: true,
+  streetText: true,
+  streetNumber: true,
+  neighborhood: true,
+  phone: true,
+  email: true,
+  process: { select: { id: true, status: true, firstEndsAt: true, secondEndsAt: true } },
+} as const;
+
+/** El proceso, tal como lo necesita el correo de observación: `currentDeadline`
+ *  decide con estos tres campos hasta cuándo tiene el vecino. */
+export type PresentationProcessRef = {
+  id: number;
+  status: ReregistrationStatus;
+  firstEndsAt: Date;
+  secondEndsAt: Date | null;
+};
+
+export type ValidateResult =
+  | {
+      ok: true;
+      memberId: number;
+      /** Los campos de la ficha que efectivamente cambiaron. Va al asiento de
+       *  auditoría (nombres, nunca valores) y a la pantalla. */
+      applied: string[];
+      /** La dirección declarada es distinta de la que tenía la ficha: es lo que
+       *  dispara la verificación de casilla (REG-08) del lado del llamador. */
+      emailChanged: boolean;
+      /** Presente sólo si el socio TENÍA cuenta y la dirección de ingreso se
+       *  mudó: el llamador necesita la anterior para avisarle a esa casilla,
+       *  porque después del commit ya no está en ninguna fila. */
+      accountEmailMove: { from: string; to: string } | null;
+      /** La ficha DESPUÉS de la escritura: `verificationTarget` decide sobre
+       *  ella qué correo le corresponde al socio. */
+      member: Member;
+    }
+  | Err;
+
+export type ObserveResult =
+  | {
+      ok: true;
+      presentationId: number;
+      memberId: number;
+      email: string;
+      /** La nota ya recortada. El llamador TIENE que pasarla a la plantilla:
+       *  sin ella el correo promete un detalle que no existe. */
+      note: string;
+      process: PresentationProcessRef;
+    }
+  | Err;
+
+export type DecisionResult = ({ ok: true; presentationId: number; memberId: number }) | Err;
+
+export type InPersonResult =
+  | {
+      ok: true;
+      presentationId: number;
+      memberId: number;
+      email: string;
+      submittedAt: Date;
+      /** `false` cuando la presentación ya se había enviado y esto es una
+       *  subsanación en el mostrador: el llamador no manda una segunda
+       *  constancia ni rota la llave. */
+      firstSubmission: boolean;
+    }
+  | Err;
+
+/** Los campos de `Member` que una validación puede tocar: los diez declarados
+ *  más las dos columnas que gobiernan la verificación de la casilla.
+ *
+ *  Es una LISTA BLANCA, igual que `Patch` en `@/lib/members/card-edit`, y por
+ *  el mismo motivo: lo que no está acá no se escribe aunque venga en la
+ *  presentación. `fullName` y `dni` quedan afuera a propósito (el ancla de
+ *  identidad y la credencial con la que se entró al trámite), y `status`,
+ *  `category` y `joinedAt` también: eso sólo cambia por un asiento con acta. */
+type MemberPatch = {
+  birthDate: Date | null;
+  civilStatus: string | null;
+  nationality: string | null;
+  occupation: string | null;
+  streetId: number | null;
+  streetText: string | null;
+  streetNumber: string | null;
+  neighborhood: string | null;
+  phone: string | null;
+  email: string | null;
+  emailStatus: EmailStatus;
+  emailVerifiedAt: Date | null;
+};
+
+type MemberBefore = Pick<Member, keyof MemberPatch>;
+
+/** Arma el patch campo por campo (nunca por spread de la presentación) y
+ *  resuelve las dos columnas de la casilla con el MISMO criterio que
+ *  `buildPatch` del modo carga: una dirección nueva vuelve a `declared` y borra
+ *  la verificación anterior; la misma dirección con otra caja o con un espacio
+ *  al borde NO es un cambio y no baja nada. Comparar con `sameAddress` —la
+ *  función exportada por el escritor de fichas— es lo que garantiza que este
+ *  módulo y el escritor entiendan lo mismo por "misma dirección": si acá se
+ *  comparara crudo, una normalización de mayúsculas revocaría los enlaces del
+ *  socio sin que su dirección hubiera cambiado. */
+function memberPatchFrom(before: MemberBefore, data: PresentationData): MemberPatch {
+  const email = data.email?.toLowerCase().trim() ?? null;
+  const emailChanged = !sameAddress(before.email, email);
+  const streetId = data.streetId ?? null;
+  return {
+    birthDate: data.birthDate,
+    civilStatus: data.civilStatus,
+    nationality: data.nationality,
+    occupation: data.occupation,
+    streetId,
+    // Con calle del catálogo el texto libre sobra: dejar los dos daría un
+    // domicilio con dos fuentes de verdad (mismo criterio que `buildPatch`).
+    streetText: streetId ? null : data.streetText,
+    streetNumber: data.streetNumber,
+    neighborhood: data.neighborhood,
+    phone: data.phone,
+    email,
+    emailStatus: emailChanged ? (email ? "declared" : "none") : before.emailStatus,
+    emailVerifiedAt: emailChanged ? null : before.emailVerifiedAt,
+  };
+}
+
+/** Qué campos del patch difieren de la ficha guardada. Las fechas se comparan
+ *  por instante y no por identidad de objeto (dos `Date` iguales nunca son
+ *  `===`), que es lo mismo que hace `changedFields` del modo carga. */
+function changedMemberFields(before: MemberBefore, patch: MemberPatch): string[] {
+  return (Object.keys(patch) as Array<keyof MemberPatch>).filter((key) => {
+    const next = patch[key];
+    const prev = before[key];
+    if (next instanceof Date || prev instanceof Date) {
+      const a = next instanceof Date ? next.getTime() : null;
+      const b = prev instanceof Date ? prev.getTime() : null;
+      return a !== b;
+    }
+    return next !== prev;
+  });
+}
 
 type SubmitOk = {
   ok: true;
@@ -81,7 +342,10 @@ type SubmitResult =
   | (SubmitOk & { firstSubmission: false; submittedAt: Date | null })
   | Err;
 
-export function makePresentations(db: Db) {
+export function makePresentations(db: Db, deps: PresentationDeps = {}) {
+  const writerFor = deps.writerFor ?? writerOn;
+  const clock = deps.now ?? (() => new Date());
+
   /** La fila cruda desde el token, con el estado de SU proceso al lado. El
    *  estado que decide si el wizard sigue abierto es el del proceso de la
    *  presentación, no el de la clave de configuración: una presentación
@@ -303,7 +567,256 @@ export function makePresentations(db: Db) {
         data: { resumeTokenHash: hash },
       });
     },
+
+    // ── Las decisiones de la Comisión ────────────────────────────────────────
+    //
+    // Las cuatro comparten el mismo esqueleto: leer, comprobar que el proceso
+    // no esté cerrado, y escribir con un `updateMany` que lleva el ESTADO
+    // ESPERADO en el WHERE. Ese WHERE es el cerrojo, y por eso no se reemplaza
+    // por un `update` a secas: entre la lectura y la escritura hay una decisión
+    // humana, y en una cola compartida eso son minutos en los que el otro
+    // administrador puede haber resuelto la misma presentación.
+
+    /** VALIDAR: el acto que vuelca la presentación a la ficha del socio.
+     *
+     *  Es la primera vez en todo el módulo que datos venidos de una pantalla
+     *  pública entran al padrón, y por eso pasa por `memberWriter` y no por un
+     *  `member.update` propio: ese módulo hace tres cosas en una transacción
+     *  que acá no se pueden omitir —escribe la ficha, revoca los enlaces que la
+     *  escritura invalida y le lleva la dirección nueva a la cuenta de acceso—.
+     *  Fabricarlo sobre `tx` (`writerOn`) es lo que mantiene todo eso adentro
+     *  de ESTA transacción: si la dirección declarada choca con la cuenta de
+     *  otra persona, el escritor levanta `MemberEmailConflictError`, la
+     *  transacción vuelve atrás y la presentación queda SIN validar, en la cola,
+     *  para que el operador la observe.
+     *
+     *  Qué NO viaja a la ficha: el nombre y el DNI. El nombre es el ancla de
+     *  identidad —el wizard ni siquiera lo pide (decisión 9)— y el DNI es lo
+     *  único con lo que se entró al trámite; dejar que cualquiera de los dos se
+     *  reescriba desde una pantalla que abre con un DNI ajeno sería permitir
+     *  apropiarse de la ficha de otro. Tampoco `status`, `category` ni
+     *  `joinedAt`: eso sólo cambia por un asiento con acta. */
+    async validate(input: {
+      presentationId: number;
+      actorId: number;
+      now?: Date;
+    }): Promise<ValidateResult> {
+      const row = await decisionRow(input.presentationId);
+      if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
+      const open = decidable(row);
+      if (!open.ok) return open;
+
+      // La MISMA función de completitud que usa el wizard para dejar enviar.
+      // Una presentación enviada siempre la cumple, así que en la práctica esto
+      // no se dispara; está igual porque lo que sigue escribe en el padrón y un
+      // camino nuevo que llegue hasta acá con la ficha a medias no puede
+      // vaciarle diez columnas al socio en silencio.
+      const data = pickData(row);
+      const complete = presentationDataComplete(data);
+      if (!complete.ok) {
+        return { ok: false, error: `No se puede validar: la presentación está incompleta. ${complete.error}` };
+      }
+
+      const at = input.now ?? clock();
+      try {
+        return await db.$transaction(async (tx) => {
+          const { count } = await tx.presentation.updateMany({
+            where: { id: row.id, status: { in: [...DECIDABLE_STATUSES] } },
+            data: { status: "validated", validatedById: input.actorId, validatedAt: at },
+          });
+          if (count !== 1) throw new AlreadyDecidedError();
+
+          const before = await tx.member.findUniqueOrThrow({ where: { id: row.memberId } });
+          const patch = memberPatchFrom(before, data);
+          const applied = changedMemberFields(before, patch);
+          const emailChanged = !sameAddress(before.email, patch.email);
+          if (applied.length === 0) {
+            // Nada que escribir: la ficha ya decía exactamente esto. Se saltea
+            // el escritor a propósito —no hay tokens que revocar ni cuenta que
+            // sincronizar por un cambio que no existe—, igual que el modo carga
+            // cuando el operador aprieta Ctrl+S dos veces.
+            return { ok: true as const, memberId: row.memberId, applied, emailChanged: false, accountEmailMove: null, member: before };
+          }
+          const written = await writerFor(tx as Tx).updateMember(row.memberId, patch);
+          return {
+            ok: true as const,
+            memberId: row.memberId,
+            applied,
+            emailChanged,
+            accountEmailMove: written.accountEmailMove,
+            member: written.member,
+          };
+        });
+      } catch (e) {
+        if (e instanceof AlreadyDecidedError) return { ok: false, error: ALREADY_DECIDED };
+        // Los dos rechazos del escritor abortan la escritura ENTERA (la
+        // transacción ya volvió atrás). Se traducen a un mensaje accionable en
+        // vez de propagarse como un error crudo: el operador tiene que saber
+        // que no se guardó nada y cuál es su salida.
+        if (e instanceof MemberWriteError) {
+          return { ok: false, error: e.reason === "email_conflict" ? VALIDATE_EMAIL_CONFLICT : e.message };
+        }
+        throw e;
+      }
+    },
+
+    /** OBSERVAR: pedirle al socio que corrija algo.
+     *
+     *  La nota es OBLIGATORIA acá, y no es una validación de formulario: la
+     *  plantilla del correo (`presentationObservedEmail`) la acepta opcional
+     *  —la omite a propósito en el reenvío del enlace— así que una observación
+     *  sin nota le manda al vecino un correo que le promete un detalle que no
+     *  existe en ningún lado, con el plazo del Art. 9° bis corriendo. */
+    async observe(input: {
+      presentationId: number;
+      actorId: number;
+      note: string;
+    }): Promise<ObserveResult> {
+      const note = input.note.trim();
+      if (note === "") return { ok: false, error: OBSERVATION_REQUIRED };
+      if (note.length > OBSERVATION_MAX) return { ok: false, error: OBSERVATION_TOO_LONG };
+
+      const row = await decisionRow(input.presentationId);
+      if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
+      const open = decidable(row);
+      if (!open.ok) return open;
+
+      const { count } = await db.presentation.updateMany({
+        where: { id: row.id, status: { in: [...DECIDABLE_STATUSES] } },
+        data: { status: "observed", observation: note },
+      });
+      if (count !== 1) return { ok: false, error: ALREADY_DECIDED };
+      return {
+        ok: true,
+        presentationId: row.id,
+        memberId: row.memberId,
+        // `decidable` ya garantizó que la presentación se envió, y no se puede
+        // enviar sin email: el `??` es para el compilador.
+        email: row.email ?? "",
+        note,
+        process: row.process,
+      };
+    },
+
+    /** RECHAZAR. La nota es opcional y se guarda en la misma columna que la
+     *  observación: es el motivo, y la pantalla lo muestra al lado del estado.
+     *  No manda ningún correo —el proyecto no tiene plantilla de rechazo de
+     *  presentación— y es reversible con `unreject` mientras el proceso viva. */
+    async reject(input: {
+      presentationId: number;
+      actorId: number;
+      note?: string;
+    }): Promise<DecisionResult> {
+      const note = input.note?.trim() ?? "";
+      if (note.length > OBSERVATION_MAX) return { ok: false, error: OBSERVATION_TOO_LONG };
+
+      const row = await decisionRow(input.presentationId);
+      if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
+      const open = decidable(row);
+      if (!open.ok) return open;
+
+      const { count } = await db.presentation.updateMany({
+        where: { id: row.id, status: { in: [...DECIDABLE_STATUSES] } },
+        data: { status: "rejected", observation: note === "" ? row.observation : note },
+      });
+      if (count !== 1) return { ok: false, error: ALREADY_DECIDED };
+      return { ok: true, presentationId: row.id, memberId: row.memberId };
+    },
+
+    /** VOLVER A OBSERVADA lo rechazado. Deshace el rechazo dejando la
+     *  presentación donde el socio puede subsanarla, que es el estado del que
+     *  hay camino de vuelta. NO manda correo: el aviso lo da una observación
+     *  posterior, con su nota. */
+    async unreject(input: { presentationId: number; actorId: number }): Promise<DecisionResult> {
+      const row = await decisionRow(input.presentationId);
+      if (!row) return { ok: false, error: PRESENTATION_NOT_FOUND };
+      if (row.process.status === "closed") return { ok: false, error: PROCESS_FINISHED };
+      if (row.status !== "rejected") return { ok: false, error: NOT_DECIDABLE };
+
+      const { count } = await db.presentation.updateMany({
+        where: { id: row.id, status: { in: ["rejected"] } },
+        data: { status: "observed" },
+      });
+      if (count !== 1) return { ok: false, error: ALREADY_DECIDED };
+      return { ok: true, presentationId: row.id, memberId: row.memberId };
+    },
+
+    /** LA CARGA PRESENCIAL (Art. 9° bis a: "en forma presencial o electrónica").
+     *
+     *  El operador carga los mismos datos y los mismos documentos del vecino
+     *  que se acercó a la sede, y la presentación entra a la MISMA cola: el que
+     *  carga no valida en el mismo acto (cuatro ojos, diseño §6).
+     *
+     *  Reusa las dos reglas puras del wizard —`presentationDataComplete` y
+     *  `presentationDocsComplete`— y no una validación propia. Es el camino que
+     *  no pasa por el `dataSchema` del formulario público, así que si acá se
+     *  escribiera otra lista, una presentación sin barrio (o sin el dorso del
+     *  DNI) llegaría hasta la ficha del socio por la puerta del mostrador. */
+    async registerInPerson(input: {
+      processId: number;
+      memberId: number;
+      actorId: number;
+      data: PresentationData;
+      now?: Date;
+    }): Promise<InPersonResult> {
+      const complete = presentationDataComplete(input.data);
+      if (!complete.ok) return complete;
+
+      const row = await db.presentation.findUnique({
+        where: { processId_memberId: { processId: input.processId, memberId: input.memberId } },
+        select: PRESENTATION_SELECT,
+      });
+      if (!row) return { ok: false, error: IN_PERSON_NOT_IN_COHORT };
+
+      // El mismo veredicto que gobierna al vecino en la web, con el texto
+      // traducido al mostrador: la REGLA es compartida (`editabilityOf`), lo
+      // que cambia es a quién le habla el cartel.
+      const editable = editabilityOf({ status: row.status, processStatus: row.process.status });
+      if (!editable.ok) {
+        return { ok: false, error: editable.error === PROCESS_CLOSED ? IN_PERSON_CLOSED : IN_PERSON_NOT_EDITABLE };
+      }
+
+      const docs = presentationDocsComplete((await docTypesOf(row.id)).map((type) => ({ type })));
+      if (!docs.ok) return docs;
+
+      // Misma regla que el envío web: la subsanación NO pisa `submittedAt`. De
+      // esa marca cuelga la prueba de que el socio cumplió el plazo.
+      const at = input.now ?? clock();
+      const submittedAt = row.submittedAt ?? at;
+      const { count } = await db.presentation.updateMany({
+        where: { id: row.id, status: { in: [...EDITABLE_STATUSES] } },
+        data: { ...input.data, status: "submitted", channel: "in_person", submittedAt },
+      });
+      if (count !== 1) return { ok: false, error: ALREADY_DECIDED };
+      return {
+        ok: true,
+        presentationId: row.id,
+        memberId: row.memberId,
+        email: input.data.email ?? "",
+        submittedAt,
+        firstSubmission: row.submittedAt === null,
+      };
+    },
   };
+
+  /** La fila que necesitan las cuatro decisiones. Una sola consulta y un solo
+   *  `select` para que ninguna decisión mire un subconjunto distinto. */
+  async function decisionRow(id: number) {
+    return db.presentation.findUnique({ where: { id }, select: PRESENTATION_SELECT });
+  }
+
+  /** ¿Esta presentación admite una decisión de la Comisión AHORA?
+   *
+   *  Dos preguntas, como `editabilityOf` del lado del vecino: el estado del
+   *  proceso y el de la presentación. Compartida por las tres decisiones que la
+   *  necesitan para que no puedan divergir. */
+  function decidable(row: { status: PresentationStatus; process: { status: string } }): Ok | Err {
+    if (row.process.status === "closed") return { ok: false, error: PROCESS_FINISHED };
+    if (!(DECIDABLE_STATUSES as readonly string[]).includes(row.status)) {
+      return { ok: false, error: NOT_DECIDABLE };
+    }
+    return { ok: true };
+  }
 }
 
 /** Las diez columnas declaradas de una fila, sin arrastrar el resto. */
