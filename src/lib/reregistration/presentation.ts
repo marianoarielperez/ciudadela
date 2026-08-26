@@ -202,10 +202,21 @@ export function makePresentations(db: Db) {
       const docs = presentationDocsComplete((await docTypesOf(row.id)).map((type) => ({ type })));
       if (!docs.ok) return docs;
 
+      // La SUBSANACIÓN NO PISA `submittedAt`. Quien ya se presentó y vuelve
+      // porque la Comisión le pidió corregir algo no puede perder la prueba de
+      // que cumplió el plazo: si la marca se moviera al día de la corrección, un
+      // socio que presentó el día 25 y corrigió el 33 quedaría, en el papel,
+      // fuera de los treinta días del Art. 9° bis — y de esa marca cuelga su
+      // condición de socio. Cuándo llegó la corrección lo dicen `updatedAt` y
+      // los dos asientos de auditoría.
+      //
+      // Es la misma regla que ya vale para el doble clic, por el mismo motivo;
+      // lo único que cambia es cuánto tiempo pasó entre los dos envíos.
       const now = input.now ?? new Date();
+      const submittedAt = row.submittedAt ?? now;
       const { count } = await db.presentation.updateMany({
         where: { id: row.id, status: { in: [...EDITABLE_STATUSES] } },
-        data: { status: "submitted", submittedAt: now, channel: "web" },
+        data: { status: "submitted", submittedAt, channel: "web" },
       });
       if (count !== 1) {
         // Perdió la carrera contra otro envío simultáneo. El que ganó ya
@@ -216,7 +227,7 @@ export function makePresentations(db: Db) {
           presentationId: row.id,
           memberId: row.memberId,
           email: row.email ?? "",
-          submittedAt: fresh?.submittedAt ?? now,
+          submittedAt: fresh?.submittedAt ?? submittedAt,
           firstSubmission: false,
         };
       }
@@ -227,7 +238,7 @@ export function makePresentations(db: Db) {
         // `presentationDataComplete` ya garantizó que hay email; el `??` es
         // para el compilador.
         email: row.email ?? "",
-        submittedAt: now,
+        submittedAt,
         firstSubmission: true,
       };
     },

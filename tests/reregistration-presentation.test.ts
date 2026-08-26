@@ -319,6 +319,26 @@ describe("submit", () => {
     expect(db.rows[0].status).toBe("submitted");
   });
 
+  // Lo que NO puede pasar en una subsanación: que se mueva la prueba del plazo.
+  // Un socio que presentó el día 25, quedó observado y corrigió el día 33
+  // quedaría —en el papel— fuera de los treinta días del Art. 9° bis, y de esa
+  // marca cuelga su condición de socio.
+  it("la subsanación conserva el submittedAt del PRIMER envío", async () => {
+    const { db, p, raw } = await ready({
+      status: "observed",
+      observation: "Falta el dorso",
+      submittedAt: NOW,
+    });
+    const later = new Date("2026-09-28T12:00:00Z");
+
+    const sent = await p.submit({ token: raw, now: later });
+
+    expect(sent.ok).toBe(true);
+    if (sent.ok) expect(sent.submittedAt).toEqual(NOW);
+    expect(db.rows[0].submittedAt).toEqual(NOW);
+    expect(db.rows[0].status).toBe("submitted");
+  });
+
   it("con el proceso cerrado NO se acepta un envío fuera de plazo", async () => {
     const { db, p, raw } = await ready({ processStatus: "closing" });
     const sent = await p.submit({ token: raw, now: NOW });
