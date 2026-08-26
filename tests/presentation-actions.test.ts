@@ -26,6 +26,7 @@ vi.mock("@/lib/email", () => ({ mailer: { sendToMember: vi.fn(async () => ({ mes
 // entregue la nota.
 vi.mock("@/lib/email/templates", () => ({
   presentationObservedEmail: vi.fn(() => ({ subject: "s", text: "t", html: "h" })),
+  presentationRejectedEmail: vi.fn(() => ({ subject: "s", text: "t", html: "h" })),
   portalInvite: vi.fn(() => ({ message: { subject: "s", text: "t", html: "h" }, summary: "r" })),
 }));
 vi.mock("@/lib/reregistration/presentation", async (orig) => ({
@@ -69,7 +70,7 @@ import { audit } from "@/lib/audit";
 import type { AdminActor } from "@/lib/auth/require-admin";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { mailer } from "@/lib/email";
-import { presentationObservedEmail } from "@/lib/email/templates";
+import { presentationObservedEmail, presentationRejectedEmail } from "@/lib/email/templates";
 import { presentations } from "@/lib/reregistration/presentation";
 
 type MockedFn = ReturnType<typeof vi.fn>;
@@ -221,8 +222,16 @@ describe("validatePresentationAction", () => {
 });
 
 describe("rejectPresentationAction", () => {
+  /** El dominio ya devuelve lo que el correo necesita. */
+  function rejected(over: Record<string, unknown> = {}) {
+    (presentations.reject as MockedFn).mockResolvedValue({
+      ok: true, presentationId: 5, memberId: 42, email: "vecina@ejemplo.com",
+      note: "La foto del frente es de otra persona.", process: PROCESS, ...over,
+    });
+  }
+
   it("asienta que hubo motivo, nunca cuál", async () => {
-    (presentations.reject as MockedFn).mockResolvedValue({ ok: true, presentationId: 5, memberId: 42 });
+    rejected();
 
     await rejectPresentationAction({}, form({ presentationId: "5", note: "No coincide con el DNI" }));
 
@@ -231,9 +240,71 @@ describe("rejectPresentationAction", () => {
     expect(JSON.stringify(entry.detail)).not.toContain("DNI");
   });
 
-  it("el rechazo NO manda correo", async () => {
-    (presentations.reject as MockedFn).mockResolvedValue({ ok: true, presentationId: 5, memberId: 42 });
-    await rejectPresentationAction({}, form({ presentationId: "5" }));
+  // LA MISMA TRAMPA QUE LA OBSERVACIÓN, y por eso el mismo test.
+  // `presentationRejectedEmail` acepta `note` como OPCIONAL —tiene que valerse
+  // sin motivo, porque en la pantalla el motivo lo es—, así que nada en el
+  // código obliga al llamador a pasárselo. Si se lo olvidara, al vecino le
+  // llegaría "si querés saber por qué, preguntanos en la sede" con el motivo
+  // escrito y guardado a un centímetro: la Comisión creería que avisó lo que no
+  // avisó, y el vecino tendría que ir a la sede a preguntar algo que ya estaba
+  // dicho, con el plazo del Art. 9° bis corriendo.
+  it("le entrega el MOTIVO a la plantilla del correo", async () => {
+    rejected();
+
+    const res = await rejectPresentationAction({}, form({ presentationId: "5", note: "La foto del frente es de otra persona." }));
+
+    expect(res.ok).toBe(true);
+    expect(presentationRejectedEmail).toHaveBeenCalledTimes(1);
+    const arg = (presentationRejectedEmail as MockedFn).mock.calls[0][0];
+    expect(arg.note).toBe("La foto del frente es de otra persona.");
+    // Y la fecha límite: sin ella el vecino no sabe hasta cuándo puede volver a
+    // presentarse, que es la mitad accionable del aviso. Sale de
+    // `currentDeadline` y no de una fecha escrita a mano, para no citarle la
+    // instancia equivocada.
+    expect(arg.deadline).toEqual(PROCESS.firstEndsAt);
+  });
+
+  it("el correo va a la casilla DECLARADA en la presentación", async () => {
+    rejected();
+
+    await rejectPresentationAction({}, form({ presentationId: "5", note: "x" }));
+
+    const sent = (mailer.sendToMember as MockedFn).mock.calls[0][0];
+    expect(sent.to).toBe("vecina@ejemplo.com");
+    expect(sent.type).toBe("presentation_rejected");
+    // La Notification cuelga del socio igual: es lo que le da carácter
+    // fehaciente (Art. 5° quater).
+    expect(sent.memberId).toBe(42);
+  });
+
+  it("un SMTP caído NO tumba el rechazo ya asentado, pero se lo dice al operador", async () => {
+    rejected();
+    (mailer.sendToMember as MockedFn).mockRejectedValueOnce(new Error("smtp"));
+
+    const res = await rejectPresentationAction({}, form({ presentationId: "5", note: "x" }));
+
+    expect(res.ok).toBe(true);
+    expect(res.warning).toBeTruthy();
+    // Y el asiento dice que el correo NO salió, que es lo único que después
+    // permite saber si al socio se le avisó antes de la baja.
+    expect((audit as MockedFn).mock.calls[0][0].detail).toMatchObject({ mailed: false });
+  });
+
+  it("el asiento de auditoría NO lleva el texto del motivo", async () => {
+    rejected({ note: "Nombre y apellido del socio en claro" });
+
+    await rejectPresentationAction({}, form({ presentationId: "5", note: "Nombre y apellido del socio en claro" }));
+
+    const entry = (audit as MockedFn).mock.calls[0][0];
+    expect(entry.action).toBe("presentation_reject");
+    expect(JSON.stringify(entry.detail)).not.toContain("Nombre y apellido");
+  });
+
+  it("sin sesión de admin no toca nada", async () => {
+    (requireAdmin as MockedFn).mockResolvedValue(blocked);
+    const res = await rejectPresentationAction({}, form({ presentationId: "5", note: "x" }));
+    expect(res.error).toBe(blocked.error);
+    expect(presentations.reject).not.toHaveBeenCalled();
     expect(mailer.sendToMember).not.toHaveBeenCalled();
   });
 });

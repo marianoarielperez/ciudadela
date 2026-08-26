@@ -8,7 +8,8 @@ import {
   boardDigestEmail,
   feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
   passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite,
-  presentationObservedEmail, presentationReceivedEmail, receiptEmail,
+  presentationObservedEmail, presentationReceivedEmail, presentationRejectedEmail,
+  receiptEmail,
   reregistrationCallEmail, reregistrationSecondEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
@@ -478,6 +479,84 @@ describe("templates", () => {
       expect(body).toContain("Hacelo cuanto antes");
       expect(body).not.toMatch(/hasta el \d{2}\/\d{2}\/\d{4}/);
     }
+  });
+
+  // ── El RECHAZO ────────────────────────────────────────────────────────────
+  // Hasta hoy no avisaba nada: el vecino se quedaba tranquilo creyendo que su
+  // trámite estaba hecho y se enteraba con la baja, cuando ya no había nada
+  // que corregir.
+  it("el rechazo dice que no se aceptó, el motivo textual y hasta cuándo", () => {
+    const m = presentationRejectedEmail({
+      note: "La foto del frente es de otra persona & no coincide con el padrón",
+      deadline: EXPIRES,
+    });
+    expect(m.subject).toContain("Vecinal Ciudadela");
+    // El motivo del operador viaja TAL CUAL, igual que la observación:
+    // resumirlo o reformatearlo sería cambiarle el motivo a la Comisión.
+    expect(m.text).toContain("La foto del frente es de otra persona & no coincide con el padrón");
+    expect(m.html).toContain("otra persona &amp; no coincide");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("no lo aceptó");
+      // Lo accionable, que es el motivo entero de este correo.
+      expect(body).toContain("sede vecinal");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("Art. 9° bis");
+    }
+    expect(m.text).not.toContain("<");
+    expect(m.text).toContain("Asociación Vecinal del Barrio Ciudadela");
+  });
+
+  // NO lleva enlace, y no es un olvido: una presentación rechazada NO está en
+  // `EDITABLE_STATUSES`, así que el enlace de retome la rebota con "ya fue
+  // resuelta por la Comisión". Un botón que muere en la primera pantalla es
+  // peor que no ofrecer ninguno: manda al vecino a pelearse con el sitio en vez
+  // de a la sede, que es lo único que le resuelve el trámite.
+  it("no ofrece un enlace que la presentación rechazada ya no acepta", () => {
+    const m = presentationRejectedEmail({ note: "x", deadline: EXPIRES });
+    expect(m.text).not.toContain("http");
+    expect(m.html).not.toContain("href");
+  });
+
+  // La regla que este módulo aprendió por las malas: un correo que tranquiliza
+  // a quien tiene que actuar es peor que no mandarlo.
+  it("no tranquiliza: dice que hay algo que hacer y qué pasa si no lo hace", () => {
+    const m = presentationRejectedEmail({ note: "x", deadline: EXPIRES });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("volver a presentarte");
+      expect(body).toContain("baja");
+      // Nada del acuse ni de la observación: al rechazado, "la Comisión va a
+      // revisar lo que cargaste" y "entrá por el enlace" le mienten.
+      expect(body).not.toContain("va a revisar lo que cargaste");
+      expect(body).not.toContain("Entrá por este enlace");
+    }
+  });
+
+  // El motivo es OPCIONAL en la pantalla (`reject` acepta la nota vacía), así
+  // que el correo tiene que valerse sin ella en vez de imprimir un hueco.
+  it("sin motivo escrito no inventa uno, pero sigue diciendo qué hacer", () => {
+    const m = presentationRejectedEmail({ deadline: EXPIRES });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("no lo aceptó");
+      expect(body).toContain("sede vecinal");
+      expect(body).not.toContain("Motivo");
+    }
+  });
+
+  it("sin fecha límite corriente tampoco imprime una", () => {
+    const m = presentationRejectedEmail({ note: "x" });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Hacelo cuanto antes");
+      expect(body).not.toMatch(/hasta el \d{2}\/\d{2}\/\d{4}/);
+    }
+  });
+
+  // Mismo criterio que la constancia y la observación: el nombre del socio no
+  // entra, y la plantilla ni siquiera puede recibirlo (Ley 25.326). Un dedazo
+  // en la dirección declarada no puede regalarle a un tercero el nombre de
+  // quien se re-empadronó ni que le rechazaron el trámite.
+  it("no nombra al socio", () => {
+    const m = presentationRejectedEmail({ note: "x", deadline: EXPIRES });
+    for (const body of [m.text, m.html]) expect(body).not.toContain("Hola ");
   });
 
   it("las plantillas del re-empadronamiento escapan la url en el html", () => {

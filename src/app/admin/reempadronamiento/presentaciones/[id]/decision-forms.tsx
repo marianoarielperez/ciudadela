@@ -120,7 +120,7 @@ export function RejectForm({ presentationId, memberName }: {
         onSubmit={(e) => {
           if (
             !window.confirm(
-              `¿Rechazar el re-empadronamiento de ${memberName}? Si no lo revertís antes del cierre del libro, queda como no presentado.`,
+              `¿Rechazar el re-empadronamiento de ${memberName}? Se le avisa por correo. Si no vuelve a presentarse ni revertís el rechazo antes del cierre del libro, queda como no presentado.`,
             )
           ) {
             e.preventDefault();
@@ -134,8 +134,8 @@ export function RejectForm({ presentationId, memberName }: {
           field={field("note")}
           rows={3}
           maxLength={MAX_NOTE}
-          placeholder="Para el registro de la Comisión."
-          hint="Queda guardado y se ve en la cola. El rechazo NO manda ningún correo: si querés que el socio se entere y pueda corregir, usá Observar."
+          placeholder="Ej.: la foto del frente es de otra persona."
+          hint="Queda guardado, se ve en la cola y viaja TAL CUAL en el correo que le avisa al socio que no se aceptó su re-empadronamiento. Si lo dejás vacío el correo sale igual, pero sin motivo: el socio tiene que venir a la sede a preguntar por qué. Ese correo NO lleva enlace —una presentación rechazada ya no se puede corregir por la web—, así que lo manda a la sede."
         />
         <Messages state={state} />
         <Button type="submit" variant="destructive" size="lg" className="min-h-11 px-4" disabled={pending}>

@@ -186,12 +186,18 @@ enum NotificationType {
   request_accepted
   request_rejected
   board_digest
-  // M6: acuse de la presentación de re-empadronamiento y pedido de corrección
-  // cuando la Comisión la observa. Los tres avisos del proceso en sí
-  // (`reregistration_first`, `reregistration_second`, `withdrawal_declared`)
-  // ya existían desde el M0.
+  // M6: acuse de la presentación de re-empadronamiento, pedido de corrección
+  // cuando la Comisión la observa y aviso de que NO la aceptó. Los tres avisos
+  // del proceso en sí (`reregistration_first`, `reregistration_second`,
+  // `withdrawal_declared`) ya existían desde el M0.
+  //
+  // `presentation_rejected` es su propio tipo y no un `generic`: es una
+  // notificación fehaciente del Art. 5° quater —lo que después acredita que al
+  // socio se le avisó antes de la baja— y tiene que poder contarse y buscarse
+  // aparte de la observación, que dice algo distinto.
   presentation_received
   presentation_observed
+  presentation_rejected
   generic
 }
 

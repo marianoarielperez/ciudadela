@@ -225,6 +225,29 @@ export type ObserveResult =
 
 export type DecisionResult = ({ ok: true; presentationId: number; memberId: number }) | Err;
 
+/** Lo mismo que `ObserveResult`, y por el mismo motivo: el rechazo también le
+ *  escribe al socio, así que el llamador necesita a dónde, con qué motivo y
+ *  hasta cuándo tiene el vecino. */
+export type RejectResult =
+  | {
+      ok: true;
+      presentationId: number;
+      memberId: number;
+      email: string;
+      /** EL MOTIVO DE ESTE RECHAZO, o `null` si la Comisión no escribió ninguno.
+       *
+       *  No es lo mismo que la columna `observation`, que cuando el motivo
+       *  viene vacío conserva la observación ANTERIOR (la pantalla la sigue
+       *  mostrando al lado del estado, que es su comportamiento de siempre).
+       *  En el correo esa nota vieja sería un dato falso: le citaría al vecino
+       *  como motivo del rechazo algo que él ya corrigió y reenvió. Sin motivo
+       *  escrito, el correo dice lo que sí es cierto —que en la sede le
+       *  explican por qué—. */
+      note: string | null;
+      process: PresentationProcessRef;
+    }
+  | Err;
+
 /** Un cohortado en el buscador del mostrador. Lleva el estado de SU
  *  presentación porque es lo que decide si hay algo que cargar: al que ya se
  *  presentó no se le carga de nuevo, y la pantalla tiene que poder decirlo
@@ -714,13 +737,18 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
 
     /** RECHAZAR. La nota es opcional y se guarda en la misma columna que la
      *  observación: es el motivo, y la pantalla lo muestra al lado del estado.
-     *  No manda ningún correo —el proyecto no tiene plantilla de rechazo de
-     *  presentación— y es reversible con `unreject` mientras el proceso viva. */
+     *  Es reversible con `unreject` mientras el proceso viva.
+     *
+     *  SÍ MANDA CORREO —lo manda el llamador, con `presentationRejectedEmail`—
+     *  y por eso devuelve la casilla, el motivo y el proceso, igual que
+     *  `observe`. Antes no mandaba nada, y ese silencio era el peor de los dos:
+     *  el vecino se quedaba tranquilo con el trámite rechazado y el plazo del
+     *  Art. 9° bis corriéndole en contra. */
     async reject(input: {
       presentationId: number;
       actorId: number;
       note?: string;
-    }): Promise<DecisionResult> {
+    }): Promise<RejectResult> {
       const note = input.note?.trim() ?? "";
       if (note.length > OBSERVATION_MAX) return { ok: false, error: OBSERVATION_TOO_LONG };
 
@@ -734,7 +762,17 @@ export function makePresentations(db: Db, deps: PresentationDeps = {}) {
         data: { status: "rejected", observation: note === "" ? row.observation : note },
       });
       if (count !== 1) return { ok: false, error: ALREADY_DECIDED };
-      return { ok: true, presentationId: row.id, memberId: row.memberId };
+      return {
+        ok: true,
+        presentationId: row.id,
+        memberId: row.memberId,
+        // `decidable` ya garantizó que la presentación se envió, y no se puede
+        // enviar sin email: el `??` es para el compilador.
+        email: row.email ?? "",
+        // El motivo de ESTE rechazo, no la columna: ver `RejectResult`.
+        note: note === "" ? null : note,
+        process: row.process,
+      };
     },
 
     /** VOLVER A OBSERVADA lo rechazado. Deshace el rechazo dejando la

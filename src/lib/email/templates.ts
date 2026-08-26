@@ -785,3 +785,78 @@ ${button(opts.url, "Corregir mi re-empadronamiento")}
 ${deadlineHtml}`),
   };
 }
+
+/** EL RECHAZO: la Comisión revisó la presentación y NO la aceptó (M6 §5.4).
+ *
+ *  Hasta que existió esta plantilla el rechazo no avisaba nada, y esa es
+ *  exactamente la forma del daño: el vecino se quedaba tranquilo creyendo que
+ *  su trámite estaba hecho mientras el plazo del Art. 9° bis le corría en
+ *  contra, y se enteraba con la notificación de la BAJA — cuando ya no había
+ *  nada que corregir. Un rechazo silencioso es peor que una observación
+ *  silenciosa: de la observación el vecino puede volver por su cuenta, del
+ *  rechazo no.
+ *
+ *  NO LLEVA ENLACE, y no es un olvido. `rejected` no está en
+ *  `EDITABLE_STATUSES` (`presentation-rules.ts`), así que la llave de retome
+ *  rebota con "Tu re-empadronamiento ya fue resuelto por la Comisión": un botón
+ *  que muere en la primera pantalla manda al vecino a pelearse con el sitio en
+ *  vez de a la sede, que es lo único que le resuelve el trámite. Por eso la
+ *  única salida que ofrece el correo es la presencial —donde el operador
+ *  revierte el rechazo y lo carga con él, o le vuelve a habilitar la web— y por
+ *  eso la plantilla ni siquiera RECIBE una url: no hay forma de meterle una por
+ *  descuido desde el llamador.
+ *
+ *  `note` es el motivo TEXTUAL de la Comisión y viaja tal cual, escapado en el
+ *  HTML como todo lo que entra desde la base. Es opcional porque en la pantalla
+ *  el motivo lo es: sin él el correo dice lo que igual es cierto —que no se
+ *  aceptó y que en la sede le explican por qué— en vez de imprimir un hueco.
+ *
+ *  El ORDEN es el mismo que el del aviso de la 2ª instancia y el de la
+ *  observación: primero qué hacer y para cuándo, y recién al final la
+ *  consecuencia. Pero la consecuencia VA: la regla que este módulo aprendió por
+ *  las malas es que un correo que tranquiliza a quien tiene que actuar es peor
+ *  que no mandarlo. Tampoco nombra al socio, por lo mismo que la constancia: un
+ *  dedazo en la dirección declarada no puede regalarle a un tercero el nombre
+ *  de quien se re-empadronó ni el hecho de que le rechazaron el trámite
+ *  (Ley 25.326, docs/08). */
+export function presentationRejectedEmail(opts: {
+  note?: string | null;
+  deadline?: Date | null;
+}): Rendered {
+  const title = "Tu re-empadronamiento no fue aceptado";
+  const until = opts.deadline ? formatDateAR(opts.deadline) : null;
+  const opening = opts.note
+    ? `La Comisión Directiva de la ${ORG} revisó tu re-empadronamiento y no lo aceptó.
+
+Motivo:
+
+${opts.note}`
+    : `La Comisión Directiva de la ${ORG} revisó tu re-empadronamiento y no lo aceptó. Si querés saber por qué, preguntanos en la sede vecinal.`;
+  const openingHtml = opts.note
+    ? `<p>La Comisión Directiva de la ${esc(ORG)} revisó tu re-empadronamiento y <strong>no lo aceptó</strong>.</p>
+<p>Motivo:</p>
+<p style="border-left:3px solid #0079BC;padding-left:12px;margin:16px 0">${esc(opts.note)}</p>`
+    : `<p>La Comisión Directiva de la ${esc(ORG)} revisó tu re-empadronamiento y <strong>no lo aceptó</strong>. Si querés saber por qué, preguntanos en la sede vecinal.</p>`;
+  // El plazo, con fecha si la hay: es lo único de este correo que el vecino no
+  // puede averiguar solo.
+  const deadlineText = until
+    ? `Tenés tiempo hasta el ${until} inclusive.`
+    : "Hacelo cuanto antes: mientras el proceso siga abierto, todavía podés volver a presentarte.";
+  const deadlineHtml = until
+    ? `<p>Tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>`
+    : `<p>Hacelo cuanto antes: mientras el proceso siga abierto, todavía podés volver a presentarte.</p>`;
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `${opening}
+
+Todavía estás a tiempo de volver a presentarte. Acercate a la sede vecinal con tu DNI y lo hacemos ahí mismo con vos; si preferís volver a hacerlo por internet, pedinos en la sede que te habilitemos el trámite de nuevo.
+
+${deadlineText}
+
+Si el plazo vence sin que vuelvas a presentarte, vas a figurar como no re-empadronado y la Comisión Directiva puede declarar tu baja como socio (Art. 9° bis del estatuto).${SIGNATURE}`,
+    html: layout(title, `${openingHtml}
+<p><strong>Todavía estás a tiempo de volver a presentarte.</strong> Acercate a la sede vecinal con tu DNI y lo hacemos ahí mismo con vos; si preferís volver a hacerlo por internet, pedinos en la sede que te habilitemos el trámite de nuevo.</p>
+${deadlineHtml}
+<p>Si el plazo vence sin que vuelvas a presentarte, vas a figurar como no re-empadronado y la Comisión Directiva puede declarar tu baja como socio (Art. 9° bis del estatuto).</p>`),
+  };
+}

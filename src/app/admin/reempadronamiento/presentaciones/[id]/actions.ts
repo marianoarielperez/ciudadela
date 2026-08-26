@@ -2,6 +2,10 @@
 // Las cuatro decisiones de la Comisión sobre una presentación: validar,
 // observar, rechazar y volver a observada lo rechazado.
 //
+// TRES de las cuatro le escriben al socio, y las tres por el mismo motivo: lo
+// que la Comisión decide acá le cuelga la condición de socio de un plazo, y el
+// vecino no tiene ninguna otra forma de enterarse.
+//
 // ── Por qué son de ADMIN y no de superadmin ──────────────────────────────────
 // Convocar el proceso y abrir la segunda instancia son actos de la Comisión y
 // van con `requireSuperadmin` (ver `../../actions.ts`). Revisar una
@@ -26,7 +30,9 @@ import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { verificationActorLimiter, verificationMemberLimiter } from "@/lib/auth/rate-limiter";
 import { mailer } from "@/lib/email";
-import { portalInvite, presentationObservedEmail } from "@/lib/email/templates";
+import {
+  portalInvite, presentationObservedEmail, presentationRejectedEmail,
+} from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
 import {
   ACCOUNT_EMAIL_NOTICE_WARNINGS, accountEmailNotice, accountEmailNoticeWarning,
@@ -321,18 +327,67 @@ export async function rejectPresentationAction(
   const result = await presentations.reject({ presentationId, actorId: actor.actorId, note });
   if (!result.ok) return { error: result.error };
 
+  // EL AVISO AL SOCIO. Antes el rechazo no mandaba nada y el vecino se quedaba
+  // tranquilo con el trámite caído: se enteraba con la baja, cuando ya no había
+  // nada que corregir. Best-effort y POSTERIOR a la decisión, igual que el
+  // correo de la observación: el rechazo ya está asentado y un SMTP caído no
+  // puede convertirlo en una pantalla de error —el reflejo del operador sería
+  // volver a apretar Rechazar, y sobre una presentación ya resuelta eso contesta
+  // "otro administrador ya resolvió esta presentación", que es falso.
+  //
+  // NO rota la llave de retome, y no es una omisión: una presentación rechazada
+  // no vuelve a ser editable por la web (`EDITABLE_STATUSES`), así que no hay
+  // enlace que entregar. Por eso este correo no lleva ninguno y la salida que
+  // ofrece es la sede.
+  let mailed = false;
+  try {
+    await mailer.sendToMember({
+      memberId: result.memberId,
+      // La casilla DECLARADA en la presentación, como la observación: puede no
+      // ser la de la ficha (casi toda la cohorte no tiene ninguna). La
+      // Notification cuelga igual del socio, que es lo que le da carácter
+      // fehaciente (Art. 5° quater).
+      to: result.email,
+      type: "presentation_rejected",
+      message: presentationRejectedEmail({
+        // EL MOTIVO VA SÍ O SÍ CUANDO EXISTE. La plantilla lo acepta opcional
+        // —tiene que valerse sin él, porque en la pantalla el motivo lo es—,
+        // así que si este llamador se lo olvidara, al vecino le llegaría
+        // "preguntanos en la sede por qué" con el motivo escrito y guardado a
+        // un centímetro. Lo fija un test.
+        note: result.note,
+        // Hasta cuándo puede volver a presentarse. `currentDeadline` decide
+        // cuál de las dos instancias manda.
+        deadline: currentDeadline(result.process),
+      }),
+      summary: "rechazo del re-empadronamiento",
+    });
+    mailed = true;
+  } catch (e) {
+    console.error("[presentaciones] falló el correo de rechazo", presentationId, "code:", codeOf(e));
+  }
+
   await audit({
     userId: actor.actorId,
     action: "presentation_reject",
     entity: "presentation",
     entityId: presentationId,
-    // Si hubo motivo escrito se asienta que lo hubo, nunca cuál.
-    detail: { memberId: result.memberId, hasNote: Boolean(note?.trim()) },
+    // Si hubo motivo escrito se asienta que lo hubo, nunca cuál. `mailed` es lo
+    // único que después permite saber si al socio se le avisó antes de la baja.
+    detail: { memberId: result.memberId, hasNote: Boolean(note?.trim()), mailed },
     ip: await clientIp(),
   });
 
   refresh(presentationId);
-  return { ok: true };
+  return mailed
+    ? { ok: true }
+    : {
+        ok: true,
+        warning:
+          "Se rechazó la presentación, pero no se pudo enviar el correo que se lo avisa al socio. " +
+          "Avisale por otro medio: sin ese correo se queda creyendo que su trámite está hecho y no " +
+          "vuelve a presentarse antes de que venza el plazo.",
+      };
 }
 
 export async function unrejectPresentationAction(
