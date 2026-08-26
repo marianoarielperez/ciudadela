@@ -74,6 +74,39 @@ export function mapWithdrawalReason(raw: string | null | undefined): { reason: W
 
 const CATEGORY: Record<string, MemberCategory> = { activo: "active", adherente: "adherent" };
 
+/** ¿La fila del padrón da de BAJA al socio? Un solo lugar para las dos únicas
+ *  formas que el libro escribe —"Si" / "No"— y para el aborto ante cualquier
+ *  otra: leerla como `activo !== "no"` haría pasar por VIGENTE a un "0", a un
+ *  "false" o a una celda vacía, y el error de tipeo se le presentaría al
+ *  operador como una discrepancia de estado que sólo se resuelve con un acta.
+ *  `context` es el prefijo del mensaje ("socio 38", "fila 40"): quien llama sabe
+ *  si está mirando el libro o la planilla. */
+export function isWithdrawnRow(activo: string | null | undefined, context: string): boolean {
+  const v = (activo ?? "").trim().toLowerCase();
+  if (v === "si") return false;
+  if (v === "no") return true;
+  throw new Error(`${context}: activo debe ser Si/No, vino "${activo ?? ""}"`);
+}
+
+/** Datos para pisar una ficha que YA existe (`import-padron.ts --update-existing`).
+ *  Es el mapeo del Excel con UNA excepción: `reentryBlocked` se prende, nunca se
+ *  apaga.
+ *
+ *  El porqué: el flag no sale sólo del padrón. `memberService.withdraw` lo prende
+ *  al asentar una expulsión desde el panel, o sea DESPUÉS de la foto del libro, y
+ *  esa fila del Excel puede seguir diciendo "Mora" por meses. Como `updateMember`
+ *  escribe lo que le pasen (su contrato: la lista blanca es del llamador), sin
+ *  esta función una corrida con el flag apagaría el bloqueo puesto por acta y
+ *  además pisaría el motivo: se perderían las DOS señales que mira
+ *  `eligibility.ts:64`, y el expulsado pasaría la puerta del wizard. Mismo
+ *  criterio que la regla 2 de `scripts/fix-withdrawal-reasons.ts`. */
+export function updateDataForExisting(
+  data: MemberImportData,
+  current: { reentryBlocked: boolean },
+): MemberImportData {
+  return { ...data, reentryBlocked: current.reentryBlocked || data.reentryBlocked };
+}
+
 export function mapPadronRow(row: RawPadronRow): MappedRow {
   const warnings: string[] = [];
   const n = row.numero_socio;
@@ -81,9 +114,7 @@ export function mapPadronRow(row: RawPadronRow): MappedRow {
   const category = CATEGORY[row.categoria_socio.trim().toLowerCase()];
   if (!category) throw new Error(`socio ${n}: categoria_socio desconocida "${row.categoria_socio}"`);
 
-  const activo = row.activo.trim().toLowerCase();
-  if (activo !== "si" && activo !== "no") throw new Error(`socio ${n}: activo debe ser Si/No, vino "${row.activo}"`);
-  const status: MemberStatus = activo === "si" ? "active" : "withdrawn";
+  const status: MemberStatus = isWithdrawnRow(row.activo, `socio ${n}`) ? "withdrawn" : "active";
 
   const { reason, warning } = mapWithdrawalReason(row.motivo_baja);
   if (warning) warnings.push(`socio ${n}: ${warning}`);
@@ -119,10 +150,12 @@ export function mapPadronRow(row: RawPadronRow): MappedRow {
       // si alguien le cambia el motivo a una ficha de expulsado, el flag es lo
       // único que sobrevive. Mismo criterio que `memberService.withdraw`
       // (`service.ts:109`), que también lo prende al asentar la expulsión.
-      // Con `--update-existing` el flag sigue al Excel igual que el motivo: no
-      // agrega una clase de daño nueva —esa corrida ya pisaba `withdrawalReason`
-      // con lo que diga el archivo— pero sí exige que el Excel diga "Expulsado"
-      // en la fila del expulsado, que es justo lo que este cambio arregla.
+      // Este valor es el del ALTA. Para pisar una ficha existente
+      // (`--update-existing`) no se usa tal cual: pasa por
+      // `updateDataForExisting`, que nunca baja un flag ya prendido. Si siguiera
+      // al Excel como el motivo, esa corrida apagaría el bloqueo asentado por un
+      // acta posterior a la foto del padrón —y con el motivo pisado en la misma
+      // escritura no quedaría NINGUNA de las dos señales de `eligibility.ts:64`.
       reentryBlocked: status === "withdrawn" && reason === "expulsion",
       joinedAt: excelDateToCivilUtc(row.fecha_ingreso),
       leftAt: row.fecha_egreso ? excelDateToCivilUtc(row.fecha_egreso) : null,

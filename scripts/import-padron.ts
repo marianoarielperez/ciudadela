@@ -33,7 +33,7 @@ import { join } from "node:path";
 import ExcelJS from "exceljs";
 import { prisma } from "../src/lib/prisma";
 import { audit, auditStrict } from "../src/lib/audit";
-import { mapPadronRow, type RawPadronRow } from "../src/lib/padron/mapping";
+import { mapPadronRow, type RawPadronRow, updateDataForExisting } from "../src/lib/padron/mapping";
 import { MemberEmailConflictError, MemberEmailRequiredError, memberWriter } from "../src/lib/members/write";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
@@ -424,6 +424,9 @@ async function main() {
   for (const m of mapped) {
     const existing = await prisma.membership.findUnique({
       where: { bookId_memberNumber: { bookId: book.id, memberNumber: m.memberNumber } },
+      // `reentryBlocked` de la ficha viva: `updateDataForExisting` lo necesita
+      // para no bajar un bloqueo que el Excel no conoce (REG-04, ver abajo).
+      include: { member: { select: { reentryBlocked: true } } },
     });
     if (existing) {
       // Sin el flag no escribimos nada sobre un socio ya cargado: las correcciones
@@ -441,7 +444,13 @@ async function main() {
       // lado del dueño del dato: el import las HEREDA, incluidos sus dos
       // rechazos, y por eso no puede producirlas en masa sin enterarse.
       try {
-        const { accountEmailMove } = await memberWriter.updateMember(existing.memberId, m.member);
+        // `updateDataForExisting` y no `m.member` pelado: es el ÚNICO lugar donde
+        // esta corrida podría APAGAR el bloqueo de reingreso de un expulsado
+        // —`updateMember` escribe lo que le pasen, por contrato— y en la misma
+        // escritura se pisa el motivo, así que se perderían las dos señales de
+        // `eligibility.ts:64`. El porqué completo está en `padron/mapping.ts`.
+        const data = updateDataForExisting(m.member, existing.member);
+        const { accountEmailMove } = await memberWriter.updateMember(existing.memberId, data);
         progress.updated++;
         // El writer le llevó la dirección nueva a la CUENTA del socio, o sea que
         // le movió el nombre de usuario con el que ingresa. Desde el panel eso

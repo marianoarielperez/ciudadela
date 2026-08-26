@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { civilDateUtc, excelDateToCivilUtc } from "@/lib/dates";
-import { mapPadronRow, mapWithdrawalReason, type RawPadronRow } from "@/lib/padron/mapping";
+import {
+  mapPadronRow, mapWithdrawalReason, type RawPadronRow, updateDataForExisting,
+} from "@/lib/padron/mapping";
 
 const base: RawPadronRow = {
   numero_socio: 14, apellido_nombre: "Perez Mariano", dni: 30111222,
@@ -116,5 +118,31 @@ describe("mapPadronRow", () => {
   it("throws on unknown category or activo flag", () => {
     expect(() => mapPadronRow({ ...base, categoria_socio: "Vitalicio" })).toThrow();
     expect(() => mapPadronRow({ ...base, activo: "quizas" })).toThrow();
+  });
+});
+
+// `import-padron.ts --update-existing` pisa la ficha con lo que diga el Excel.
+// Para `reentryBlocked` eso no puede valer: el flag lo prende también
+// `memberService.withdraw` al asentar una expulsión POSTERIOR a la foto del
+// padrón, y bajarlo reabriría la puerta que REG-04 cierra para siempre.
+describe("updateDataForExisting", () => {
+  const incoming = (motivo: string) =>
+    mapPadronRow({ ...base, activo: "No", motivo_baja: motivo, fecha_egreso: new Date(Date.UTC(2024, 4, 10)) })
+      .member;
+
+  it("never lowers a reentry block that the ficha already has", () => {
+    const data = updateDataForExisting(incoming("Mora"), { reentryBlocked: true });
+    expect(data.reentryBlocked).toBe(true);
+    expect(data.withdrawalReason).toBe("arrears");
+  });
+
+  it("turns the block on when the padron says expulsion", () => {
+    expect(updateDataForExisting(incoming("Expulsado"), { reentryBlocked: false }).reentryBlocked).toBe(true);
+  });
+
+  it("leaves the block off when neither side has it, and copies everything else", () => {
+    const data = updateDataForExisting(incoming("Mora"), { reentryBlocked: false });
+    expect(data.reentryBlocked).toBe(false);
+    expect(data).toEqual({ ...incoming("Mora"), reentryBlocked: false });
   });
 });

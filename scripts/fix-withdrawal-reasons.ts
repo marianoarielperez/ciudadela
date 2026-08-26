@@ -35,10 +35,13 @@
 //     socio que en la base está vigente (o al revés), no lo corrige: lo reporta
 //     como discrepancia. Eso se resuelve con un acta y desde el panel, nunca por
 //     script.
-//  2. **Nunca APAGA un bloqueo de reingreso.** Lo prende cuando el motivo es
-//     expulsión y lo deja como está en cualquier otro caso: el flag puede
-//     haberlo puesto un acta de expulsión que el Excel todavía no refleja, y
-//     bajarlo en silencio reabre la puerta que REG-04 cierra para siempre.
+//  2. **Nunca APAGA un bloqueo de reingreso**, y eso vale para las DOS señales
+//     que mira la puerta, no sólo para el flag. El flag lo prende cuando el
+//     motivo es expulsión y lo deja como está en cualquier otro caso: puede
+//     haberlo puesto un acta que el Excel todavía no refleja. Y una ficha cuyo
+//     motivo YA es expulsión no se degrada nunca: se reporta como discrepancia,
+//     porque hay fichas viejas con el motivo puesto y el flag en `false` y ahí
+//     el motivo es lo único que cierra la puerta que REG-04 cierra para siempre.
 //  3. **No escribe un motivo que no entiende.** Una celda que el mapeo manda a
 //     `other`, o vacía, no pisa el motivo que ya tiene la ficha: se reporta.
 //  4. **Seco por defecto.** Sin `--apply` imprime la tabla de lo que haría y no
@@ -61,8 +64,11 @@ import ExcelJS from "exceljs";
 import type { WithdrawalReason } from "../src/generated/prisma/client";
 import { makeAuditStrict } from "../src/lib/audit";
 import { REASON_LABELS } from "../src/lib/members/labels";
-import { mapWithdrawalReason } from "../src/lib/padron/mapping";
+import { isWithdrawnRow } from "../src/lib/padron/mapping";
 import { prisma } from "../src/lib/prisma";
+// El veredicto por fila es una función pura y vive en `src/`: las reglas que
+// decide son estatutarias y se prueban sin base ni Excel (tests/padron-withdrawal-fix).
+import { decideWithdrawalFix } from "../src/lib/padron/withdrawal-fix";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
 const LOCK = join(process.cwd(), "datos", "~$padron_socios.xlsx");
@@ -124,7 +130,7 @@ const digits = (s: string | null) => (s ?? "").replace(/\D/g, "") || null;
 type Row = {
   rowNumber: number;
   memberNumber: number;
-  activo: string;
+  withdrawn: boolean;
   motivo: string | null;
   dni: string | null;
 };
@@ -184,10 +190,22 @@ async function readRows(): Promise<Row[]> {
       throw new DataError(`socio ${memberNumber}: aparece en las filas ${previous} y ${rowNumber}`);
     }
     seen.set(memberNumber, rowNumber);
+    // El estado se decide con el mismo lector que el import (`isWithdrawnRow`) y
+    // no con un `!== "no"`: una celda rara —"0", "false", un typo— pasaba por
+    // VIGENTE y la fila salía reportada como "el Excel lo da por VIGENTE", que
+    // manda al operador a buscar un acta por un error de tipeo. El error del
+    // lector se re-envuelve en `DataError` para que el pie del script diga que el
+    // problema está en el Excel y no en la base.
+    let withdrawn: boolean;
+    try {
+      withdrawn = isWithdrawnRow(get("activo"), `fila ${rowNumber}`);
+    } catch (e) {
+      throw new DataError(e instanceof Error ? e.message : String(e));
+    }
     rows.push({
       rowNumber,
       memberNumber,
-      activo: (trimmed(get("activo")) ?? "").toLowerCase(),
+      withdrawn,
       motivo: trimmed(get("motivo_baja")),
       dni: digits(get("dni")),
     });
@@ -231,79 +249,32 @@ async function main() {
 
   for (const row of rows) {
     const member = byNumber.get(row.memberNumber);
-    const baja = row.activo === "no";
-
-    if (!member) {
-      // Sólo se reporta si el Excel lo da de baja: los vigentes que falten en la
-      // base son asunto del import, no de este script.
-      if (baja) {
-        discrepancies.push(
-          `socio ${row.memberNumber} (fila ${row.rowNumber}): está en el Excel y NO en la base`,
-        );
+    const decision = decideWithdrawalFix(row, member);
+    switch (decision.kind) {
+      case "skip":
+        break;
+      case "unchanged":
+        unchanged++;
+        break;
+      case "discrepancy":
+        discrepancies.push(decision.message);
+        break;
+      case "plan": {
+        // Sin ficha no hay plan posible: `decideWithdrawalFix` sólo devuelve
+        // "plan" cuando recibió una. La guarda es para el compilador.
+        if (!member) throw new Error(`socio ${row.memberNumber}: plan sin ficha`);
+        plans.push({
+          memberNumber: row.memberNumber,
+          memberId: member.id,
+          fullName: member.fullName,
+          from: member.withdrawalReason,
+          to: decision.to,
+          blockFrom: member.reentryBlocked,
+          blockTo: decision.blockTo,
+        });
+        break;
       }
-      continue;
     }
-
-    // Regla 1: el estado societario no se toca por script, en ninguna dirección.
-    if (baja && member.status !== "withdrawn") {
-      discrepancies.push(
-        `socio ${row.memberNumber} ${member.fullName}: el Excel lo da de BAJA y en la base está ` +
-          `"${member.status}" — se resuelve con acta desde el panel, no acá`,
-      );
-      continue;
-    }
-    if (!baja) {
-      if (member.status === "withdrawn") {
-        discrepancies.push(
-          `socio ${row.memberNumber} ${member.fullName}: el Excel lo da por VIGENTE y en la base está ` +
-            `dado de baja (${label(member.withdrawalReason)}) — se resuelve con acta desde el panel, no acá`,
-        );
-      }
-      continue;
-    }
-
-    // Cruce de identidad: el número de socio es la clave, pero si las dos puntas
-    // tienen DNI y no coinciden, no estamos mirando a la misma persona.
-    if (row.dni && member.dni && digits(member.dni) !== row.dni) {
-      discrepancies.push(
-        `socio ${row.memberNumber} ${member.fullName}: el DNI del Excel no coincide con el de la ficha — ` +
-          `no se toca nada hasta que se aclare cuál es la persona`,
-      );
-      continue;
-    }
-
-    const { reason } = mapWithdrawalReason(row.motivo);
-    // Regla 3: un motivo vacío o que el mapeo no entiende no pisa lo que ya hay.
-    if (reason === null || reason === "other") {
-      // Que los conteos del encabezado CIERREN: cada baja del Excel termina en
-      // exactamente uno de los tres contadores. Un resto invisible es una fila
-      // que nadie revisa.
-      if (member.withdrawalReason === reason) unchanged++;
-      else {
-        discrepancies.push(
-          `socio ${row.memberNumber} ${member.fullName}: motivo_baja ${
-            row.motivo === null ? "vacío" : `"${row.motivo}" (no mapeado)`
-          } — la ficha conserva "${label(member.withdrawalReason)}"`,
-        );
-      }
-      continue;
-    }
-
-    // Regla 2: el bloqueo se prende, nunca se apaga.
-    const blockTo = reason === "expulsion" ? true : member.reentryBlocked;
-    if (member.withdrawalReason === reason && member.reentryBlocked === blockTo) {
-      unchanged++;
-      continue;
-    }
-    plans.push({
-      memberNumber: row.memberNumber,
-      memberId: member.id,
-      fullName: member.fullName,
-      from: member.withdrawalReason,
-      to: reason,
-      blockFrom: member.reentryBlocked,
-      blockTo,
-    });
   }
 
   console.log(`\nfix-withdrawal-reasons — ${new Date().toISOString()}`);
@@ -311,7 +282,7 @@ async function main() {
     `modo: ${apply ? `${APPLY_FLAG} (ESCRIBE en la base)` : `seco (por defecto; para escribir: ${APPLY_FLAG})`}`,
   );
   console.log(
-    `filas del Excel: ${rows.length} | bajas: ${rows.filter((r) => r.activo === "no").length} ` +
+    `filas del Excel: ${rows.length} | bajas: ${rows.filter((r) => r.withdrawn).length} ` +
       `| ya coinciden: ${unchanged} | a corregir: ${plans.length} | discrepancias: ${discrepancies.length}`,
   );
 
