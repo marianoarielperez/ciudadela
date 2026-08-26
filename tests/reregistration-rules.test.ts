@@ -13,6 +13,7 @@ import {
   canStartSecond,
   FIRST_INSTANCE_DAYS,
   firstEndsAt,
+  hasExpired,
   isCohortMember,
   lookupVerdict,
   maskedName,
@@ -283,5 +284,60 @@ describe("transiciones del proceso", () => {
 
   it("wizardOpen is false when there is no process at all", () => {
     expect(wizardOpen(null)).toBe(false);
+  });
+});
+
+describe("hasExpired — el último día del plazo todavía es del vecino", () => {
+  // `firstEndsAt`, `secondEndsAt` y `appealUntil` devuelven un MARCADOR de día
+  // civil argentino: el mediodía UTC del último día. El plazo abierto el
+  // 02/10/2026 vence el 01/11/2026, y ese marcador es 2026-11-01T12:00Z, que
+  // en Argentina son las 09:00 de la mañana. Comparar contra el instante crudo
+  // lo daría por vencido desde esa hora y le comería al vecino las últimas
+  // quince horas de un plazo estatutario de treinta días.
+  const deadline = firstEndsAt(d(2026, 10, 2));
+
+  it("marks the last day of the term, inclusive", () => {
+    expect(deadline).toEqual(d(2026, 11, 1));
+  });
+
+  it("is NOT expired at 09:30 AR of the last day, where the naive read already says it is", () => {
+    const morning = new Date("2026-11-01T09:30:00-03:00");
+    // La lectura obvia —y equivocada— que este comparador existe para evitar:
+    expect(morning.getTime() > deadline.getTime()).toBe(true);
+    expect(hasExpired(deadline, morning)).toBe(false);
+  });
+
+  it("is NOT expired at either end of the last civil day", () => {
+    expect(hasExpired(deadline, new Date("2026-11-01T00:01:00-03:00"))).toBe(false);
+    expect(hasExpired(deadline, new Date("2026-11-01T23:59:00-03:00"))).toBe(false);
+  });
+
+  it("IS expired one minute into the following civil day", () => {
+    expect(hasExpired(deadline, new Date("2026-11-02T00:01:00-03:00"))).toBe(true);
+  });
+
+  it("is not expired the day before, obviously", () => {
+    expect(hasExpired(deadline, new Date("2026-10-31T23:00:00-03:00"))).toBe(false);
+  });
+
+  it("reads the same way for the second instance and for the appeal", () => {
+    const second = secondEndsAt(d(2026, 11, 1)); // 11/11/2026
+    expect(hasExpired(second, new Date("2026-11-11T23:59:00-03:00"))).toBe(false);
+    expect(hasExpired(second, new Date("2026-11-12T00:01:00-03:00"))).toBe(true);
+
+    const appeal = appealUntil(d(2026, 12, 24)); // 23/01/2027
+    expect(hasExpired(appeal, new Date("2027-01-23T23:59:00-03:00"))).toBe(false);
+    expect(hasExpired(appeal, new Date("2027-01-24T00:01:00-03:00"))).toBe(true);
+  });
+
+  it("agrees with canPrepareClose, which asks the same question through it", () => {
+    const p = { status: "second_instance" as ReregistrationStatus, secondEndsAt: d(2026, 11, 11) };
+    for (const now of [
+      new Date("2026-11-11T09:30:00-03:00"),
+      new Date("2026-11-11T23:59:00-03:00"),
+      new Date("2026-11-12T00:01:00-03:00"),
+    ]) {
+      expect(canPrepareClose(p, now)).toBe(hasExpired(d(2026, 11, 11), now));
+    }
   });
 });

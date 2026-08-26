@@ -36,13 +36,53 @@ export class HolidayCoverageError extends Error {
   }
 }
 
+/** Una fecha de feriado llegó fuera del formato canónico del proyecto. Ver
+ *  `canonicalHolidayDay`: no es un detalle de estilo, es un plazo mal contado. */
+export class HolidayFormatError extends Error {
+  readonly received: Date;
+
+  constructor(received: Date) {
+    super(
+      `El feriado ${received.toISOString()} no está en el formato canónico de fecha ` +
+        `civil del proyecto (mediodía UTC del día civil argentino): computado así ` +
+        `caería el día equivocado y el plazo saldría mal. Construilo con ` +
+        `civilDateUtc(año, mes, día) —o con excelDateToCivilUtc si viene de una ` +
+        `planilla— antes de inyectarlo.`,
+    );
+    this.name = "HolidayFormatError";
+    this.received = received;
+  }
+}
+
+/** El día civil de un feriado inyectado, EXIGIENDO que ya venga canónico.
+ *
+ *  Todo este módulo asume que un feriado es el mediodía UTC de su día civil
+ *  argentino. Una fila a medianoche UTC —el formato en que ExcelJS entrega las
+ *  fechas de planilla, y la razón de que exista `excelDateToCivilUtc`; el ABM de
+ *  feriados todavía no está escrito, así que es una entrada plausible— rompería
+ *  DOS cosas a la vez y calladas: 2027-01-01T00:00Z son las 21:00 del 31/12/2026
+ *  en Argentina, así que `civilDayOf` lo mandaría al 31/12, el 1° de enero se
+ *  contaría como día HÁBIL y el plazo del vecino se acortaría —que es
+ *  exactamente la falla que la guarda de COBERTURA de abajo existe para
+ *  impedir—, y encima la cobertura quedaría anotada en 2026, con lo cual esa
+ *  misma guarda quedaría engañada y no avisaría nada.
+ *
+ *  Se falla ruidoso, igual que con el año sin cobertura y por el mismo motivo:
+ *  el único modo de falla que este módulo no se puede permitir es acortarle el
+ *  plazo a alguien en silencio. Una fecha canónica pasa por acá sin cambiar. */
+function canonicalHolidayDay(holiday: Date): Date {
+  const civil = civilDayOf(holiday);
+  if (civil.getTime() !== holiday.getTime()) throw new HolidayFormatError(holiday);
+  return civil;
+}
+
 /** Los años civiles sobre los que el calendario inyectado tiene algo para
  *  decir. Se exporta para que una pantalla pueda AVISAR antes de que el
  *  operador asiente una fijación cuyo plazo se iría a un año sin cargar,
  *  en vez de comerse el error recién al guardar. */
 export function holidayCoverageYears(holidays: readonly Date[]): Set<number> {
   const years = new Set<number>();
-  for (const holiday of holidays) years.add(civilDayOf(holiday).getUTCFullYear());
+  for (const holiday of holidays) years.add(canonicalHolidayDay(holiday).getUTCFullYear());
   return years;
 }
 
@@ -53,7 +93,8 @@ export function holidayCoverageYears(holidays: readonly Date[]): Set<number> {
  *  Los feriados se inyectan como fechas civiles (mediodía UTC, el criterio con
  *  el que el proyecto guarda TODA fecha civil): así el módulo se testea sin
  *  base y el llamador decide de dónde salen. Se pueden pasar desordenados y con
- *  repetidos. `postedAt` puede ser un instante cualquiera: el día lo resuelve
+ *  repetidos, pero NO fuera de ese formato: lo verifica `canonicalHolidayDay`,
+ *  que lanza `HolidayFormatError` en vez de contar mal. `postedAt` puede ser un instante cualquiera: el día lo resuelve
  *  `civilDayOf` con el calendario ARGENTINO, porque a las 21:00 de acá el reloj
  *  UTC del server ya está en el día siguiente y el plazo es del vecino.
  *
@@ -87,7 +128,7 @@ export function businessDayEnd(postedAt: Date, days: number, holidays: readonly 
 
   const covered = holidayCoverageYears(holidays);
   const holidayDays = new Set<number>();
-  for (const holiday of holidays) holidayDays.add(civilDayOf(holiday).getTime());
+  for (const holiday of holidays) holidayDays.add(canonicalHolidayDay(holiday).getTime());
 
   // Mediodía UTC + 24 h sigue siendo mediodía UTC (UTC no tiene DST), así que
   // el paseo por el calendario no tiene ningún borde de horario. Y por lo mismo

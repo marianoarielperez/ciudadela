@@ -4,6 +4,7 @@ import {
   BOARD_BUSINESS_DAYS,
   businessDayEnd,
   HolidayCoverageError,
+  HolidayFormatError,
   holidayCoverageYears,
 } from "@/lib/board/business-days";
 
@@ -102,7 +103,9 @@ describe("businessDayEnd — el plazo de cartelera (20 días hábiles)", () => {
 
   it("ignores a holiday that falls on a Saturday", () => {
     // 20/11/2027 cae sábado: ya no era hábil, así que no corre nada. Arranque
-    // lunes 15/11/2027 → 5 hábiles → viernes 19/11... y el 22 es el siguiente.
+    // lunes 15/11/2027 → el plazo cuenta desde el día SIGUIENTE, así que de esa
+    // semana quedan 4 hábiles (mar 16 a vie 19); el 5° es el lunes 22 y el 6° el
+    // martes 23. Verificado contra almanaque.
     const withHoliday = businessDayEnd(d(2027, 11, 15), 6, [H2027.soberania]);
     const withoutHoliday = businessDayEnd(d(2027, 11, 15), 6, [H2027.anioNuevo]);
     expect(withHoliday).toEqual(withoutHoliday);
@@ -156,5 +159,46 @@ describe("businessDayEnd — cobertura de feriados", () => {
     expect(
       businessDayEnd(d(2026, 12, 15), BOARD_BUSINESS_DAYS, [H2026.navidad, H2027.anioNuevo]),
     ).toEqual(d(2027, 1, 14));
+  });
+});
+
+describe("businessDayEnd — formato canónico de los feriados", () => {
+  // Toda fecha civil del proyecto es el MEDIODÍA UTC de su día civil argentino.
+  // Una fila de feriado a MEDIANOCHE UTC —el formato en que ExcelJS entrega las
+  // fechas de planilla, y la razón de que exista `excelDateToCivilUtc`— rompe
+  // dos cosas a la vez y en silencio, que es lo peor que le puede pasar a este
+  // módulo:
+  //   · 2027-01-01T00:00Z son las 21:00 del 31/12/2026 en Argentina, así que su
+  //     día civil es el 31/12: el feriado deja de coincidir con su propio día,
+  //     el 1° de enero se cuenta como HÁBIL y el plazo del vecino se acorta —
+  //     exactamente la falla que la guarda de cobertura existe para impedir;
+  //   · y la cobertura queda anotada en 2026, con lo cual esa misma guarda
+  //     queda engañada y no avisa nada.
+  const midnightNewYear2027 = new Date(Date.UTC(2027, 0, 1));
+
+  it("refuses a holiday that is not at UTC noon", () => {
+    expect(() =>
+      businessDayEnd(d(2026, 12, 15), BOARD_BUSINESS_DAYS, [H2026.navidad, midnightNewYear2027]),
+    ).toThrow(HolidayFormatError);
+  });
+
+  it("refuses it in holidayCoverageYears too, instead of crediting the wrong year", () => {
+    // Sin la guarda esto devolvería {2026} para un feriado de 2027.
+    expect(() => holidayCoverageYears([midnightNewYear2027])).toThrow(HolidayFormatError);
+  });
+
+  it("says what is wrong and how to fix it", () => {
+    try {
+      holidayCoverageYears([midnightNewYear2027]);
+      expect.unreachable("tendría que haber lanzado por el formato");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HolidayFormatError);
+      expect((error as HolidayFormatError).message).toContain(midnightNewYear2027.toISOString());
+      expect((error as HolidayFormatError).message).toContain("civilDateUtc");
+    }
+  });
+
+  it("accepts the canonical form of that same holiday", () => {
+    expect(holidayCoverageYears([d(2027, 1, 1)]).has(2027)).toBe(true);
   });
 });

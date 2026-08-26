@@ -40,16 +40,53 @@ function addCalendarDays(from: Date, days: number): Date {
   return new Date(civilDayOf(from).getTime() + days * DAY_MS);
 }
 
+/** Último día de la 1ª instancia, INCLUSIVE: 30 días corridos desde la
+ *  convocatoria. Como los otros dos plazos, devuelve un MARCADOR DE DÍA CIVIL
+ *  argentino y se compara con `hasExpired` — nunca contra el instante crudo.
+ *  Ver el bloque de `hasExpired`, que explica por qué. */
 export function firstEndsAt(calledAt: Date): Date {
   return addCalendarDays(calledAt, FIRST_INSTANCE_DAYS);
 }
 
+/** Último día de la 2ª instancia, INCLUSIVE: 10 días corridos desde que se
+ *  abrió. Marcador de día civil argentino; se compara con `hasExpired`. */
 export function secondEndsAt(startedAt: Date): Date {
   return addCalendarDays(startedAt, SECOND_INSTANCE_DAYS);
 }
 
+/** Último día para INTERPONER el recurso del Art. 9° bis d), INCLUSIVE: 30 días
+ *  corridos desde la notificación fehaciente. Marcador de día civil argentino;
+ *  se compara con `hasExpired`. */
 export function appealUntil(notifiedAt: Date): Date {
   return addCalendarDays(notifiedAt, APPEAL_DAYS);
+}
+
+/** ¿El plazo que termina el día `deadline` YA VENCIÓ a la fecha `now`?
+ *
+ *  LA ÚNICA FORMA DE PREGUNTARLO. Las tres funciones de arriba devuelven el
+ *  mediodía UTC del último día civil argentino del plazo, que es el criterio con
+ *  el que el proyecto guarda toda fecha civil. Ese mediodía UTC son las 09:00 de
+ *  la mañana en Argentina, así que la comparación que sale sola —
+ *  `new Date() > process.firstEndsAt`— da "vencido" desde las nueve de la mañana
+ *  del último día y le come al vecino las últimas QUINCE HORAS de un plazo
+ *  estatutario de treinta días. De esta aritmética cuelga la baja de un socio
+ *  real: la segunda instancia o la declaración de baja se dispararían un día en
+ *  que todavía tiene derecho a presentarse.
+ *
+ *  Por eso se compara DÍA CIVIL CONTRA DÍA CIVIL, y estricto: el día del
+ *  vencimiento NO está vencido, el socio lo tiene entero hasta las 23:59 de acá.
+ *  Recién el día siguiente vence.
+ *
+ *  Y por eso es una función COMPARTIDA en vez de una comparación repetida en
+ *  cada llamador. El proyecto ya pagó esa lección con `coverageFloor`
+ *  (`src/lib/treasury/rules.ts`): el devengo y el recordatorio de vencimiento
+ *  calculaban su propio piso de cobertura por separado, divergieron, y al vecino
+ *  que ingresó en septiembre se le reclamaba septiembre. Se arregló compartiendo
+ *  la función, no reimplementándola. Acá vale igual: hay nueve tareas por venir
+ *  que van a consultar estos plazos, y si cada una escribe su propia comparación
+ *  van a divergir. */
+export function hasExpired(deadline: Date, now: Date = new Date()): boolean {
+  return civilDayOf(now).getTime() > civilDayOf(deadline).getTime();
 }
 
 /** Cohorte del proceso: adherentes vigentes al activar (decisión 12: los
@@ -149,15 +186,14 @@ export function canStartSecond(p: { status: ReregistrationStatus }): boolean {
  *  en una baja.
  *
  *  El día del vencimiento NO habilita: ese día el socio todavía tiene el plazo
- *  entero. Se compara día civil argentino contra día civil, no instante contra
- *  instante, o a las 21:00 del último día el server —que ya está en el día
- *  siguiente en UTC— le cortaría el plazo tres horas antes. */
+ *  entero. Quién decide eso es `hasExpired`, que es el único comparador de
+ *  plazos del módulo — acá no se vuelve a escribir la comparación. */
 export function canPrepareClose(
   p: { status: ReregistrationStatus; secondEndsAt: Date | null },
   now: Date = new Date(),
 ): boolean {
   if (p.status !== "second_instance" || p.secondEndsAt === null) return false;
-  return civilDayOf(now).getTime() > civilDayOf(p.secondEndsAt).getTime();
+  return hasExpired(p.secondEndsAt, now);
 }
 
 /** El wizard público sólo abre durante las dos instancias. Sin proceso vivo no
