@@ -15,6 +15,7 @@ import {
   nextStep, ProcessVerdict, UnnotifiedPanel, type BoardNoticeRow, type ProcessCountersView,
   type UnnotifiedRow,
 } from "@/app/admin/reempadronamiento/board-panels";
+import { AddToBoardChip } from "@/app/admin/reempadronamiento/avisos/board-notice-card";
 import { daysLeftLabel, ProcessStepper, type StepperProcess } from "@/app/admin/reempadronamiento/process-stepper";
 import type { PresentationStatus } from "@/generated/prisma/client";
 
@@ -448,5 +449,32 @@ describe("BoardNoticesPanel", () => {
     }));
 
     expect(html).toContain("No hay feriados cargados para 2028.");
+  });
+});
+
+describe("AddToBoardChip", () => {
+  // El chip es el único control del módulo que opera sobre UN socio. Su modo de
+  // falla no es escribir de más —sumar a un cartel sin fijar no mueve ningún
+  // plazo— sino no decir nada: como la acción no escribe ninguna fila del lado
+  // del socio (la nómina del aviso se calcula en vivo, que está bien), sin una
+  // señal explícita el botón sigue ofreciendo exactamente lo mismo después de
+  // usarlo y cada clic repetido sólo agrega un asiento de auditoría.
+  const chip = { processId: 4, memberId: 12, memberName: "Pérez, Ana" };
+
+  it("ofrece sumarlo mientras no haya cartel complementario abierto", () => {
+    const html = render(createElement(AddToBoardChip, { ...chip, alreadyOnBoard: false }));
+
+    expect(html).toContain("Pasar a cartelera");
+    // El nombre va en el nombre accesible: una lista de cien filas no puede
+    // dictarle al lector de pantalla cien botones idénticos.
+    expect(html).toContain("Pasar a cartelera a Pérez, Ana");
+  });
+
+  it("con el cartel ya abierto no vuelve a ofrecer lo mismo: dice que ya está", () => {
+    const html = render(createElement(AddToBoardChip, { ...chip, alreadyOnBoard: true }));
+
+    expect(html).toContain("Ya está en el cartel complementario");
+    // Y el control desaparece: no queda un botón que repita el asiento.
+    expect(html).not.toContain("<button");
   });
 });

@@ -273,6 +273,13 @@ async function MissingView({ process, empty }: {
     ),
   );
 
+  // Si el cartel complementario del proceso YA está abierto, todos los de
+  // `pendingBoard` figuran en él: su nómina se calcula en vivo y es la misma
+  // lista. Entonces el chip no tiene nada que ofrecer y se reemplaza por la
+  // señal de que ya está hecho — sin esto, la acción no escribe ninguna fila
+  // que cambie la pantalla y el operador clickea de nuevo, y de nuevo.
+  const openOtherNoticeId = await boardNotices.openOtherNoticeId(process.id);
+
   const rows = await prisma.presentation.findMany({
     where: { processId: process.id, status: "pending" },
     select: {
@@ -358,6 +365,7 @@ async function MissingView({ process, empty }: {
                       processId={process.id}
                       memberId={row.memberId}
                       memberName={row.fullName}
+                      alreadyOnBoard={openOtherNoticeId !== null}
                     />
                   )}
                 </span>

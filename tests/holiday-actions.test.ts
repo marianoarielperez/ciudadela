@@ -77,6 +77,28 @@ describe("createHolidayAction", () => {
     expect(prismaMock.holiday.create).not.toHaveBeenCalled();
   });
 
+  it("un año tipeado de más tampoco se guarda: la cota va para los dos lados", async () => {
+    prismaMock.holiday.create.mockClear();
+    // El año se acotaba sólo por abajo (2020), así que un "9999" entraba como
+    // fila válida —ningún unique lo rechaza— y quedaba para siempre en una
+    // tabla de la que cuelgan plazos: el borrado sólo alcanza a los feriados
+    // futuros, y ése lo es por otros ocho mil años.
+    const result = await createHolidayAction({}, form({ date: "9999-01-01", label: "Año Nuevo" }));
+
+    expect(result?.error).toContain("El año del feriado");
+    expect(prismaMock.holiday.create).not.toHaveBeenCalled();
+  });
+
+  it("el año que viene sí entra: el tope no puede molestar al uso normal", async () => {
+    prismaMock.holiday.create.mockClear();
+    const nextYear = civilDayOf().getUTCFullYear() + 1;
+
+    const result = await createHolidayAction({}, form({ date: `${nextYear}-01-01`, label: "Año Nuevo" }));
+
+    expect(result?.error).toBeUndefined();
+    expect(prismaMock.holiday.create).toHaveBeenCalled();
+  });
+
   it("el día ya cargado se rechaza con una frase, no con un error de Prisma", async () => {
     prismaMock.holiday.create.mockClear();
     prismaMock.holiday.create.mockRejectedValueOnce(

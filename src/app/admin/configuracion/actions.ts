@@ -26,7 +26,7 @@ import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
-import { parseCivilDate } from "@/lib/dates";
+import { civilDateUtc, parseCivilDate } from "@/lib/dates";
 import { CONFIG_KEYS } from "@/lib/config";
 import { isUniqueViolation } from "@/lib/treasury/unique-violation";
 import { civilDayOf } from "@/lib/treasury/periods";
@@ -287,6 +287,9 @@ export async function createFeeValueAction(
 // día con horas distintas la base no las rechaza. Escribir canónico es lo que
 // hace que ese unique sirva de algo.
 
+/** Cuántos años para adelante se acepta cargar un feriado. */
+const HOLIDAY_YEARS_AHEAD = 5;
+
 const holidaySchema = z.object({
   // El mensaje va también en `z.string(...)`: sin la clave en el POST, zod ni
   // llega al regex y devuelve su texto por defecto EN INGLÉS.
@@ -314,9 +317,21 @@ export async function createHolidayAction(
   // El regex es sólo de forma: `parseCivilDate` rechaza el día que no existe
   // ("2027-02-31", que `civilDateUtc` rodaría al 03/03 en silencio) y el año mal
   // tipeado, y devuelve el mediodía UTC canónico.
+  //
+  // Y el año se acota por ARRIBA además de por abajo, que es la mitad que
+  // faltaba: sin tope, un "9999" tipeado de más entra como fila válida, no lo
+  // rechaza ningún unique, y queda para siempre en una tabla de la que cuelgan
+  // plazos —el borrado sólo alcanza a los feriados futuros, así que sacarlo
+  // después es posible pero nadie lo va a ver—. Cinco años es holgado: el
+  // calendario oficial se publica con uno o dos de anticipación.
+  const maxYear = civilDayOf().getUTCFullYear() + HOLIDAY_YEARS_AHEAD;
   const date = parseCivilDate(parsed.data.date, {
     minYear: 2020,
+    maxDate: civilDateUtc(maxYear, 12, 31),
     invalidError: "La fecha del feriado no existe en el calendario.",
+    rangeError:
+      `El año del feriado tiene que estar entre 2020 y ${maxYear}: el calendario oficial se ` +
+      `publica con uno o dos años de anticipación.`,
   });
   if (!date.ok) return { error: date.error };
 

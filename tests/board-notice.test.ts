@@ -509,6 +509,34 @@ describe("openOther", () => {
   });
 });
 
+describe("openOtherNoticeId", () => {
+  // De esto cuelga que el chip de la cola deje de ofrecer lo mismo después de
+  // usarlo: la acción no escribe ninguna fila del lado del socio, así que la
+  // única señal disponible es que el cartel complementario ya esté abierto.
+  const cohort = [{ member: member(2, { email: "c@d.com", emailStatus: "bounced" }), status: "pending" as const }];
+
+  it("sin cartel complementario abierto devuelve null", async () => {
+    const { board: b } = board({ notices: [], covered: [], cohort });
+    expect(await b.openOtherNoticeId(1)).toBeNull();
+  });
+
+  it("con uno abierto devuelve su id, y con uno FIJADO vuelve a devolver null", async () => {
+    const open: World = {
+      notices: [{ id: 7, processId: 1, kind: "other", postedAt: null, dueAt: null }],
+      covered: [], cohort,
+    };
+    expect(await board(open).board.openOtherNoticeId(1)).toBe(7);
+
+    const posted: World = {
+      notices: [{ id: 7, processId: 1, kind: "other", postedAt: d(2026, 10, 2), dueAt: d(2026, 11, 2) }],
+      covered: [], cohort,
+    };
+    // Fijado ya no es "abierto": el vecino que rebote ahora necesita otro
+    // cartel, y el chip tiene que volver a ofrecerse.
+    expect(await board(posted).board.openOtherNoticeId(1)).toBeNull();
+  });
+});
+
 describe("coverageNotice", () => {
   const FROM = d(2026, 10, 2);
 

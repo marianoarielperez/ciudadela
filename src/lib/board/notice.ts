@@ -220,6 +220,23 @@ async function listRecipientsWith(db: Tx, input: ListRecipientsInput): Promise<B
     .sort(byMemberNumber);
 }
 
+/** El cartel complementario ABIERTO del proceso, o `null` si no hay ninguno.
+ *
+ *  `postedAt: null` viaja en el `where` y es la condición que importa: un aviso
+ *  ya fijado tiene la nómina CONGELADA en filas `Notification`, así que sumarle
+ *  un vecino sería ponerle el nombre a un papel que ya se colgó y cuyo plazo ya
+ *  está corriendo. Ahí no se reutiliza: se abre otro.
+ *
+ *  Se escribe una vez porque lo usan dos cosas —abrir el cartel y saber si ya
+ *  está abierto para no volver a ofrecerlo— y no pueden divergir. */
+function findOpenOther(db: Tx, processId: number): Promise<{ id: number } | null> {
+  return db.boardNotice.findFirst({
+    where: { processId, kind: "other", postedAt: null },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+}
+
 /** Lo que la pantalla necesita para dibujar la tarjeta de un aviso y para
  *  imprimirlo. */
 export type BoardNoticeDoc = {
@@ -247,6 +264,16 @@ export function makeBoardNotices(deps: Deps) {
      *  utilizable al momento de armarlo. */
     listRecipients(input: ListRecipientsInput): Promise<BoardRecipient[]> {
       return listRecipientsWith(deps.db, input);
+    },
+
+    /** El id del cartel complementario abierto del proceso, o `null`.
+     *
+     *  La cola de "Sin presentar" lo necesita para no seguir ofreciendo "Pasar
+     *  a cartelera" a un vecino que YA figura en ese cartel: como la nómina del
+     *  aviso es viva hasta que se fija, sumarlo no escribe ninguna fila y el
+     *  chip no tendría de dónde enterarse de que el trabajo ya está hecho. */
+    async openOtherNoticeId(processId: number): Promise<number | null> {
+      return (await findOpenOther(deps.db, processId))?.id ?? null;
     },
 
     /** El aviso entero, para la tarjeta y para el PDF. `null` si no existe. */
@@ -429,11 +456,7 @@ export function makeBoardNotices(deps: Deps) {
           };
         }
 
-        const open = await deps.db.boardNotice.findFirst({
-          where: { processId: input.processId, kind: "other", postedAt: null },
-          orderBy: { id: "asc" },
-          select: { id: true },
-        });
+        const open = await findOpenOther(deps.db, input.processId);
         if (open) return { ok: true as const, noticeId: open.id };
 
         const created = await deps.db.boardNotice.create({

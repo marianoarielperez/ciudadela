@@ -95,8 +95,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       "Cache-Control": "no-store, private",
       Vary: "Cookie",
       "X-Content-Type-Options": "nosniff",
-      // Next copia las cabeceras de la Response con `setHeader`, que REEMPLAZA
-      // la global, así que ésta tiene que bastarse sola.
+      // OJO: esta CSP NO es la que llega al navegador. Medido contra el
+      // servidor de esta rama, la respuesta viaja con la CSP GLOBAL del
+      // proyecto; el comentario de `treasury/receipt-response.ts` —"Next copia
+      // las cabeceras de la Response con `setHeader`, que REEMPLAZA la
+      // global"— está desmentido por la medición. Se la declara igual porque
+      // es lo correcto para un binario servido inline y no cuesta nada, pero
+      // NO se puede contar como la barrera de este endpoint.
+      // El problema de fondo es preexistente y más grande que esta ruta
+      // (alcanza a los recibos y a los documentos de solicitudes desde el M3),
+      // vive en el núcleo de dinero y se ataca con su propia tarea: ver el
+      // informe de la Task 13, §8.2. `nosniff`, `no-store` y `Vary: Cookie` sí
+      // llegan, y son las que efectivamente protegen este PDF.
       "Content-Security-Policy": "default-src 'none'; sandbox",
     },
   });

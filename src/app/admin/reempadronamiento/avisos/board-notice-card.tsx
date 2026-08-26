@@ -162,9 +162,17 @@ export function BoardNoticeCard({ notice, todayIso, canPost, coverageWarning }: 
               impreso en la pared.
             </p>
             {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
-            {state.ok && <FormMessage kind="success" box>{state.ok}</FormMessage>}
           </form>
         )}
+
+        {/* El éxito vive FUERA del formulario, y no es un detalle de armado: al
+            asentar la fijación el aviso pasa a "fijado" y el formulario deja de
+            renderizarse, así que un mensaje adentro no lo lee nadie. Acá se ve
+            al lado de la línea del plazo, que es la que confirma el acto. El
+            error sí se queda adentro: cuando falla, el formulario sigue en
+            pantalla y el mensaje tiene que estar pegado al campo que se
+            corrige. */}
+        {state.ok && <FormMessage kind="success" box>{state.ok}</FormMessage>}
       </CardContent>
     </Card>
   );
@@ -182,13 +190,33 @@ export function BoardNoticeCard({ notice, todayIso, canPost, coverageWarning }: 
  *  Lo que hace es sumarlo al cartel complementario del proceso —abriéndolo si no
  *  existe—; imprimirlo y fijarlo sigue siendo trabajo del aviso, en el tablero.
  *  No pide confirmación: sumar a un cartel sin fijar no mueve ningún plazo y es
- *  reversible sin más que no fijarlo. */
-export function AddToBoardChip({ processId, memberId, memberName }: {
+ *  reversible sin más que no fijarlo.
+ *
+ *  Y cuando ya está hecho, el control DESAPARECE y en su lugar queda la señal.
+ *  Hace falta decirlo explícitamente porque la acción no escribe ninguna fila
+ *  del lado del socio —la nómina del aviso es viva hasta que se fija, y eso está
+ *  bien—: sin esta prop el chip seguiría ofreciendo exactamente lo mismo después
+ *  de usarlo, cada clic repetido dejaría otro asiento de auditoría y el operador
+ *  no tendría de dónde saber que el vecino ya figura en el cartel. */
+export function AddToBoardChip({ processId, memberId, memberName, alreadyOnBoard }: {
   processId: number;
   memberId: number;
   memberName: string;
+  /** El proceso ya tiene un cartel complementario ABIERTO. Como su nómina se
+   *  calcula en vivo, este socio —que es destinatario de `other`, si no el chip
+   *  no se dibujaría— ya está listado ahí. */
+  alreadyOnBoard: boolean;
 }) {
   const [state, formAction, pending] = useActionState(addToBoardNoticeAction, {});
+
+  if (alreadyOnBoard) {
+    return (
+      <FormMessage kind="neutral" as="span" role="none">
+        Ya está en el cartel complementario: imprimilo y fijalo desde el tablero del proceso.
+      </FormMessage>
+    );
+  }
+
   return (
     <form action={formAction} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="processId" value={processId} />
