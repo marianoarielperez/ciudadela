@@ -33,6 +33,7 @@ import { prisma } from "@/lib/prisma";
 import { openWizardProcess } from "@/lib/reregistration/current";
 import { civilTodayAr } from "@/lib/applications/wizard";
 import { presentations, PRESENTATION_MAX_ANNEXES } from "@/lib/reregistration/presentation";
+import { presentationResumeUrl as resumeUrl } from "@/lib/reregistration/resume-link";
 import { currentDeadline, lookupVerdict } from "@/lib/reregistration/rules";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -279,17 +280,11 @@ const dataSchema = z.object({
   emailConfirm: z.string().min(1, "Repetí tu email"),
 });
 
-function baseUrl(): string {
-  return process.env.AUTH_URL ?? "http://localhost:3000";
-}
-
-/** La URL de retorno de una presentación. En una sola función porque la arman
- *  la constancia, el reenvío y —en la task siguiente— el correo de observación:
- *  mandar el token a una ruta equivocada le daría al vecino un enlace muerto.
- *  Mismo criterio que `verifyUrl` en las plantillas. */
-function resumeUrl(raw: string): string {
-  return `${baseUrl()}/reempadronate/retomar/${raw}`;
-}
+// La URL de retorno vive en `@/lib/reregistration/resume-link` y no acá: la
+// arman también el correo de OBSERVACIÓN, que sale del panel de la Comisión
+// (Task 12). Un módulo "use server" no puede exportar nada que no sea una
+// función async, así que la única forma de que los cuatro correos armen la
+// misma URL es que la función viva afuera.
 
 // Los errores de nodemailer traen `envelope` y el `response` del SMTP, o sea la
 // dirección en claro, y el log de PM2 no está cubierto por los cuidados de

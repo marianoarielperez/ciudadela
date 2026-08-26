@@ -20,6 +20,8 @@ import type {
   BoardNoticeKind, EmailStatus, NotificationStatus, PresentationStatus, ReregistrationStatus,
 } from "@/generated/prisma/client";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
+import { queueHrefForStatus } from "@/lib/admin/presentation-queue";
+import { type BadgeVariant, presentationStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { formatDateAR } from "@/lib/format";
 import {
   BOARD_NOTICE_KIND_LABELS, PRESENTATION_STATUS_LABELS, PROCESS_STATUS_LABELS,
@@ -158,40 +160,39 @@ const CHIP_ORDER: PresentationStatus[] = [
   "submitted", "observed", "validated", "pending", "rejected", "withdrawn",
 ];
 
-type ChipVariant = "default" | "secondary" | "outline" | "success" | "destructive";
-
-const CHIP_VARIANT: Record<PresentationStatus, ChipVariant> = {
-  submitted: "default",   // lo accionable, resaltado
-  observed: "secondary",
-  validated: "success",
-  pending: "outline",
-  rejected: "destructive",
-  withdrawn: "outline",
-};
-
 /** Un contador en CERO nunca se pinta: "Rechazada 0" en rojo es una alarma que
  *  dice que no pasó nada, y el proyecto ya corrigió tres veces esa clase de
  *  ruido (4C §veredicto). El color queda para lo que efectivamente hay.
  *
- *  Exportada para poder fijarla en el test: es una regla de producto —la única
- *  del tablero que quedaba sin test— y fue un defecto real, cazado a mano. */
-export function chipVariant(status: PresentationStatus, count: number): ChipVariant {
-  return count === 0 ? "outline" : CHIP_VARIANT[status];
+ *  El mapa estado→variante NO vive acá: es el mismo que usa la cola de
+ *  validación en sus tarjetas y por eso está en `@/lib/admin/status-badges`,
+ *  con los otros nueve del panel. Lo que sí es propio del tablero es la regla
+ *  del cero, que es una regla de producto y fue un defecto real cazado a mano.
+ *
+ *  Exportada para poder fijarla en el test. */
+export function chipVariant(status: PresentationStatus, count: number): BadgeVariant {
+  return count === 0 ? "outline" : presentationStatusBadgeVariant(status);
 }
 
 export function CounterChips({ byStatus }: { byStatus: Record<PresentationStatus, number> }) {
   return (
-    // TODO (M6 Task 11): cuando exista `/admin/reempadronamiento/presentaciones`
-    // cada chip pasa a ser un <Link> a `?estado={status}`. Hoy NO se enlaza a
-    // propósito: un chip que lleva a un 404 es peor que un chip que no lleva a
-    // ningún lado. Los targets de ≥44px llegan con el link.
+    // Cada chip ENLAZA a la vista de la cola que contiene ese estado (la URL la
+    // resuelve `queueHrefForStatus`, no esta pantalla: un chip que lleva a una
+    // vista donde su estado no se lista mostraría un listado vacío después de
+    // hacer clic sobre un número distinto de cero). El target de 44px lo pone
+    // el link, no la pastilla.
     <ul className="flex list-none flex-wrap gap-2 p-0">
       {CHIP_ORDER.map((status) => (
         <li key={status}>
-          <Badge variant={chipVariant(status, byStatus[status])} className="h-7 gap-1.5 px-2.5 text-sm">
-            <span>{PRESENTATION_STATUS_LABELS[status]}</span>
-            <span className={NUM}>{byStatus[status]}</span>
-          </Badge>
+          <Link
+            href={queueHrefForStatus(status)}
+            className="inline-flex min-h-11 items-center rounded-md outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Badge variant={chipVariant(status, byStatus[status])} className="h-7 gap-1.5 px-2.5 text-sm">
+              <span>{PRESENTATION_STATUS_LABELS[status]}</span>
+              <span className={NUM}>{byStatus[status]}</span>
+            </Badge>
+          </Link>
         </li>
       ))}
     </ul>

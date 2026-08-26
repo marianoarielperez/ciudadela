@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NotificationType } from "@/generated/prisma/client";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
+import { PRESENTATIONS_BASE } from "@/lib/admin/presentation-queue";
 import { requireAdmin, requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { formatDateAR } from "@/lib/format";
@@ -278,7 +279,16 @@ export default async function ReempadronamientoPage() {
       <Section
         id="presentaciones"
         title="Presentaciones"
-        hint="Estado de los convocados. La cola para validar, observar y rechazar llega en la próxima pantalla de la sección."
+        hint={
+          <>
+            Estado de los convocados. Cada pastilla abre la{" "}
+            <Link className={INLINE_LINK} href={PRESENTATIONS_BASE}>cola de validación</Link>{" "}
+            filtrada por ese estado. Para el vecino que se acerca a la sede,{" "}
+            <Link className={INLINE_LINK} href="/admin/reempadronamiento/presencial">
+              cargá la presentación presencial
+            </Link>.
+          </>
+        }
       >
         <CounterChips byStatus={counters.byStatus} />
       </Section>
