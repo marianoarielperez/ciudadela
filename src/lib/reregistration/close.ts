@@ -15,8 +15,10 @@ import type {
   NotificationStatus,
   NotificationType,
   NotificationVia,
+  Prisma,
 } from "@/generated/prisma/client";
 import { civilDayOf } from "@/lib/treasury/periods";
+import { COHORT_CATEGORY, COHORT_STATUSES } from "./rules";
 
 /** Una fila del libro viejo tal como la lee el caller para planificar. */
 export type MigrationCandidate = {
@@ -146,6 +148,45 @@ const BLOCKING_KINDS: readonly ClosePrecondition["kind"][] = [
 export function closeBlockers(pre: ClosePrecondition[]): ClosePrecondition[] {
   return pre.filter((p) => p.count > 0 && BLOCKING_KINDS.includes(p.kind));
 }
+
+/** Los `where` de las DOS condiciones bloqueantes, escritos UNA sola vez.
+ *
+ *  Los comparten el checklist de la etapa A (`withdrawals.closeChecklist`), la
+ *  vista previa de la etapa C y —lo que importa— la re-validación DENTRO de la
+ *  transacción de cierre. La vista previa puede envejecer entre que el operador
+ *  la mira y aprieta el botón, así que la transacción vuelve a contar con los
+ *  datos que ella ve; si el `where` de adentro divergiera del de afuera, la
+ *  pantalla diría "se puede cerrar" sobre una condición que la transacción no
+ *  revisa — la lección de `coverageFloor` del Módulo 4, una vez más.
+ *
+ *  Viven acá (puro, sólo tipos de Prisma) y no en `withdrawals.ts`, que arrastra
+ *  el singleton de Prisma y el mailer: la transacción de cierre vive en un
+ *  módulo con la base inyectada y no puede importar aquello. */
+export function unresolvedPresentationsWhere(processId: number): Prisma.PresentationWhereInput {
+  // Presentaciones que esperan una decisión de la Comisión: cerrar con ellas
+  // vivas deja al vecino fuera del libro nuevo sin que nadie haya resuelto nada.
+  return { processId, status: { in: ["submitted", "observed"] } };
+}
+
+export function cohortNotTerminalWhere(processId: number): Prisma.PresentationWhereInput {
+  // Convocados que siguen siendo adherentes vigentes y no tienen su
+  // re-empadronamiento validado: los que esperan que la Comisión les declare la
+  // baja (§9 etapa C: "cero adherentes vigentes de la cohorte sin validated").
+  return {
+    processId,
+    status: { notIn: ["validated"] },
+    member: { category: COHORT_CATEGORY, status: { in: [...COHORT_STATUSES] } },
+  };
+}
+
+/** Qué estados MIGRAN al libro nuevo: los vigentes (decisión 12 del diseño: los
+ *  suspendidos migran suspendidos; `withdrawn` queda en la foto del libro que
+ *  se cierra y nada más). Coincide en valores con `COHORT_STATUSES` porque las
+ *  dos listas enumeran "vigente", pero es OTRA decisión: aquélla dice a quién
+ *  alcanza la convocatoria (sólo adherentes); ésta dice quién cruza de libro
+ *  (todas las categorías). Compartir la constante ataría el alcance de la
+ *  cohorte al de la migración, que no tienen por qué moverse juntos. */
+export const MIGRATING_STATUSES = ["active", "suspended"] as const satisfies readonly MemberStatus[];
 
 /** Tope de convocados por lote de bajas. No sale del estatuto: sale del reloj, y
  *  es el mismo argumento (y el mismo número) que el lote de cesantía por mora.

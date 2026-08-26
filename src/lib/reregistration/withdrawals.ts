@@ -46,7 +46,7 @@ import type { WithdrawInput, DebitCancellation } from "@/lib/members/withdraw-wi
 import { withdrawWithDebits } from "@/lib/members/withdraw-with-debits";
 import { prisma } from "@/lib/prisma";
 import type { ClosePrecondition, NoticeTrace } from "./close";
-import { WITHDRAWAL_BATCH_MAX } from "./close";
+import { cohortNotTerminalWhere, unresolvedPresentationsWhere, WITHDRAWAL_BATCH_MAX } from "./close";
 import { appealUntil, COHORT_CATEGORY, COHORT_STATUSES, emailUsable, hasExpired } from "./rules";
 
 /** El tope del lote y el tipo del anexo viven en el módulo PURO `./close` y se
@@ -410,23 +410,15 @@ export function makeWithdrawals(deps: Deps) {
     async closeChecklist(processId: number): Promise<CloseChecklist> {
       const at = now();
       const [unresolved, notTerminal, arrearsGroups, notices] = await Promise.all([
-        // Esperan una decisión de la Comisión. Cerrar con ellas vivas deja al
-        // vecino fuera del libro nuevo sin que nadie haya resuelto su trámite.
-        deps.db.presentation.count({
-          where: { processId, status: { in: ["submitted", "observed"] } },
-        }),
-        // Convocados que siguen siendo adherentes vigentes y NO tienen su
-        // re-empadronamiento validado: los que están esperando que la Comisión
-        // les declare la baja. Incluye a los `submitted` a propósito —tampoco
-        // tienen desenlace— aunque ya cuenten arriba: son dos cosas distintas y
-        // el operador tiene que ver las dos.
-        deps.db.presentation.count({
-          where: {
-            processId,
-            status: { notIn: ["validated"] },
-            member: { category: COHORT_CATEGORY, status: { in: [...COHORT_STATUSES] } },
-          },
-        }),
+        // Los `where` de las dos condiciones BLOQUEANTES viven en `./close` y
+        // los comparte la transacción de cierre, que re-valida adentro con los
+        // datos que ella ve: si se escribieran acá de nuevo, este checklist
+        // podría decir "se puede cerrar" sobre una condición que la transacción
+        // no revisa. Incluir a los `submitted` en la segunda cuenta es a
+        // propósito —tampoco tienen desenlace— aunque ya cuenten en la primera:
+        // son dos cosas distintas y el operador tiene que ver las dos.
+        deps.db.presentation.count({ where: unresolvedPresentationsWhere(processId) }),
+        deps.db.presentation.count({ where: cohortNotTerminalWhere(processId) }),
         // Cesanteables por mora HOY. Cálculo en vivo y en una consulta agrupada
         // propia: el checklist ADVIERTE con el número y enlaza a Deudores, y no
         // automatiza ninguna cesantía jamás (decisión 1 del operador).
