@@ -152,6 +152,21 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
+      {
+        // Lo mismo, palabra por palabra, para los documentos de una
+        // presentación de re-empadronamiento (M6): su visor los framea desde el
+        // mismo origen y necesita la misma CSP dura repuesta acá. Son dos
+        // entradas y no una porque las rutas no comparten prefijo, y un
+        // `source` con comodín abarcaría de más.
+        source: "/api/admin/reempadronamiento/presentaciones/:id/documentos/:docId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'self'",
+          },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+        ],
+      },
     ];
   },
   experimental: {
