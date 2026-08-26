@@ -841,10 +841,10 @@ ${opts.note}`
   // puede averiguar solo.
   const deadlineText = until
     ? `Tenés tiempo hasta el ${until} inclusive.`
-    : "Hacelo cuanto antes: mientras el proceso siga abierto, todavía podés volver a presentarte.";
+    : "Hacelo cuanto antes: mientras no tengamos tu re-empadronamiento aprobado, el plazo del Art. 9° bis sigue corriendo.";
   const deadlineHtml = until
     ? `<p>Tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>`
-    : `<p>Hacelo cuanto antes: mientras el proceso siga abierto, todavía podés volver a presentarte.</p>`;
+    : `<p>Hacelo cuanto antes: mientras no tengamos tu re-empadronamiento aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`;
   return {
     subject: `${title} — Vecinal Ciudadela`,
     text: `${opening}
