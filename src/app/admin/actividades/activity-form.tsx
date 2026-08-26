@@ -1,5 +1,5 @@
 "use client";
-// Formulario del calendario de salones.
+// Formulario del calendario de espacios de la sede.
 //
 // El detalle que importa acá son los días de la semana. Son un GRUPO de
 // checkboxes con el mismo `name`, y el rechazo por solapamiento es el caso
@@ -12,7 +12,7 @@ import { useActionState } from "react";
 import { createActivityAction, deleteActivityAction, updateActivityAction } from "./actions";
 import { useSyncedForm, SelectField, TextField } from "@/components/admin/synced-fields";
 import { FormMessage } from "@/components/admin/form-message";
-import { ROOM_LABELS, WEEKDAYS, type ActivitySlot } from "@/lib/activities/rules";
+import { ROOM_KEYS, ROOM_LABELS, WEEKDAYS, type ActivitySlot } from "@/lib/activities/rules";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 
@@ -64,12 +64,9 @@ export function ActivityForm(
         placeholder="Ej.: Gimnasia mujeres"
       />
       <SelectField
-        label="Salón"
+        label="Espacio"
         field={field("room")}
-        options={[
-          ["historic", ROOM_LABELS.historic],
-          ["glass", ROOM_LABELS.glass],
-        ]}
+        options={ROOM_KEYS.map((k) => [k, ROOM_LABELS[k]] as [string, string])}
       />
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">Días de la semana</legend>
@@ -118,7 +115,7 @@ export function ActivityForm(
           Visible en el sitio público
         </Label>
         <p className="text-xs text-muted-foreground">
-          Una actividad oculta se guarda igual y no ocupa el salón: no se controla el solapamiento
+          Una actividad oculta se guarda igual y no ocupa el espacio: no se controla el solapamiento
           hasta que la hagas visible.
         </p>
       </div>

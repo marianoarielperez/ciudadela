@@ -51,6 +51,18 @@ export function currentYearAR(now: Date = new Date()): number {
   );
 }
 
+// El día de la semana ARGENTINO (lunes=1 … domingo=7), por el mismo motivo que
+// currentYearAR: cerca de la medianoche el reloj UTC del server ya está en el
+// día siguiente. Mismo esquema de numeración que Activity.weekdays.
+export function currentWeekdayAR(now: Date = new Date()): number {
+  const short = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    weekday: "short",
+  }).format(now);
+  const map: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+  return map[short] ?? 1;
+}
+
 // El año por defecto de una barra de años: el año en curso manda por sobre el
 // más reciente cargado. Si ya hay algo cargado del año que viene, el que entra
 // hoy tiene que ver el de hoy, no el que todavía no empezó.

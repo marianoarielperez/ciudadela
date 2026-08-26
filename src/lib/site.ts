@@ -12,7 +12,12 @@ export const SITE = {
   founded: "4 de agosto de 1964",
   legallyFounded: "27 de febrero de 2015",
   legalStatus: "Personería jurídica 4139 — Resolución 184/15",
-  rooms: { historic: "Salón Histórico", glass: "Salón Vidriado" },
+  rooms: {
+    historic: "Salón Histórico",
+    glass: "Salón Vidriado",
+    kitchen: "Cocina",
+    classroom: "Aulas",
+  },
 } as const;
 
 // Hosts que NO pueden ser la base pública del sitio: si el build los hornea,

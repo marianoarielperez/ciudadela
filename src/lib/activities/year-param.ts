@@ -10,7 +10,12 @@
 // importar un módulo de /actividades. Se re-exportan desde acá para que esta
 // página —y sus tests— sigan teniendo un solo lugar del que traer todo lo del
 // `?anio=`.
-export { currentYearAR, fallbackYear } from "@/lib/dates";
+//
+// `currentWeekdayAR` viaja con ellos por el mismo motivo: el calendario público
+// resuelve el año Y el día de hoy en la misma pasada (el chip "Hoy" y el día
+// preseleccionado del celular), y traer uno de acá y el otro de `@/lib/dates`
+// dejaba a la pantalla leyendo la fecha de dos lugares.
+export { currentWeekdayAR, currentYearAR, fallbackYear } from "@/lib/dates";
 import { fallbackYear } from "@/lib/dates";
 
 // El año por defecto se sirve en /actividades a secas: es la URL que linkea el
