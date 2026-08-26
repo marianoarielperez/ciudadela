@@ -49,13 +49,19 @@ const CHIP_ACTIVE = "bg-background text-foreground shadow-sm";
 const CHIP_INACTIVE = "text-muted-foreground hover:text-foreground";
 
 type ChipKey = keyof PadronCounts;
+// Cada chip filtra EXACTAMENTE lo que cuenta: el número que muestra y la
+// cantidad de filas que aparecen al clickearlo tienen que ser el mismo. Por eso
+// "Activos" y "Adherentes" viajan con `status=vigentes` además de la categoría
+// —se cuentan dentro de los vigentes, así que también tienen que filtrarse
+// dentro de ellos— y "Vigentes" usa el valor de filtro `vigentes`, que
+// `padronWhere` resuelve a "activo o suspendido" (ver el comentario de
+// `PadronStatusFilter` en `query.ts`). Antes "Vigentes 160" llevaba al padrón
+// sin filtrar: 279 filas.
+const VIGENTES_QS = "status=vigentes";
 const CHIPS: { key: ChipKey; label: string; href: string }[] = [
-  // "Vigentes" no tiene filtro que lo exprese —el enum de estado no tiene un
-  // valor "vigente", son dos (activo y suspendido)— así que apunta al padrón
-  // sin filtros de estado: es también el chip que los limpia.
-  { key: "vigentes", label: "Vigentes", href: BASE },
-  { key: "activos", label: "Activos", href: `${BASE}?category=active` },
-  { key: "adherentes", label: "Adherentes", href: `${BASE}?category=adherent` },
+  { key: "vigentes", label: "Vigentes", href: `${BASE}?${VIGENTES_QS}` },
+  { key: "activos", label: "Activos", href: `${BASE}?${VIGENTES_QS}&category=active` },
+  { key: "adherentes", label: "Adherentes", href: `${BASE}?${VIGENTES_QS}&category=adherent` },
   { key: "suspendidos", label: "Suspendidos", href: `${BASE}?status=suspended` },
   { key: "bajas", label: "Bajas", href: `${BASE}?status=withdrawn` },
 ];
@@ -63,15 +69,21 @@ const CHIPS: { key: ChipKey; label: string; href: string }[] = [
 /** Qué chip está prendido, mirando los filtros YA parseados y no la URL cruda:
  *  un `?category=basura` no llega a filtrar nada, y tampoco puede prender un
  *  chip. Devuelve uno solo: los chips son excluyentes entre sí, así que una
- *  combinación que ninguno representa (categoría + estado a la vez) no prende
- *  ninguno en vez de prender el que se le parezca. */
+ *  combinación que ninguno representa (una categoría dentro de las bajas, por
+ *  ejemplo) no prende ninguno en vez de prender el que se le parezca. El padrón
+ *  sin filtros tampoco prende ninguno: muestra las 279 filas del libro y no hay
+ *  chip que diga 279. */
 function activeChip(f: PadronFilters): ChipKey | null {
-  if (f.status === "suspended" && !f.category) return "suspendidos";
-  if (f.status === "withdrawn" && !f.category) return "bajas";
-  if (f.status) return null;
-  if (f.category === "active") return "activos";
-  if (f.category === "adherent") return "adherentes";
-  return f.category ? null : "vigentes";
+  if (f.status === "vigentes") {
+    if (!f.category) return "vigentes";
+    if (f.category === "active") return "activos";
+    if (f.category === "adherent") return "adherentes";
+    return null;
+  }
+  if (f.category) return null;
+  if (f.status === "suspended") return "suspendidos";
+  if (f.status === "withdrawn") return "bajas";
+  return null;
 }
 
 // El mapa ícono→componente vive ACÁ y no en `@/lib/members/labels` por el mismo
@@ -197,6 +209,11 @@ export default async function SociosPage(props: {
           aria-label="Estado"
         >
           <option value="">Estado (todos)</option>
+          {/* "Vigentes" no sale de STATUS_LABELS porque no es un estado del
+              Libro: son los dos que componen el padrón vigente. Va con el
+              paréntesis porque el estado `active` ya se llama "Vigente" a
+              secas, y sin la aclaración las dos opciones se leerían igual. */}
+          <option value="vigentes">Vigentes (incluye suspendidos)</option>
           {Object.entries(STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <select

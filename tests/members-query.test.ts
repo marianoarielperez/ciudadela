@@ -11,6 +11,26 @@ describe("parsePadronFilters", () => {
   });
 });
 
+// ── El filtro "vigentes" ──────────────────────────────────────────────────────
+//
+// `vigentes` no es un `MemberStatus`: es el valor de filtro que hace que el chip
+// "Vigentes 160" lleve a esas mismas 160 filas. Antes el chip apuntaba al padrón
+// sin filtrar (279 filas) porque el enum no puede expresar "activo o
+// suspendido", y el número prometido no coincidía con la lista.
+describe("parsePadronFilters — vigentes", () => {
+  it("accepts vigentes as a status value", () => {
+    expect(parsePadronFilters({ status: "vigentes" })).toEqual({ status: "vigentes" });
+  });
+  it("still rejects anything that is neither a status nor vigentes", () => {
+    expect(parsePadronFilters({ status: "vigente" })).toEqual({});
+    expect(parsePadronFilters({ status: "todos" })).toEqual({});
+  });
+  it("combines with a category, which is what the Activos/Adherentes chips send", () => {
+    expect(parsePadronFilters({ status: "vigentes", category: "adherent" }))
+      .toEqual({ status: "vigentes", category: "adherent" });
+  });
+});
+
 describe("padronWhere", () => {
   it("always scopes to the open book", () => {
     expect(padronWhere({})).toMatchObject({ book: { status: "open" } });
@@ -23,6 +43,33 @@ describe("padronWhere", () => {
   it("maps email filter", () => {
     expect(JSON.stringify(padronWhere({ email: "verificado" }))).toContain("verified");
     expect(JSON.stringify(padronWhere({ email: "sin" }))).toContain("none");
+  });
+
+  it("resolves vigentes to the two statuses that make up a padron member", () => {
+    expect(padronWhere({ status: "vigentes" })).toMatchObject({
+      member: { status: { in: ["active", "suspended"] } },
+    });
+  });
+
+  it("keeps a plain status as an equality, not an `in`", () => {
+    expect(padronWhere({ status: "suspended" })).toMatchObject({ member: { status: "suspended" } });
+  });
+
+  it("crosses vigentes with the category (the Activos and Adherentes chips)", () => {
+    expect(padronWhere({ status: "vigentes", category: "active" })).toMatchObject({
+      member: { status: { in: ["active", "suspended"] }, category: "active" },
+    });
+  });
+
+  // Cada rama del OR de búsqueda arrastra los demás filtros: buscar un apellido
+  // con "Vigentes" puesto no puede devolver las bajas que matchean el nombre.
+  it("carries vigentes into every branch of the text search", () => {
+    const w = padronWhere({ status: "vigentes", q: "perez" });
+    const branches = w.OR ?? [];
+    expect(branches.length).toBeGreaterThan(0);
+    for (const b of branches) {
+      expect(JSON.stringify(b)).toContain('"status":{"in":["active","suspended"]}');
+    }
   });
 });
 

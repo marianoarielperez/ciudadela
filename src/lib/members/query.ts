@@ -3,16 +3,37 @@ import type {
   Member, MemberCategory, MemberStatus, Prisma, PrismaClient, Street,
 } from "@/generated/prisma/client";
 
+// OJO: `vigentes` NO es un valor de `MemberStatus` y no hay que "corregirlo"
+// agregándolo al enum. El enum del Libro tiene tres estados (`active`,
+// `suspended`, `withdrawn`) y "vigente" del padrón son DOS de ellos: el
+// suspendido sigue siendo socio (REG-17). Es un valor del FILTRO, no del
+// dominio, y existe porque el chip "Vigentes 160" del listado tiene que llevar
+// exactamente a esas 160 filas: sin él, el único destino posible era el padrón
+// sin filtrar (279 filas) y el número prometido no coincidía con la lista.
+export type PadronStatusFilter = MemberStatus | "vigentes";
+
+// Los dos estados que componen "vigente". Un solo lugar: lo comparten el filtro
+// de acá y el resumen de `fetchPadronCounts` más abajo.
+const VIGENTE_STATUSES = ["active", "suspended"] as const satisfies readonly MemberStatus[];
+
 export type PadronFilters = {
   q?: string;
   category?: MemberCategory;
-  status?: MemberStatus;
+  status?: PadronStatusFilter;
   email?: "con" | "sin" | "verificado";
   dni?: "con" | "sin";
 };
 
 const CATEGORIES = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"];
-const STATUSES = ["active", "suspended", "withdrawn"];
+const STATUS_FILTERS = [
+  ...VIGENTE_STATUSES, "withdrawn", "vigentes",
+] as const satisfies readonly PadronStatusFilter[];
+
+// Predicado en vez de `includes` + `as`: el `as` taparía el día en que alguien
+// agregue un estado al enum y se olvide de esta lista.
+function isStatusFilter(v: string): v is PadronStatusFilter {
+  return STATUS_FILTERS.some((s) => s === v);
+}
 
 export function parsePadronFilters(sp: Record<string, string | string[] | undefined>): PadronFilters {
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -22,7 +43,7 @@ export function parsePadronFilters(sp: Record<string, string | string[] | undefi
   const category = one(sp.category);
   if (category && CATEGORIES.includes(category)) f.category = category as MemberCategory;
   const status = one(sp.status);
-  if (status && STATUSES.includes(status)) f.status = status as MemberStatus;
+  if (status && isStatusFilter(status)) f.status = status;
   const email = one(sp.email);
   if (email === "con" || email === "sin" || email === "verificado") f.email = email;
   const dni = one(sp.dni);
@@ -33,7 +54,11 @@ export function parsePadronFilters(sp: Record<string, string | string[] | undefi
 export function padronWhere(f: PadronFilters): Prisma.MembershipWhereInput {
   const member: Prisma.MemberWhereInput = {};
   if (f.category) member.category = f.category;
-  if (f.status) member.status = f.status;
+  // "vigentes" se resuelve acá y no en la pantalla: el listado y la exportación
+  // a Excel comparten esta función, así que el archivo sale con el mismo
+  // recorte que el operador está mirando.
+  if (f.status === "vigentes") member.status = { in: [...VIGENTE_STATUSES] };
+  else if (f.status) member.status = f.status;
   if (f.email === "con") member.email = { not: null };
   if (f.email === "sin") member.emailStatus = "none";
   if (f.email === "verificado") member.emailStatus = "verified";
@@ -175,8 +200,11 @@ export async function fetchPadronCounts(db: PadronDb): Promise<PadronCounts> {
   for (const g of groups) {
     const n = typeof g._count === "number" ? g._count : 0;
     // "Vigente" es del padrón, no del enum: el suspendido sigue siendo socio
-    // (REG-17), así que suma acá y además en su propio chip.
-    if (g.status === "active" || g.status === "suspended") {
+    // (REG-17), así que suma acá y además en su propio chip. La lista de
+    // estados es la MISMA que usa el filtro `status=vigentes` (VIGENTE_STATUSES,
+    // arriba): si divergieran, el chip volvería a prometer un número que su
+    // propia lista no muestra.
+    if (VIGENTE_STATUSES.some((st) => st === g.status)) {
       counts.vigentes += n;
       if (g.category === "active") counts.activos += n;
       if (g.category === "adherent") counts.adherentes += n;
