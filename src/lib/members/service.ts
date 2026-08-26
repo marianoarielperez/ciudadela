@@ -13,7 +13,15 @@ import { revokeStaleMemberTokens } from "./write";
 // métodos de control de sesión (`$transaction`, `$connect`, …).
 type Tx = Pick<
   PrismaClient,
-  "actionToken" | "book" | "fee" | "member" | "membership" | "minute" | "movement" | "user"
+  | "actionToken"
+  | "book"
+  | "fee"
+  | "member"
+  | "memberRequest"
+  | "membership"
+  | "minute"
+  | "movement"
+  | "user"
 >;
 
 // Exportada: las server actions la consultan para poder rechazar el cambio de
@@ -82,7 +90,15 @@ export function makeMemberService(db: PrismaClient) {
       });
     },
 
-    async withdraw(input: { memberId: number; reason: WithdrawalReason; minuteId: number; actorId: number; detail?: string }) {
+    // `sparedRequestId`: la solicitud que se está APLICANDO por este mismo acto
+    // (el camino "Aplicar" de la bandeja). Va exceptuada de la cancelación de
+    // abajo porque `markAccepted` corre DESPUÉS del commit y filtra por
+    // `status: "pending"`: cancelarla acá la dejaría "cancelada" en vez de
+    // "aceptada" y sin el vínculo con el acta. Las demás sí se cancelan.
+    async withdraw(input: {
+      memberId: number; reason: WithdrawalReason; minuteId: number; actorId: number;
+      detail?: string; sparedRequestId?: number;
+    }) {
       return db.$transaction(async (tx) => {
         const member = await tx.member.findUniqueOrThrow({ where: { id: input.memberId } });
         const check = canWithdraw(member);
@@ -130,6 +146,25 @@ export function makeMemberService(db: PrismaClient) {
         if (member.userId) {
           await tx.user.update({ where: { id: member.userId }, data: { active: false } });
         }
+        // Y una baja tampoco deja solicitudes vivas. Una pendiente de un socio
+        // dado de baja no tiene ninguna salida: la bandeja del admin y el
+        // contador de la campanita la muestran para siempre, aplicarla es
+        // imposible (`canWithdraw`/`canChangeCategory` la rechazan por el
+        // status) y el socio ya no puede retirarla porque `requireMember` le
+        // cierra el panel. Va acá y no en la pantalla que ordenó la baja por el
+        // mismo motivo que `debtAtWithdrawal`: así lo llevan por igual la baja
+        // individual, el lote de cesantía por mora y las bajas en lote del
+        // re-empadronamiento (M6), que son las que multiplicarían el hueco.
+        // El `count` no se mira: no haber tenido nada que cancelar es el caso
+        // normal, no un error.
+        await tx.memberRequest.updateMany({
+          where: {
+            memberId: member.id,
+            status: "pending",
+            ...(input.sparedRequestId ? { id: { not: input.sparedRequestId } } : {}),
+          },
+          data: { status: "cancelled", cancelledAt: new Date() },
+        });
         await tx.movement.create({
           data: {
             memberId: member.id, type: "withdrawal", date: minute.date, minuteId: minute.id,

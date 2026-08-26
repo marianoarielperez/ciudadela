@@ -633,6 +633,78 @@ adherentes + 2 validados, renumerados por antigüedad, con el sin-respuesta dado
 baja con `recurso_hasta` correcto; el Libro 1 queda cerrado y consultable; restaurar
 backup revierte el simulacro.
 
+Se ejecuta en tres fases: **6A** (`/admin/socios` reorganizado, sin proceso),
+**6B** (proceso, wizard público y cartelera) y **6C** (cierre de libro). El diseño
+está en `docs/superpowers/specs/2026-08-25-modulo-6-reempadronamiento-design.md` y
+el plan en `docs/superpowers/plans/2026-08-25-modulo-6-reempadronamiento.md`.
+
+### Fase 6A — `/admin/socios` reorganizado — **CERRADA** (26/08/2026)
+
+Produce software terminado por sí sola: nada de esta fase depende del proceso de
+re-empadronamiento, y es la que deja la sección Socios en condiciones de recibirlo.
+
+Migración `20260826105006_membership_close_snapshot`, **estrictamente aditiva**:
+las dos columnas `status_at_close` / `category_at_close` en `memberships`, ENUM y
+NULL. Hoy están vacías; las llena el cierre de libro de la 6C, y hasta entonces el
+detalle de un libro cae al valor vivo del socio (el fallback decide **por campo**,
+con `??`, y por presencia de la columna y no por `book.status`, para no abrir una
+segunda fuente de verdad). Apta para `migrate deploy` sobre la base con socios reales.
+
+**Qué quedó andando** (5 tareas, 16 commits):
+
+- **Pestañas por URL en la sección Socios**: Padrón | Libros | Histórico
+  (`src/lib/admin/socios-tabs.ts` puro + `SociosTabs` + `layout.tsx`), mismo molde
+  que las de Solicitudes de la 5B. La regla de matcheo es "el prefijo más
+  específico gana": todo lo que no cuelga de `libros` o `historico` es Padrón, así
+  que la ficha, la baja y el alta siguen marcando su pestaña.
+- **El Padrón rediseñado**: chips-resumen que **filtran exactamente lo que
+  cuentan** —se sumó el filtro "vigentes", que antes no se podía expresar—,
+  filtros con los tokens del panel, tabla en escritorio que colapsa a tarjetas en
+  móvil, íconos de estado de email y de débito, y la paginación compartida.
+- **La pestaña Libros**: una tarjeta por libro con su total de asentados, detalle
+  consultable, export a Excel por route handler **auditado**
+  (`/api/admin/libros/[numero]/export`), y el bloque "Libros" en la ficha del
+  socio. Sin N+1 en ningún camino: el listado usa `_count` y el detalle son dos
+  consultas fijas.
+- **La pestaña Histórico**: todas las personas que alguna vez pasaron por la
+  vecinal, con el **veredicto de reingreso** al lado de cada una
+  (`src/lib/members/history.ts`), reutilizando el mismo criterio que el wizard.
+  Un fallecido y una ficha anulada por duplicado **no** muestran el chip verde de
+  "puede reasociarse": la pantalla no puede decir que sí donde el alta dice que no.
+- **Una baja no deja solicitudes pendientes vivas.** `memberService.withdraw`
+  cancela, en su misma transacción, las `member_requests` `pending` del socio: una
+  solicitud de un socio dado de baja no tenía ninguna salida —seguía en la bandeja
+  y en la campanita, aplicarla la rechazaban las reglas estatutarias y el socio ya
+  no podía retirarla porque `requireMember` le cierra el panel—. Va en el servicio
+  y no en la pantalla, por el mismo motivo que `debtAtWithdrawal`: lo llevan por
+  igual la baja individual, el lote de cesantía por mora y las bajas en lote del
+  re-empadronamiento, que son las que multiplicarían el hueco. La solicitud que se
+  está **aplicando** queda exceptuada (`sparedRequestId`, que pasa `withdrawAction`
+  cuando la baja viene de la bandeja): `markAccepted` corre después del commit y
+  filtra por `pending`, así que sin la excepción la solicitud terminaba "cancelada"
+  en vez de "aceptada" y perdía el vínculo con el acta.
+
+**Una inserción no planificada, disparada por datos reales del operador** (Task 4b):
+el importador del padrón **no tenía caso para "expulsión"** y la mapeaba a `other`,
+que no bloquea nada; el bloqueo de reingreso usa doble criterio
+(`reentryBlocked || withdrawalReason === "expulsion"`), así que con el motivo mal
+puesto no lo frenaba nadie. Se agregó el mapeo, un módulo puro
+(`src/lib/padron/withdrawal-fix.ts`) y un script acotado y auditado
+(`scripts/fix-withdrawal-reasons.ts`) para reconciliar motivos de baja contra la
+planilla. Y se cerraron los dos agujeros que abrió el propio arreglo: una expulsión
+**no se puede degradar** por una celda de planilla (se reporta como discrepancia
+para resolver con acta) y `import-padron --update-existing` **no puede apagar** un
+`reentryBlocked` puesto por acta desde el panel.
+
+2620 tests, build y lint limpios.
+
+**Pendiente del operador, accionable:** correr `scripts/fix-withdrawal-reasons.ts`
+en el VPS (bloque copiable en `.superpowers/sdd/task-4b-report.md`). En la base
+local ya corrió; en producción el socio N° 38 sigue asentado como baja por mora
+cuando fue expulsión. Queda además una discrepancia que el script **no** corrige
+porque necesita acta: el socio N° 2, que la planilla da por vigente y la base tiene
+de baja por mora.
+
 ## Lanzamiento (cuando IGJ oficialice)
 
 Ya hecho, antes de tiempo: ~~cambiar `MP_ACCESS_TOKEN` a las credenciales

@@ -26,6 +26,10 @@ export type WithdrawInput = {
   minuteId: number;
   actorId: number;
   detail?: string;
+  /** Pasa derecho al servicio: la solicitud que se está aplicando por este
+   *  mismo acto, que la baja NO cancela (la marca `markAccepted` después del
+   *  commit). Ver el comentario en `service.withdraw`. */
+  sparedRequestId?: number;
 };
 
 export type DebitCancellation = {

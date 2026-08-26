@@ -250,6 +250,20 @@ describe("withdrawAction", () => {
       expect(redirect).toHaveBeenCalledWith("/admin/socios/12");
     });
 
+    // M6A Task 5: la baja cancela las solicitudes pendientes del socio. La que
+    // se está aplicando tiene que quedar EXCEPTUADA: `markAccepted` corre
+    // después del commit y filtra por `status: "pending"`, así que sin la
+    // excepción la solicitud quedaría "cancelada" en vez de "aceptada" y sin el
+    // vínculo con el acta. El camino de siempre (sin `requestId`) no manda el
+    // campo — lo verifica la aserción exacta de "da la baja por el camino que
+    // cancela el débito", que compara el objeto entero.
+    it("le pasa al servicio cuál solicitud NO cancelar (la que se está aplicando)", async () => {
+      await withdrawAction({}, withdrawForm({ requestId: "55" }));
+      expect(withdrawWithDebits.withdraw).toHaveBeenCalledWith(
+        expect.objectContaining({ sparedRequestId: 55 }),
+      );
+    });
+
     it("si markAccepted falla, la baja sale igual (ya commiteó) y el aviso no se manda", async () => {
       markAccepted.mockRejectedValueOnce(new Error("db hiccup"));
       const r = await withdrawAction({}, withdrawForm({ requestId: "55" }));
