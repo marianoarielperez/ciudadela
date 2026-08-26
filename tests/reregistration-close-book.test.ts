@@ -452,6 +452,34 @@ describe("closeBook — re-valida DENTRO de la transacción", () => {
     expect(state.configuration.some((c) => c.key === CONFIG_KEYS.reregistrationProcessId)).toBe(true);
   });
 
+  it("un plan de migración VACÍO aborta: no se abre un libro nuevo sin un solo socio", async () => {
+    const state = seed();
+    // Escenario imposible con datos reales (~160 vigentes) pero simétrico con
+    // lo que la pantalla ya exige: si entre la vista previa y el botón cayera
+    // el último vigente, la transacción no puede abrir un libro vacío.
+    for (const m of state.members) m.status = "withdrawn";
+    const svc = service(state);
+
+    // La pantalla esconde el formulario cuando esto pasa…
+    expect((await svc.preview(5)).migrants).toEqual([]);
+    // …y la transacción NO confía en eso: lo re-valida adentro, como los
+    // bloqueos.
+    const result = await svc.closeBook(INPUT);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toMatch(/vigente/i);
+    expect(result.error).toContain("No se cerró nada");
+
+    // Nada se escribió: ni cierre, ni libro nuevo, ni foto, ni movimientos, ni
+    // limpieza de la configuración. La foto del paso 2 también se deshace.
+    expect(state.books).toHaveLength(1);
+    expect(state.books[0].status).toBe("open");
+    expect(state.memberships.every((m) => m.statusAtClose === null)).toBe(true);
+    expect(state.movements).toHaveLength(0);
+    expect(state.processes[0].status).toBe("second_instance");
+    expect(state.configuration.some((c) => c.key === CONFIG_KEYS.reregistrationProcessId)).toBe(true);
+  });
+
   it("un cohortado vigente que volvió a quedar sin desenlace también aborta", async () => {
     const state = seed();
     // Beto (adherente vigente) pierde su validación: su presentación vuelve a

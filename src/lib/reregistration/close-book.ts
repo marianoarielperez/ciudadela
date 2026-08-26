@@ -13,6 +13,9 @@
 //     las dos precondiciones bloqueantes se re-evalúan DENTRO de la
 //     transacción, con los `where` compartidos de `./close` — los mismos que
 //     usa el checklist, para que no puedan divergir (lección `coverageFloor`).
+//     Y por el mismo motivo se re-valida adentro la tercera condición que la
+//     pantalla exige para mostrar el botón: que haya ALGUIEN para migrar. Un
+//     libro nuevo vacío no es un libro (paso 5).
 //   - La numeración sale de `planMigration` (Task 15, revisada a mano y por
 //     mutación) y de ningún otro lado. `assertDensePlan` re-verifica densidad
 //     y unicidad ANTES de escribir: una numeración rota en el libro que la
@@ -23,6 +26,65 @@
 //     esa invariante y acá NO se usa: adentro de esta transacción el estado
 //     intermedio la violaría a propósito — es la transacción la que la
 //     sostiene hacia afuera, no la guarda.
+//
+// DOS VENTANAS DE CONCURRENCIA CONOCIDAS Y ACEPTADAS. No se cierran con código
+// hoy; quedan escritas acá para que quien toque esto dentro de cinco años sepa
+// que existen y por qué se convivió con ellas, en vez de descubrirlas el día
+// que muerdan. Las dos son angostísimas y las dos tienen mitigación real —el
+// cierre es una CEREMONIA que ejecuta una sola persona, con la Comisión
+// reunida, no una pantalla que alguien abre un martes cualquiera—.
+//
+//   1. Un alta aprobada EN EL MISMO INSTANTE puede caer en el libro viejo.
+//      `applications/record.ts` (aprobar una solicitud) y `members/service.ts`
+//      (alta manual del panel) abren su PROPIA transacción y numeran con
+//      `requireOpenBook`, que es un `findMany` sin bloqueo: si corre mientras
+//      este cierre va por la mitad, ve el libro viejo todavía abierto e inserta
+//      ahí. Esa membresía queda en un libro CERRADO, sin foto (`statusAtClose`
+//      en null, porque el paso 2 ya pasó) y sin migrar (el paso 5 leyó su lista
+//      antes de que existiera). Ninguna de las dos guardas de acá la ve: las
+//      dos son SELECT comunes y la fila todavía no está commiteada.
+//      Por qué se acepta: convocar SUSPENDE las altas web por sí solo
+//      —`createApplicationAction` rechaza el POST leyendo `openWizardProcess`
+//      mientras el proceso está en primera o segunda instancia—, así que no
+//      entra ninguna solicitud nueva durante todo el proceso. Lo único que
+//      queda es un operador aprobando la cola vieja o cargando un alta a mano
+//      en el segundo exacto del cierre. Y si pasara, es DETECTABLE con la misma
+//      condición que usa la guarda de completitud del paso 2: una membresía de
+//      un libro cerrado con `statusAtClose` en null. La persona no se pierde
+//      —quedan su ficha y su movimiento de admisión—: se la vuelve a asentar en
+//      el libro nuevo a mano.
+//
+//   2. La foto y la decisión de migrar pueden leer VERSIONES DISTINTAS de la
+//      misma persona. Esto es MEDIDO, no supuesto (MariaDB 10.11 —la misma
+//      serie en el VPS—, nivel de aislamiento REPEATABLE READ, que es el
+//      default y que este proyecto no cambia en ningún lado: no hay un solo
+//      `isolationLevel` en `$transaction`):
+//        · el `updateMany` de la foto compila a UNA sola sentencia
+//          `UPDATE memberships … WHERE book_id = ? AND EXISTS(SELECT … FROM
+//          members …)`, y el sub-SELECT de un DML es lectura ACTUAL: matchea
+//          contra el último valor COMMITEADO, no contra la instantánea;
+//        · `bookMemberships` compila a dos SELECT comunes (`memberships`, y
+//          después `members WHERE id IN (…)`), que son lecturas consistentes:
+//          ven la INSTANTÁNEA que la transacción fijó en su primera lectura, el
+//          `findUnique` del paso 0.
+//      Comprobado con dos conexiones sobre una base descartable: con la
+//      instantánea diciendo `active` y otra sesión commiteando `withdrawn` en
+//      el medio, el UPDATE matcheó igual y escribió la foto `withdrawn`,
+//      mientras el SELECT posterior de la MISMA transacción seguía devolviendo
+//      `active`. O sea que esa persona migraría al libro nuevo y quedaría
+//      fotografiada de baja en el viejo (o al revés, según hacia dónde cambie
+//      el estado).
+//      Por qué se acepta: la ventana son los milisegundos entre el paso 0 y el
+//      paso 2, y en ese rato nadie está cambiando el estado de un socio. Todos
+//      los caminos que escriben `Member.status` son acciones de operador
+//      —admisión, baja, suspensión, reintegro, readmisión, el lote de bajas y
+//      el asiento de cartelera—: NINGÚN cron lo toca, así que no hay nada
+//      automático que pueda meterse justo ahí. Y las bajas de la etapa B ya
+//      están asentadas antes de llegar: que la cohorte esté terminal es
+//      precondición bloqueante del paso 1.
+//      Y no se arregla escribiendo la foto fila por fila desde `rows` —que
+//      sería leer y escribir el mismo valor—: eso es exactamente lo que se
+//      midió en el paso 2 y se comió el timeout entero.
 //
 // El cliente de Prisma se INYECTA (patrón del proyecto): este módulo no sabe
 // de pantallas ni de `next/cache`, y sus tests corren sin base. La auditoría
@@ -360,6 +422,25 @@ export function makeCloseBook(deps: Deps) {
             // transacción: la persona es la misma, con números distintos por
             // libro.
             const candidates = migrationCandidates(rows);
+            // La tercera condición bloqueante, re-validada ADENTRO como las dos
+            // del paso 1. La pantalla ya esconde el formulario cuando no hay
+            // nadie para migrar, pero esa asimetría dejaba que la transacción
+            // abriera un libro nuevo VACÍO sin protestar si entre la vista
+            // previa y el botón se cayera el último vigente. Un libro sin un
+            // solo socio no es un libro: se aborta y no se escribe nada.
+            //
+            // Vive acá y no en el paso 1 porque "quién migra" sale de `rows`,
+            // que se lee en el paso 2 para la foto; contarlo antes con otra
+            // consulta sería una SEGUNDA definición de vigente que puede
+            // divergir de ésta (la lección de `coverageFloor`). La transacción
+            // es atómica, así que abortar acá deshace también la foto y el
+            // cierre del libro viejo.
+            if (candidates.length === 0) {
+              throw new CloseAborted(
+                `Ningún socio vigente quedó para migrar al Libro N° ${process.book.number + 1}. ` +
+                  "No se cerró nada — revisá el padrón y repetí la vista previa.",
+              );
+            }
             const plan = planMigration(candidates);
             assertDensePlan(plan, candidates.length);
             await tx.membership.createMany({
