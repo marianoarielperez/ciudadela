@@ -223,7 +223,7 @@ describe("lookupAction — veredictos", () => {
     // Igualdad estructural EXACTA, no `res.kind`: la respuesta no puede llevar
     // ningún campo extra —motivo, id, bandera— que permita distinguir un caso
     // de otro leyendo el POST.
-    expect(res).toEqual({ kind: "not_found" });
+    expect(res).toStrictEqual({ kind: "not_found" });
   });
 
   it("ninguna búsqueda deja asiento de auditoría", async () => {
