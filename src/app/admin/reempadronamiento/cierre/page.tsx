@@ -1,9 +1,10 @@
 // Cierre del libro, etapas A y B (M6 §9): el checklist que dice si se puede
 // cerrar, y la declaración de las bajas de quienes no se re-empadronaron.
 //
-// La etapa C —la transacción que cierra el libro y abre el siguiente— llega en
-// la tarea que sigue. Esta pantalla la prepara: sin desenlace para todos los
-// convocados, aquella transacción no puede correr.
+// La etapa C —la transacción que cierra el libro y abre el siguiente— vive en
+// `./confirmar`, con su vista previa obligatoria. Esta pantalla la prepara:
+// sin desenlace para todos los convocados, aquella transacción no corre (y lo
+// re-valida adentro, por si esta pantalla envejeció).
 //
 // `requireSuperadmin()` propio y no heredado de ningún layout: acá se listan
 // nombres de socios (Ley 25.326, docs/08) y se ofrece el acto más grave del
@@ -218,6 +219,23 @@ export default async function CierrePage() {
         }
       >
         <WithdrawalNoticeButton processId={process.id} />
+      </Section>
+
+      <Section
+        id="cerrar"
+        title="Cerrar el libro y abrir el siguiente"
+        hint={
+          <>
+            La etapa final: la vista previa muestra el mapeo completo de números nuevos —renumerados
+            desde 1 por antigüedad—, pide el acta de cierre y recién ahí ofrece el botón.{" "}
+            <strong>Ese paso solo se revierte restaurando un backup.</strong> Los bloqueos del
+            checklist se re-validan también ahí, así que entrar a mirar no compromete nada.
+          </>
+        }
+      >
+        <Button asChild variant={canClose && blockers.length === 0 ? "default" : "outline"} className="min-h-11 px-4">
+          <Link href="/admin/reempadronamiento/cierre/confirmar">Ir a la vista previa del cierre</Link>
+        </Button>
       </Section>
     </div>
   );
