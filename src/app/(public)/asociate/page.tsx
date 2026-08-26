@@ -48,6 +48,13 @@ export default async function AsociatePage() {
     return (
       <main className="mx-auto w-full max-w-xl px-4 py-16">
         <h1 className="text-2xl font-bold tracking-tight">Asociate</h1>
+        {/* La fecha se cita sólo si hay una que sea verdad: `currentDeadline`
+            (adentro del lector cacheado) devuelve `null` fuera de las dos
+            instancias y también cuando el plazo YA VENCIÓ y el proceso todavía
+            no cambió de estado. Sin fecha la frase sigue siendo cierta —la
+            suspensión dura lo que dure el proceso—; con una fecha pasada le
+            estaría diciendo al vecino que ya puede asociarse en la misma
+            pantalla que se lo impide. */}
         <p className="mt-3 text-muted-foreground">
           Las asociaciones están suspendidas temporalmente durante el proceso de
           re-empadronamiento

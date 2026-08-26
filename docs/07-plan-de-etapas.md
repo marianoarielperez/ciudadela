@@ -793,9 +793,18 @@ ENUM). Ninguna toca una fila existente.
   protagonismo que ASOCIATE, y **las asociaciones quedan suspendidas** —la
   asociación está depurando su padrón, no es momento de sumar gente—: la portada y
   `/asociate` lo muestran con la fecha hasta la que dura, y la acción que crea una
-  solicitud corta por sí misma. En el panel del socio, el adherente que todavía no
-  se presentó ve el llamado con su fecha límite y el enlace al trámite: es la gente
-  que ya tiene cuenta, la que más fácil se pierde el correo.
+  solicitud corta por sí misma. Esa fecha es la del plazo que corre; **si el plazo
+  venció y la Comisión todavía no abrió la 2ª instancia ni cerró el proceso, las
+  tres superficies dejan de citar fecha** y dicen sólo que la suspensión sigue
+  mientras dure el trámite. Una fecha pasada le afirmaría al vecino que ya puede
+  asociarse en la misma pantalla que se lo impide, y quién calla ese plazo es una
+  sola función (`currentDeadline`), así que las tres no pueden divergir.
+  En el panel del socio, el adherente convocado que tiene algo pendiente ve el
+  llamado con su fecha límite, en dos versiones: **si todavía no se presentó**, el
+  botón lo lleva al trámite; **si se presentó y la Comisión se lo observó**, lo
+  lleva a pedir el reenvío de su enlace, porque una presentación observada no se
+  reabre tipeando el DNI. Es la gente que ya tiene cuenta, la que más fácil se
+  pierde el correo.
 
 **Auditoría nueva**, siempre con ids y conteos y nunca con DNI, email ni
 domicilios (Ley 25.326): `reregistration_call`, `reregistration_second`,
@@ -803,7 +812,7 @@ domicilios (Ley 25.326): `reregistration_call`, `reregistration_second`,
 `_unreject`, `presentation_document_upload`, `presentation_document_view`,
 `board_notice_post`, `board_notice_other` y `board_notice_pdf`.
 
-2983 tests en verde (7 salteados), build y lint limpios.
+2992 tests en verde (7 salteados), build y lint limpios.
 
 **Lo que hay que saber para operar la fase:**
 
@@ -816,9 +825,11 @@ domicilios (Ley 25.326): `reregistration_call`, `reregistration_second`,
   tablero del panel **avisa de la divergencia** en vez de que cada pantalla adivine.
 - **Las pantallas públicas son cacheadas y se invalidan por tag.** Convocar y abrir
   la 2ª instancia llaman `updateTag("config")`, que es lo que hace que la portada
-  cambie en el acto en las dos direcciones. La acción de la 6C que apague el proceso
-  tiene que hacer lo mismo: sin eso, el sitio seguiría ofreciendo un trámite
-  terminado hasta que el caché venciera solo.
+  cambie en el acto: aparece REEMPADRONATE, se suspenden las asociaciones y, al
+  abrir la 2ª instancia, la fecha citada pasa a ser la de la segunda. **La vuelta
+  todavía no existe**: la acción que apague el proceso es de la fase 6C y tiene que
+  llamar lo mismo. Sin eso, el sitio seguiría ofreciendo un trámite terminado hasta
+  que el caché venciera solo.
 - **La cartelera necesita los feriados del año cargados.** El seed
   (`scripts/seed-holidays.ts`) trae los nacionales; los "puentes" turísticos no
   cuentan como feriado a propósito.

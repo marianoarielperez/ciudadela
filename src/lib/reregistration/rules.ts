@@ -268,14 +268,39 @@ export function canPrepareClose(
  *  `preparing`, `closing` y `closed` devuelven `null` y no una fecha vieja: en
  *  esos estados no hay plazo corriendo, y afirmar uno sería peor que callarlo.
  *  Es la misma lista que decide `wizardOpen`, escrita con `wizardOpen` para que
- *  no puedan divergir. */
-export function currentDeadline(p: {
-  status: ReregistrationStatus;
-  firstEndsAt: Date;
-  secondEndsAt: Date | null;
-}): Date | null {
+ *  no puedan divergir.
+ *
+ *  Y UNA FECHA YA VENCIDA TAMBIÉN DEVUELVE `null`, por el mismo motivo. El
+ *  estado del proceso no cambia solo: cuando la 1ª instancia vence, el proceso
+ *  se queda en `first_instance` hasta que la Comisión abre la 2ª o cierra. En
+ *  esa ventana —el panel la detecta y le avisa a la Comisión, así que debería
+ *  ser corta, pero mientras dura es real— citar `firstEndsAt` le decía al
+ *  vecino "las asociaciones están suspendidas hasta el 25/09" un 30 de
+ *  septiembre: le afirma que la suspensión terminó mientras el botón de
+ *  asociarse sigue apagado y el POST sigue rechazando. Sin fecha el texto es
+ *  verdadero en los dos momentos ("suspendidas durante el proceso"), y esa es
+ *  la razón por la que se resuelve ACÁ y no en cada pantalla: la portada,
+ *  `/asociate` y el mensaje del POST leen esta misma función —dos por el lector
+ *  cacheado de `@/lib/config` y una directo— y así no pueden divergir. Lo mismo
+ *  vale para el correo de observación y la tarjeta de `/mi`, que ya sabían
+ *  redactarse sin fecha.
+ *
+ *  El vencimiento se pregunta con `hasExpired` —el único comparador de plazos
+ *  del módulo, día civil contra día civil— y NO con un `>` sobre el instante:
+ *  el día del vencimiento el vecino lo tiene entero, y ese día la fecha se
+ *  sigue citando. */
+export function currentDeadline(
+  p: {
+    status: ReregistrationStatus;
+    firstEndsAt: Date;
+    secondEndsAt: Date | null;
+  },
+  now: Date = new Date(),
+): Date | null {
   if (!wizardOpen(p)) return null;
-  return p.status === "second_instance" ? p.secondEndsAt : p.firstEndsAt;
+  const deadline = p.status === "second_instance" ? p.secondEndsAt : p.firstEndsAt;
+  if (deadline === null || hasExpired(deadline, now)) return null;
+  return deadline;
 }
 
 /** El wizard público sólo abre durante las dos instancias. Sin proceso vivo no

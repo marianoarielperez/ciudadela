@@ -62,7 +62,13 @@ const ASOCIATE_CLOSED =
   "Las asociaciones en línea están cerradas en este momento. Para asociarte, acercate a la sede vecinal.";
 // La segunda causal de la guarda 0: mientras corre el re-empadronamiento del
 // Art. 9° bis la asociación está depurando su padrón y no suma gente (diseño M6
-// §11). Lleva la fecha porque es lo único que le sirve al vecino para volver.
+// §11). Lleva la fecha porque es lo único que le sirve al vecino para volver,
+// y NO la lleva cuando `currentDeadline` devuelve `null` —fuera de las dos
+// instancias, o con el plazo ya vencido y el proceso todavía sin cambiar de
+// estado—: la frase sin fecha es verdadera en los dos momentos, y citar una
+// fecha pasada le diría que la suspensión terminó justo en el mensaje que la
+// aplica. Es la misma decisión, y la misma función, que la portada y
+// `/asociate`.
 function reregistrationClosed(deadline: Date | null): string {
   const until = deadline === null ? "" : ` (hasta el ${formatDateAR(deadline)})`;
   return `Las asociaciones están suspendidas temporalmente durante el proceso de re-empadronamiento${until}. Para asociarte, acercate a la sede vecinal.`;

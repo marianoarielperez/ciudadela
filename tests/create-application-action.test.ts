@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Las actions del wizard son endpoints públicos y ANÓNIMOS: no hay `requireAdmin`
 // que las abra, así que lo único que las protege es el orden interruptor de
@@ -100,6 +100,17 @@ function form(entries: Record<string, string>): FormData {
   return fd;
 }
 
+// EL RELOJ SE CONGELA, igual que en tests/reregistration-actions.test.ts. La
+// segunda causal de la guarda 0 cita el plazo del re-empadronamiento, y
+// `currentDeadline` calla los plazos ya vencidos: sin fijar "hoy", los casos de
+// abajo dirían la fecha hasta el 25/09/2026 y dejarían de decirla al día
+// siguiente, o sea que el archivo pasaría o fallaría según el día en que se
+// corra. Sólo se falsea `Date`: no hay temporizadores en este camino y
+// falsearlos colgaría los `await`.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-09-01T15:00:00Z")); // 12:00 en Argentina
+afterAll(() => { vi.useRealTimers(); });
+
 async function flushAfter() {
   const pending = mocks.afterCallbacks.splice(0);
   for (const fn of pending) await fn();
@@ -171,12 +182,12 @@ describe("createApplicationAction", () => {
   // asociación está depurando su padrón y no es momento de sumar gente (diseño
   // M6 §11). El interruptor de arriba puede seguir PRENDIDO —la Comisión no
   // tiene por qué acordarse de apagarlo— y el POST igual tiene que cortar.
-  function openProcess(over: { status?: string; secondEndsAt?: Date } = {}) {
+  function openProcess(over: { status?: string; firstEndsAt?: Date; secondEndsAt?: Date } = {}) {
     mocks.configRows.reempadronamiento_proceso_id = "7";
     mocks.prisma.reregistrationProcess.findUnique.mockResolvedValue({
       id: 7,
       status: over.status ?? "first_instance",
-      firstEndsAt: new Date("2026-09-25T12:00:00.000Z"),
+      firstEndsAt: over.firstEndsAt ?? new Date("2026-09-25T12:00:00.000Z"),
       secondEndsAt: over.secondEndsAt ?? null,
     });
   }
@@ -209,6 +220,22 @@ describe("createApplicationAction", () => {
 
     expect(result.error).toContain("05/10/2026");
     expect(result.error).not.toContain("25/09/2026");
+  });
+
+  // La ventana entre el vencimiento de la 1ª instancia y la decisión de la
+  // Comisión: el estado del proceso no cambia solo. Citarle "hasta el
+  // 20/08/2026" a alguien que postea el 01/09 le afirma que la suspensión
+  // terminó, en el mismo mensaje que se la aplica. Lo decide `currentDeadline`,
+  // que es la misma función que usan la portada y `/asociate`.
+  it("con el plazo ya vencido y el proceso sin mover, suspende igual pero SIN citar la fecha", async () => {
+    openProcess({ firstEndsAt: new Date("2026-08-20T12:00:00.000Z") });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toMatch(/suspendidas temporalmente durante el proceso de re-empadronamiento/i);
+    expect(result.error).not.toContain("hasta el");
+    expect(result.error).not.toContain("20/08/2026");
+    expect(mocks.service.create).not.toHaveBeenCalled();
   });
 
   it("un proceso que ya no admite presentaciones NO suspende las altas", async () => {

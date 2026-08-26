@@ -11,6 +11,7 @@ import {
   appealUntil,
   canPrepareClose,
   canStartSecond,
+  currentDeadline,
   FIRST_INSTANCE_DAYS,
   firstEndsAt,
   hasExpired,
@@ -288,6 +289,44 @@ describe("transiciones del proceso", () => {
 
   it("wizardOpen is false when there is no process at all", () => {
     expect(wizardOpen(null)).toBe(false);
+  });
+});
+
+// `currentDeadline` es la ÚNICA fuente de la fecha que el sitio público le cita
+// al vecino ("las asociaciones están suspendidas hasta el ..."): la portada y
+// `/asociate` la leen por el lector cacheado de `@/lib/config` y el POST de
+// ASOCIATE la llama directo. Por eso el silencio ante un plazo vencido se
+// decide acá y no en cada pantalla.
+describe("currentDeadline — nunca cita una fecha que ya pasó", () => {
+  const first = { status: "first_instance" as ReregistrationStatus, firstEndsAt: d(2026, 9, 25), secondEndsAt: null };
+
+  it("durante la 1ª instancia devuelve su plazo", () => {
+    expect(currentDeadline(first, new Date("2026-09-10T12:00:00-03:00"))).toEqual(d(2026, 9, 25));
+  });
+
+  it("el día del vencimiento todavía la cita: ese día es entero del vecino", () => {
+    expect(currentDeadline(first, new Date("2026-09-25T23:59:00-03:00"))).toEqual(d(2026, 9, 25));
+  });
+
+  // La ventana que motivó el arreglo: la 1ª instancia venció y el proceso sigue
+  // en `first_instance` hasta que la Comisión abre la 2ª o cierra. Citar
+  // `firstEndsAt` un 30 de septiembre le decía al vecino que la suspensión
+  // había terminado, en la misma pantalla que se la aplica.
+  it("vencida la 1ª instancia y con el proceso sin mover, calla en vez de mentir", () => {
+    expect(currentDeadline(first, new Date("2026-09-26T00:01:00-03:00"))).toBeNull();
+    expect(currentDeadline(first, new Date("2026-09-30T12:00:00-03:00"))).toBeNull();
+  });
+
+  it("la 2ª instancia manda sobre la 1ª, y también se calla al vencer", () => {
+    const second = { status: "second_instance" as ReregistrationStatus, firstEndsAt: d(2026, 9, 25), secondEndsAt: d(2026, 10, 5) };
+    expect(currentDeadline(second, new Date("2026-09-30T12:00:00-03:00"))).toEqual(d(2026, 10, 5));
+    expect(currentDeadline(second, new Date("2026-10-06T00:01:00-03:00"))).toBeNull();
+  });
+
+  it("fuera de las dos instancias no hay plazo, vencido o no", () => {
+    for (const status of ["preparing", "closing", "closed"] as ReregistrationStatus[]) {
+      expect(currentDeadline({ status, firstEndsAt: d(2026, 9, 25), secondEndsAt: d(2026, 10, 5) }, new Date("2026-09-10T12:00:00-03:00"))).toBeNull();
+    }
   });
 });
 

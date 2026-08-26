@@ -51,16 +51,26 @@ export const getAsociateActive = unstable_cache(
  *  hay un proceso abierto y hasta qué día corre el plazo que está corriendo.
  *  `null` = no hay proceso y todo funciona como siempre.
  *
+ *  Sólo viaja el plazo. El id del proceso estuvo en este tipo hasta que se
+ *  notó que ninguna de las dos pantallas lo leía: acá adentro es DISPLAY —lo
+ *  que ata una presentación es `openWizardProcess`, que se lee fresco— y un
+ *  campo que cruza una capa de caché sin que nadie lo use sólo puede envejecer
+ *  y confundir al que lo encuentre.
+ *
  *  El plazo viaja YA FORMATEADO ("DD/MM/AAAA") y no como `Date`. No es
  *  cosmética: `unstable_cache` guarda el valor con `JSON.stringify`, así que un
  *  `Date` vuelve como `Date` en el fallo de caché y como STRING en el acierto —
  *  el mismo tipo cambiando según si la página se sirvió del caché o no, que es
  *  la clase de diferencia que aparece en producción y nunca en un test. Se
  *  formatea una vez, acá, con la misma `formatDateAR` de todo el proyecto.
+ *  Hay dos tests que lo fijan (`tests/config.test.ts`).
  *
  *  Cuál de los dos plazos se muestra lo decide `currentDeadline` —la 2ª
  *  instancia manda sobre la 1ª— y no esta función: es la misma regla que usan
- *  el wizard y los correos, y copiarla acá la dejaría divergir.
+ *  el wizard y los correos, y copiarla acá la dejaría divergir. Es también la
+ *  que devuelve `null` cuando el plazo YA VENCIÓ y el proceso todavía no
+ *  cambió de estado: en esa ventana las dos pantallas dejan de citar una fecha
+ *  vencida y dicen sólo que la suspensión sigue.
  *
  *  QUIÉN LA INVALIDA (tag `config`, igual que el interruptor de ASOCIATE): las
  *  dos actions de fase de `/admin/reempadronamiento` —convocar y abrir la 2ª
@@ -74,14 +84,14 @@ export const getAsociateActive = unstable_cache(
  *  —`createApplicationAction`, la página y las actions del wizard— lee directo
  *  con `openWizardProcess(prisma)`, sin caché, por el mismo motivo por el que la
  *  guarda del interruptor no usa `getAsociateActive`. */
-export type PublicReregistration = { id: number; deadline: string | null };
+export type PublicReregistration = { deadline: string | null };
 
 export const getActiveReregistration = unstable_cache(
   async (): Promise<PublicReregistration | null> => {
     const process = await openWizardProcess(prisma);
     if (process === null) return null;
     const deadline = currentDeadline(process);
-    return { id: process.id, deadline: deadline === null ? null : formatDateAR(deadline) };
+    return { deadline: deadline === null ? null : formatDateAR(deadline) };
   },
   ["config-reregistration"],
   { tags: [CACHE_TAGS.config] },

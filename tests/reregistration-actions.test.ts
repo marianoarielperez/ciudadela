@@ -325,6 +325,17 @@ describe("startSecondAction", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
+  // El espejo del test de `callProcessAction`, y no un adorno: la línea que
+  // invalida el caché vivió toda la fase 6B sin existir en esta action y nadie
+  // lo notó, porque nada la obligaba. Es exactamente la clase de línea que un
+  // refactor borra sin que chille un test.
+  it("invalida el caché del sitio público: sin eso el sitio sigue citando el plazo de la 1ª instancia, ya vencido", async () => {
+    await startSecondAction({}, secondForm());
+
+    expect(updateTag).toHaveBeenCalledWith(CACHE_TAGS.config);
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/reempadronamiento");
+  });
+
   it("asienta quién la abrió, si la adelantó y a quién no se pudo avisar", async () => {
     const state = await startSecondAction({}, secondForm({ force: "on" }));
 

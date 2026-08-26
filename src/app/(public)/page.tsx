@@ -113,8 +113,13 @@ export default async function HomePage() {
                     /* Suspensión por re-empadronamiento: el vecino tiene que
                        saber HASTA CUÁNDO, que es lo único que le sirve para
                        volver. La fecha es la del plazo que corre ahora (la 2ª
-                       instancia manda sobre la 1ª). Si por algún motivo no hay
-                       plazo asentado se calla en vez de inventar uno. */
+                       instancia manda sobre la 1ª). Cuando no hay plazo que
+                       citar la frase se lee igual y sigue siendo verdadera —la
+                       suspensión dura lo que dure el proceso—, y esa rama no es
+                       teórica: `currentDeadline` devuelve `null` también
+                       mientras el plazo ya venció y el proceso todavía no
+                       cambió de estado, justamente para no afirmarle al vecino
+                       una fecha pasada. */
                     <p className="text-sm">
                       Las asociaciones están suspendidas temporalmente durante el proceso de
                       re-empadronamiento
