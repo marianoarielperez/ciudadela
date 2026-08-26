@@ -603,7 +603,7 @@ export function reregistrationCallEmail(opts: { url: string; firstEndsAt: Date }
   const until = formatDateAR(opts.firstEndsAt);
   const title = "Re-empadronamiento de socios adherentes";
   return {
-    subject: `${title} — tenés tiempo hasta el ${until}`,
+    subject: `${title} — tenés tiempo hasta el ${until} — Vecinal Ciudadela`,
     text: `La Comisión Directiva de la ${ORG} convocó el re-empadronamiento de los socios adherentes (Art. 9° bis del estatuto).
 
 Figurás en el padrón como socio adherente, así que para conservar tu condición de socio tenés que ratificar tus datos antes del ${until} inclusive.
@@ -630,8 +630,16 @@ ${button(opts.url, "Re-empadronarme")}
 
 /** Segunda instancia del Art. 9° bis (M6): el aviso con APERCIBIMIENTO.
  *
- *  Va sólo a quien no se presentó en los primeros treinta días, y es la última
- *  notificación antes de que la Comisión resuelva la baja. Tiene que decir con
+ *  Va a todos los que NO tienen presentación aprobada, que son cuatro casos
+ *  distintos: el que no presentó nada, el que presentó y quedó OBSERVADO, el que
+ *  presentó y fue RECHAZADO y el que retiró su presentación. Por eso el correo
+ *  abre diciendo que no tenemos el re-empadronamiento APROBADO y no que "no lo
+ *  registramos": a dos de esos cuatro sí se les registró la presentación —y al
+ *  rechazado se le registró y se le rechazó—, así que afirmar lo contrario sería
+ *  un dato falso en la última notificación antes de una baja estatutaria, y le
+ *  regalaría al socio un argumento para el recurso del inc. d).
+ *
+ *  Es la última notificación antes de que la Comisión resuelva la baja. Tiene que decir con
  *  todas las letras qué está en juego —el estatuto exige el apercibimiento para
  *  que la baja sea oponible— y al mismo tiempo no sonar a intimación de estudio
  *  jurídico: del otro lado hay un vecino que probablemente no abrió el correo
@@ -641,8 +649,8 @@ export function reregistrationSecondEmail(opts: { url: string; secondEndsAt: Dat
   const until = formatDateAR(opts.secondEndsAt);
   const title = "Último plazo para re-empadronarte";
   return {
-    subject: `${title} — hasta el ${until}`,
-    text: `Todavía no registramos tu re-empadronamiento, así que la ${ORG} te concede un último plazo: tenés tiempo hasta el ${until} inclusive.
+    subject: `${title} — hasta el ${until} — Vecinal Ciudadela`,
+    text: `Todavía no tenemos aprobado tu re-empadronamiento, así que la ${ORG} te concede un último plazo: tenés tiempo hasta el ${until} inclusive.
 
 Podés hacerlo por internet, en este enlace:
 
@@ -653,7 +661,7 @@ O en persona, acercándote a la sede vecinal con tu DNI.
 Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, bajo apercibimiento de baja (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.
 
 Si ya te re-empadronaste en estos días, ignorá este correo.${SIGNATURE}`,
-    html: layout(title, `<p>Todavía no registramos tu re-empadronamiento, así que la ${esc(ORG)} te concede un último plazo: tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>
+    html: layout(title, `<p>Todavía no tenemos aprobado tu re-empadronamiento, así que la ${esc(ORG)} te concede un último plazo: tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>
 ${button(opts.url, "Re-empadronarme")}
 <p>También podés hacerlo <strong>en persona</strong>, acercándote a la sede vecinal con tu DNI.</p>
 <p>Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, <strong>bajo apercibimiento de baja</strong> (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.</p>

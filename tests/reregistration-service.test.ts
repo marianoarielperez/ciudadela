@@ -11,10 +11,12 @@
 //     cartelera;
 //   - que el plazo se lea con `hasExpired` y no con un `>` sobre el instante:
 //     el día del vencimiento el socio todavía tiene el día entero.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-import { makeMailBudget } from "@/lib/email/batch-cap";
+import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
+import { DEFAULT_MAIL_BATCH_CAP, makeMailBudget } from "@/lib/email/batch-cap";
 import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
+import { COHORT_CATEGORY, COHORT_STATUSES, isCohortMember } from "@/lib/reregistration/rules";
 import { makeReregistration } from "@/lib/reregistration/service";
 
 // 20/09/2026 a las 12:00 UTC = 09:00 en Argentina.
@@ -35,6 +37,16 @@ type ProcessRow = {
   firstEndsAt: Date;
   secondEndsAt: Date | null;
 };
+
+/** Envíos que ocurrieron ANTES del commit, acumulados por el doble del mailer y
+ *  afirmados en el `afterEach`.
+ *
+ *  La aserción NO puede ir adentro del doble: el servicio envuelve cada envío en
+ *  un `try/catch`, así que una excepción tirada ahí se la traga el catch y se
+ *  cuenta como un fallo de envío más — el candado no trababa y el test pasaba
+ *  igual. Acumular y afirmar desde afuera es lo que hace que una violación
+ *  rompa, y que rompa diciendo qué socio salió antes de tiempo. */
+const preCommitSends: number[] = [];
 
 function deps(
   over: {
@@ -86,8 +98,9 @@ function deps(
   const mailer = {
     sendToMember: vi.fn(async (input: { memberId: number | null; type: string; message: { subject: string } }) => {
       // La invariante más cara del módulo: ninguna llamada de red adentro de la
-      // transacción de Prisma (el timeout es de 5 s y el lock se sostiene).
-      expect(committed).toBe(true);
+      // transacción de Prisma (el timeout es de 5 s y el lock se sostiene). La
+      // violación se ACUMULA y se afirma en el `afterEach` — ver `preCommitSends`.
+      if (!committed) preCommitSends.push(input.memberId ?? -1);
       sent.push({ memberId: input.memberId, type: input.type, subject: input.message.subject });
       if (over.send) return over.send(input);
       return { messageId: "mid" };
@@ -98,7 +111,11 @@ function deps(
     db: db as never,
     mailer: mailer as never,
     baseUrl: () => "https://vecinalciudadela.ar",
-    mailBudget: () => makeMailBudget(over.cap ?? 50),
+    // El presupuesto se inyecta SÓLO cuando el caso quiere forzar un tope chico.
+    // Sin `cap` corre el default del servicio, que es lo que dimensiona el
+    // presupuesto a la cohorte: si se inyectara siempre, ese default no se
+    // probaría nunca.
+    ...(over.cap === undefined ? {} : { mailBudget: () => makeMailBudget(over.cap as number) }),
     now: () => over.now ?? NOW,
   });
   return { service, db, tx, mailer, sent };
@@ -121,8 +138,16 @@ function failWith(code: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Se limpia ACÁ y no en el `afterEach`: si la aserción de allá falla, lo que
+  // venga después del `expect` no corre y el resto del archivo arrastraría la
+  // violación del test anterior.
+  preCommitSends.length = 0;
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  expect(preCommitSends, "hubo envíos ANTES del commit (socios)").toEqual([]);
 });
 
 describe("reregistration.activate", () => {
@@ -277,6 +302,81 @@ describe("reregistration.activate", () => {
     expect(r).toMatchObject({ ok: true, emailed: 1, deferred: 2 });
     expect(d.mailer.sendToMember).toHaveBeenCalledTimes(1);
   });
+
+  // El tope por default (50) existe para trabajos RECURRENTES: lo que se difiere
+  // hoy sale en la corrida del mes que viene. La convocatoria corre UNA vez y no
+  // tiene repesca, así que un diferido es un vecino al que le corre un plazo de
+  // treinta días del que nunca se enteró. Con la cohorte real —124 adherentes—
+  // el default diferiría a más de setenta si el padrón tuviera las casillas
+  // cargadas.
+  it("sin tope inyectado el presupuesto se dimensiona a la cohorte: nadie queda diferido", async () => {
+    const cohort = Array.from({ length: DEFAULT_MAIL_BATCH_CAP + 10 }, (_, i) => member(i + 1));
+    const d = deps({ cohort });
+    const r = await d.service.activate({
+      bookId: 1, calledAt: CALLED_AT, minuteId: 9,
+      igjApprovedAt: null, estimatedElectionAt: null, actorId: 1,
+    });
+    expect(r).toMatchObject({ ok: true, emailed: cohort.length, deferred: 0, deferredIds: [] });
+    expect(d.mailer.sendToMember).toHaveBeenCalledTimes(cohort.length);
+  });
+
+  // Un conteo no se puede reintentar ni nombrar en una pantalla. Y el diferido es
+  // el caso que no deja NINGÚN otro rastro: el mailer no escribió fila (nunca
+  // hubo envío) y tampoco cae a la cartelera, porque la cartelera se calcula
+  // sobre quienes no tienen casilla utilizable — y éste la tiene.
+  it("los que quedaron sin aviso vuelven CON SU ID, no sólo contados", async () => {
+    const d = deps({ cohort: [member(1), member(2), member(3)], cap: 1 });
+    const r = await d.service.activate({
+      bookId: 1, calledAt: CALLED_AT, minuteId: 9,
+      igjApprovedAt: null, estimatedElectionAt: null, actorId: 1,
+    });
+    expect(r).toMatchObject({ ok: true, emailed: 1, deferredIds: [2, 3], failedIds: [], blockedIds: [] });
+  });
+
+  it("el fallo y el bloqueo también vuelven con su id", async () => {
+    const d = deps({
+      cohort: [member(1), member(2), member(3)],
+      send: async (input) => {
+        if (input.memberId === 1) return failWith("ESOCKET")();
+        if (input.memberId === 2) return failWith(ALLOWLIST_BLOCK_CODE)();
+        return { messageId: "mid" };
+      },
+    });
+    const r = await d.service.activate({
+      bookId: 1, calledAt: CALLED_AT, minuteId: 9,
+      igjApprovedAt: null, estimatedElectionAt: null, actorId: 1,
+    });
+    expect(r).toMatchObject({
+      ok: true, emailed: 1, failedIds: [1], blockedIds: [2], deferredIds: [],
+    });
+  });
+
+  // El wizard público filtra con `isCohortMember`; el servicio convoca con una
+  // consulta. Si los dos criterios divergen, un socio convocado —al que le corre
+  // el plazo y al que le llegó el correo— recibe "no te encontramos" al intentar
+  // presentarse. Por eso la consulta se arma con las MISMAS constantes que la
+  // función pura, y este test recorre la tabla entera de pares.
+  it("la consulta de la cohorte no puede divergir de `isCohortMember`", async () => {
+    const d = deps({ cohort: [member(1)] });
+    await d.service.activate({
+      bookId: 1, calledAt: CALLED_AT, minuteId: 9,
+      igjApprovedAt: null, estimatedElectionAt: null, actorId: 1,
+    });
+    const where = argOf<{ where: { category: MemberCategory; status: { in: MemberStatus[] } } }>(
+      d.tx.member.findMany,
+    ).where;
+    expect(where.category).toBe(COHORT_CATEGORY);
+    expect([...where.status.in]).toEqual([...COHORT_STATUSES]);
+
+    const categories: MemberCategory[] = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"];
+    const statuses: MemberStatus[] = ["active", "suspended", "withdrawn"];
+    for (const category of categories) {
+      for (const status of statuses) {
+        const matchesQuery = category === where.category && where.status.in.includes(status);
+        expect(isCohortMember({ category, status }), `${category}/${status}`).toBe(matchesQuery);
+      }
+    }
+  });
 });
 
 describe("reregistration.startSecond", () => {
@@ -354,6 +454,22 @@ describe("reregistration.startSecond", () => {
     const notice = argOf<{ data: { kind: string; postedAt?: unknown } }>(d.tx.boardNotice.create);
     expect(notice.data.kind).toBe("second_instance");
     expect(notice.data.postedAt).toBeUndefined();
+  });
+
+  // Mismo motivo que en la convocatoria, y acá pesa más: el correo de 2ª
+  // instancia es la ÚLTIMA notificación antes de una baja estatutaria. Un
+  // diferido silencioso ahí es una baja que el socio no vio venir.
+  it("sin tope inyectado el presupuesto se dimensiona a los no presentados", async () => {
+    const missing = Array.from({ length: DEFAULT_MAIL_BATCH_CAP + 10 }, (_, i) => member(i + 1));
+    const d = deps({ process: first(), missing });
+    const r = await d.service.startSecond({ processId: 7, actorId: 1, force: true });
+    expect(r).toMatchObject({ ok: true, emailed: missing.length, deferred: 0, deferredIds: [] });
+  });
+
+  it("los no notificados de la 2ª instancia también vuelven con su id", async () => {
+    const d = deps({ process: first(), missing: [member(5), member(6), member(7)], cap: 1 });
+    const r = await d.service.startSecond({ processId: 7, actorId: 1, force: true });
+    expect(r).toMatchObject({ ok: true, emailed: 1, deferredIds: [6, 7] });
   });
 
   it("el cerrojo optimista corta si otra corrida ya movió el proceso", async () => {

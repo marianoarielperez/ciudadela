@@ -44,7 +44,14 @@ import { reregistrationCallEmail, reregistrationSecondEmail } from "@/lib/email/
 import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import { prisma } from "@/lib/prisma";
 import { civilDayOf } from "@/lib/treasury/periods";
-import { canStartSecond, firstEndsAt, hasExpired, secondEndsAt } from "./rules";
+import {
+  canStartSecond,
+  COHORT_CATEGORY,
+  COHORT_STATUSES,
+  firstEndsAt,
+  hasExpired,
+  secondEndsAt,
+} from "./rules";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -75,10 +82,17 @@ const PRESENTATION_STATUSES = [
   "withdrawn",
 ] as const satisfies readonly PresentationStatus[];
 
-/** El criterio de "casilla utilizable" del proyecto, escrito una sola vez.
- *  Es el MISMO de `treasury/reminder.ts:184` y `treasury/debtors.ts:110`: sin
- *  dirección o con rebote registrado no se manda nada, y esos son exactamente
- *  los que van a la cartelera. */
+/** El criterio de "casilla utilizable" del proyecto: sin dirección o con rebote
+ *  registrado no se manda nada, y esos son exactamente los que van a la
+ *  cartelera.
+ *
+ *  Y NO está escrito una sola vez: ésta es la sexta copia en `src/lib` —las
+ *  otras cinco están en `admin/health.ts:286`, `treasury/debtors.ts:110`,
+ *  `treasury/reminder.ts:184`, `treasury/receipt-email.ts:60` y
+ *  `members/member-requests/notify.ts:53`, más algunas pantallas—. Es deuda
+ *  conocida, no una decisión: unificarla toca el núcleo de dinero y excede este
+ *  módulo. Lo que sí se sostiene acá es que la FORMA sea idéntica a las otras,
+ *  para que el día que se unifique sea un reemplazo mecánico. */
 function emailUsable(m: { email: string | null; emailStatus: EmailStatus }): boolean {
   return Boolean(m.email) && m.emailStatus !== "bounced";
 }
@@ -111,12 +125,13 @@ type CohortRow = { id: number; fullName: string; email: string | null; emailStat
  *  cada uno significa un vecino que NO quedó notificado por correo, y este es
  *  el único lugar donde se sabe.
  *
- *  `deferred` es el más filoso de los cuatro: a diferencia del recordatorio de
- *  vencimiento —que vuelve a correr el mes siguiente—, la convocatoria ocurre
- *  UNA vez. Un correo diferido por el tope no lo levanta ninguna corrida
- *  posterior: es un socio al que le corre un plazo del que no se enteró. Por eso
- *  se devuelve y la pantalla tiene que mostrarlo, y por eso el presupuesto se
- *  puede inyectar (ver `Deps.mailBudget`). */
+ *  Y viajan CON LOS IDS, no sólo contados. Un número no se puede nombrar en una
+ *  pantalla ni reintentar, y de los tres sólo el fallo deja rastro después (el
+ *  mailer escribe su fila `failed` colgada del socio): el bloqueado y el
+ *  diferido no dejan ninguno. El diferido es además el que queda en tierra de
+ *  nadie —tampoco cae a la cartelera, porque la cartelera se calcula sobre
+ *  quienes NO tienen casilla utilizable, y éste la tiene—. Los ids son lo que le
+ *  permite a la pantalla decir quiénes y ofrecer reintentarlos. */
 type MailOutcome = {
   emailed: number;
   /** Intentos que fallaron de verdad. El mailer ya dejó su fila `failed` con el
@@ -127,6 +142,11 @@ type MailOutcome = {
   blocked: number;
   /** Excedieron el tope de la corrida. Nadie los levanta después. */
   deferred: number;
+  /** Los socios de cada uno de los tres, en el orden en que se los recorrió (por
+   *  número de socio). Los conteos de arriba son sus longitudes. */
+  failedIds: number[];
+  blockedIds: number[];
+  deferredIds: number[];
 };
 
 export type ActivateInput = {
@@ -180,11 +200,12 @@ type Deps = {
   /** El presupuesto de correos se pide UNA VEZ POR CORRIDA y no es un contador
    *  de módulo: éste es un singleton de proceso, y un contador global lo dejaría
    *  mudo después de 50 correos hasta el próximo restart de PM2 (`batch-cap.ts`
-   *  lo explica con el caso que lo motivó). Es inyectable para que el llamador
-   *  pueda darle a la convocatoria un tope a la medida de la cohorte: el
-   *  default de 50 alcanza para el padrón de hoy —37 emails cargados sobre 278
-   *  socios— pero no es una garantía. */
-  mailBudget?: () => MailBudget;
+   *  lo explica con el caso que lo motivó).
+   *
+   *  Recibe la CANTIDAD DE DESTINATARIOS porque el default lo dimensiona a ella
+   *  —ver `budgetFor`—. Sigue siendo inyectable para que un test pueda forzar un
+   *  tope chico sin tocar `process.env`. */
+  mailBudget?: (recipients: number) => MailBudget;
   /** `AUTH_URL` se hornea en el build; se inyecta para poder testear el enlace
    *  sin entorno. */
   baseUrl?: () => string;
@@ -194,7 +215,27 @@ type Deps = {
 export function makeReregistration(deps: Deps) {
   const now = deps.now ?? (() => new Date());
   const baseUrl = deps.baseUrl ?? (() => process.env.AUTH_URL ?? "http://localhost:3000");
-  const budgetFor = deps.mailBudget ?? (() => makeMailBudget());
+  /** El presupuesto de ESTA corrida, dimensionado a la cantidad de
+   *  destinatarios.
+   *
+   *  El tope por default (`MAIL_BATCH_CAP`, 50) protege trabajos RECURRENTES:
+   *  si el devengo o el recordatorio se pasan, lo que se difirió sale en la
+   *  corrida del mes siguiente. Acá no hay corrida siguiente —la convocatoria y
+   *  la apertura de la 2ª instancia ocurren UNA vez— así que un diferido es
+   *  definitivo: un vecino al que le corre un plazo de treinta días del que
+   *  nunca se enteró, y en la 2ª instancia, una baja estatutaria que no vio
+   *  venir. El propio `batch-cap.ts` ya tiene el precedente de esta forma
+   *  —`UNLIMITED_MAIL_BUDGET`, para el camino de un solo email, donde el tope no
+   *  protege de nada y convierte un envío legítimo en un diferido invisible—;
+   *  esto es lo mismo para un envío de un solo tiro.
+   *
+   *  Se dimensiona a la cohorte y no se usa `UNLIMITED_MAIL_BUDGET` a secas para
+   *  conservar un techo: el presupuesto sigue acotado por una cantidad contada
+   *  contra la base, así que un bug que traiga diez mil filas no se convierte en
+   *  diez mil correos. Dejar la decisión "para más arriba" no era neutral: el
+   *  default ya estaba decidiendo, y decidía diferir callado. */
+  const budgetFor =
+    deps.mailBudget ?? ((recipients: number) => makeMailBudget(Math.max(recipients, 1)));
 
   /** El envío masivo, POST-COMMIT siempre. El mensaje es idéntico para todos
    *  —ninguna de las dos plantillas recibe el nombre del socio—, así que se
@@ -206,13 +247,19 @@ export function makeReregistration(deps: Deps) {
     summary: string;
     tag: string;
   }): Promise<MailOutcome> {
-    const budget = budgetFor();
-    const out: MailOutcome = { emailed: 0, failed: 0, blocked: 0, deferred: 0 };
+    const budget = budgetFor(input.recipients.length);
+    const failedIds: number[] = [];
+    const blockedIds: number[] = [];
+    const deferredIds: number[] = [];
+    let emailed = 0;
     for (const m of input.recipients) {
       // `emailUsable` ya corrió del lado del llamador (los que no la pasan son
       // los de la cartelera); esto es el estrechamiento para TypeScript.
       if (!m.email) continue;
-      if (!budget.take()) continue;
+      if (!budget.take()) {
+        deferredIds.push(m.id);
+        continue;
+      }
       try {
         await deps.mailer.sendToMember({
           memberId: m.id,
@@ -221,7 +268,7 @@ export function makeReregistration(deps: Deps) {
           message: input.message,
           summary: input.summary,
         });
-        out.emailed++;
+        emailed++;
       } catch (e) {
         const code = codeOf(e);
         if (code === ALLOWLIST_BLOCK_CODE) {
@@ -229,20 +276,31 @@ export function makeReregistration(deps: Deps) {
           // entorno de prueba los bloqueados agotarían el tope y diferirían
           // justo a los que sí están en la lista.
           budget.refund();
-          out.blocked++;
+          blockedIds.push(m.id);
           continue;
         }
         console.error(`[${input.tag}] no se pudo notificar al socio`, m.id, code);
-        out.failed++;
+        failedIds.push(m.id);
       }
     }
-    out.deferred = budget.deferred;
-    if (out.deferred > 0) {
-      // Un diferido acá no lo levanta ninguna corrida posterior: la convocatoria
-      // ocurre una sola vez. Queda en el log además de en el resultado.
-      console.warn(`[${input.tag}] ${out.deferred} socios quedaron sin aviso por el tope de correos`);
+    if (deferredIds.length > 0) {
+      // Con el presupuesto dimensionado a la cohorte esto no debería pasar nunca
+      // salvo que el llamador inyecte un tope propio; si pasa, no lo levanta
+      // ninguna corrida posterior. Los ids van en el resultado (la pantalla los
+      // nombra y reintenta); acá queda el conteo, sin direcciones.
+      console.warn(`[${input.tag}] ${deferredIds.length} socios quedaron sin aviso por el tope de correos`);
     }
-    return out;
+    // Los conteos son las longitudes: un contador aparte podía divergir de la
+    // lista, y es la lista la que la pantalla usa para reintentar.
+    return {
+      emailed,
+      failed: failedIds.length,
+      blocked: blockedIds.length,
+      deferred: deferredIds.length,
+      failedIds,
+      blockedIds,
+      deferredIds,
+    };
   }
 
   return {
@@ -262,14 +320,18 @@ export function makeReregistration(deps: Deps) {
           return { ok: false as const, error: "Ya hay un proceso de re-empadronamiento en curso." };
         }
 
+        // El plazo se calcula UNA vez y es el que se asienta y el que nombra el
+        // correo: el vecino tiene que leer exactamente la fecha que quedó
+        // registrada. Sale de `rules.firstEndsAt`, que cuenta días corridos
+        // sobre el día civil argentino del acta; acá no se hace aritmética.
+        const endsAt = firstEndsAt(input.calledAt);
+
         const process = await tx.reregistrationProcess.create({
           data: {
             bookId: input.bookId,
             status: "first_instance",
             calledAt: input.calledAt,
-            // El plazo sale de `rules.firstEndsAt`, que cuenta días corridos
-            // sobre el día civil argentino del acta. Acá no se hace aritmética.
-            firstEndsAt: firstEndsAt(input.calledAt),
+            firstEndsAt: endsAt,
             igjApprovedAt: input.igjApprovedAt,
             estimatedElectionAt: input.estimatedElectionAt,
             callMinuteId: input.minuteId,
@@ -277,11 +339,18 @@ export function makeReregistration(deps: Deps) {
           select: { id: true },
         });
 
-        // LA COHORTE. `orderBy: id` para que el orden de las filas y el de los
-        // correos sea estable y reproducible (el número de socio manda en las
-        // pantallas del módulo).
+        // LA COHORTE. El criterio NO se escribe acá: sale de las constantes de
+        // `rules.ts`, las mismas de las que depende `isCohortMember` —el filtro
+        // del wizard público—. Duplicarlo a mano es lo que le costó caro al
+        // proyecto con `coverageFloor`, y acá la divergencia tiene una víctima
+        // concreta: un socio convocado por esta consulta al que el wizard le
+        // contestaría "no te encontramos".
+        //
+        // `orderBy: id` para que el orden de las filas y el de los correos sea
+        // estable y reproducible (el número de socio manda en las pantallas del
+        // módulo).
         const cohort = await tx.member.findMany({
-          where: { category: "adherent", status: { in: ["active", "suspended"] } },
+          where: { category: COHORT_CATEGORY, status: { in: [...COHORT_STATUSES] } },
           select: { id: true, fullName: true, email: true, emailStatus: true },
           orderBy: { id: "asc" },
         });
@@ -319,9 +388,9 @@ export function makeReregistration(deps: Deps) {
         return {
           ok: true as const,
           processId: process.id,
-          // El plazo sale de la transacción en vez de recalcularse abajo: el
-          // correo tiene que nombrar EXACTAMENTE la fecha que quedó asentada.
-          firstEndsAt: firstEndsAt(input.calledAt),
+          // El plazo ASENTADO viaja hacia afuera en vez de recalcularse abajo:
+          // el correo nombra exactamente la fecha que quedó registrada.
+          firstEndsAt: endsAt,
           cohort,
           boardCount: board.length,
         };

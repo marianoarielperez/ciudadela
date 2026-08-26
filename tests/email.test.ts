@@ -7,7 +7,8 @@ import { makeMailer } from "@/lib/email";
 import {
   boardDigestEmail,
   feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
-  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite, receiptEmail, verificationEmail,
+  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite, receiptEmail,
+  reregistrationCallEmail, reregistrationSecondEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import { rejectionReason } from "@/lib/mp/rejection-reasons";
@@ -49,6 +50,8 @@ describe("templates", () => {
       verificationEmail({ url: "https://x/v/t" }),
       invitationEmail({ name: "Ana", url: "https://x/i/t" }),
       passwordResetEmail({ url: "https://x/r/t" }),
+      reregistrationCallEmail({ url: "https://x/reempadronate", firstEndsAt: EXPIRES }),
+      reregistrationSecondEmail({ url: "https://x/reempadronate", secondEndsAt: EXPIRES }),
     ];
     for (const m of rendered) {
       expect(m.subject).toContain("Vecinal Ciudadela");
@@ -354,6 +357,65 @@ describe("templates", () => {
       // Nada sobre lo que no medimos, y ninguna acción sin destino.
       expect(body).not.toContain("da de baja el débito");
       expect(body).not.toContain("volver a autorizarlo");
+    }
+  });
+
+  // La convocatoria del Art. 9° bis sale de una sola vez a toda la cohorte de
+  // adherentes y abre un plazo de treinta días del que cuelga la condición de
+  // socio. Tres cosas la hacen útil: el enlace al wizard, la fecha límite
+  // ESCRITA (no "en 30 días", que obliga al vecino a contar desde una fecha que
+  // no sabe) y la vía presencial, porque buena parte del padrón no usa la web.
+  it("la convocatoria lleva el enlace al wizard, la fecha límite y la vía presencial", () => {
+    const m = reregistrationCallEmail({ url: "https://x/reempadronate", firstEndsAt: EXPIRES });
+    expect(m.subject).toContain("26/08/2026");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("sede vecinal");
+      expect(body).toContain("no tiene ningún costo");
+      // No saluda por nombre, y la plantilla ni siquiera lo recibe: el mensaje
+      // es idéntico para los ciento y pico y se arma UNA vez.
+      expect(body).not.toContain("Hola ");
+    }
+    expect(reregistrationCallEmail.length).toBe(1);
+  });
+
+  // Es la ÚLTIMA notificación antes de una baja estatutaria, así que el
+  // apercibimiento con la cita del artículo tiene que estar: es lo que la hace
+  // oponible. Y no puede afirmar que el socio no presentó nada: el correo va a
+  // TODOS los que no tienen presentación aprobada, y ahí entran el observado (se
+  // le registró la presentación y se le pidió corregir) y el rechazado (se le
+  // registró y se le rechazó). Decirles que "no lo registramos" es un dato falso
+  // en el aviso previo a la baja, y les regala el recurso del inc. d).
+  it("el último plazo apercibe con el artículo y no afirma que el socio no presentó nada", () => {
+    const m = reregistrationSecondEmail({ url: "https://x/reempadronate", secondEndsAt: EXPIRES });
+    expect(m.subject).toContain("26/08/2026");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("apercibimiento de baja");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("treinta días");
+      // Verdadero para los cuatro casos que reciben este correo: el que no
+      // presentó nada, el observado, el rechazado y el que retiró su
+      // presentación.
+      expect(body).toContain("aprobado");
+      expect(body).not.toContain("no registramos");
+    }
+  });
+
+  it("las plantillas del re-empadronamiento escapan la url en el html", () => {
+    const url = "https://x/reempadronate?a=1&b=2";
+    for (const m of [
+      reregistrationCallEmail({ url, firstEndsAt: EXPIRES }),
+      reregistrationSecondEmail({ url, secondEndsAt: EXPIRES }),
+    ]) {
+      expect(m.html).toContain("a=1&amp;b=2");
+      expect(m.html).not.toContain("a=1&b=2");
+      // En el texto plano el enlace viaja crudo: ahí no hay markup que romper y
+      // un `&amp;` sería un enlace que no funciona al copiarlo.
+      expect(m.text).toContain(url);
     }
   });
 });

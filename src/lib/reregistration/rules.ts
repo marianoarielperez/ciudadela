@@ -89,15 +89,35 @@ export function hasExpired(deadline: Date, now: Date = new Date()): boolean {
   return civilDayOf(now).getTime() > civilDayOf(deadline).getTime();
 }
 
-/** Cohorte del proceso: adherentes vigentes al activar (decisión 12: los
- *  suspendidos participan — se los notifica y pueden presentarse).
+/** LA definición de la cohorte, en dos constantes: el Art. 9° bis convoca a los
+ *  socios ADHERENTES, y "vigente" incluye al suspendido (decisión 12: la
+ *  suspensión es disciplinaria y no exime del deber de re-empadronarse; se lo
+ *  notifica y puede presentarse).
  *
- *  Los dos estados vigentes se enumeran en vez de escribir `!== "withdrawn"`:
- *  si algún día aparece un estado nuevo en el enum, queda AFUERA de la cohorte
+ *  Están exportadas —y no escritas adentro de `isCohortMember`— para que la
+ *  CONSULTA que congela la cohorte al convocar (`reregistration/service.ts`) se
+ *  arme con estos mismos valores en vez de repetir el criterio a mano. Si los
+ *  dos se separan, la divergencia tiene una víctima concreta: un socio al que la
+ *  consulta convocó —le corre el plazo y le llegó el correo— recibiría
+ *  "no te encontramos" del wizard público, que filtra con `isCohortMember`. Es
+ *  la misma lección de `coverageFloor` en el Módulo 4: compartir la función, no
+ *  reimplementarla.
+ *
+ *  Los estados vigentes se ENUMERAN en vez de escribir `!== "withdrawn"`: si
+ *  algún día aparece un estado nuevo en el enum, queda AFUERA de la cohorte
  *  hasta que alguien decida a mano que entra. Convocar de más a un estado que
  *  nadie miró termina en una baja por no presentarse. */
+export const COHORT_CATEGORY = "adherent" satisfies MemberCategory;
+export const COHORT_STATUSES = ["active", "suspended"] as const satisfies readonly MemberStatus[];
+
+/** ¿Este socio pertenece a la cohorte del proceso? Único veredicto del criterio
+ *  de arriba: lo usan el wizard público (paso 1) y todo lo que tenga la ficha
+ *  del socio en la mano. Quien tenga que CONSULTAR la base usa las constantes. */
 export function isCohortMember(m: { category: MemberCategory; status: MemberStatus }): boolean {
-  return m.category === "adherent" && (m.status === "active" || m.status === "suspended");
+  return (
+    m.category === COHORT_CATEGORY &&
+    (COHORT_STATUSES as readonly MemberStatus[]).includes(m.status)
+  );
 }
 
 /** Paso 1 del wizard. El caller busca por DNI y pasa lo hallado (o null). */
