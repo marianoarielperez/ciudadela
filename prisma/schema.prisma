@@ -394,8 +394,15 @@ model Notification {
   // Aviso publicado en la CARTELERA de la sede (M6): la fila de `board_notices`
   // es el hecho institucional —qué se publicó, desde cuándo y hasta cuándo— y
   // ésta es la acreditación por socio de que quedó notificado por esa vía
-  // (Art. 5° quater). `SetNull` y no `Cascade`: si alguien borra el cartel, la
-  // acreditación del socio no se puede evaporar con él.
+  // (Art. 5° quater).
+  //
+  // `SetNull` y no `Cascade` salva la NOTIFICACIÓN, no la acreditación entera:
+  // borrado el cartel sobrevive la fila del envío pero se pierde CUÁL cartel lo
+  // respaldaba, y de esa fecha cuelga el cómputo del plazo de la instancia. Lo
+  // único que protegería la acreditación completa es `Restrict`; la spec fija
+  // `SetNull`, así que la garantía NO está en la clave foránea: hoy ninguna
+  // pantalla borra carteles, y la pantalla que alguna vez los borre tiene que
+  // bloquear el borrado de un cartel ya colgado por su cuenta.
   boardNoticeId  Int?               @map("board_notice_id")
   boardNotice    BoardNotice?       @relation(fields: [boardNoticeId], references: [id], onDelete: SetNull)
   type           NotificationType

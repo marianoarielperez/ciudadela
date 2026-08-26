@@ -19,6 +19,11 @@ export type PrunableMember = {
     mpSubscriptions: number;
     payments: number;
     fees: number;
+    /** Presentaciones de re-empadronamiento (M6). La FK es `Restrict`, así que
+     *  sin nombrarlas la poda no borra igual: revienta con un error crudo de la
+     *  base a mitad de la transacción, en vez del mensaje que el operador puede
+     *  resolver. */
+    presentations: number;
     /** Incluye la membresía del libro que se está podando. */
     memberships: number;
   };
@@ -58,6 +63,7 @@ export function pruneBlockReasons(member: PrunableMember): string[] {
   const c = member._count;
   if (member.user) reasons.push("tiene cuenta de acceso");
   if (c.applications > 0) reasons.push(`${c.applications} solicitud(es)`);
+  if (c.presentations > 0) reasons.push(`${c.presentations} presentación(es) de re-empadronamiento`);
   if (c.mpSubscriptions > 0) reasons.push(`${c.mpSubscriptions} suscripción(es) de Mercado Pago`);
   if (c.payments > 0) reasons.push(`${c.payments} pago(s)`);
   if (c.fees > 0) reasons.push(`${c.fees} cuota(s)`);

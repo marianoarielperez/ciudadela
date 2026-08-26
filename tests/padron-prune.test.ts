@@ -5,7 +5,7 @@ import { IMPORT_ADMISSION_DETAIL, pruneBlockReasons, type PrunableMember } from 
 // Es el único caso que `--prune` puede borrar.
 const importedOnly = (over: Partial<PrunableMember> = {}): PrunableMember => ({
   user: null,
-  _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1 },
+  _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 0 },
   movements: [{ type: "admission", detail: IMPORT_ADMISSION_DETAIL }],
   withdrawalReason: "arrears",
   reentryBlocked: false,
@@ -20,11 +20,11 @@ describe("pruneBlockReasons", () => {
   it("blocks on anything the system produced", () => {
     const cases: [Partial<PrunableMember>, RegExp][] = [
       [{ user: { id: 7 } }, /cuenta de acceso/],
-      [{ _count: { applications: 1, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1 } }, /solicitud/],
-      [{ _count: { applications: 0, mpSubscriptions: 1, payments: 0, fees: 0, memberships: 1 } }, /Mercado Pago/],
-      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 2, fees: 0, memberships: 1 } }, /2 pago/],
-      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1 } }, /21 cuota/],
-      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 2 } }, /1 libro/],
+      [{ _count: { applications: 1, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 0 } }, /solicitud/],
+      [{ _count: { applications: 0, mpSubscriptions: 1, payments: 0, fees: 0, memberships: 1, presentations: 0 } }, /Mercado Pago/],
+      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 2, fees: 0, memberships: 1, presentations: 0 } }, /2 pago/],
+      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1, presentations: 0 } }, /21 cuota/],
+      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 2, presentations: 0 } }, /1 libro/],
       [{ movements: [{ type: "withdrawal", detail: "Acta 12" }] }, /a mano/],
     ];
     for (const [over, re] of cases) {
@@ -32,6 +32,20 @@ describe("pruneBlockReasons", () => {
       expect(reasons).toHaveLength(1);
       expect(reasons[0]).toMatch(re);
     }
+  });
+
+  // Las presentaciones de re-empadronamiento (M6) son un referente más de la
+  // ficha y su FK es `Restrict`: sin nombrarlas acá la poda igual no borra, pero
+  // revienta con un error crudo de base a mitad de la transacción en vez del
+  // mensaje que el operador puede resolver.
+  it("blocks on re-registration presentations", () => {
+    const reasons = pruneBlockReasons(
+      importedOnly({
+        _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 1 },
+      }),
+    );
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toMatch(/presentación/i);
   });
 
   // REG-04 (Art. 5 inc. 2): el expulsado no reingresa jamás. Su ficha puede no
@@ -70,7 +84,7 @@ describe("pruneBlockReasons", () => {
       importedOnly({
         withdrawalReason: "expulsion",
         reentryBlocked: true,
-        _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1 },
+        _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1, presentations: 0 },
       }),
     );
     expect(reasons).toHaveLength(2);

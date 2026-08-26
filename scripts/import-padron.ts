@@ -557,7 +557,8 @@ async function main() {
           include: {
             _count: {
               select: {
-                applications: true, mpSubscriptions: true, payments: true, fees: true, memberships: true,
+                applications: true, mpSubscriptions: true, payments: true, fees: true,
+                presentations: true, memberships: true,
               },
             },
             movements: { select: { type: true, detail: true } },

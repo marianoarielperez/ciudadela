@@ -157,12 +157,34 @@ describe("createsNewMinute", () => {
 });
 
 describe("discardUnusedMinute", () => {
-  function makeDb(counts: { movements: number; books: number; applications?: number }) {
+  type Counts = {
+    movements: number;
+    books: number;
+    applications?: number;
+    /** Procesos de re-empadronamiento que usan el acta COMO CONVOCATORIA. */
+    callProcesses?: number;
+    /** Procesos que la usan COMO ACTA DE CIERRE (la relación opcional). */
+    closeProcesses?: number;
+    feeValues?: number;
+  };
+
+  function makeDb(counts: Counts, minuteId = 42) {
     const deleted: number[] = [];
     const db = {
       movement: { count: async () => counts.movements },
       book: { count: async () => counts.books },
       application: { count: async () => counts.applications ?? 0 },
+      // El fake mira el `where` en vez de devolver un número fijo: así una
+      // guarda que chequeara sólo `callMinuteId` fallaría el caso del acta de
+      // cierre en vez de pasar por casualidad.
+      reregistrationProcess: {
+        count: async ({ where }: { where: { OR: Record<string, number>[] } }) => {
+          const asksCall = where.OR.some((c) => c.callMinuteId === minuteId);
+          const asksClose = where.OR.some((c) => c.closeMinuteId === minuteId);
+          return (asksCall ? counts.callProcesses ?? 0 : 0) + (asksClose ? counts.closeProcesses ?? 0 : 0);
+        },
+      },
+      feeValue: { count: async () => counts.feeValues ?? 0 },
       minute: {
         delete: async ({ where }: { where: { id: number } }) => {
           deleted.push(where.id);
@@ -197,6 +219,31 @@ describe("discardUnusedMinute", () => {
   // la constancia en actas del rechazo en silencio (Art. 5 inc. 7).
   it("keeps a minute that already backs a decided application", async () => {
     const { db, deleted } = makeDb({ movements: 0, books: 0, applications: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  // El acta de convocatoria es OBLIGATORIA en el proceso: la base rechazaría el
+  // borrado y quedaría un acta fantasma con un error técnico encima.
+  it("keeps a minute that called a re-registration process", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, callProcesses: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  // El acta de CIERRE es opcional y su relación es `SetNull`: sin este chequeo
+  // el borrado sale bien y el proceso pierde, en silencio, la constancia del
+  // cierre del Libro N° 1 ante la IGJ. Es el mismo agujero que `Application`.
+  it("keeps a minute that closes a re-registration process", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, closeProcesses: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  // `FeeValue.minuteId` también es `SetNull`: borrar el acta dejaría al valor de
+  // cuota vigente sin la constancia de la decisión que lo fijó (REG-34).
+  it("keeps a minute that backs a fee value", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, feeValues: 1 });
     await discardUnusedMinute(db as never, 42);
     expect(deleted).toEqual([]);
   });
