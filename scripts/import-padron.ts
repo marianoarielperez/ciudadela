@@ -35,6 +35,7 @@ import { prisma } from "../src/lib/prisma";
 import { audit, auditStrict } from "../src/lib/audit";
 import { mapPadronRow, type RawPadronRow, updateDataForExisting } from "../src/lib/padron/mapping";
 import { MemberEmailConflictError, MemberEmailRequiredError, memberWriter } from "../src/lib/members/write";
+import { IMPORT_ADMISSION_DETAIL, pruneBlockReasons } from "../src/lib/padron/prune";
 
 const FILE = join(process.cwd(), "datos", "padron_socios.xlsx");
 const LOCK = join(process.cwd(), "datos", "~$padron_socios.xlsx");
@@ -229,11 +230,6 @@ const UPDATE_FLAG = "--update-existing";
 const PRUNE_FLAG = "--prune";
 const YES_FLAG = "--yes";
 const KNOWN_FLAGS = [UPDATE_FLAG, PRUNE_FLAG, YES_FLAG];
-
-// El detalle del movimiento de admisión que crea ESTE script. Es constante
-// porque la poda lo usa para reconocer un socio "solo importado": un socio con
-// cualquier otro movimiento tiene trabajo hecho a mano encima y no se borra.
-const IMPORT_ADMISSION_DETAIL = "import Libro 1 (acta física no digitalizada)";
 
 // Si el proceso muere en medio del loop, el reporte nunca se escribe: este contador
 // vive afuera para que el handler de error pueda decir hasta dónde llegó.
@@ -532,7 +528,13 @@ async function main() {
   // las constantes de arriba (que es lo que hay que hacer igual) y recién ahí
   // se poda.
   //
-  // Segundo, que el socio no tenga NADA colgando que haya producido el sistema.
+  // Segundo, que la ficha no lleve un bloqueo PERMANENTE de reingreso (REG-04:
+  // `reentryBlocked` o motivo de expulsión). Ese caso no depende de que el socio
+  // tenga datos colgando —un expulsado que entró por el import puede no tener
+  // ninguno— y borrarlo le devuelve el alta por la web: el porqué completo está
+  // en `src/lib/padron/prune.ts`.
+  //
+  // Tercero, que el socio no tenga NADA colgando que haya producido el sistema.
   // El esquema no protege: `fees` es Cascade (se borrarían las cuotas sin
   // decir nada), `payments`, `applications` y `mpSubscriptions` son SetNull (un
   // pago cobrado quedaría sin socio, y con él su recibo). Y la cuenta de acceso
@@ -565,29 +567,19 @@ async function main() {
       },
     });
 
+    // Qué le impide borrar UNA ficha lo decide `pruneBlockReasons`, que es pura
+    // y se prueba con una tabla de casos (no corriendo un borrado físico contra
+    // la base): acá sólo se arman las líneas del mensaje.
     const blocked = stale.flatMap((s) => {
-      const c = s.member._count;
-      const reasons: string[] = [];
-      if (s.member.user) reasons.push("tiene cuenta de acceso");
-      if (c.applications > 0) reasons.push(`${c.applications} solicitud(es)`);
-      if (c.mpSubscriptions > 0) reasons.push(`${c.mpSubscriptions} suscripción(es) de Mercado Pago`);
-      if (c.payments > 0) reasons.push(`${c.payments} pago(s)`);
-      if (c.fees > 0) reasons.push(`${c.fees} cuota(s)`);
-      // Membresía en otro libro: borrar al socio dejaría esa otra ficha rota (y
-      // la FK, que es Restrict, haría fallar el borrado a mitad de camino).
-      if (c.memberships > 1) reasons.push(`membresía en ${c.memberships - 1} libro(s) más`);
-      // Cualquier movimiento que no sea la admisión que escribió este import es
-      // trabajo hecho desde el panel (una baja asentada, un cambio de categoría).
-      const handMade = s.member.movements.filter(
-        (mv) => !(mv.type === "admission" && mv.detail === IMPORT_ADMISSION_DETAIL),
-      );
-      if (handMade.length > 0) reasons.push(`${handMade.length} movimiento(s) cargados a mano`);
+      const reasons = pruneBlockReasons(s.member);
       return reasons.length > 0 ? [`  socio ${s.memberNumber}: ${reasons.join(", ")}`] : [];
     });
     if (blocked.length > 0) {
       throw new PadronDataError(
         [
-          "No se puede podar: estos socios ya no están en el Excel pero tienen datos del sistema.",
+          // "tienen datos del sistema" ya no alcanza: un expulsado sin nada
+          // colgando se frena igual, y por una razón estatutaria.
+          "No se puede podar: estos socios ya no están en el Excel pero el sistema no los puede olvidar.",
           "No se borró a nadie. Resolvelos a mano desde el panel (o volvelos a poner en el Excel):",
           ...blocked,
         ].join("\n"),
