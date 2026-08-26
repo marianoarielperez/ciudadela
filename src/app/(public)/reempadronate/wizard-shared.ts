@@ -52,7 +52,11 @@ export type LookupState =
 
 export type SaveState = { error?: string; saved?: true };
 export type UploadState = { error?: string; uploaded?: { type: string; count: number } };
-export type SubmitState = { error?: string; done?: { submittedAt: string; mailed: boolean } };
+/** `submittedAt` es `string | null`: en el segundo envío se relee de la fila y
+ *  puede no haber marca. La pantalla NO inventa una fecha en ese caso — es la
+ *  constancia del plazo del Art. 9° bis, y una fecha falsa ahí es peor que
+ *  ninguna. */
+export type SubmitState = { error?: string; done?: { submittedAt: string | null; mailed: boolean } };
 export type ResendState = { error?: string; done?: boolean };
 
 /** Lo que el vecino tipea en el paso 2. Todo string porque es lo que viaja en

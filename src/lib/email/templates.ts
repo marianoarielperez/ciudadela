@@ -713,21 +713,64 @@ ${button(opts.url, "Ver mi re-empadronamiento")}
 /** La OBSERVACIÓN: la Comisión revisó la presentación y necesita una
  *  corrección (M6 §5.4, decisión 13 — las observaciones van siempre por email).
  *
- *  El texto de la observación lo escribe el operador y viaja tal cual: es lo
- *  único que le dice al vecino qué tiene que arreglar, y resumirlo o
- *  reformatearlo sería cambiarle el pedido. Va escapado en el HTML como todo lo
- *  que entra desde la base.
+ *  ES TAMBIÉN EL CORREO DEL REENVÍO DEL ENLACE cuando la presentación está
+ *  observada, y de ahí que sus dos parámetros de contenido sean opcionales.
+ *  Antes ese reenvío mandaba la CONSTANCIA, que a un observado le dice dos
+ *  cosas falsas —"la Comisión va a revisar lo que cargaste" y "si hay que
+ *  corregir algo te vamos a escribir"— y, peor, lo tranquiliza: lo manda a
+ *  esperar justo cuando lo que tiene que hacer es actuar antes de una fecha, y
+ *  de esa fecha cuelga su condición de socio.
+ *
+ *  `observation` — el pedido TEXTUAL del operador — viaja tal cual cuando está:
+ *  es lo único que le dice al vecino qué arreglar, y resumirlo o reformatearlo
+ *  sería cambiarle el pedido. Va escapado en el HTML como todo lo que entra
+ *  desde la base.
+ *
+ *  Y se OMITE a propósito en el reenvío. La nota ya viajó en el correo original
+ *  de la observación; repetirla acá la pondría en dos correos que pueden
+ *  divergir —el operador puede haberla editado en el medio— y el vecino no
+ *  tendría cómo saber cuál manda. Sin ella el correo dice lo que sí es cierto
+ *  siempre: que hay algo para corregir, que el detalle está en el correo de la
+ *  observación, por dónde entrar y hasta cuándo.
+ *
+ *  `deadline` es el último día del plazo que corre (`currentDeadline`), y es la
+ *  mitad accionable del mensaje: "cuanto antes" no es una fecha, y el vecino no
+ *  puede reconstruir un plazo estatutario por su cuenta. Es opcional porque
+ *  puede no haber plazo corriendo (proceso fuera de sus dos instancias): en ese
+ *  caso el correo no inventa uno.
  *
  *  Dice que el plazo SIGUE CORRIENDO porque es verdad y porque callarlo sería
  *  la diferencia entre subsanar a tiempo y una baja: mientras la presentación
- *  no esté validada, el Art. 9° bis cuenta igual. */
-export function presentationObservedEmail(opts: { url: string; observation: string }): Rendered {
+ *  no esté validada, el Art. 9° bis cuenta igual. Y el orden es el mismo que el
+ *  del aviso de la 2ª instancia: primero qué hacer y para cuándo, después la
+ *  consecuencia — del otro lado hay un vecino, no una contraparte. */
+export function presentationObservedEmail(opts: {
+  url: string;
+  observation?: string | null;
+  deadline?: Date | null;
+}): Rendered {
   const title = "Tenemos que pedirte una corrección";
+  const until = opts.deadline ? formatDateAR(opts.deadline) : null;
+  // El plazo primero, y con fecha si la hay: es lo único de este correo que el
+  // vecino no puede averiguar solo.
+  const deadlineText = until
+    ? `Tenés tiempo hasta el ${until} inclusive: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.`
+    : "Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.";
+  const deadlineHtml = until
+    ? `<p>Tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`
+    : `<p>Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`;
+  const opening = opts.observation
+    ? `Revisamos tu re-empadronamiento en la ${ORG} y necesitamos que corrijas lo siguiente:
+
+${opts.observation}`
+    : `Revisamos tu re-empadronamiento en la ${ORG} y te pedimos que corrijas algo. El detalle de qué es te lo mandamos por correo cuando lo revisamos.`;
+  const openingHtml = opts.observation
+    ? `<p>Revisamos tu re-empadronamiento en la ${esc(ORG)} y necesitamos que corrijas lo siguiente:</p>
+<p style="border-left:3px solid #0079BC;padding-left:12px;margin:16px 0">${esc(opts.observation)}</p>`
+    : `<p>Revisamos tu re-empadronamiento en la ${esc(ORG)} y te pedimos que corrijas algo. El detalle de qué es te lo mandamos por correo cuando lo revisamos.</p>`;
   return {
     subject: `${title} en tu re-empadronamiento — Vecinal Ciudadela`,
-    text: `Revisamos tu re-empadronamiento en la ${ORG} y necesitamos que corrijas lo siguiente:
-
-${opts.observation}
+    text: `${opening}
 
 Entrá por este enlace, corregilo y volvé a enviarlo:
 
@@ -735,11 +778,10 @@ ${opts.url}
 
 Vas a encontrar tus datos como los cargaste: sólo tenés que cambiar lo que te pedimos.
 
-Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.${SIGNATURE}`,
-    html: layout(title, `<p>Revisamos tu re-empadronamiento en la ${esc(ORG)} y necesitamos que corrijas lo siguiente:</p>
-<p style="border-left:3px solid #0079BC;padding-left:12px;margin:16px 0">${esc(opts.observation)}</p>
+${deadlineText}${SIGNATURE}`,
+    html: layout(title, `${openingHtml}
 ${button(opts.url, "Corregir mi re-empadronamiento")}
 <p>Vas a encontrar tus datos como los cargaste: sólo tenés que cambiar lo que te pedimos.</p>
-<p>Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`),
+${deadlineHtml}`),
   };
 }

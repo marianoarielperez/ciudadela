@@ -408,13 +408,24 @@ function ConfirmIdentity({
  *
  *  Cuando el correo NO salió, lo dice. Mentirle "te lo mandamos" a quien tipeó
  *  mal la dirección lo dejaría esperando un enlace que no existe, y ese enlace
- *  es su única forma de volver a ver la presentación. */
+ *  es su única forma de volver a ver la presentación.
+ *
+ *  Y cuando NO hay fecha (`submittedAt === null`), la pantalla se calla la
+ *  frase del plazo en vez de imprimir una fecha inventada. Antes el server
+ *  tapaba ese hueco con `new Date(0)` y acá salía **01/01/1970**, presentado
+ *  con todas las letras como "la prueba de que te presentaste dentro del
+ *  plazo": una fecha falsa en un documento que el socio puede llegar a esgrimir
+ *  ante la Comisión. El caso sigue siendo teórico —sólo escriben la marca este
+ *  envío y la carga presencial—, y justamente por eso no vale la pena
+ *  sostenerlo con una mentira: si alguna vez ocurre, decir menos es correcto y
+ *  decir 1970 no lo es nunca. Lo que la pantalla afirma igual, porque es
+ *  verdad, es que el re-empadronamiento quedó registrado. */
 function ReceiptPanel({
   submittedAt,
   mailed,
   email,
 }: {
-  submittedAt: string;
+  submittedAt: string | null;
   mailed: boolean;
   email: string;
 }) {
@@ -434,8 +445,9 @@ function ReceiptPanel({
       </h1>
       <FormMessage kind="success" box className="mt-5">
         <span className="block">
-          Quedó registrado el {formatDateTimeAR(new Date(submittedAt))}. Esa fecha es la constancia
-          de que te presentaste dentro del plazo.
+          {submittedAt
+            ? `Quedó registrado el ${formatDateTimeAR(new Date(submittedAt))}. Esa fecha es la constancia de que te presentaste dentro del plazo.`
+            : "Tu re-empadronamiento quedó registrado."}
         </span>
         <span className="mt-2 block">
           {mailed

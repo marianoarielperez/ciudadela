@@ -252,6 +252,32 @@ export function canPrepareClose(
   return hasExpired(p.secondEndsAt, now);
 }
 
+/** El último día del plazo QUE CORRE AHORA, o `null` si el proceso no está en
+ *  ninguna de sus dos instancias.
+ *
+ *  Para qué: lo que el vecino necesita saber cuando le pedimos que corrija algo
+ *  no es cuándo empezó el trámite sino hasta cuándo tiene. Decirle "hacelo
+ *  cuanto antes" y nada más lo deja calculando un plazo estatutario que él no
+ *  puede reconstruir — y del vencimiento de ese plazo cuelga su baja.
+ *
+ *  Vive acá, con los otros plazos, y no en el llamador de turno: la 1ª y la 2ª
+ *  instancia tienen columnas distintas, y "cuál de las dos manda" es
+ *  exactamente la clase de decisión que copiada en dos pantallas termina
+ *  citándole al vecino la fecha de la instancia equivocada.
+ *
+ *  `preparing`, `closing` y `closed` devuelven `null` y no una fecha vieja: en
+ *  esos estados no hay plazo corriendo, y afirmar uno sería peor que callarlo.
+ *  Es la misma lista que decide `wizardOpen`, escrita con `wizardOpen` para que
+ *  no puedan divergir. */
+export function currentDeadline(p: {
+  status: ReregistrationStatus;
+  firstEndsAt: Date;
+  secondEndsAt: Date | null;
+}): Date | null {
+  if (!wizardOpen(p)) return null;
+  return p.status === "second_instance" ? p.secondEndsAt : p.firstEndsAt;
+}
+
 /** El wizard público sólo abre durante las dos instancias. Sin proceso vivo no
  *  hay nada que re-empadronar: `preparing` es antes del primer aviso y
  *  `closing`/`closed` ya no admiten presentaciones. */

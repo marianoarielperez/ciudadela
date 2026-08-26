@@ -29,9 +29,17 @@ import { wizardOpen } from "./rules";
 type Db = Pick<PrismaClient, "configuration" | "reregistrationProcess">;
 
 /** Lo mínimo que el wizard necesita saber del proceso. El id es lo que ata la
- *  presentación; el estado es lo que decide si sigue abierto. NO viaja nada del
- *  padrón: esto termina en una pantalla anónima. */
-export type WizardProcess = { id: number; status: ReregistrationStatus };
+ *  presentación; el estado es lo que decide si sigue abierto; los dos plazos
+ *  son lo que le decimos al vecino cuando le pedimos que corrija algo — cuál de
+ *  los dos corre lo resuelve `currentDeadline` y no cada llamador. NO viaja
+ *  nada del padrón: esto termina en una pantalla anónima, y las fechas del
+ *  proceso son públicas (van también a la cartelera). */
+export type WizardProcess = {
+  id: number;
+  status: ReregistrationStatus;
+  firstEndsAt: Date;
+  secondEndsAt: Date | null;
+};
 
 /** El proceso que el wizard público tiene que atender, o `null` si no hay
  *  ninguno abierto (sin clave, con una clave que no apunta a nada, o con el
@@ -57,7 +65,7 @@ export async function openWizardProcess(db: Db): Promise<WizardProcess | null> {
 
   const process = await db.reregistrationProcess.findUnique({
     where: { id },
-    select: { id: true, status: true },
+    select: { id: true, status: true, firstEndsAt: true, secondEndsAt: true },
   });
   // `wizardOpen` es el ÚNICO lugar donde se decide qué estados admiten
   // presentaciones (vive en `rules.ts`, con los plazos). Acá no se vuelve a

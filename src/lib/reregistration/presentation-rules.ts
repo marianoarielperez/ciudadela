@@ -122,6 +122,14 @@ export function presentationDocsComplete(docs: Array<{ type: DocumentType }>): O
  *  documentos, y misma razón de ser: la usa el paso 4 para habilitar el envío y
  *  el server para aceptarlo.
  *
+ *  Están TODOS los campos que el trámite exige, y el orden es el del paso 2:
+ *  el barrio se agregó después porque faltaba. Mientras el único camino de
+ *  escritura fue el wizard, el olvido era inofensivo —`dataSchema` lo pide con
+ *  `min(1)` y rechaza antes—, pero esta función es la regla COMPARTIDA y la
+ *  carga presencial del operador la reusa sin pasar por ese schema: ahí una
+ *  presentación sin barrio se colaba hasta la ficha del socio. Un test recorre
+ *  `PresentationData` entero para que el próximo campo nuevo no se olvide.
+ *
  *  El email es OBLIGATORIO por decisión del operador (decisión 4): el
  *  re-empadronamiento constituye el domicilio electrónico del Art. 5° ter, que
  *  es la vía por la que la asociación notifica. Sin él, la observación y la
@@ -133,6 +141,7 @@ export function presentationDataComplete(data: PresentationData): Ok | Err {
   if (!data.occupation) return { ok: false, error: "Falta tu ocupación." };
   if (!data.streetId && !data.streetText) return { ok: false, error: "Falta tu calle." };
   if (!data.streetNumber) return { ok: false, error: "Falta la altura de tu domicilio." };
+  if (!data.neighborhood) return { ok: false, error: "Falta tu barrio." };
   if (!data.phone) return { ok: false, error: "Falta tu teléfono." };
   if (!data.email) return { ok: false, error: "Falta tu email." };
   return { ok: true };

@@ -159,6 +159,35 @@ describe("presentationDataComplete", () => {
   it("rechaza sin fecha de nacimiento", () => {
     expect(presentationDataComplete({ ...DATA, birthDate: null }).ok).toBe(false);
   });
+
+  // El barrio es obligatorio en el formulario del paso 2 (`dataSchema` lo pide
+  // con `min(1)`) y tiene su propia columna. Que la regla COMPARTIDA no lo
+  // mirara era inofensivo mientras el único camino de escritura fuera el
+  // wizard —zod lo rechazaba antes—, pero esta función está vendida como LA
+  // regla de completitud y la carga presencial del operador la va a reusar sin
+  // pasar por ese schema: ahí sí entraría una presentación sin barrio.
+  it("rechaza sin barrio", () => {
+    const r = presentationDataComplete({ ...DATA, neighborhood: null });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/barrio/i);
+  });
+
+  // La red que impide que se vuelva a olvidar un campo: TODO campo declarado
+  // que el trámite exige tiene que hacer fallar a la función si falta. Se
+  // enumeran los opcionales en vez de los obligatorios para que un campo NUEVO
+  // en `PresentationData` nazca exigido y haya que decidir a mano que no lo es.
+  //
+  //   - `streetText` es la calle LIBRE: sólo se usa cuando no hay `streetId`,
+  //     y la pareja ya está cubierta por el caso de "sin domicilio";
+  //   - `streetId` idem, por el otro lado de la misma pareja.
+  it("exige todos los campos del trámite, no sólo algunos", () => {
+    const optional = new Set<keyof PresentationData>(["streetId", "streetText"]);
+    for (const field of Object.keys(DATA) as Array<keyof PresentationData>) {
+      if (optional.has(field)) continue;
+      const r = presentationDataComplete({ ...DATA, [field]: null });
+      expect(r.ok, `falta el chequeo de "${field}"`).toBe(false);
+    }
+  });
 });
 
 describe("claim", () => {
@@ -309,6 +338,21 @@ describe("submit", () => {
     expect(sent.ok).toBe(true);
     if (sent.ok) expect(sent.firstSubmission).toBe(false);
     expect(db.rows[0].status).toBe("validated");
+  });
+
+  // La constancia es un papel que el socio puede llegar a esgrimir: si la fila
+  // llegara SIN marca de tiempo, el envío no puede inventarle una. Antes esta
+  // rama devolvía `new Date(0)` "porque el caso no puede ocurrir" y la pantalla
+  // imprimía 01/01/1970 como prueba del plazo del Art. 9° bis.
+  it("una fila ya presentada SIN marca de tiempo devuelve null, no el epoch", async () => {
+    const { db, p, raw } = await ready();
+    Object.assign(db.rows[0], { status: "submitted", submittedAt: null });
+    const sent = await p.submit({ token: raw, now: NOW });
+    expect(sent.ok).toBe(true);
+    if (sent.ok) {
+      expect(sent.firstSubmission).toBe(false);
+      expect(sent.submittedAt).toBeNull();
+    }
   });
 
   it("una observada se subsana y vuelve a submitted", async () => {

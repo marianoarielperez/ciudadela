@@ -27,13 +27,13 @@ import { audit } from "@/lib/audit";
 import { parseCivilDate } from "@/lib/dates";
 import { documentStore, MAX_DOCUMENT_BYTES } from "@/lib/documents/storage";
 import { mailer } from "@/lib/email";
-import { presentationReceivedEmail } from "@/lib/email/templates";
+import { presentationObservedEmail, presentationReceivedEmail } from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
 import { prisma } from "@/lib/prisma";
 import { openWizardProcess } from "@/lib/reregistration/current";
 import { civilTodayAr } from "@/lib/applications/wizard";
 import { presentations, PRESENTATION_MAX_ANNEXES } from "@/lib/reregistration/presentation";
-import { lookupVerdict } from "@/lib/reregistration/rules";
+import { currentDeadline, lookupVerdict } from "@/lib/reregistration/rules";
 import { verifyTurnstile } from "@/lib/turnstile";
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
@@ -228,7 +228,11 @@ const LINK_DEAD =
 
 type SaveState = { error?: string; saved?: true };
 type UploadState = { error?: string; uploaded?: { type: string; count: number } };
-type SubmitState = { error?: string; done?: { submittedAt: string; mailed: boolean } };
+// `submittedAt` puede ser `null` y la pantalla tiene que bancárselo: ver el
+// comentario de `SubmitResult` en `presentation.ts`. En corto: antes ese hueco
+// se tapaba con `new Date(0)` y la constancia le imprimía 01/01/1970 al vecino
+// como prueba del plazo del Art. 9° bis.
+type SubmitState = { error?: string; done?: { submittedAt: string | null; mailed: boolean } };
 type ResendState = { error?: string; done?: boolean };
 
 // Respuesta única del reenvío: la misma exista o no la presentación.
@@ -465,7 +469,7 @@ export async function submitPresentationAction(
   // constancia ni se rota la llave. Rotarla mataría el enlace que el vecino ya
   // tiene en el buzón sin darle nada a cambio.
   if (!sent.firstSubmission) {
-    return { done: { submittedAt: sent.submittedAt.toISOString(), mailed: false } };
+    return { done: { submittedAt: sent.submittedAt?.toISOString() ?? null, mailed: false } };
   }
 
   let mailed = false;
@@ -553,9 +557,22 @@ export async function resendPresentationLinkAction(
 
 /** Todo lo que toca la presentación corre acá, después de responder. Nada de lo
  *  que pase adentro puede cambiar lo que ve el visitante: ni el resultado, ni
- *  el tiempo. Los errores se registran y se comen. */
+ *  el tiempo. Los errores se registran y se comen.
+ *
+ *  EL TEXTO DEPENDE DEL ESTADO REAL, y eso no es cosmética. A un socio
+ *  OBSERVADO —al que la Comisión ya revisó y ya le pidió corregir algo— la
+ *  constancia le dice que "la Comisión va a revisar lo que cargaste" y que "si
+ *  hay que corregir algo te vamos a escribir": las dos frases son falsas para
+ *  él y las dos lo mandan a esperar, justo cuando lo que le corre es el plazo
+ *  para subsanar. Si no actúa, pierde la condición de socio. */
 async function deliverPresentationLink(dni: string): Promise<void> {
-  let target: { id: number; memberId: number; email: string; submittedAt: Date } | null = null;
+  let target: {
+    id: number;
+    memberId: number;
+    email: string;
+    submittedAt: Date;
+    observed: boolean;
+  } | null = null;
   try {
     const process = await openWizardProcess(prisma);
     if (process === null) return;
@@ -570,25 +587,48 @@ async function deliverPresentationLink(dni: string): Promise<void> {
         email: { not: null },
         submittedAt: { not: null },
       },
-      select: { id: true, memberId: true, email: true, submittedAt: true },
+      select: { id: true, memberId: true, email: true, submittedAt: true, status: true },
     });
     if (!row?.email || !row.submittedAt) return;
-    target = { id: row.id, memberId: row.memberId, email: row.email, submittedAt: row.submittedAt };
+    target = {
+      id: row.id,
+      memberId: row.memberId,
+      email: row.email,
+      submittedAt: row.submittedAt,
+      observed: row.status === "observed",
+    };
 
+    // El observado recibe el correo de la OBSERVACIÓN, sin la nota del
+    // operador: ésa ya viajó en el correo original y repetirla acá la pondría
+    // en dos lugares que pueden divergir (el operador puede haberla editado en
+    // el medio). Lo que sí lleva es la fecha límite, que es la mitad
+    // accionable. Los otros dos estados —`submitted` y `validated`— siguen
+    // recibiendo la constancia, que para ellos es verdadera.
+    //
     // Acuñar → ENVIAR → persistir. Al revés, un rebote le mata al vecino el
     // enlace que ya tenía y no le deja ninguno: es el error que ASOCIATE pagó y
     // documentó, y el caso más probable no es el SMTP caído sino la dirección
-    // mal tipeada, que Brevo va a rechazar SIEMPRE.
+    // mal tipeada, que Brevo va a rechazar SIEMPRE. `commitResumeToken` queda
+    // DESPUÉS del `await` del envío a propósito: si el envío tira, esta línea
+    // no corre y la llave vieja sigue abriendo.
     const { raw, hash } = presentations.mintResumeToken();
     await mailer.sendToMember({
       memberId: target.memberId,
       to: target.email,
-      type: "presentation_received",
-      message: presentationReceivedEmail({
-        url: resumeUrl(raw),
-        submittedAt: target.submittedAt,
-      }),
-      summary: "reenvío del enlace del re-empadronamiento",
+      type: target.observed ? "presentation_observed" : "presentation_received",
+      message: target.observed
+        ? presentationObservedEmail({
+            url: resumeUrl(raw),
+            // Sin `observation`: no se duplica la nota del operador.
+            deadline: currentDeadline(process),
+          })
+        : presentationReceivedEmail({
+            url: resumeUrl(raw),
+            submittedAt: target.submittedAt,
+          }),
+      summary: target.observed
+        ? "reenvío del enlace para corregir el re-empadronamiento"
+        : "reenvío del enlace del re-empadronamiento",
     });
     await presentations.commitResumeToken(target.id, hash);
   } catch (e) {

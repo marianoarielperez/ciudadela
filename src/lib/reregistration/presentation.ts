@@ -50,18 +50,35 @@ type Err = { ok: false; error: string };
 
 type Db = Pick<PrismaClient, "presentation" | "document">;
 
+type SubmitOk = {
+  ok: true;
+  presentationId: number;
+  memberId: number;
+  email: string;
+};
+
+/** El resultado del envío, DISCRIMINADO por `firstSubmission`.
+ *
+ *  Son dos formas y no una con un booleano al lado porque `submittedAt` no vale
+ *  lo mismo en las dos:
+ *
+ *   - en el PRIMER envío lo acaba de escribir este método, así que es una fecha
+ *     y el tipo lo dice — es lo que deja mandar la constancia sin un `??` que
+ *     invente nada;
+ *   - en el segundo (doble clic, reintento del navegador, o una presentación
+ *     que la Comisión ya validó) se RELEE de la fila, y una fila sin marca es
+ *     `null`. Antes esa rama devolvía `new Date(0)` "porque el caso no puede
+ *     ocurrir", y el resultado era que la pantalla de constancia le imprimía al
+ *     vecino **01/01/1970** presentado como la prueba de que se presentó dentro
+ *     del plazo del Art. 9° bis. Una fecha inventada en un papel que el socio
+ *     puede llegar a esgrimir es peor que ninguna: `null` viaja hasta la
+ *     pantalla, que en ese caso simplemente no afirma nada sobre el plazo.
+ *
+ *  `firstSubmission` lo usa el caller para no mandar una segunda constancia ni
+ *  rotar la llave de nuevo. */
 type SubmitResult =
-  | {
-      ok: true;
-      presentationId: number;
-      memberId: number;
-      email: string;
-      submittedAt: Date;
-      /** `false` cuando la presentación YA estaba enviada (doble clic, reintento
-       *  del navegador, o la Comisión ya la validó). El caller lo usa para no
-       *  mandar una segunda constancia ni rotar la llave de nuevo. */
-      firstSubmission: boolean;
-    }
+  | (SubmitOk & { firstSubmission: true; submittedAt: Date })
+  | (SubmitOk & { firstSubmission: false; submittedAt: Date | null })
   | Err;
 
 export function makePresentations(db: Db) {
@@ -187,9 +204,12 @@ export function makePresentations(db: Db) {
           presentationId: row.id,
           memberId: row.memberId,
           email: row.email ?? "",
-          // `submittedAt` no puede ser null en estos estados: sólo lo escribe
-          // este método (y la carga presencial). El fallback existe por el tipo.
-          submittedAt: row.submittedAt ?? new Date(0),
+          // Se devuelve TAL CUAL, `null` incluido. En estos estados debería
+          // haber siempre una marca —sólo la escriben este método y la carga
+          // presencial—, pero "debería" no alcanza para emitir una fecha: si la
+          // fila llegara sin ella, inventar una sería fabricarle al vecino una
+          // constancia falsa del plazo del Art. 9° bis.
+          submittedAt: row.submittedAt,
           firstSubmission: false,
         };
       }
@@ -227,7 +247,7 @@ export function makePresentations(db: Db) {
           presentationId: row.id,
           memberId: row.memberId,
           email: row.email ?? "",
-          submittedAt: fresh?.submittedAt ?? submittedAt,
+          submittedAt: fresh?.submittedAt ?? null,
           firstSubmission: false,
         };
       }

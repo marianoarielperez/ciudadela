@@ -448,6 +448,38 @@ describe("templates", () => {
     }
   });
 
+  // La MISMA plantilla es la del reenvío del enlace cuando la presentación está
+  // observada, y ahí va SIN la nota del operador: ésa ya viajó en el correo
+  // original, y repetirla en dos correos que pueden divergir deja al vecino sin
+  // saber cuál manda. Lo que no puede faltar nunca es lo accionable: que hay
+  // algo para corregir, por dónde entrar y hasta cuándo.
+  it("sin la nota del operador dice igual qué hacer, y con fecha límite", () => {
+    const m = presentationObservedEmail({
+      url: "https://x/reempadronate/retomar/tok",
+      deadline: EXPIRES,
+    });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("corrijas");
+      expect(body).toContain("https://x/reempadronate/retomar/tok");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("sigue corriendo");
+      // Y nada de lo que dice la CONSTANCIA: a quien ya se le revisó y ya se le
+      // pidió corregir, "la Comisión va a revisar lo que cargaste" lo manda a
+      // esperar cuando tiene que actuar.
+      expect(body).not.toContain("va a revisar lo que cargaste");
+    }
+  });
+
+  // Sin plazo corriendo no se inventa uno: el correo cae al "cuanto antes".
+  it("sin fecha límite no imprime ninguna", () => {
+    const m = presentationObservedEmail({ url: "https://x/t" });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Hacelo cuanto antes");
+      expect(body).not.toMatch(/hasta el \d{2}\/\d{2}\/\d{4}/);
+    }
+  });
+
   it("las plantillas del re-empadronamiento escapan la url en el html", () => {
     const url = "https://x/reempadronate?a=1&b=2";
     for (const m of [
