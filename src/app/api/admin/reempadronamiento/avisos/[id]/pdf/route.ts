@@ -27,7 +27,7 @@ import { headers } from "next/headers";
 
 import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { boardNotices } from "@/lib/board/notice";
+import { boardNotices, NOTICE_AUDIT_ENTITY, PDF_AUDIT_ACTION } from "@/lib/board/notice";
 import { renderBoardNoticePdf } from "@/lib/board/notice-pdf";
 import { siteBaseUrl } from "@/lib/site";
 
@@ -73,8 +73,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
   await audit({
     userId: actor.actorId,
-    action: "board_notice_pdf",
-    entity: "board_notice",
+    action: PDF_AUDIT_ACTION,
+    entity: NOTICE_AUDIT_ENTITY,
     entityId: notice.id,
     // Ids, códigos y conteos. Ningún nombre: el asiento no puede ser una copia
     // del cartel (Ley 25.326).

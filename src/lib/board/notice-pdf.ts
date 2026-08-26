@@ -68,8 +68,47 @@ const BOTTOM = MARGIN + FOOTER_RESERVE;
 // U+00A0–U+00FF): cubre el castellano entero —tildes, ñ, ü, ¿, °— y lo que
 // quede afuera se reemplaza para que un nombre raro del padrón no tire el
 // cartel de cien personas.
+//
+// Antes del reemplazo se TRANSLITERA la tipografía de imprenta, y eso NO es un
+// lujo: los textos de este módulo están escritos con rayas de diálogo y comillas
+// tipográficas como todo el proyecto, y el reemplazo crudo las convertía en
+// signos de pregunta. Se vio en el cartel real: "que se nominan al pie
+// ?inscriptos en el Libro de Socios N° 1? a RATIFICAR…". En una pared pública
+// eso no se puede colgar.
+const TYPOGRAPHIC: Array<[RegExp, string]> = [
+  [/[—–]/g, "-"],
+  [/[“”]/g, '"'],
+  [/[‘’]/g, "'"],
+  [/…/g, "..."],
+  [/ /g, " "],
+];
+
 function safe(s: string): string {
-  return s.replace(/[^ -~ -ÿ]/g, "?");
+  let out = s;
+  for (const [pattern, replacement] of TYPOGRAPHIC) out = out.replace(pattern, replacement);
+  return out.replace(/[^ -~ -ÿ]/g, "?");
+}
+
+/** El nombre de un socio en UNA sola línea, que es lo que hace legible una
+ *  columna de cincuenta renglones.
+ *
+ *  El corte de línea automático de pdf-lib no sirve acá: dibuja el segundo
+ *  renglón por debajo, encima de la fila siguiente, y la nómina queda pisada.
+ *  Se vio en el cartel real con un nombre de cuarenta caracteres.
+ *
+ *  El nombre completo es lo que le permite al socio reconocerse en la pared, así
+ *  que primero se achica la letra (hasta 7 pt) y recién si con eso no entra se
+ *  recorta. Hoy el padrón tiene 29 caracteres en su nombre más largo y en la
+ *  columna entran unos 52 a 9 pt, así que el recorte es la red y no el camino. */
+function fitName(name: string, font: PDFFont, maxWidth: number): { text: string; size: number } {
+  for (const size of [9, 8, 7]) {
+    if (font.widthOfTextAtSize(name, size) <= maxWidth) return { text: name, size };
+  }
+  let text = name;
+  while (text.length > 1 && font.widthOfTextAtSize(text + "...", 7) > maxWidth) {
+    text = text.slice(0, -1);
+  }
+  return { text: text + "...", size: 7 };
 }
 
 /** Corta un texto en renglones que entran en `maxWidth`. pdf-lib sabe cortar
@@ -94,7 +133,7 @@ function wrap(text: string, font: PDFFont, size: number, maxWidth: number): stri
 
 const TITLES: Record<NoticeSubject, string> = {
   first_instance: "CONVOCATORIA A RE-EMPADRONAMIENTO",
-  second_instance: "SEGUNDA INSTANCIA — BAJO APERCIBIMIENTO DE BAJA",
+  second_instance: "SEGUNDA INSTANCIA, BAJO APERCIBIMIENTO DE BAJA",
   withdrawal: "BAJAS DECLARADAS",
 };
 
@@ -121,7 +160,7 @@ function bodyParagraphs(data: BoardNoticePdfData): string[] {
     case "first_instance":
       return [
         `La Comisión Directiva de la ${SITE.name} convoca a los señores socios adherentes que se ` +
-          `nominan al pie —inscriptos en el Libro de Socios N° ${data.bookNumber}— a RATIFICAR SU ` +
+          `nominan al pie (inscriptos en el Libro de Socios N° ${data.bookNumber}) a RATIFICAR SU ` +
           `CONDICIÓN DE SOCIO (re-empadronamiento del Art. 9° bis del Estatuto), dentro de los ` +
           `treinta (30) días corridos contados desde la convocatoria del ` +
           `${formatDateAR(data.calledAt)}, plazo que vence el ${formatDateAR(data.firstEndsAt)}.`,
@@ -133,7 +172,7 @@ function bodyParagraphs(data: BoardNoticePdfData): string[] {
     case "second_instance":
       return [
         `La Comisión Directiva de la ${SITE.name} hace saber a los señores socios adherentes que se ` +
-          `nominan al pie —inscriptos en el Libro de Socios N° ${data.bookNumber}— que, vencido el ` +
+          `nominan al pie (inscriptos en el Libro de Socios N° ${data.bookNumber}) que, vencido el ` +
           `plazo de la primera instancia del re-empadronamiento del Art. 9° bis del Estatuto, se les ` +
           `otorga un plazo final de diez (10) días corridos, que vence el ` +
           `${formatDateAR(data.secondEndsAt ?? data.firstEndsAt)}, para RATIFICAR SU CONDICIÓN DE ` +
@@ -145,8 +184,8 @@ function bodyParagraphs(data: BoardNoticePdfData): string[] {
     case "withdrawal":
       return [
         `La Comisión Directiva de la ${SITE.name} hace saber que ha DECLARADO LA BAJA del registro ` +
-          `de socios de las personas que se nominan al pie —inscriptas en el Libro de Socios ` +
-          `N° ${data.bookNumber}—, por no haber ratificado su condición de socio en el proceso de ` +
+          `de socios de las personas que se nominan al pie (inscriptas en el Libro de Socios ` +
+          `N° ${data.bookNumber}), por no haber ratificado su condición de socio en el proceso de ` +
           `re-empadronamiento del Art. 9° bis del Estatuto.`,
         "Contra esta decisión puede interponerse recurso ante la primera Asamblea que se celebre, " +
           "dentro de los treinta (30) días corridos contados desde la notificación fehaciente " +
@@ -224,7 +263,7 @@ export async function renderBoardNoticePdf(data: BoardNoticePdfData): Promise<Ui
   if (data.kind === "other") {
     // El aviso complementario dice de qué es complemento: si no, el vecino que
     // ve dos carteles casi iguales no sabe cuál lo alcanza.
-    page.drawText(safe("Aviso complementario — mismo aviso, socios incorporados con posterioridad"), {
+    page.drawText(safe("Aviso complementario: mismo aviso, para socios incorporados con posterioridad"), {
       x: MARGIN, y, size: 9, font, color: MUTED,
     });
     y -= 16;
@@ -287,11 +326,8 @@ export async function renderBoardNoticePdf(data: BoardNoticePdfData): Promise<Ui
       const label = r.memberNumber === null ? "  —" : String(r.memberNumber).padStart(3, " ");
       page.drawText(safe(label), { x, y: rowY, size: 9, font: mono, color: MUTED });
       const nameX = x + mono.widthOfTextAtSize("0000 ", 9);
-      // Un nombre larguísimo se recorta a la columna en vez de invadir la otra.
-      page.drawText(safe(r.fullName), {
-        x: nameX, y: rowY, size: 9, font, color: INK,
-        maxWidth: COLUMN_WIDTH - (nameX - x), lineHeight: ROW_HEIGHT,
-      });
+      const name = fitName(safe(r.fullName), font, COLUMN_WIDTH - (nameX - x));
+      page.drawText(name.text, { x: nameX, y: rowY, size: name.size, font, color: INK });
     }
     index += drawn;
     // La columna izquierda es la más larga: es la que dice hasta dónde bajó

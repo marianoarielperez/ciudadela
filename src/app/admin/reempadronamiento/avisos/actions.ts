@@ -21,7 +21,9 @@ import { z } from "zod";
 
 import { audit } from "@/lib/audit";
 import { requireAdmin, requireSuperadmin } from "@/lib/auth/require-admin";
-import { boardNotices } from "@/lib/board/notice";
+import {
+  boardNotices, NOTICE_AUDIT_ENTITY, OTHER_AUDIT_ACTION, POST_AUDIT_ACTION,
+} from "@/lib/board/notice";
 import { parseCivilDate } from "@/lib/dates";
 import { formatDateAR } from "@/lib/format";
 import { parseForm } from "@/lib/forms";
@@ -30,10 +32,6 @@ import { civilDayOf } from "@/lib/treasury/periods";
 
 export type PostNoticeState = { error?: string; ok?: string };
 export type AddToBoardState = { error?: string; ok?: string };
-
-export const POST_AUDIT_ACTION = "board_notice_post";
-export const OTHER_AUDIT_ACTION = "board_notice_other";
-export const NOTICE_AUDIT_ENTITY = "board_notice";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 

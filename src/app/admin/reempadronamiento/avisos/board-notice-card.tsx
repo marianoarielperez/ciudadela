@@ -111,10 +111,17 @@ export function BoardNoticeCard({ notice, todayIso, canPost, coverageWarning }: 
           <form
             action={formAction}
             onSubmit={(e) => {
-              const value = new FormData(e.currentTarget).get("postedAt");
+              // El input entrega "AAAA-MM-DD" y la UI del proyecto es es-AR: el
+              // diálogo tiene que decir la fecha como la lee el operador. Se da
+              // vuelta el string y no se construye un `Date`, que en el
+              // navegador interpretaría el ISO como UTC y podría mostrar el día
+              // anterior.
+              const iso = String(new FormData(e.currentTarget).get("postedAt") ?? "");
+              const [y, m, d] = iso.split("-");
+              const shown = d ? `${d}/${m}/${y}` : iso;
               if (
                 !window.confirm(
-                  `¿Asentar que este aviso se fijó el ${String(value)}? La fecha se registra una sola ` +
+                  `¿Asentar que este aviso se fijó el ${shown}? La fecha se registra una sola ` +
                     `vez: de ella salen los veinte días hábiles de ${notice.recipients} ` +
                     `${notice.recipients === 1 ? "socio" : "socios"} y no se puede corregir después.`,
                 )

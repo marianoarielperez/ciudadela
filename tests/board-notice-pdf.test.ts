@@ -1,10 +1,18 @@
-// El PDF del aviso de cartelera. Lo que se fija acá es lo que no se ve mirando
-// una sola hoja de prueba: que la nómina de CIEN socios entre —paginada y en
-// dos columnas— sin pisar el pie de fijación ni perder a nadie por el camino.
+// El PDF del aviso de cartelera.
 //
-// El texto estatutario en sí se verifica a ojo abriendo el archivo (está en el
-// informe de la tarea); lo que un test puede sostener es la mecánica.
-import { PDFDocument } from "pdf-lib";
+// Se fija lo que no se ve mirando una sola hoja de prueba: que la nómina de
+// CIEN socios entre —paginada y en dos columnas— sin pisar el pie de fijación ni
+// perder a nadie por el camino, y que cada nombre ocupe UNA fila.
+//
+// Los dos casos de texto salieron de mirar el cartel real, no de imaginar: las
+// rayas de imprenta se dibujaban como "?" y un nombre largo se partía en dos
+// renglones montándose sobre la fila de abajo. Los dos se leen del flujo de
+// contenido del PDF (`drawnText`), que es la única forma de que un test vea lo
+// que ve el vecino parado frente a la pared. La redacción estatutaria en sí se
+// verificó a ojo (está en el informe de la tarea).
+import { inflateSync } from "node:zlib";
+
+import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFRef } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 
 import { renderBoardNoticePdf, type BoardNoticePdfData } from "@/lib/board/notice-pdf";
@@ -32,6 +40,36 @@ function data(over: Partial<BoardNoticePdfData> = {}): BoardNoticePdfData {
 async function pageCount(bytes: Uint8Array): Promise<number> {
   const doc = await PDFDocument.load(bytes);
   return doc.getPageCount();
+}
+
+/** El texto efectivamente DIBUJADO, hoja por hoja, leído del flujo de contenido.
+ *
+ *  Existe porque mirar el archivo a ojo no sirve como test y porque las dos
+ *  fallas que este bloque cubre eran invisibles desde afuera: pdf-lib acepta
+ *  cualquier string y dibuja lo que puede. `drawText` escribe los strings en
+ *  hexadecimal, un byte por carácter WinAnsi. */
+async function drawnText(bytes: Uint8Array): Promise<string[]> {
+  const doc = await PDFDocument.load(bytes);
+  const out: string[] = [];
+  for (const page of doc.getPages()) {
+    const contents = page.node.get(PDFName.of("Contents"));
+    const refs: unknown[] = contents instanceof PDFArray ? contents.asArray() : [contents];
+    for (const ref of refs) {
+      const stream = ref instanceof PDFRef ? doc.context.lookup(ref) : ref;
+      if (!(stream instanceof PDFRawStream)) continue;
+      const raw = Buffer.from(stream.contents);
+      const filter = stream.dict.get(PDFName.of("Filter"));
+      const body = (String(filter) === "/FlateDecode" ? inflateSync(raw) : raw).toString("latin1");
+      for (const line of body.split("\n")) {
+        const hex = /^<([0-9A-Fa-f]*)>\s*Tj$/.exec(line.trim());
+        if (!hex) continue;
+        out.push(
+          (hex[1].match(/../g) ?? []).map((b) => String.fromCharCode(parseInt(b, 16))).join(""),
+        );
+      }
+    }
+  }
+  return out;
 }
 
 describe("renderBoardNoticePdf", () => {
@@ -72,6 +110,47 @@ describe("renderBoardNoticePdf", () => {
       data({ recipients: [{ memberNumber: null, fullName: "Sin Membresía" }] }),
     );
     expect(await pageCount(bytes)).toBe(1);
+  });
+
+  it("la tipografía de imprenta NO sale como signos de pregunta", async () => {
+    // Las rayas y las comillas tipográficas de los textos del proyecto quedan
+    // fuera del Latin-1 que aceptan las fuentes estándar, y el reemplazo crudo
+    // las convertía en "?". Se vio en el cartel real: "que se nominan al pie
+    // ?inscriptos en el Libro de Socios N° 1?". Eso no se cuelga en una pared.
+    const lines = await drawnText(await renderBoardNoticePdf(data({ subject: "withdrawal" })));
+    expect(lines.join(" ")).not.toContain("?");
+    // Y el castellano sí tiene que salir entero: tildes, ñ y el ordinal.
+    expect(lines.join(" ")).toContain("Art. 9° bis");
+    expect(lines.some((l) => l.includes("Coñuecar Nestor Ramón"))).toBe(true);
+  });
+
+  it("un nombre largo ocupa UNA fila y sale entero", async () => {
+    // El corte de línea de pdf-lib dibuja el segundo renglón por debajo, encima
+    // de la fila siguiente: la nómina queda pisada y no se puede leer de pie
+    // frente a la pared. Se vio en el cartel real. El nombre entra achicando la
+    // letra, que es lo que preserva lo único que importa acá: que el socio se
+    // reconozca. Éste tiene 48 caracteres; el más largo del padrón hoy tiene 29.
+    const largo = "Uribe Barria Agustina Soledad de la Concepción";
+    const lines = await drawnText(
+      await renderBoardNoticePdf(data({ recipients: [{ memberNumber: 7, fullName: largo }] })),
+    );
+    // Una sola aparición y COMPLETA: partido en dos renglones habría dos
+    // entradas parciales.
+    expect(lines.filter((l) => l.includes("Uribe Barria"))).toEqual([largo]);
+  });
+
+  it("un nombre imposible se recorta, pero sigue en una sola fila", async () => {
+    // `Member.fullName` es VarChar(160): la columna admite un nombre que no
+    // entra ni a 7 pt. Ahí se recorta, que es la red y no el camino — recortar
+    // pierde información y por eso es lo último que se prueba.
+    const imposible = `Fernández ${"Villanueva ".repeat(12)}Etchegaray`;
+    const lines = await drawnText(
+      await renderBoardNoticePdf(data({ recipients: [{ memberNumber: 7, fullName: imposible }] })),
+    );
+    const drawn = lines.filter((l) => l.includes("Fernández"));
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].endsWith("...")).toBe(true);
+    expect(drawn[0].length).toBeLessThan(imposible.length);
   });
 
   it("un aviso ya fijado imprime su plazo", async () => {

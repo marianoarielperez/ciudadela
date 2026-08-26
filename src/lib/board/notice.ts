@@ -49,6 +49,20 @@ import {
   holidayCoverageYears,
 } from "./business-days";
 
+/** Los nombres de auditoría del módulo y la entidad que los agrupa.
+ *
+ *  Viven acá y no en la action que los escribe por dos motivos. El técnico: un
+ *  módulo `"use server"` sólo puede exportar funciones async, así que una
+ *  constante exportada ahí ROMPE EL BUILD —lo cazó el navegador, no los tests—.
+ *  Y el de fondo, el mismo que llevó `CALL_AUDIT_ACTION` a
+ *  `reregistration/service.ts`: un asiento se escribe en un lado y se lee en
+ *  otro, y si el string se desincroniza el dato desaparece de la pantalla sin
+ *  que nada falle. */
+export const POST_AUDIT_ACTION = "board_notice_post";
+export const OTHER_AUDIT_ACTION = "board_notice_other";
+export const PDF_AUDIT_ACTION = "board_notice_pdf";
+export const NOTICE_AUDIT_ENTITY = "board_notice";
+
 /** Los tres avisos que tienen texto propio. `other` no es uno de ellos: es el
  *  MISMO aviso de la instancia en curso para un vecino que se quedó afuera del
  *  lote (ver `effectiveKind`). */
