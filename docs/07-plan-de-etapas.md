@@ -715,6 +715,115 @@ cuando fue expulsión. Queda además una discrepancia que el script **no** corri
 porque necesita acta: el socio N° 2, que la planilla da por vigente y la base tiene
 de baja por mora.
 
+### Fase 6B — El proceso, el wizard público y la cartelera — **CERRADA** (26/08/2026)
+
+Es la fase que pone el re-empadronamiento del Art. 9° bis en marcha de punta a
+punta: la Comisión convoca, el vecino se presenta por la web o en la sede, la
+Comisión valida, y a quien no tiene casilla se lo notifica por cartelera. Lo
+único que NO entra acá es el final del camino —declarar las bajas y cerrar el
+libro—: eso es la fase 6C.
+
+Dos migraciones, las dos **aditivas** y aptas para `migrate deploy` sobre la base
+con socios reales: `20260826130029_reregistration_process` (las tablas
+`reregistration_processes`, `presentations`, `holidays` y `board_notices`, más la
+columna `board_notice_id` y los valores nuevos del ENUM de `notifications`) y
+`20260826160000_presentation_rejected_notification` (un valor más en ese mismo
+ENUM). Ninguna toca una fila existente.
+
+**Qué quedó andando** (9 tareas, 37 commits):
+
+- **La aritmética, pura y en dos módulos separados a propósito.**
+  `src/lib/reregistration/rules.ts` tiene los plazos del artículo —30 días para la
+  1ª instancia, 10 para la 2ª, 30 para interponer el recurso— en **días corridos**,
+  que es la lectura conservadora del art. 6 del CCyC porque el estatuto no lo
+  aclara. `src/lib/board/business-days.ts` tiene la cartelera en **días hábiles**,
+  que es lo que su artículo (5° ter) sí dice con todas las letras. Están separados
+  para que nadie las mezcle: `rules.ts` no importa feriados y no tiene por qué.
+  Los dos son puros —no tocan Prisma ni el reloj— y se prueban en tabla, porque de
+  esta cuenta cuelga la baja de un socio real. Hay **un solo comparador de plazos**
+  (`hasExpired`, que compara día civil contra día civil: el día del vencimiento
+  todavía no venció) y **un solo criterio de cohorte** (`isCohortMember`, con las
+  constantes que además arman la consulta que la congela), por la misma razón por
+  la que el Módulo 4 comparte `coverageFloor`.
+- **El servicio que convoca.** `reregistration.activate` abre el proceso contra el
+  libro abierto y un acta, **congela la cohorte** de adherentes vigentes creando
+  una fila de `presentations` por socio, y notifica: email a quien tiene casilla
+  utilizable, aviso de cartelera a quien no. `reregistration.startSecond` abre la
+  segunda instancia —10 días más, "bajo apercibimiento de baja"— sobre los que
+  siguen sin presentarse. Cinco plantillas nuevas de correo en `templates.ts`
+  (convocatoria, 2ª instancia, constancia de presentación, observación y rechazo),
+  todas por el mailer de siempre: allowlist en el transporte, `Notification.failed`
+  con el código del fallo y presupuesto de correos por corrida.
+- **La sección `/admin/reempadronamiento`**: estado vacío cuando no hay proceso,
+  pantalla de convocatoria con acta (superadmin) y tablero con la línea de proceso,
+  los conteos de la instancia y el bloque de cartelera. La convocatoria **no puede
+  nacer vencida**: una fecha de más de treinta días atrás se rechaza con el plazo
+  ya calculado, porque no hay ninguna pantalla para cancelar un proceso.
+- **El wizard público `/reempadronate`, completo.** Identificación por DNI con
+  **nombre enmascarado** para que el socio se reconozca sin que el sistema le
+  revele el nombre de un tercero, ficha (los mismos campos que el alta, sin el
+  nombre), documentos, declaración jurada, constancia por correo con enlace de
+  retome, y subsanación de lo observado por ese enlace. Turnstile en el paso 1 y en
+  el reenvío del enlace —los dos formularios anónimos—, rate limits propios, y
+  `robots: noindex` en la ruta con token. Los documentos van a
+  `UPLOADS_DIR/presentations/`, nunca a `public/`.
+- **Una presentación observada no se reabre tipeando el DNI.** Entrar por el paso 1
+  acuña una llave nueva y rota la anterior; si el DNI reabriera lo observado,
+  cualquiera que tipeara ese número —que no es una contraseña— le mataría al socio
+  el enlace del buzón justo cuando le corre el plazo para subsanar. Se entra
+  siempre por el enlace del correo, y el paso 1 ofrece reenviarlo.
+- **La cola de validación** (`/admin/reempadronamiento/presentaciones`) con la
+  ficha de cada presentación al lado de lo que dice el padrón, **visor de
+  documentos por ruta autenticada con un asiento por cada vista**, y las tres
+  decisiones: validar —que escribe la ficha del socio—, observar con el motivo que
+  le llega al vecino, y rechazar. Y **carga presencial** para el socio que se
+  acerca a la sede: el mismo circuito, cargado por el operador.
+- **La cartelera por lotes**, que es la unidad de trabajo real del operador: el
+  sistema arma la lista de destinatarios sin casilla utilizable, genera el **PDF
+  imprimible** a pedido —con el molde de los recibos, pero sin guardarlo en
+  disco: se arma y se devuelve—, y el operador asienta
+  **una sola fecha de fijación** que estampa el plazo de veinte días hábiles en
+  todas las filas del lote. Un email que rebota después del envío masivo cae como
+  tarea puntual en un aviso propio. Y el **ABM de feriados** en
+  `/admin/configuracion` (superadmin), que es la tabla sobre la que se cuentan esos
+  días hábiles: si falta el año que el cómputo pisa, el sistema **falla ruidoso** en
+  vez de contar un feriado como hábil y acortarle el plazo a un vecino.
+- **Los puntos de entrada del sitio público** (esta última tarea): mientras hay un
+  proceso en 1ª o 2ª instancia, la portada ofrece **REEMPADRONATE** con el mismo
+  protagonismo que ASOCIATE, y **las asociaciones quedan suspendidas** —la
+  asociación está depurando su padrón, no es momento de sumar gente—: la portada y
+  `/asociate` lo muestran con la fecha hasta la que dura, y la acción que crea una
+  solicitud corta por sí misma. En el panel del socio, el adherente que todavía no
+  se presentó ve el llamado con su fecha límite y el enlace al trámite: es la gente
+  que ya tiene cuenta, la que más fácil se pierde el correo.
+
+**Auditoría nueva**, siempre con ids y conteos y nunca con DNI, email ni
+domicilios (Ley 25.326): `reregistration_call`, `reregistration_second`,
+`presentation_submit`, `presentation_validate` / `_observe` / `_reject` /
+`_unreject`, `presentation_document_upload`, `presentation_document_view`,
+`board_notice_post`, `board_notice_other` y `board_notice_pdf`.
+
+2983 tests en verde (7 salteados), build y lint limpios.
+
+**Lo que hay que saber para operar la fase:**
+
+- **Convocar manda correos de verdad.** Es un envío masivo a los adherentes con
+  casilla, y arranca un plazo estatutario de treinta días. No es una pantalla para
+  probar.
+- **Quién ve el wizard lo decide la clave `reempadronamiento_proceso_id`** de
+  `Configuration`, no una consulta por estado: de esa clave dependen el botón de la
+  portada y la suspensión de ASOCIATE, y si el proceso vivo y la clave divergen, el
+  tablero del panel **avisa de la divergencia** en vez de que cada pantalla adivine.
+- **Las pantallas públicas son cacheadas y se invalidan por tag.** Convocar y abrir
+  la 2ª instancia llaman `updateTag("config")`, que es lo que hace que la portada
+  cambie en el acto en las dos direcciones. La acción de la 6C que apague el proceso
+  tiene que hacer lo mismo: sin eso, el sitio seguiría ofreciendo un trámite
+  terminado hasta que el caché venciera solo.
+- **La cartelera necesita los feriados del año cargados.** El seed
+  (`scripts/seed-holidays.ts`) trae los nacionales; los "puentes" turísticos no
+  cuentan como feriado a propósito.
+
+
 ## Lanzamiento (cuando IGJ oficialice)
 
 Ya hecho, antes de tiempo: ~~cambiar `MP_ACCESS_TOKEN` a las credenciales

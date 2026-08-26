@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getAsociateActive, getLegalTexts } from "@/lib/config";
+import { getActiveReregistration, getAsociateActive, getLegalTexts } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { SITE } from "@/lib/site";
 import { feeAmountsForWizard, feeValueReader } from "@/lib/treasury/fee-values";
@@ -33,7 +33,50 @@ export default async function AsociatePage() {
   // URL es pública y se puede llegar por un enlace viejo o por el buscador:
   // revalidar acá es lo único que impide entrar al wizard con las asociaciones
   // suspendidas.
-  const active = await getAsociateActive();
+  // Dos causales de cierre, las mismas dos que corta la guarda 0 de
+  // `createApplicationAction` y las mismas dos que decide la portada: el
+  // interruptor de la Comisión y el proceso de re-empadronamiento en curso
+  // (diseño M6 §11 — mientras la asociación depura su padrón no suma gente).
+  // El re-empadronamiento se lee con la MISMA función cacheada por tag que usa
+  // la portada, porque esta página también es cacheada (`revalidate = 3600`) y
+  // se invalida por `updateTag(CACHE_TAGS.config)`.
+  const [active, reregistration] = await Promise.all([
+    getAsociateActive(),
+    getActiveReregistration(),
+  ]);
+  if (reregistration !== null) {
+    return (
+      <main className="mx-auto w-full max-w-xl px-4 py-16">
+        <h1 className="text-2xl font-bold tracking-tight">Asociate</h1>
+        <p className="mt-3 text-muted-foreground">
+          Las asociaciones están suspendidas temporalmente durante el proceso de
+          re-empadronamiento
+          {reregistration.deadline !== null && <> (hasta el {reregistration.deadline})</>}. Para
+          asociarte, acercate a la sede vecinal.
+        </p>
+        <p className="mt-4 font-medium">
+          <Link href="/ubicacion" className="text-primary underline underline-offset-2">
+            {SITE.address}
+          </Link>
+        </p>
+        {/* El que llega acá durante el proceso puede ser justamente un socio
+            adherente buscando el trámite: el camino que SÍ está abierto se le
+            ofrece en vez de dejarlo en un callejón. */}
+        <p className="mt-6 text-sm text-muted-foreground">
+          Si ya sos socio adherente,{" "}
+          <Link href="/reempadronate" className="text-primary underline underline-offset-2">
+            re-empadronate acá
+          </Link>
+          .
+        </p>
+        <p className="mt-8">
+          <Link href="/" className="text-sm text-primary underline underline-offset-2">
+            Volver al inicio
+          </Link>
+        </p>
+      </main>
+    );
+  }
   if (!active) {
     return (
       <main className="mx-auto w-full max-w-xl px-4 py-16">

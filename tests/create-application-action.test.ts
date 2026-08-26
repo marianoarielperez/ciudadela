@@ -17,7 +17,13 @@ const mocks = vi.hoisted(() => {
   }
   return {
     DuplicateLiveApplicationError,
-    prisma: { member: { findUnique: vi.fn() }, configuration: { findUnique: vi.fn() } },
+    prisma: {
+      member: { findUnique: vi.fn() },
+      configuration: { findUnique: vi.fn() },
+      // Lo consulta la segunda causal de la guarda 0 (`openWizardProcess`), y
+      // sólo cuando la clave `reempadronamiento_proceso_id` existe.
+      reregistrationProcess: { findUnique: vi.fn() },
+    },
     service: {
       create: vi.fn(),
       findLiveByDni: vi.fn(),
@@ -117,6 +123,7 @@ beforeEach(() => {
     async ({ where: { key } }: { where: { key: string } }) =>
       key in mocks.configRows ? { key, value: mocks.configRows[key] } : null,
   );
+  mocks.prisma.reregistrationProcess.findUnique.mockResolvedValue(null);
   mocks.prisma.member.findUnique.mockResolvedValue(null);
   mocks.service.findLiveByDni.mockResolvedValue(null);
   mocks.service.lastRejectionAt.mockResolvedValue(null);
@@ -157,6 +164,75 @@ describe("createApplicationAction", () => {
     expect(mocks.createLimiter.record).not.toHaveBeenCalled();
     expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
     expect(mocks.prisma.member.findUnique).not.toHaveBeenCalled();
+  });
+
+  // ── La segunda causal de la guarda 0: el re-empadronamiento (M6) ──────────
+  // Convocar el proceso del Art. 9° bis suspende las altas por sí solo: la
+  // asociación está depurando su padrón y no es momento de sumar gente (diseño
+  // M6 §11). El interruptor de arriba puede seguir PRENDIDO —la Comisión no
+  // tiene por qué acordarse de apagarlo— y el POST igual tiene que cortar.
+  function openProcess(over: { status?: string; secondEndsAt?: Date } = {}) {
+    mocks.configRows.reempadronamiento_proceso_id = "7";
+    mocks.prisma.reregistrationProcess.findUnique.mockResolvedValue({
+      id: 7,
+      status: over.status ?? "first_instance",
+      firstEndsAt: new Date("2026-09-25T12:00:00.000Z"),
+      secondEndsAt: over.secondEndsAt ?? null,
+    });
+  }
+
+  it("proceso de re-empadronamiento en curso: ASOCIATE queda suspendido aunque el interruptor esté prendido", async () => {
+    openProcess();
+    expect(mocks.configRows.asociate_activo).toBe(true); // el interruptor NO se tocó
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toMatch(/suspendidas temporalmente durante el proceso de re-empadronamiento/i);
+    // Y con la fecha del plazo que corre: es lo único que le sirve al vecino
+    // para saber cuándo volver.
+    expect(result.error).toContain("25/09/2026");
+    expect(result.created).toBeUndefined();
+    expect(mocks.service.create).not.toHaveBeenCalled();
+    // Corta antes de gastar cupo, de pedir el captcha y de tocar el padrón.
+    expect(mocks.createLimiter.allows).not.toHaveBeenCalled();
+    expect(mocks.createLimiter.record).not.toHaveBeenCalled();
+    expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+    expect(mocks.prisma.member.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("en segunda instancia cita el plazo de la segunda, no el de la primera", async () => {
+    // `currentDeadline`: la 2ª instancia manda sobre la 1ª. Citarle al vecino
+    // la fecha de la primera —ya vencida— sería peor que no citarle ninguna.
+    openProcess({ status: "second_instance", secondEndsAt: new Date("2026-10-05T12:00:00.000Z") });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toContain("05/10/2026");
+    expect(result.error).not.toContain("25/09/2026");
+  });
+
+  it("un proceso que ya no admite presentaciones NO suspende las altas", async () => {
+    // La vuelta, que es la que suele fallar: `wizardOpen` (dentro de
+    // `openWizardProcess`) es la única lista de estados que suspenden, y
+    // `closing` no está. Con el proceso apagado el alta vuelve a correr entera.
+    openProcess({ status: "closing" });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBeUndefined();
+    expect(mocks.service.create).toHaveBeenCalled();
+  });
+
+  it("una clave de configuración rota es lo mismo que no tener proceso", async () => {
+    // Misma defensa que en el wizard público: `Number("")` es 0 y `Number("x")`
+    // es NaN, y ninguna de las dos puede terminar en un `findUnique` con un id
+    // inventado ni en una suspensión fantasma.
+    mocks.configRows.reempadronamiento_proceso_id = "";
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBeUndefined();
+    expect(mocks.prisma.reregistrationProcess.findUnique).not.toHaveBeenCalled();
   });
 
   it("interruptor ausente en `configuration`: se trata como apagado", async () => {

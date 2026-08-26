@@ -256,5 +256,11 @@ export async function startSecondAction(_prev: SecondState, formData: FormData):
   });
 
   revalidatePath("/admin/reempadronamiento");
+  // Igual que al convocar, y por el mismo motivo: la portada y `/asociate`
+  // muestran HASTA CUÁNDO están suspendidas las asociaciones, y esa fecha es la
+  // del plazo que corre ahora (`currentDeadline`). Al abrir la segunda
+  // instancia el plazo cambia; sin esta línea el sitio seguiría citando el de la
+  // primera —una fecha ya vencida— hasta que el caché venciera solo.
+  updateTag(CACHE_TAGS.config);
   return { ok: true };
 }

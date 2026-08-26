@@ -1,13 +1,15 @@
 import Link from "next/link";
-import { RefreshCw, ScrollText, User, Wallet } from "lucide-react";
+import { ClipboardCheck, RefreshCw, ScrollText, User, Wallet } from "lucide-react";
 
 import { MemberCard } from "@/components/mi/member-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireMember } from "@/lib/auth/require-member";
-import { formatARS } from "@/lib/format";
+import { formatARS, formatDateAR } from "@/lib/format";
 import { electoralStatusFor } from "@/lib/mi/identity";
 import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
+import { openWizardProcess } from "@/lib/reregistration/current";
+import { currentDeadline } from "@/lib/reregistration/rules";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, categoryPaysFee, debtAmount } from "@/lib/treasury/rules";
@@ -43,7 +45,7 @@ export default async function MiHomePage() {
   // La página se autoriza sola (el layout corre en paralelo y no la protege).
   const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return null; // el layout ya explica por qué
-  const [member, pendingCount, arrears, feeValue, debitSubs] = await Promise.all([
+  const [member, pendingCount, arrears, feeValue, debitSubs, openProcess] = await Promise.all([
     prisma.member.findUniqueOrThrow({
       where: { id: actor.memberId },
       select: {
@@ -64,7 +66,39 @@ export default async function MiHomePage() {
     // Consulta liviana para la tarjeta de débito: sólo el status, nada de lo
     // que ya trae `memberDebit.preview` (eso lo resuelve /mi/debito).
     prisma.mpSubscription.findMany({ where: { memberId: actor.memberId }, select: { status: true } }),
+    // El proceso de re-empadronamiento abierto, si lo hay. Lectura DIRECTA (la
+    // misma que usan el wizard y su action): esta pantalla es `force-dynamic` y
+    // no hay nada que cachear. Sin proceso son cero consultas más abajo.
+    openWizardProcess(prisma),
   ]);
+  // ¿A ESTE socio le falta presentarse? La cohorte se congeló al convocar, así
+  // que la fila de `presentations` es la respuesta completa: sin fila no fue
+  // convocado (no es adherente, o lo recategorizaron después) y no se le muestra
+  // nada. `pending` = no presentó; `observed` = presentó y le pidieron que
+  // corrija. `submitted`, `validated`, `rejected` y `withdrawn` no tienen nada
+  // que hacer acá: o ya cumplió, o el trámite terminó.
+  const pendingPresentation =
+    openProcess === null
+      ? null
+      : await prisma.presentation.findFirst({
+          where: {
+            processId: openProcess.id,
+            memberId: actor.memberId,
+            status: { in: ["pending", "observed"] },
+          },
+          select: { status: true },
+        });
+  // El plazo que corre AHORA (la 2ª instancia manda sobre la 1ª): la misma
+  // función que usan los correos y el wizard, para que las tres superficies no
+  // le citen al socio fechas distintas.
+  const deadline = openProcess === null ? null : currentDeadline(openProcess);
+  const reregistration =
+    pendingPresentation === null
+      ? null
+      : {
+          status: pendingPresentation.status,
+          deadline: deadline === null ? null : formatDateAR(deadline),
+        };
   // El número vigente es el del libro ABIERTO (mismo criterio que Deudores).
   const memberNumber =
     member.memberships.find((m) => m.book.status === "open")?.memberNumber ?? null;
@@ -91,6 +125,47 @@ export default async function MiHomePage() {
   return (
     <div className="space-y-4">
       <h1 className="sr-only">Inicio</h1>
+      {reregistration !== null && (
+        /* Llamado al re-empadronamiento. Va ARRIBA de la credencial y con
+           `ring-primary`: es lo único de esta pantalla que tiene un plazo del
+           que cuelga la baja del socio (Art. 9° bis), y el que entra al panel es
+           justamente el que más fácil se pierde el correo. Desaparece solo
+           cuando la presentación deja de estar `pending`/`observed`. */
+        <Card className="ring-2 ring-primary">
+          <CardHeader>
+            <CardTitle as="h2" className="flex items-center gap-2">
+              <ClipboardCheck className="size-4 text-primary" aria-hidden />
+              Re-empadronate
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {reregistration.status === "observed" ? (
+              // Una presentación observada NO se reabre tipeando el DNI (es la
+              // garantía de `lookupVerdict`: el enlace del correo es lo único
+              // que acredita que es él). Lo que se le ofrece acá es pedir que se
+              // lo reenviemos, que es lo que hace el paso 1 con una observada.
+              <p className="text-sm">
+                La Comisión Directiva te pidió que corrijas algo de tu presentación. Entrá con el
+                enlace que te mandamos por correo; si no lo tenés a mano, pedí que te lo
+                reenviemos.
+              </p>
+            ) : (
+              <p className="text-sm">
+                Todavía no presentaste tu re-empadronamiento. Es obligatorio para seguir figurando
+                en el padrón.
+              </p>
+            )}
+            {reregistration.deadline !== null && (
+              <p className="text-sm font-medium text-warning">
+                Tenés tiempo hasta el {reregistration.deadline}.
+              </p>
+            )}
+            <Link className={LINK_CTA} href="/reempadronate">
+              {reregistration.status === "observed" ? "Pedir el enlace →" : "Re-empadronarme →"}
+            </Link>
+          </CardContent>
+        </Card>
+      )}
       <MemberCard
         fullName={member.fullName}
         memberNumber={memberNumber}

@@ -293,9 +293,12 @@ cada action (`requireSuperadmin` / `requireAdmin`), nunca solo en la nav.
   demand como los recibos: encabezado institucional, texto del aviso, lista de
   socios con número y nombre, fechas) y el operador asienta **una sola fecha de
   fijación**, que estampa `boardFrom`/`boardTo` en todas las filas del lote. El
-  aviso se muestra como una tarjeta: "1ª instancia · 100 socios · fijado 02/10 ·
-  fehaciente el 30/10". Caso borde individual: un email que rebota DESPUÉS del
-  envío masivo aparece como tarea puntual "pasar a cartelera" (se suma a un aviso
+  aviso se muestra como una tarjeta: "1ª instancia · 100 socios · fijado
+  02/10/2026 · fehaciente el 02/11/2026" (veinte días hábiles contados con
+  `businessDayEnd`, salteando el feriado del 12/10; el ejemplo decía 30/10, que
+  es lo que da si no se cuenta ese feriado).
+  Caso borde individual: un email que rebota DESPUÉS del envío masivo aparece
+  como tarea puntual "pasar a cartelera" (se suma a un aviso
   `other` propio).
 - **Días hábiles**: función pura `businessDayEnd(from, n, holidays)` en
   `src/lib/board/` (lun-vie, feriados de `holidays`), testeada con tabla de casos

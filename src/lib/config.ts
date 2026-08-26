@@ -6,6 +6,9 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 import { CONFIG_KEYS } from "@/lib/config-keys";
+import { formatDateAR } from "@/lib/format";
+import { openWizardProcess } from "@/lib/reregistration/current";
+import { currentDeadline } from "@/lib/reregistration/rules";
 
 // Las claves viven en un módulo puro (`@/lib/config-keys`) y se re-exportan acá:
 // este archivo evalúa `unstable_cache` y el cliente de Prisma al cargarse, y un
@@ -44,6 +47,46 @@ export const getAsociateActive = unstable_cache(
   ["config-asociate"],
   { tags: [CACHE_TAGS.config] },
 );
+/** Lo que el SITIO PÚBLICO CACHEADO necesita saber del re-empadronamiento: si
+ *  hay un proceso abierto y hasta qué día corre el plazo que está corriendo.
+ *  `null` = no hay proceso y todo funciona como siempre.
+ *
+ *  El plazo viaja YA FORMATEADO ("DD/MM/AAAA") y no como `Date`. No es
+ *  cosmética: `unstable_cache` guarda el valor con `JSON.stringify`, así que un
+ *  `Date` vuelve como `Date` en el fallo de caché y como STRING en el acierto —
+ *  el mismo tipo cambiando según si la página se sirvió del caché o no, que es
+ *  la clase de diferencia que aparece en producción y nunca en un test. Se
+ *  formatea una vez, acá, con la misma `formatDateAR` de todo el proyecto.
+ *
+ *  Cuál de los dos plazos se muestra lo decide `currentDeadline` —la 2ª
+ *  instancia manda sobre la 1ª— y no esta función: es la misma regla que usan
+ *  el wizard y los correos, y copiarla acá la dejaría divergir.
+ *
+ *  QUIÉN LA INVALIDA (tag `config`, igual que el interruptor de ASOCIATE): las
+ *  dos actions de fase de `/admin/reempadronamiento` —convocar y abrir la 2ª
+ *  instancia— y `/admin/configuracion`. La ida y la vuelta importan las dos: sin
+ *  la invalidación al convocar el sitio seguiría ofreciendo asociarse durante un
+ *  proceso que lo suspende, y sin la del cierre seguiría ofreciendo un trámite
+ *  que ya terminó. El cierre de libro es de la fase 6C: la action que apague el
+ *  proceso tiene que llamar `updateTag(CACHE_TAGS.config)` como estas dos.
+ *
+ *  Ojo con el otro lado del mostrador: esto es DISPLAY. Toda GUARDA
+ *  —`createApplicationAction`, la página y las actions del wizard— lee directo
+ *  con `openWizardProcess(prisma)`, sin caché, por el mismo motivo por el que la
+ *  guarda del interruptor no usa `getAsociateActive`. */
+export type PublicReregistration = { id: number; deadline: string | null };
+
+export const getActiveReregistration = unstable_cache(
+  async (): Promise<PublicReregistration | null> => {
+    const process = await openWizardProcess(prisma);
+    if (process === null) return null;
+    const deadline = currentDeadline(process);
+    return { id: process.id, deadline: deadline === null ? null : formatDateAR(deadline) };
+  },
+  ["config-reregistration"],
+  { tags: [CACHE_TAGS.config] },
+);
+
 export const getContactInfo = unstable_cache(
   async () => ({
     phone: await configReader.getString(CONFIG_KEYS.contactPhone),

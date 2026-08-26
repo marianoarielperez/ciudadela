@@ -4,7 +4,7 @@ import Link from "next/link";
 // Static import (no se copia a public/): así next/image genera las variantes
 // responsive y el blur placeholder del hero en tiempo de build.
 import heroImg from "../../../assets/hero.jpg";
-import { getAsociateActive } from "@/lib/config";
+import { getActiveReregistration, getAsociateActive } from "@/lib/config";
 import { getLatestNews } from "@/lib/news/query";
 import { NewsCard } from "@/components/public/news-card";
 import { SITE, siteBaseUrl } from "@/lib/site";
@@ -14,7 +14,17 @@ export const metadata: Metadata = {
 };
 
 export default async function HomePage() {
-  const [asociateActive, latest] = await Promise.all([getAsociateActive(), getLatestNews(3)]);
+  const [asociateActive, reregistration, latest] = await Promise.all([
+    getAsociateActive(),
+    getActiveReregistration(),
+    getLatestNews(3),
+  ]);
+  // Mientras corre el re-empadronamiento las altas se suspenden: la asociación
+  // está justamente depurando su padrón (diseño M6 §11). El interruptor de la
+  // Comisión puede estar prendido y aun así ASOCIATE no se ofrece — y la guarda
+  // de `createApplicationAction` corta por las MISMAS dos causales, para que lo
+  // que la portada muestra apagado sea exactamente lo que el POST rechaza.
+  const showAsociate = asociateActive && reregistration === null;
   return (
     <main>
       <script
@@ -72,7 +82,20 @@ export default async function HomePage() {
             {SITE.city}
           </p>
           <div className="mt-4 flex flex-col items-center gap-3">
-            {asociateActive ? (
+            {/* REEMPADRONATE va PRIMERO y con el mismo tratamiento que
+                ASOCIATE (mismo relleno, mismo peso, mismo tamaño): mientras el
+                proceso corre, es el trámite que el vecino viene a hacer a la
+                portada. Sólo aparece con un proceso en 1ª o 2ª instancia — de
+                eso se ocupa `wizardOpen`, adentro de `getActiveReregistration`. */}
+            {reregistration !== null && (
+              <Link
+                href="/reempadronate"
+                className="rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground shadow hover:opacity-90"
+              >
+                REEMPADRONATE
+              </Link>
+            )}
+            {showAsociate ? (
               <Link
                 href="/asociate"
                 className="rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground shadow hover:opacity-90"
@@ -86,10 +109,24 @@ export default async function HomePage() {
                     opaca (no un negro translúcido): su contraste no puede
                     depender de qué pixel de la foto le toque atrás. */}
                 <div className="max-w-md rounded-md bg-background px-4 py-2.5 text-left text-foreground shadow-lg">
-                  <p className="text-sm">
-                    Las asociaciones están suspendidas temporalmente. Para más información acercate
-                    a la sede vecinal:
-                  </p>
+                  {reregistration !== null ? (
+                    /* Suspensión por re-empadronamiento: el vecino tiene que
+                       saber HASTA CUÁNDO, que es lo único que le sirve para
+                       volver. La fecha es la del plazo que corre ahora (la 2ª
+                       instancia manda sobre la 1ª). Si por algún motivo no hay
+                       plazo asentado se calla en vez de inventar uno. */
+                    <p className="text-sm">
+                      Las asociaciones están suspendidas temporalmente durante el proceso de
+                      re-empadronamiento
+                      {reregistration.deadline !== null && <> (hasta el {reregistration.deadline})</>}
+                      . Para más información acercate a la sede vecinal:
+                    </p>
+                  ) : (
+                    <p className="text-sm">
+                      Las asociaciones están suspendidas temporalmente. Para más información
+                      acercate a la sede vecinal:
+                    </p>
+                  )}
                   {/* La dirección era un callejón sin salida: decía dónde ir y
                       ahí terminaba. Ahora lleva al mapa y al contacto. */}
                   <p className="mt-1 text-sm font-semibold">
@@ -111,7 +148,6 @@ export default async function HomePage() {
                 </span>
               </>
             )}
-            {/* REEMPADRONATE: oculto hasta que exista un proceso (Módulo 6). */}
           </div>
         </div>
       </section>
