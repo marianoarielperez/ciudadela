@@ -21,7 +21,7 @@ export function BlockedPanel({
   blocked: NonNullable<CreateState["blocked"]>;
   dni: string;
   siteKey: string;
-  /** Vuelve al paso 3 con el borrador intacto. Sin esto el bloqueo es un
+  /** Vuelve al paso 4 con el borrador intacto. Sin esto el bloqueo es un
    *  callejón sin salida: un DNI mal tipeado que caiga sobre una ficha con
    *  deuda manda al vecino a "acercate a la sede" y le pierde los 16 campos. */
   onDismiss: () => void;

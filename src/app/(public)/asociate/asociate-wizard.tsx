@@ -255,12 +255,12 @@ export function AsociateWizard(props: {
   //
   // Es `history.replaceState` y no `router.replace` a propósito:
   //   - `replaceState` y no `pushState` porque el "atrás" no puede volver al
-  //     paso 3 con el formulario cargado: reenviarlo sólo puede terminar en un
+  //     paso 4 con el formulario cargado: reenviarlo sólo puede terminar en un
   //     duplicado (que el server rechaza igual).
   //   - la API del historial y no el router porque acá NO hay a dónde navegar:
   //     el trámite ya está en pantalla. Una navegación de verdad desmontaría el
   //     wizard vivo, perdiendo el foco que se acaba de llevar al encabezado del
-  //     paso 4. Lo único que falta es la dirección, y eso es exactamente lo que
+  //     paso 5. Lo único que falta es la dirección, y eso es exactamente lo que
   //     hace. Next soporta `history.pushState/replaceState` nativos en el App
   //     Router: los parchea para despachar `ACTION_RESTORE`, que se queda con
   //     el árbol de router que YA está en memoria (el de `/asociate`) y sólo

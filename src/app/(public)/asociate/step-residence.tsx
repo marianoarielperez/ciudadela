@@ -1,5 +1,5 @@
 "use client";
-// Paso 1 del wizard ASOCIATE: dónde vive el solicitante. La respuesta decide la
+// Paso 2 del wizard ASOCIATE: dónde vive el solicitante. La respuesta decide la
 // rama entera del trámite (REG-01: las categorías dependen de la residencia).
 import { FormMessage } from "@/components/admin/form-message";
 import { Input } from "@/components/ui/input";

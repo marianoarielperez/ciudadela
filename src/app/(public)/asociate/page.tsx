@@ -106,7 +106,7 @@ export default async function AsociatePage() {
     );
   }
 
-  // `loadOrder` viaja junto al nombre porque el buscador del paso 1 reusa
+  // `loadOrder` viaja junto al nombre porque el buscador del paso 2 reusa
   // `searchStreets` (src/lib/streets/search.ts), que matchea también el código
   // catastral —"1906" encuentra "Hernandez , Jose"— y ordena los empates por
   // ese número. `normalizedName` no hace falta: esa misma función normaliza el

@@ -1,5 +1,5 @@
 "use client";
-// Paso 2 del wizard ASOCIATE: categoría de socio y débito automático.
+// Paso 3 del wizard ASOCIATE: categoría de socio y débito automático.
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { formatARS } from "@/lib/format";
@@ -83,7 +83,7 @@ export function StepCategory({
         <>
           {/* Una sola categoría posible (Art. 5 bis): no hay elección que
               ofrecer, así que la tarjeta informa y `requestedCategory` ya quedó
-              fijada al elegir "En otro barrio" en el paso 1. */}
+              fijada al elegir "En otro barrio" en el paso 2. */}
           <div className="rounded-xl border-2 border-primary bg-primary/5 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <p className="text-base font-semibold">Socio colaborador</p>

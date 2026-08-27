@@ -1,5 +1,5 @@
 "use client";
-// Combo sobre las 40 calles catastrales del barrio (paso 1 del wizard).
+// Combo sobre las 40 calles catastrales del barrio (paso 2 del wizard).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { Input } from "@/components/ui/input";
@@ -31,7 +31,7 @@ export function StreetPicker({
   streetName: string;
   onPick: (street: StreetOption | null) => void;
   /** Qué decir cuando lo tipeado no matchea ninguna calle del catálogo. El
-   *  texto por defecto manda a la rama «En otro barrio» del paso 1 de ASOCIATE,
+   *  texto por defecto manda a la rama «En otro barrio» del paso 2 de ASOCIATE,
    *  que el wizard de re-empadronamiento NO tiene: allá la cohorte es de
    *  adherentes, que por el Art. 5 viven en el barrio, y la salida es la sede.
    *  Es una prop y no un componente aparte porque todo lo demás —la

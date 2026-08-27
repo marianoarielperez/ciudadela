@@ -158,7 +158,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // ponerla antes o después no le gasta cupo a nadie. Se lee mejor con la
   // pregunta más barata de responder arriba de todo.
   //
-  // NO frena lo ya empezado: los pasos 4 y 5 operan con el token de retome
+  // NO frena lo ya empezado: los pasos 5 y 6 operan con el token de retome
   // sobre solicitudes que YA existen y no chequean el interruptor, a propósito
   // (ver docs/05 §2). Apagar ASOCIATE cierra las altas nuevas; la cola viva se
   // vacía sola al vencer, hasta 7 días después.
@@ -192,7 +192,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   //
   // Son claves de `configuration` que nacen en el seed y que el superadmin
   // edita desde /admin/configuracion, o sea que pueden faltar (base recién
-  // migrada, clave borrada). Cuando faltan, el paso 3 del wizard muestra "El
+  // migrada, clave borrada). Cuando faltan, el paso 4 del wizard muestra "El
   // texto todavía no está publicado" justo encima de un checkbox obligatorio
   // que igual se puede tildar, y el POST se grababa con `acceptedTermsAt`
   // apuntando a unos términos inexistentes: una aceptación sin objeto, que es
@@ -220,7 +220,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // Se consulta el cupo primero (no se gasta un intento contra alguien que ya
   // está bloqueado) y se REGISTRA recién después del captcha y de las
   // validaciones puras. Que el registro vaya después del captcha evita que uno
-  // vencido —la ficha dura 5 minutos y el paso 3 del wizard puede tardar más—
+  // vencido —la ficha dura 5 minutos y el paso 4 del wizard puede tardar más—
   // le queme un intento al vecino. Que vaya después del formato evita lo mismo
   // con los tipeos: son ~16 campos y el formulario reporta un error por vez, así
   // que corregir la fecha, el email repetido y la altura podía comerse los cinco
@@ -248,10 +248,10 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   if (!livesInBarrio && (!data.streetText || !data.neighborhood)) {
     return { error: "Ingresá tu calle y tu barrio." };
   }
-  // Revalidación de REG-01 en el server: el paso 2 del wizard ya filtra las
+  // Revalidación de REG-01 en el server: el paso 3 del wizard ya filtra las
   // opciones, pero un POST armado a mano no pasa por ese filtro.
   if (!categoryAllowedForResidence(data.requestedCategory, livesInBarrio)) {
-    return { error: "La categoría elegida no corresponde a tu lugar de residencia. Volvé al paso 2." };
+    return { error: "La categoría elegida no corresponde a tu lugar de residencia. Volvé al paso 3." };
   }
 
   // El día civil argentino, no el UTC del server (ver `civilTodayAr`).
@@ -420,7 +420,7 @@ export async function checkDniAction(_prev: DniCheckState, formData: FormData): 
 // de una solicitud que YA existe no es asociarse. El interruptor suspende el
 // alta de solicitudes nuevas; los trámites en curso —incluidos los que ya tienen
 // una suscripción viva en Mercado Pago— tienen que poder terminarse, igual que
-// los pasos 4 y 5, que tampoco lo chequean. Sumarla acá dejaría al vecino sin
+// los pasos 5 y 6, que tampoco lo chequean. Sumarla acá dejaría al vecino sin
 // forma de retomar un trámite que la vecinal ya le aceptó.
 export async function resendResumeLinkAction(_prev: ResendState, formData: FormData): Promise<ResendState> {
   const { ip } = await requestMeta();
@@ -517,7 +517,7 @@ type Lookup = { ok: true; app: Application } | { ok: false; error: string };
 /** Resuelve la solicitud desde el token del formulario. Distingue los tres
  *  motivos de fallo en vez de devolver `null`: decirle "no encontramos tu
  *  solicitud" a quien se pasó de cupo lo manda a empezar de cero un trámite que
- *  está entero, y esa es la peor respuesta posible del paso 4. */
+ *  está entero, y esa es la peor respuesta posible del paso 5. */
 async function appFromToken(resumeToken: string): Promise<Lookup> {
   if (!resumeToken) return { ok: false, error: LINK_DEAD };
   const { ip } = await requestMeta();

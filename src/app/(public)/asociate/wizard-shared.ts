@@ -8,7 +8,7 @@ import type { LegalTexts } from "@/lib/config";
 
 export type { LegalTexts };
 
-/** Los dos montos que muestra el paso 2. Salen de `fee_values` —la única fuente
+/** Los dos montos que muestra el paso 3. Salen de `fee_values` —la única fuente
  *  de montos del sistema (REG-34)—, no de los planes de Mercado Pago. */
 export type FeeAmounts = { active: number; shared: number };
 
@@ -70,9 +70,9 @@ export type DniCheckState =
   | { kind: "error"; error: string };
 
 /** Lo que el wizard sabe de una solicitud YA creada. Se arma en el servidor
- *  (`/asociate/retomar/[token]`) o se deriva del borrador apenas el paso 3
+ *  (`/asociate/retomar/[token]`) o se deriva del borrador apenas el paso 4
  *  contesta. Es lo que decide qué pantalla se muestra: `started` sigue en los
- *  pasos 4-5, cualquier otro estado va a `ApplicationStatusScreen`.
+ *  pasos 5-6, cualquier otro estado va a `ApplicationStatusScreen`.
  *
  *  Ojo con qué NO viaja: ni el id de la solicitud ni el DNI ni el domicilio. El
  *  cliente no los necesita —todas las actions se dirigen con el token de
@@ -87,13 +87,13 @@ export type ApplicationSnapshot = {
   fullName: string;
 };
 
-/** Cómo crece la lista de documentos ya subidos del paso 4 cuando el server
+/** Cómo crece la lista de documentos ya subidos del paso 5 cuando el server
  *  acepta uno más.
  *
  *  El frente y el dorso se REEMPLAZAN —el store borra el archivo anterior, así
  *  que volver a subir el frente no puede dejar dos "Frente del DNI" en la
  *  lista— y los anexos se ACUMULAN, hasta MAX_ANNEXES (el tope lo hace cumplir
- *  el server; acá sólo se cuenta). La lista es la que decide si el paso 5 se
+ *  el server; acá sólo se cuenta). La lista es la que decide si el paso 6 se
  *  habilita, y `annex` aparece repetido a propósito: la ranura muestra
  *  "2 archivos" contándolo. */
 export function withUploadedType(prev: DocumentType[], type: DocumentType): DocumentType[] {

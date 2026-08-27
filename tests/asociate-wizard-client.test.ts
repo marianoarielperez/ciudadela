@@ -189,4 +189,11 @@ describe("el wizard de 6 pasos", () => {
   it("con la solicitud creada no se navega por debajo del paso 5", () => {
     expect(wizard).toContain("const step = resumeToken && navStep < 5 ? 5 : navStep;");
   });
+
+  it("el retome entra en el paso 6 con la documentación completa, o en el 5", () => {
+    // El tercer número load-bearing de la renumeración: un desliz acá degrada
+    // en silencio (la guarda de navStep lo absorbe y el retome cae un paso antes).
+    expect(wizard).toContain("? 6");
+    expect(wizard).toContain(": 5;");
+  });
 });
