@@ -5,10 +5,22 @@ import { useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
+import {
+  initialMinuteChoice,
+  initialMinuteDraft,
+  offeredMinutes,
+  suggestedMinuteNumber,
+  type MinuteChoice,
+  type MinuteDraft,
+  type MinuteDraftDefaults,
+  type MinuteOption,
+} from "@/lib/members/minute-choice";
 
-export type MinuteOption = { id: number; label: string };
+// Los tipos viven en `minute-choice.ts` (puro, sin React) y se re-exportan desde
+// acá porque es de donde los importan los nueve consumidores.
+export type { MinuteOption, MinuteChoice, MinuteDraftDefaults };
 
-export function MinutePicker({ minutes, applied }: {
+export function MinutePicker({ minutes, applied, defaultMode, newDefaults, onChoiceChange }: {
   minutes: MinuteOption[];
   /** El acta que la acción anterior ACABA de usar, si la hubo: se ofrece en el
    *  desplegable y arranca ELEGIDA.
@@ -28,22 +40,68 @@ export function MinutePicker({ minutes, applied }: {
    *  efecto sería pisarle al operador una elección que quizás acaba de hacer, y
    *  encima con un render de más. */
   applied?: MinuteOption | null;
+  /** Con qué modo arranca cuando no hay `applied`. Por omisión "existing" con la
+   *  primera de la lista, que es lo que hacen ocho de los nueve consumidores.
+   *
+   *  La pantalla de cierre del libro pide "new" a propósito: la lista viene
+   *  ordenada por fecha descendente, así que la preseleccionada es siempre la
+   *  más reciente, y en una ceremonia de cierre esa es casi seguro el acta del
+   *  paso anterior. En el simulacro el cierre del Libro N° 1 quedó asentado con
+   *  el acta de las bajas por exactamente eso. */
+  defaultMode?: "existing" | "new";
+  /** Valores con los que arranca el modo "Acta nueva" (tipo, número sugerido por
+   *  tipo, fecha). El número sugerido acompaña al tipo si el operador lo cambia
+   *  y todavía no lo tocó a mano. */
+  newDefaults?: MinuteDraftDefaults;
+  /** Avisa la elección viva cada vez que cambia, para que la pantalla pueda
+   *  NOMBRARLA antes de confirmar. El estado inicial no se avisa: quien la use
+   *  lo calcula con `initialMinuteChoice` —la misma función que usa este
+   *  componente— así que no pueden diverger. */
+  onChoiceChange?: (choice: MinuteChoice) => void;
 }) {
-  // Se OFRECE aunque la lista que llegó por props no la traiga: entre la carga
-  // de la página y el fin de la tanda el acta pudo haberse creado, y el operador
-  // no tiene por qué recargar para poder elegirla.
-  const options =
-    applied && !minutes.some((m) => m.id === applied.id) ? [applied, ...minutes] : minutes;
-  const [mode, setMode] = useState<"existing" | "new">(options.length > 0 ? "existing" : "new");
+  const options = offeredMinutes(minutes, applied);
+  const initial = initialMinuteChoice({ minutes, applied, defaultMode, newDefaults });
+  const [mode, setMode] = useState<"existing" | "new">(initial.mode);
   // Controlados por la misma razón que el ABM de actas: React 19 resetea el
   // formulario al terminar la action, y si la acción societaria vuelve con un
   // error el acta tipeada se perdía.
   const [minuteId, setMinuteId] = useState(
-    applied ? String(applied.id) : options[0] ? String(options[0].id) : "",
+    initial.mode === "existing" && initial.option ? String(initial.option.id) : (options[0] ? String(options[0].id) : ""),
   );
-  const [draft, setDraft] = useState({ type: "board", number: "", date: "", description: "" });
-  const set = (k: keyof typeof draft) => (e: { target: { value: string } }) =>
-    setDraft((v) => ({ ...v, [k]: e.target.value }));
+  const [draft, setDraft] = useState<MinuteDraft>(
+    initial.mode === "new" ? initial.draft : initialMinuteDraft(newDefaults),
+  );
+
+  const notify = (nextMode: "existing" | "new", nextId: string, nextDraft: MinuteDraft) => {
+    onChoiceChange?.(
+      nextMode === "existing"
+        ? { mode: "existing", option: options.find((o) => String(o.id) === nextId) ?? null }
+        : { mode: "new", draft: nextDraft },
+    );
+  };
+
+  const changeMode = (next: "existing" | "new") => {
+    setMode(next);
+    notify(next, minuteId, draft);
+  };
+
+  const set = (k: keyof MinuteDraft) => (e: { target: { value: string } }) => {
+    const next = { ...draft, [k]: e.target.value } as MinuteDraft;
+    // El número sugerido viaja con el TIPO: la numeración de actas es por tipo,
+    // así que dejar el siguiente de Comisión Directiva tipeado bajo "Asamblea"
+    // sería ofrecer en silencio un número equivocado. Sólo se reemplaza mientras
+    // siga siendo la sugerencia —si el operador lo escribió a mano, manda él.
+    if (k === "type" && draft.number === suggestedMinuteNumber(newDefaults, draft.type)) {
+      next.number = suggestedMinuteNumber(newDefaults, next.type);
+    }
+    setDraft(next);
+    notify(mode, minuteId, next);
+  };
+
+  const changeMinuteId = (value: string) => {
+    setMinuteId(value);
+    notify(mode, value, draft);
+  };
 
   // Estar controlados no alcanza para los <select> ni para los radios: el reset
   // de React 19 los devuelve a la opción por defecto y React no los corrige.
@@ -57,7 +115,7 @@ export function MinutePicker({ minutes, applied }: {
         <label className="flex items-center gap-1">
           <input
             type="radio" name="minuteMode" value="existing"
-            checked={mode === "existing"} onChange={() => setMode("existing")}
+            checked={mode === "existing"} onChange={() => changeMode("existing")}
             disabled={options.length === 0}
           />
           Acta existente
@@ -65,7 +123,7 @@ export function MinutePicker({ minutes, applied }: {
         <label className="flex items-center gap-1">
           <input
             type="radio" name="minuteMode" value="new"
-            checked={mode === "new"} onChange={() => setMode("new")}
+            checked={mode === "new"} onChange={() => changeMode("new")}
           />
           Acta nueva
         </label>
@@ -73,7 +131,7 @@ export function MinutePicker({ minutes, applied }: {
       {mode === "existing" ? (
         <select
           name="minuteId" className="h-9 w-full rounded-md border px-2 text-sm" required
-          value={minuteId} onChange={(e) => setMinuteId(e.target.value)}
+          value={minuteId} onChange={(e) => changeMinuteId(e.target.value)}
         >
           {options.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>

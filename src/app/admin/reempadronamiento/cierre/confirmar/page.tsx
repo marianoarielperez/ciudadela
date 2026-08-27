@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
+import type { MinuteType } from "@/generated/prisma/client";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
@@ -26,6 +27,7 @@ import { closeBookService } from "@/lib/reregistration/close-book";
 import { canPrepareClose } from "@/lib/reregistration/rules";
 import { LIVE_PROCESS_STATUSES } from "@/lib/reregistration/service";
 import { withdrawals } from "@/lib/reregistration/withdrawals";
+import { civilDayOf } from "@/lib/treasury/periods";
 import { ConfirmCloseForm } from "./confirm-close-form";
 import {
   CloseBlockersNotice, CloseWarnings, IrreversibleWarning, MigrationPreview,
@@ -100,13 +102,18 @@ export default async function ConfirmarCierrePage(props: {
   }
 
   const canClose = canPrepareClose(process);
-  const [preview, checklist, unnotified, minuteRows] = await Promise.all([
+  const [preview, checklist, unnotified, minuteRows, minuteMaxByType] = await Promise.all([
     closeBookService.preview(process.id),
     // Para las ADVERTENCIAS (mora, cartelera): los bloqueos ya vienen en la
     // vista previa, contados con los mismos `where` que la transacción.
     withdrawals.closeChecklist(process.id),
     withdrawals.listUnnotifiedWithdrawals(process.id),
     prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
+    // El número siguiente por tipo, para SUGERIR el del acta de cierre. Se
+    // pregunta por el máximo y no por la lista de arriba, que viene ordenada por
+    // fecha y recortada a 30: el índice único es (tipo, número), y un número ya
+    // usado se rechazaría recién al confirmar.
+    prisma.minute.groupBy({ by: ["type"], _max: { number: true } }),
   ]);
   const arrears = checklist.preconditions.find((p) => p.kind === "arrears_candidates")?.count ?? 0;
   const oldNumber = process.book.number;
@@ -114,6 +121,18 @@ export default async function ConfirmarCierrePage(props: {
     id: m.id,
     label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
   }));
+  const nextMinuteNumber = (type: MinuteType) =>
+    (minuteMaxByType.find((g) => g.type === type)?._max.number ?? 0) + 1;
+  // Con qué arranca el acta de cierre: NUEVA, de Comisión Directiva, con el
+  // número siguiente y la fecha de hoy. El día se resuelve con el calendario
+  // argentino (`civilDayOf`) y no con el reloj UTC del server: a las 21:00 de
+  // acá UTC ya está en el día siguiente y el acta de cierre nacería fechada
+  // mañana. La sugerencia va por tipo porque la numeración lo es.
+  const minuteDefaults = {
+    type: "board" as const,
+    numberByType: { board: nextMinuteNumber("board"), assembly: nextMinuteNumber("assembly") },
+    date: civilDayOf().toISOString().slice(0, 10),
+  };
 
   return (
     <div className="space-y-6">
@@ -163,6 +182,7 @@ export default async function ConfirmarCierrePage(props: {
           newNumber={preview.newBookNumber}
           migrantCount={preview.migrants.length}
           minutes={minutes}
+          minuteDefaults={minuteDefaults}
         />
       )}
     </div>

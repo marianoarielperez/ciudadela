@@ -35,6 +35,33 @@ export function IrreversibleWarning({ oldNumber, newNumber }: { oldNumber: numbe
   );
 }
 
+/** EL ACTA, NOMBRADA. Va adentro del bloque que el operador confirma y con el
+ *  mismo peso que el resto de los datos irreversibles, porque confirmar sin
+ *  haberla visto tiene que ser imposible.
+ *
+ *  Existe por un error real: en el simulacro el cierre del Libro N° 1 quedó
+ *  asentado con el acta de las bajas —la CD 126, creada minutos antes— en vez de
+ *  con la CD 127 que el operador creía estar creando. El selector arrancaba en
+ *  "Acta existente" con la más reciente ya elegida, y esta pantalla no nombraba
+ *  el acta en ningún lado: no había dónde darse cuenta.
+ *
+ *  Presentacional como el resto del archivo: el texto y el `ready` los calcula
+ *  `describeMinuteChoice` (puro), acá sólo se decide cómo se ven. */
+export function CloseMinuteSummary({ text, ready }: { text: string; ready: boolean }) {
+  return (
+    <FormMessage
+      kind={ready ? "neutral" : "warning"}
+      box
+      // Ayuda estática que ya está en pantalla mientras el operador completa el
+      // acta: un `role="alert"` acá interrumpiría al lector en cada tecla.
+      role="none"
+      className={ready ? "text-foreground" : undefined}
+    >
+      <span className="font-medium">Acta de cierre:</span> {text}
+    </FormMessage>
+  );
+}
+
 /** Los bloqueos vivos: con uno solo de estos, el botón no se ofrece. La
  *  transacción los re-valida igual adentro — esto es la versión legible. */
 export function CloseBlockersNotice({ blockers }: { blockers: ClosePrecondition[] }) {
