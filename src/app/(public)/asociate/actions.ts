@@ -14,6 +14,7 @@ import {
 } from "@/lib/auth/rate-limiter";
 import { MAX_ANNEXES, requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { checkEligibility } from "@/lib/applications/eligibility";
+import { loadEligibilityInputs } from "@/lib/applications/eligibility-inputs";
 import { applicationService, DuplicateLiveApplicationError } from "@/lib/applications/service";
 import { categoryAllowedForResidence, civilTodayAr, isAdult, WEB_CATEGORIES } from "@/lib/applications/wizard";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
@@ -258,24 +259,12 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
 
   // Elegibilidad por DNI (spec §4): corre DESPUÉS de Turnstile + rate limit,
   // que son lo único que impide usar este formulario para barrer el padrón.
+  // Los insumos salen de `loadEligibilityInputs`, la MISMA carga que usa el
+  // chequeo temprano del paso "Tu DNI": los dos puntos de verdad no pueden
+  // divergir en qué miran.
   const now = new Date();
-  const memberRow = await prisma.member.findUnique({
-    where: { dni: data.dni },
-    select: {
-      id: true, status: true, withdrawalReason: true,
-      reentryBlocked: true, rejectedUntil: true,
-      // La deuda que bloquea es la VIVA de la cuenta corriente (M4), no el flag
-      // `debtAtWithdrawal` que quedó congelado en la baja: el que saldó en la
-      // sede tiene que poder reingresar sin que nadie le toque la ficha.
-      _count: { select: { fees: { where: { status: "pending" } } } },
-    },
-  });
-  const member = memberRow ? { ...memberRow, pendingFees: memberRow._count.fees } : null;
-  const [liveApplication, lastRejectionAt] = await Promise.all([
-    applicationService.findLiveByDni(data.dni),
-    applicationService.lastRejectionAt(data.dni),
-  ]);
-  const eligibility = checkEligibility({ member, liveApplication, lastRejectionAt, now });
+  const inputs = await loadEligibilityInputs(prisma, applicationService, data.dni);
+  const eligibility = checkEligibility({ ...inputs, now });
   if (!eligibility.ok) {
     return {
       blocked: {
