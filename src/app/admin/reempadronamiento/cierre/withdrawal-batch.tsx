@@ -12,7 +12,7 @@
 //   - la selección se sigue desde el `onChange` del <form> y se re-afirma con
 //     `useFormResetSync`, porque React 19 resetea el formulario al terminar la
 //     action y el rechazo parcial es el caso ESPERABLE;
-//   - la barra de acción va `sticky bottom-0`: la lista puede tener veinticinco
+//   - la barra de acción va `sticky bottom-0`: la lista puede tener noventa
 //     tarjetas largas y el botón no puede estar sólo al final del scroll;
 //   - la acción tiene DOS pasos, y el primero no da de baja a nadie.
 import Link from "next/link";
@@ -31,7 +31,7 @@ import { formatDateAR } from "@/lib/format";
 import { NOTIFICATION_TYPE_LABELS, PRESENTATION_STATUS_LABELS } from "@/lib/members/labels";
 // De `close` y NO de `withdrawals`: este es un componente de CLIENTE y
 // `withdrawals` arrastra Prisma y el mailer. `close` es puro.
-import { WITHDRAWAL_BATCH_MAX, type NoticeTrace } from "@/lib/reregistration/close";
+import type { NoticeTrace } from "@/lib/reregistration/close";
 import { cn } from "@/lib/utils";
 import { declareWithdrawalsAction } from "./actions";
 
@@ -136,10 +136,14 @@ function WithdrawalCard({ row, checked }: { row: WithdrawalRow; checked: boolean
   );
 }
 
-export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedReason }: {
+export function WithdrawalBatch({ processId, rows, minutes, appliedMinute, canDeclare, blockedReason }: {
   processId: number;
   rows: WithdrawalRow[];
   minutes: MinuteOption[];
+  /** El acta que usó la tanda anterior, cuando la pantalla vuelve de una
+   *  (`?acta=` del redirect). El estado de la action manda sobre esto: cubre el
+   *  camino en el que la tanda terminó con algo que decir y no hubo redirect. */
+  appliedMinute?: MinuteOption | null;
   /** Sólo display: la action vuelve a resolver `requireSuperadmin` y a
    *  revalidar el vencimiento de la segunda instancia contra la base. */
   canDeclare: boolean;
@@ -162,9 +166,14 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
   const all = rows.map((r) => String(r.presentationId));
   const effective = selected.filter((id) => all.includes(id));
   useFormResetSync(formRef, { ids: effective.join(",") });
-  const batch = all.slice(0, WITHDRAWAL_BATCH_MAX);
-  const overCap = effective.length > WITHDRAWAL_BATCH_MAX;
-  const allSelected = batch.length > 0 && batch.every((id) => effective.includes(id));
+  const allSelected = all.length > 0 && all.every((id) => effective.includes(id));
+  // El acta que la última tanda usó, y NO se pierde. Es estado y no un
+  // `state.minute ?? appliedMinute`: cada corrida siguiente de la action —el
+  // paso de confirmación, un rechazo— vuelve sin `minute`, y con la expresión
+  // suelta el acta adoptada se caía justo entre "Declarar" y "Confirmar",
+  // cambiándole al operador el acta debajo de la confirmación que está leyendo.
+  const [applied, setApplied] = useState<MinuteOption | null>(appliedMinute ?? null);
+  if (state.minute && state.minute.id !== applied?.id) setApplied(state.minute);
 
   const onChange = (e: React.ChangeEvent<HTMLFormElement>) => {
     const el = e.target;
@@ -216,7 +225,13 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
           su condición de socia. */}
       <div className="flex flex-wrap items-end gap-4 rounded-md border border-destructive/40 p-3">
         <div className="min-w-64 grow">
-          <MinutePicker minutes={minutes} />
+          {/* La `key` es lo que hace que el acta de la tanda anterior se ADOPTE:
+              `MinutePicker` sólo la mira al montarse, así que remontarlo es lo
+              que reemplaza al borrador "Acta nueva" con el número ya tipeado.
+              Es el patrón de React para resetear estado cuando cambia una prop,
+              y de paso limpia ese número — que ya es un acta del libro y
+              re-tipearlo chocaría contra el índice único de tipo+número. */}
+          <MinutePicker key={applied ? `acta-${applied.id}` : "acta"} minutes={minutes} applied={applied} />
         </div>
         <label className="flex min-h-11 items-center gap-2 text-sm">
           <input
@@ -224,26 +239,19 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
             className="size-4"
             checked={allSelected}
             onChange={() => {
-              setSelected(allSelected ? [] : batch);
+              setSelected(allSelected ? [] : all);
               setDismissed(state.confirm);
             }}
           />
-          {all.length > WITHDRAWAL_BATCH_MAX
-            ? `Seleccionar los primeros ${WITHDRAWAL_BATCH_MAX}`
-            : "Seleccionar todos"}
+          {/* Sin tope: la tanda entera se puede tildar de una. Lo que el lote
+              acota son las cancelaciones de débito en Mercado Pago, y acá los
+              convocados son adherentes —la categoría no lo habilita—, así que
+              casi siempre son cero. Si alguna vez no lo fueran, la acción lo
+              dice con los números en la mano en vez de apagar el botón por
+              adelantado sobre una cuenta que el navegador no puede hacer. */}
+          Seleccionar todos
         </label>
       </div>
-
-      {overCap && (
-        // `role="status"` y no `role="none"`: esto es la reacción a tildar una
-        // casilla y explica un control que se acaba de apagar. Cortés y no
-        // `alert`: no interrumpe mientras se sigue tildando.
-        <FormMessage kind="warning" role="status">
-          {`Tenés ${effective.length} convocados tildados y el lote acepta hasta ${WITHDRAWAL_BATCH_MAX} por vez. ` +
-            "Destildá los que sobren y declaralos en una segunda tanda: cada baja cancela además el " +
-            "débito automático en Mercado Pago y eso lleva su tiempo."}
-        </FormMessage>
-      )}
 
       {/* Padding extra cuando la barra está montada: `sticky` reserva su lugar en
           el flujo, pero se superpone a las tarjetas de más arriba mientras se
@@ -319,7 +327,7 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
         </div>
       )}
 
-      {/* La barra de acción, pegada abajo: la lista puede tener veinticinco
+      {/* La barra de acción, pegada abajo: la lista puede tener noventa
           tarjetas largas. Con la confirmación en pantalla desaparece — hay un
           solo botón que da de baja, y es el del panel de confirmación. */}
       {!confirm && (
@@ -332,7 +340,7 @@ export function WithdrawalBatch({ processId, rows, minutes, canDeclare, blockedR
               type="submit"
               variant="destructive"
               className="min-h-11"
-              disabled={pending || effective.length === 0 || overCap || !canDeclare}
+              disabled={pending || effective.length === 0 || !canDeclare}
             >
               {pending ? "Revisando…" : "Declarar bajas seleccionadas"}
             </Button>

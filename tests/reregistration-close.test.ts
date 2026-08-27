@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
 import { civilDateUtc } from "@/lib/dates";
-import { closeBlockers, planMigration, type ClosePrecondition } from "@/lib/reregistration/close";
+import {
+  closeBlockers,
+  debitBudgetBlock,
+  planMigration,
+  WITHDRAWAL_DEBIT_CALL_BUDGET,
+  type ClosePrecondition,
+} from "@/lib/reregistration/close";
 
 const d = civilDateUtc;
 
@@ -219,5 +225,48 @@ describe("closeBlockers — qué frena el cierre y qué sólo se mira", () => {
     for (const kind of Object.keys(blocksClose) as Array<ClosePrecondition["kind"]>) {
       expect(closeBlockers([{ kind, count: 3 }]).length === 1).toBe(blocksClose[kind]);
     }
+  });
+});
+
+describe("debitBudgetBlock — el lote se mide en LLAMADAS DE RED, no en nombres", () => {
+  // Por qué esta regla reemplazó al tope de 25 convocados por tanda: en la etapa
+  // de bajas los convocados son ADHERENTES, y la categoría no habilita el débito
+  // automático. En el ensayo real del 26/08/2026 el operador declaró 90 bajas en
+  // cuatro tandas y hubo CERO llamadas a Mercado Pago: el tope lo protegía de un
+  // costo que ese lote no tenía. Lo que hay que contar es lo que tarda.
+  it("deja pasar una tanda enorme sin ningún débito vivo", () => {
+    expect(debitBudgetBlock({ members: 0, calls: 0 })).toBeNull();
+  });
+
+  it("deja pasar justo el presupuesto", () => {
+    expect(
+      debitBudgetBlock({
+        members: WITHDRAWAL_DEBIT_CALL_BUDGET,
+        calls: WITHDRAWAL_DEBIT_CALL_BUDGET,
+      }),
+    ).toBeNull();
+  });
+
+  it("corta una llamada más arriba y dice cuántos tienen débito", () => {
+    const msg = debitBudgetBlock({
+      members: WITHDRAWAL_DEBIT_CALL_BUDGET + 1,
+      calls: WITHDRAWAL_DEBIT_CALL_BUDGET + 1,
+    });
+    expect(msg).toContain(String(WITHDRAWAL_DEBIT_CALL_BUDGET + 1));
+    expect(msg).toContain(String(WITHDRAWAL_DEBIT_CALL_BUDGET));
+    // Un mensaje que sólo dice "no" manda al operador a adivinar por dónde
+    // partir. Tiene que decir qué medir para armar la tanda siguiente.
+    expect(msg).toContain("débito");
+    expect(msg).toContain("tanda");
+  });
+
+  it("cuando un socio tiene DOS débitos, el mensaje dice las dos cosas", () => {
+    // `memberId` no es unique en `mp_subscriptions`: un vecino puede tener dos
+    // preapprovals vivos, y son dos llamadas de red. Decir sólo "13 socios"
+    // cuando el presupuesto se gastó con 26 cancelaciones haría que el operador
+    // partiera la selección mal y volviera a chocar contra lo mismo.
+    const msg = debitBudgetBlock({ members: 13, calls: 26 });
+    expect(msg).toContain("13");
+    expect(msg).toContain("26");
   });
 });

@@ -44,19 +44,24 @@ import { withdrawalDeclaredEmail } from "@/lib/email/templates";
 import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import type { WithdrawInput, DebitCancellation } from "@/lib/members/withdraw-with-debits";
 import { withdrawWithDebits } from "@/lib/members/withdraw-with-debits";
+// La MISMA pregunta que decide qué cancela `withdrawWithDebits`, IMPORTADA y no
+// reescrita: lista NEGRA de un solo valor. Si acá se preguntara `canStillCharge`
+// (lista blanca), un estado que Mercado Pago invente mañana no entraría al
+// presupuesto y el lote se cortaría por tiempo igual — con las bajas ya escritas
+// y el informe perdido. Ver `mp/subscription-status.ts`.
+import { isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
-import type { ClosePrecondition, NoticeTrace } from "./close";
-import { cohortNotTerminalWhere, unresolvedPresentationsWhere, WITHDRAWAL_BATCH_MAX } from "./close";
+import type { ClosePrecondition, DebitLoad, NoticeTrace } from "./close";
+import { cohortNotTerminalWhere, debitBudgetBlock, unresolvedPresentationsWhere } from "./close";
 import { appealUntil, COHORT_CATEGORY, COHORT_STATUSES, emailUsable, hasExpired } from "./rules";
 
-/** El tope del lote y el tipo del anexo viven en el módulo PURO `./close` y se
- *  re-exportan desde acá por comodidad del servidor. No pueden vivir en este
- *  archivo: la pantalla del lote es un componente de CLIENTE y este módulo
- *  arrastra Prisma y el mailer. El número con el que la pantalla corta la
- *  selección tiene que ser el mismo que el que esta acción revalida, así que
- *  tiene que poder importarse desde los dos lados. */
-export { WITHDRAWAL_BATCH_MAX } from "./close";
-export type { NoticeTrace } from "./close";
+/** El presupuesto de red del lote y el tipo del anexo viven en el módulo PURO
+ *  `./close` y se re-exportan desde acá por comodidad del servidor. No pueden
+ *  vivir en este archivo, que arrastra Prisma y el mailer: la regla se prueba
+ *  sin base, y el número que el dominio revalida tiene que ser el MISMO que
+ *  aplica la action antes de tocar el libro de actas. */
+export { WITHDRAWAL_DEBIT_CALL_BUDGET, debitBudgetBlock } from "./close";
+export type { DebitLoad, NoticeTrace } from "./close";
 
 /** REG-15 (Art. 9 inc. c): cuatro cuotas atrasadas habilitan la cesantía por
  *  mora, y sólo sobre socios activos y colaboradores —el adherente aporta
@@ -188,7 +193,7 @@ export type CloseChecklist = {
 
 type Db = Pick<
   PrismaClient,
-  "reregistrationProcess" | "presentation" | "notification" | "boardNotice" | "fee"
+  "reregistrationProcess" | "presentation" | "notification" | "boardNotice" | "fee" | "mpSubscription"
 >;
 
 type Deps = {
@@ -295,7 +300,37 @@ export function makeWithdrawals(deps: Deps) {
     return byMember;
   }
 
+  /** Cuánto le va a costar en RED este lote: cuántos de estos socios tienen un
+   *  débito automático que la baja va a tener que cancelar en Mercado Pago.
+   *
+   *  Es la cuenta que reemplazó al tope de convocados por tanda. Lo que no
+   *  entra en los 60 s del proxy no son las bajas —transacciones cortas contra
+   *  la base, en serie— sino las llamadas a Mercado Pago; y en esta etapa los
+   *  convocados son adherentes, así que casi siempre esto da cero y la tanda
+   *  entera pasa (ver `WITHDRAWAL_DEBIT_CALL_BUDGET` en `./close`).
+   *
+   *  El filtro por estado se hace en JS y no en el `where` A PROPÓSITO: la
+   *  semántica de "suscripción viva" es una función del proyecto
+   *  (`isNotCancelled`) y tiene que ser exactamente la que usa
+   *  `withdrawWithDebits` para decidir qué cancela. Copiada dentro de un
+   *  `where` sería una segunda definición que puede divergir en silencio, y
+   *  divergir acá significa presupuestar mal y cortarse por tiempo. */
+  async function countDebitCalls(memberIds: number[]): Promise<DebitLoad> {
+    const ids = [...new Set(memberIds)].filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) return { members: 0, calls: 0 };
+    const subs = await deps.db.mpSubscription.findMany({
+      where: { memberId: { in: ids } },
+      select: { memberId: true, status: true },
+    });
+    const live = subs.filter((s) => isNotCancelled(s.status));
+    // Dos números porque `memberId` NO es unique: un vecino con dos
+    // preapprovals vivos son dos llamadas de red, no una.
+    return { members: new Set(live.map((s) => s.memberId)).size, calls: live.length };
+  }
+
   return {
+    countDebitCalls,
+
     /** Los convocados a los que hay que declararles la baja, con el anexo del
      *  acta ya armado. */
     async listPendingWithdrawals(processId: number): Promise<PendingWithdrawal[]> {
@@ -466,9 +501,12 @@ export function makeWithdrawals(deps: Deps) {
      *
      *  El orden de adentro, que es lo que hay que leer antes de tocar nada:
      *
-     *  1. Tope del lote. Corta ANTES de tocar a nadie (la action lo corta antes
-     *     todavía: antes de crear el acta, para no dejar un asiento fantasma en
-     *     un libro que se presenta ante la IGJ).
+     *  1. Presupuesto de RED (`countDebitCalls` + `debitBudgetBlock`): cuántas
+     *     cancelaciones de débito en Mercado Pago va a tener que hacer esta
+     *     tanda. Corta ANTES de tocar a nadie (la action lo corta antes todavía:
+     *     antes de crear el acta, para no dejar un asiento fantasma en un libro
+     *     que se presenta ante la IGJ). NO es un tope de nombres: sin débitos
+     *     vivos —el caso normal, son adherentes— la tanda pasa entera.
      *  2. Revalidación contra la base, socio por socio. La pantalla pudo quedar
      *     vieja —el vecino se presentó en el mostrador mientras el operador
      *     miraba la lista— y esto expulsa gente: lo que vale es la base, nunca
@@ -494,14 +532,6 @@ export function makeWithdrawals(deps: Deps) {
       const out: BatchOutcome = { declared: [], failures: [], debitFailures: [], unstamped: [] };
       const ids = [...new Set(input.presentationIds)].sort((a, b) => a - b);
       if (ids.length === 0) return { ...out, error: "No seleccionaste a ningún convocado." };
-      if (ids.length > WITHDRAWAL_BATCH_MAX) {
-        return {
-          ...out,
-          error:
-            `Seleccionaste ${ids.length} convocados y el lote acepta hasta ${WITHDRAWAL_BATCH_MAX} por vez. ` +
-            "Declaralos en tandas: cada baja cancela además el débito automático en Mercado Pago y eso lleva su tiempo.",
-        };
-      }
 
       // Se cargan TODAS las pedidas, sin el filtro de elegibilidad, para poder
       // decir POR QUÉ quedó afuera cada una. "No cumple" a secas dejaría al
@@ -518,6 +548,18 @@ export function makeWithdrawals(deps: Deps) {
         },
       });
       const byId = new Map(rows.map((r) => [r.id, r]));
+
+      // El presupuesto de RED, revalidado acá. La guarda que importa está en la
+      // action —ahí corta ANTES de crear el acta, para que un lote rechazado no
+      // deje un asiento fantasma en un libro que se presenta ante la IGJ— y ésta
+      // es la segunda barrera: un POST armado a mano no puede saltearla.
+      //
+      // Se cuenta sobre TODAS las filas pedidas y no sólo sobre las elegibles:
+      // la elegibilidad se resuelve socio por socio recién en el bucle de abajo,
+      // y una cuenta que se pasa de más falla del lado seguro (pide partir una
+      // tanda que quizás entraba). Al revés no: dejaría pasar una que no entra.
+      const blocked = debitBudgetBlock(await countDebitCalls(rows.map((r) => r.memberId)));
+      if (blocked) return { ...out, error: blocked };
 
       for (const id of ids) {
         const row = byId.get(id);

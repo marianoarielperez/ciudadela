@@ -8,15 +8,43 @@ import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 
 export type MinuteOption = { id: number; label: string };
 
-export function MinutePicker({ minutes }: { minutes: MinuteOption[] }) {
-  const [mode, setMode] = useState<"existing" | "new">(minutes.length > 0 ? "existing" : "new");
+export function MinutePicker({ minutes, applied }: {
+  minutes: MinuteOption[];
+  /** El acta que la acción anterior ACABA de usar, si la hubo: se ofrece en el
+   *  desplegable y arranca ELEGIDA.
+   *
+   *  Opcional y `undefined` en casi todos los consumidores: sólo la usa una
+   *  pantalla que corre la misma acción varias veces seguidas contra el mismo
+   *  acta (el lote de bajas del cierre, que se declara en tandas). Sin ella el
+   *  formulario volvía a "Acta nueva" con el número anterior todavía tipeado
+   *  —invitando a asentar dos veces la misma reunión— y la lista de actas
+   *  existentes era la de cuando se montó la página, así que la recién creada
+   *  no estaba en el desplegable.
+   *
+   *  IMPORTANTE para quien la use: acá sólo decide el estado INICIAL. Para que
+   *  un acta nueva se adopte, el consumidor tiene que remontar el componente con
+   *  una `key` que la incluya. Es a propósito y es el patrón que React
+   *  recomienda para resetear estado cuando cambia una prop: adoptarla desde un
+   *  efecto sería pisarle al operador una elección que quizás acaba de hacer, y
+   *  encima con un render de más. */
+  applied?: MinuteOption | null;
+}) {
+  // Se OFRECE aunque la lista que llegó por props no la traiga: entre la carga
+  // de la página y el fin de la tanda el acta pudo haberse creado, y el operador
+  // no tiene por qué recargar para poder elegirla.
+  const options =
+    applied && !minutes.some((m) => m.id === applied.id) ? [applied, ...minutes] : minutes;
+  const [mode, setMode] = useState<"existing" | "new">(options.length > 0 ? "existing" : "new");
   // Controlados por la misma razón que el ABM de actas: React 19 resetea el
   // formulario al terminar la action, y si la acción societaria vuelve con un
   // error el acta tipeada se perdía.
-  const [minuteId, setMinuteId] = useState(minutes[0] ? String(minutes[0].id) : "");
+  const [minuteId, setMinuteId] = useState(
+    applied ? String(applied.id) : options[0] ? String(options[0].id) : "",
+  );
   const [draft, setDraft] = useState({ type: "board", number: "", date: "", description: "" });
   const set = (k: keyof typeof draft) => (e: { target: { value: string } }) =>
     setDraft((v) => ({ ...v, [k]: e.target.value }));
+
   // Estar controlados no alcanza para los <select> ni para los radios: el reset
   // de React 19 los devuelve a la opción por defecto y React no los corrige.
   const rootRef = useRef<HTMLFieldSetElement>(null);
@@ -30,7 +58,7 @@ export function MinutePicker({ minutes }: { minutes: MinuteOption[] }) {
           <input
             type="radio" name="minuteMode" value="existing"
             checked={mode === "existing"} onChange={() => setMode("existing")}
-            disabled={minutes.length === 0}
+            disabled={options.length === 0}
           />
           Acta existente
         </label>
@@ -47,7 +75,7 @@ export function MinutePicker({ minutes }: { minutes: MinuteOption[] }) {
           name="minuteId" className="h-9 w-full rounded-md border px-2 text-sm" required
           value={minuteId} onChange={(e) => setMinuteId(e.target.value)}
         >
-          {minutes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          {options.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
       ) : (
         // Los campos del modo "nueva" solo se renderizan en ese modo, así que el

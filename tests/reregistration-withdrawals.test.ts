@@ -10,7 +10,8 @@
 // Lo que se fija:
 //   - a quién alcanza la etapa de bajas (cohortados que SIGUEN siendo adherentes
 //     vigentes y no tienen presentación validada) y a quién ya no;
-//   - que el lote corte en 25 ANTES de tocar el acta;
+//   - que el lote corte por LLAMADAS DE RED —no por cantidad de nombres— ANTES
+//     de tocar el acta, y que una tanda sin débitos vivos pase entera;
 //   - que un fallo de `withdraw` vaya a su balde y no frene a los demás;
 //   - que `debitFailures` sea un balde PROPIO (la baja salió; lo que quedó vivo
 //     es el débito);
@@ -33,7 +34,7 @@ import {
   ARREARS_CATEGORIES_MIRROR,
   ARREARS_THRESHOLD_MIRROR,
   makeWithdrawals,
-  WITHDRAWAL_BATCH_MAX,
+  WITHDRAWAL_DEBIT_CALL_BUDGET,
 } from "@/lib/reregistration/withdrawals";
 // Sólo para el test de deriva: el dominio NO los importa (son de tesorería).
 import { ACCRUING_CATEGORIES, ARREARS_THRESHOLD } from "@/lib/treasury/rules";
@@ -156,10 +157,16 @@ type BoardNoticeRow = {
   dueAt: Date | null;
 };
 
+/** El espejo local de una suscripción de Mercado Pago. Sólo las dos columnas de
+ *  las que cuelga la guarda del lote: de quién es y en qué estado está. */
+type SubscriptionRow = { memberId: number | null; status: string };
+
 type World = {
   presentations: PresentationRow[];
   notices?: NoticeRow[];
   boardNotices?: BoardNoticeRow[];
+  /** Débitos automáticos espejados, para el presupuesto de red del lote. */
+  subscriptions?: SubscriptionRow[];
   /** Cuotas pendientes por socio, para el conteo de cesanteables por mora. */
   fees?: Array<{ memberId: number; category: MemberCategory; status: MemberStatus; pending: number }>;
   process?: { id: number; bookId: number; createdAt: Date } | null;
@@ -231,6 +238,15 @@ function fakeDb(world: World) {
     boardNotice: {
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
         (world.boardNotices ?? []).filter((n) => matchesWhere(n, where)),
+      ),
+    },
+    // El `where` viaja TAL CUAL, igual que en el resto de este doble: lo que
+    // filtra por estado no es la consulta sino `isNotCancelled` en el módulo, y
+    // si acá se reimplementara el filtro el test dejaría de vigilar cuál de las
+    // dos semánticas de "suscripción viva" se está usando.
+    mpSubscription: {
+      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
+        (world.subscriptions ?? []).filter((s) => matchesWhere(s, where)),
       ),
     },
   };
@@ -387,18 +403,88 @@ describe("declareBatch", () => {
     expect(audited[0]).toMatchObject({ entityId: 10, userId: 4 });
   });
 
-  it("corta en el tope del lote y NO llama a ninguna baja", async () => {
-    // El tope se aplica antes de tocar a nadie. La guarda que importa está en la
-    // action —ahí corta ANTES de crear el acta, para que no quede un asiento
-    // fantasma en un libro que se presenta ante la IGJ— y ésta es la segunda
-    // barrera: un POST armado a mano no puede saltearla.
-    const many = Array.from({ length: WITHDRAWAL_BATCH_MAX + 1 }, (_, i) => i + 1);
-    const { sut, calls } = makeSut(world());
+  /** Un mundo de `n` convocados, para las tandas grandes. */
+  const crowd = (n: number): World => ({
+    presentations: Array.from({ length: n }, (_, i) =>
+      presentation(i + 1, member((i + 1) * 10), { status: "pending" }),
+    ),
+  });
+  const crowdIds = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 
-    const out = await sut.declareBatch({ processId: 1, presentationIds: many, minuteId: 7, actorId: 4 });
+  it("declara una tanda de 90 entera cuando ninguno tiene débito vivo", async () => {
+    // EL CASO REAL (ensayo del 26/08/2026): 90 adherentes, cero llamadas a
+    // Mercado Pago. La categoría adherente no habilita el débito automático, así
+    // que el lote es todo base: transacciones cortas en serie. El tope viejo de
+    // 25 nombres obligaba a cuatro tandas para nada.
+    const { sut, calls } = makeSut(crowd(90));
 
-    expect(out.error).toContain(String(WITHDRAWAL_BATCH_MAX));
+    const out = await sut.declareBatch({
+      processId: 1, presentationIds: crowdIds(90), minuteId: 7, actorId: 4,
+    });
+
+    expect(out.error).toBeUndefined();
+    expect(out.declared).toHaveLength(90);
+    expect(calls).toHaveLength(90);
+  });
+
+  it("corta cuando las cancelaciones de débito pasan el presupuesto, y NO da de baja a nadie", async () => {
+    // La guarda que importa está en la action —ahí corta ANTES de crear el acta,
+    // para que no quede un asiento fantasma en un libro que se presenta ante la
+    // IGJ— y ésta es la segunda barrera: un POST armado a mano no puede
+    // saltearla. Lo que se cuenta son LLAMADAS DE RED: cada una es ~1,2 s contra
+    // los 60 s del proxy, y una petición cortada por tiempo deja las bajas
+    // asentadas y pierde el informe de a quién le quedó el débito vivo.
+    const over = WITHDRAWAL_DEBIT_CALL_BUDGET + 1;
+    const { sut, calls } = makeSut({
+      ...crowd(over),
+      subscriptions: crowdIds(over).map((i) => ({ memberId: i * 10, status: "authorized" })),
+    });
+
+    const out = await sut.declareBatch({
+      processId: 1, presentationIds: crowdIds(over), minuteId: 7, actorId: 4,
+    });
+
+    expect(out.error).toContain(String(WITHDRAWAL_DEBIT_CALL_BUDGET));
     expect(out.declared).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("una suscripción ya cancelada no gasta presupuesto: no hay nada que cancelar", async () => {
+    // `withdrawWithDebits` la saltea (`isKnownDead`), así que no es una llamada
+    // de red. Contarla habría dejado el lote bloqueado por débitos que ya están
+    // muertos — que en un padrón viejo son la mayoría.
+    const many = WITHDRAWAL_DEBIT_CALL_BUDGET * 3;
+    const { sut, calls } = makeSut({
+      ...crowd(many),
+      subscriptions: crowdIds(many).map((i) => ({ memberId: i * 10, status: "cancelled" })),
+    });
+
+    const out = await sut.declareBatch({
+      processId: 1, presentationIds: crowdIds(many), minuteId: 7, actorId: 4,
+    });
+
+    expect(out.error).toBeUndefined();
+    expect(calls).toHaveLength(many);
+  });
+
+  it("un estado que Mercado Pago no documenta CUENTA como débito vivo", async () => {
+    // Ésta es la línea que separa las dos semánticas (`mp/subscription-status`).
+    // Acá va la LISTA NEGRA (`isNotCancelled`), la misma que decide qué cancela
+    // `withdrawWithDebits`: lo que no se puede afirmar muerto se intenta
+    // cancelar, y eso es una llamada de red que hay que presupuestar. Con la
+    // lista blanca (`canStillCharge`) un estado nuevo de MP no contaría, el lote
+    // pasaría la guarda y la petición se cortaría por tiempo a mitad de camino.
+    const over = WITHDRAWAL_DEBIT_CALL_BUDGET + 1;
+    const { sut, calls } = makeSut({
+      ...crowd(over),
+      subscriptions: crowdIds(over).map((i) => ({ memberId: i * 10, status: "on_hold_by_mp" })),
+    });
+
+    const out = await sut.declareBatch({
+      processId: 1, presentationIds: crowdIds(over), minuteId: 7, actorId: 4,
+    });
+
+    expect(out.error).toContain(String(WITHDRAWAL_DEBIT_CALL_BUDGET));
     expect(calls).toEqual([]);
   });
 

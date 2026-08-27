@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
+import type { MinuteType } from "@/generated/prisma/client";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { formatDateAR } from "@/lib/format";
@@ -40,7 +41,17 @@ export const metadata = { title: "Cierre del libro — SIGeV" };
 
 const NUM = "font-mono tabular-nums";
 
-export default async function CierrePage() {
+/** Cómo se nombra un acta en el desplegable. Una sola vez: la lista y el acta
+ *  recién usada tienen que leerse igual, o el operador ve dos nombres para la
+ *  misma acta. */
+function minuteOption(m: { id: number; type: MinuteType; number: number; date: Date }) {
+  return { id: m.id, label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}` };
+}
+
+export default async function CierrePage(props: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await props.searchParams;
   const actor = await requireSuperadmin();
   if (!actor.ok) {
     return (
@@ -114,10 +125,19 @@ export default async function CierrePage() {
     prisma.minute.findMany({ orderBy: [{ date: "desc" }, { id: "desc" }], take: 30 }),
   ]);
   const blockers = closeBlockers(preconditions);
-  const minutes = minuteRows.map((m) => ({
-    id: m.id,
-    label: `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number} — ${formatDateAR(m.date)}`,
-  }));
+  const minutes = minuteRows.map(minuteOption);
+
+  // El acta que usó la tanda anterior: el lote redirige acá con su id, porque en
+  // ese camino el estado de la action se pierde y sin esto el selector volvía a
+  // "Acta nueva" con el número anterior tipeado. Se consulta por id en vez de
+  // buscarla en `minutes` —que son las 30 más recientes— para que ofrecerla no
+  // dependa de que haya entrado en esa ventana.
+  const appliedId = Number(Array.isArray(sp.acta) ? sp.acta[0] : sp.acta);
+  const appliedRow =
+    Number.isInteger(appliedId) && appliedId > 0
+      ? await prisma.minute.findUnique({ where: { id: appliedId } })
+      : null;
+  const appliedMinute = appliedRow ? minuteOption(appliedRow) : null;
 
   return (
     <div className="space-y-6">
@@ -179,6 +199,7 @@ export default async function CierrePage() {
           processId={process.id}
           rows={pending}
           minutes={minutes}
+          appliedMinute={appliedMinute}
           // Sólo display: la action vuelve a resolver `requireSuperadmin` y a
           // revalidar el vencimiento contra la fila viva del proceso.
           canDeclare={canClose}

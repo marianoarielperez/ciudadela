@@ -188,27 +188,74 @@ export function cohortNotTerminalWhere(processId: number): Prisma.PresentationWh
  *  cohorte al de la migración, que no tienen por qué moverse juntos. */
 export const MIGRATING_STATUSES = ["active", "suspended"] as const satisfies readonly MemberStatus[];
 
-/** Tope de convocados por lote de bajas. No sale del estatuto: sale del reloj, y
- *  es el mismo argumento (y el mismo número) que el lote de cesantía por mora.
+/** Presupuesto de LLAMADAS DE RED de un lote de bajas. No es un tope de nombres
+ *  por tanda: es cuántas cancelaciones de débito automático en Mercado Pago
+ *  entran en una sola petición HTTP.
  *
- *  Cada baja del lote llama a `withdrawWithDebits`, que después del commit
- *  cancela el débito automático en Mercado Pago —medido en ~1,2 s—. El lote
- *  corre en serie dentro de una server action detrás de un Nginx con
- *  `proxy_read_timeout`: uno que se pasa deja las bajas asentadas y pierde el
- *  informe, que es lo único que dice a quién le quedó el débito vivo y a quién
- *  no se pudo notificar.
+ *  ── De dónde sale el número ─────────────────────────────────────────────────
+ *  Cada baja del lote llama a `withdrawWithDebits`, que DESPUÉS del commit
+ *  cancela en Mercado Pago cada suscripción que no se pueda afirmar muerta
+ *  —medido en ~1,2 s cada una—. El lote corre en serie dentro de una server
+ *  action detrás de un Nginx con `proxy_read_timeout` de 60 s: 25 × 1,2 s ≈ 30 s
+ *  deja la otra mitad del presupuesto para la base y los correos. Es el mismo
+ *  argumento —y el mismo número— que el lote de cesantía por mora, de donde se
+ *  heredó.
  *
- *  Acá los adherentes NO pueden adherir débito (la categoría no lo habilita),
- *  así que serán casi cero llamadas de red; el tope se mantiene igual porque el
- *  camino tiene que quedar cubierto y porque veinticinco nombres ya son una
- *  lista larga para leer antes de quitarle a alguien la condición de socio.
+ *  ── Por qué dejó de contar CONVOCADOS y pasó a contar cancelaciones ─────────
+ *  Porque acá los convocados son ADHERENTES, y la categoría no habilita el
+ *  débito automático. En el ensayo real del 26/08/2026 el operador declaró 90
+ *  bajas y hubo CERO llamadas a Mercado Pago: el tope de 25 nombres lo obligó a
+ *  armar cuatro veces la selección y cuatro veces el acta para protegerse de un
+ *  costo que ese lote no tenía. Contar nombres era medir la cosa equivocada.
  *
- *  Vive en este módulo PURO y no en `withdrawals.ts` por una razón muy concreta:
- *  la pantalla del lote es un componente de cliente, y `withdrawals.ts` arrastra
- *  Prisma y el mailer. El número que la pantalla usa para cortar la selección
- *  tiene que ser el MISMO que el que la acción revalida, así que no puede
- *  copiarse: tiene que poder importarse desde los dos lados. */
-export const WITHDRAWAL_BATCH_MAX = 25;
+ *  ── El otro presupuesto: el tiempo de la petición ───────────────────────────
+ *  Lo que gasta el lote sin débitos es base: por socio, una transacción corta
+ *  (la baja, sus enlaces revocados, la cuenta apagada, el movimiento) contra
+ *  MariaDB en localhost, más un `updateMany` y un asiento de auditoría. Medido
+ *  en el ensayo, 25 bajas sin débito tardan pocos segundos, así que 90 entran
+ *  holgadas en los 60 s.
+ *
+ *  La otra red de la petición son los correos del post-lote, y no se cuentan
+ *  acá a propósito: sólo los tiene quien tiene casilla utilizable —en este
+ *  padrón, unos 24 de 124 adherentes—, un envío SMTP es un orden de magnitud más
+ *  barato que un `cancelPreapproval`, y hoy la `EMAIL_ALLOWLIST` de producción
+ *  los corta antes de salir. Si algún día el lote sumara otra llamada externa
+ *  POR SOCIO —una que le toque a todos—, el presupuesto a revisar es éste.
+ *
+ *  Vive en este módulo PURO y no en `withdrawals.ts` porque `withdrawals.ts`
+ *  arrastra Prisma y el mailer: la regla se prueba sin base y la puede importar
+ *  cualquiera de los dos lados (la action y el dominio la aplican por separado,
+ *  y tienen que aplicar la MISMA). */
+export const WITHDRAWAL_DEBIT_CALL_BUDGET = 25;
+
+/** Cuánto le va a costar en RED a un lote de bajas: cuántos de los seleccionados
+ *  tienen débito automático que hay que cancelar, y cuántas cancelaciones son.
+ *
+ *  Son dos números y no uno porque `memberId` NO es unique en `mp_subscriptions`:
+ *  un vecino puede tener dos preapprovals vivos, y son dos llamadas de red. */
+export type DebitLoad = { members: number; calls: number };
+
+/** La guarda del lote, como función pura. `null` = se puede procesar entero.
+ *
+ *  El mensaje dice los dos números y qué hacer, porque un "no" a secas manda al
+ *  operador a adivinar por dónde partir la selección — y lo que tiene que partir
+ *  no son los nombres sino los que tienen débito: a los demás los puede declarar
+ *  todos juntos. */
+export function debitBudgetBlock(load: DebitLoad): string | null {
+  if (load.calls <= WITHDRAWAL_DEBIT_CALL_BUDGET) return null;
+  const cuantos =
+    load.calls === load.members
+      ? `${load.members} ${load.members === 1 ? "tiene" : "tienen"} el débito automático vivo en Mercado Pago`
+      : `${load.members} ${load.members === 1 ? "tiene" : "tienen"} el débito automático vivo en Mercado Pago ` +
+        `(${load.calls} débitos en total: hay quien tiene más de uno)`;
+  return (
+    `De los convocados que seleccionaste, ${cuantos}, y una tanda cancela hasta ` +
+    `${WITHDRAWAL_DEBIT_CALL_BUDGET} por vez: cada cancelación es una llamada a Mercado Pago de ` +
+    "alrededor de un segundo, y la pantalla se cortaría por tiempo antes de terminar de declarar las " +
+    `bajas. Partí la selección dejando hasta ${WITHDRAWAL_DEBIT_CALL_BUDGET} de los que tienen débito ` +
+    "en cada tanda; a los que no tienen podés declararlos todos juntos."
+  );
+}
 
 /** Una notificación cursada, tal como va al anexo del acta (REG-23). Es lo que
  *  hace oponible la resolución: qué se le dijo al vecino, por qué vía y cuándo.

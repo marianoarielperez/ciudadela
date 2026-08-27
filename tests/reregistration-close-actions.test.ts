@@ -21,6 +21,7 @@ const requireMock = vi.hoisted(() => ({
 const domain = vi.hoisted(() => ({
   listPendingWithdrawals: vi.fn(),
   listUnnotifiedWithdrawals: vi.fn(),
+  countDebitCalls: vi.fn(),
   declareBatch: vi.fn(),
   notifyWithdrawal: vi.fn(),
 }));
@@ -45,7 +46,6 @@ vi.mock("@/lib/members/minute-form", async (orig) => ({
   discardUnusedMinute: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/reregistration/withdrawals", () => ({
-  WITHDRAWAL_BATCH_MAX: 25,
   WITHDRAWAL_RETRY_AUDIT_ACTION: "reregistration_withdrawal_retry",
   WITHDRAWAL_AUDIT_ENTITY: "member",
   withdrawals: domain,
@@ -66,6 +66,9 @@ import { audit } from "@/lib/audit";
 import {
   declareWithdrawalsAction, retryWithdrawalNoticesAction,
 } from "@/app/admin/reempadronamiento/cierre/actions";
+import { redirect } from "next/navigation";
+import { resolveMinuteId } from "@/lib/members/minute-form";
+import { WITHDRAWAL_DEBIT_CALL_BUDGET } from "@/lib/reregistration/close";
 import { withdrawalConfirmToken } from "@/lib/reregistration/withdrawal-confirm";
 
 function pending(id: number, over: Record<string, unknown> = {}) {
@@ -108,6 +111,12 @@ function reset() {
   requireMock.superadmin.mockReset();
   requireMock.superadmin.mockResolvedValue({ ok: true, actorId: 4 });
   for (const fn of Object.values(domain)) fn.mockReset();
+  // El caso REAL de esta pantalla: los convocados son adherentes y la categoría
+  // no habilita el débito automático, así que el lote no llama a Mercado Pago ni
+  // una vez. Cada test que quiera débitos vivos lo dice.
+  domain.countDebitCalls.mockResolvedValue({ members: 0, calls: 0 });
+  vi.mocked(resolveMinuteId).mockClear();
+  vi.mocked(redirect).mockClear();
 }
 
 describe("declareWithdrawalsAction — el bloqueo del correo viaja CON NOMBRE", () => {
@@ -148,6 +157,94 @@ describe("declareWithdrawalsAction — el bloqueo del correo viaja CON NOMBRE", 
     // Con `redirect` el querystring sólo lleva números y el nombre no llega.
     expect(state.notices?.blocked).toEqual(["Socio 10"]);
     expect(state.declared).toBe(1);
+  });
+});
+
+describe("declareWithdrawalsAction — el lote se presupuesta en LLAMADAS DE RED", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+
+  it("declara los 90 de una tanda cuando ninguno tiene débito automático vivo", async () => {
+    // El pedido del operador después del ensayo del 26/08/2026: "deberíamos
+    // poder seleccionar a todos". Declaró 90 bajas en cuatro tandas por un tope
+    // de 25 nombres que existía para acotar las cancelaciones de débito en
+    // Mercado Pago — y en esas 90 bajas no hubo NINGUNA (son adherentes, y la
+    // categoría no habilita el débito).
+    reset();
+    domain.listPendingWithdrawals.mockResolvedValue(many(90).map((id) => pending(id)));
+    domain.declareBatch.mockResolvedValue({
+      declared: many(90), failures: [], debitFailures: [], unstamped: [],
+    });
+    domain.notifyWithdrawal.mockResolvedValue("board");
+
+    await declareWithdrawalsAction({}, confirmedForm(many(90)));
+
+    expect(domain.declareBatch).toHaveBeenCalledTimes(1);
+    expect(domain.declareBatch.mock.calls[0][0].presentationIds).toHaveLength(90);
+  });
+
+  it("si las cancelaciones pasan el presupuesto rechaza, y NO crea el acta", async () => {
+    // El orden importa tanto como el corte: un lote rechazado después de
+    // resolver el acta deja un asiento fantasma en un libro que la asociación
+    // presenta ante la IGJ.
+    reset();
+    const over = WITHDRAWAL_DEBIT_CALL_BUDGET + 1;
+    domain.listPendingWithdrawals.mockResolvedValue(many(over).map((id) => pending(id)));
+    domain.countDebitCalls.mockResolvedValue({ members: over, calls: over });
+
+    const state = await declareWithdrawalsAction({}, confirmedForm(many(over)));
+
+    expect(state.error).toContain(String(over));
+    expect(state.error).toContain(String(WITHDRAWAL_DEBIT_CALL_BUDGET));
+    expect(resolveMinuteId).not.toHaveBeenCalled();
+    expect(domain.declareBatch).not.toHaveBeenCalled();
+  });
+
+  it("presupuesta sobre la lista VIVA de la base, no sobre lo que manda el formulario", async () => {
+    // Mismo criterio que el resto de la pantalla: lo que vale es la base. Un
+    // POST armado a mano con ids que ya no corresponden no puede hacer que la
+    // guarda mida otra cosa que los socios que se van a dar de baja.
+    reset();
+    domain.listPendingWithdrawals.mockResolvedValue([pending(1), pending(2)]);
+    domain.declareBatch.mockResolvedValue({
+      declared: [1, 2], failures: [], debitFailures: [], unstamped: [],
+    });
+    domain.notifyWithdrawal.mockResolvedValue("board");
+
+    await declareWithdrawalsAction({}, confirmedForm([1, 2, 999]));
+
+    expect(domain.countDebitCalls).toHaveBeenCalledWith([10, 20]);
+  });
+
+  it("devuelve el acta que usó la tanda, para que la siguiente no cree una duplicada", async () => {
+    // La fricción medida en el ensayo: al terminar una tanda el selector volvía
+    // a "Acta nueva" con el número anterior todavía tipeado, y la lista de actas
+    // existentes era la de cuando se montó la página. El acta recién usada tiene
+    // que volver identificada para que la pantalla la pueda ofrecer.
+    reset();
+    domain.listPendingWithdrawals.mockResolvedValue([pending(1)]);
+    domain.declareBatch.mockResolvedValue({
+      declared: [1], failures: [], debitFailures: [], unstamped: [],
+    });
+    domain.notifyWithdrawal.mockResolvedValue("blocked");
+
+    const state = await declareWithdrawalsAction({}, confirmedForm([1]));
+
+    expect(state.minute).toEqual({ id: 77, label: "Acta de Comisión N° 12 — 10/11/2026" });
+  });
+
+  it("con la tanda limpia el acta viaja en el redirect, que es donde el estado se pierde", async () => {
+    reset();
+    domain.listPendingWithdrawals.mockResolvedValue([pending(1)]);
+    domain.declareBatch.mockResolvedValue({
+      declared: [1], failures: [], debitFailures: [], unstamped: [],
+    });
+    domain.notifyWithdrawal.mockResolvedValue("board");
+
+    await declareWithdrawalsAction({}, confirmedForm([1]));
+
+    expect(redirect).toHaveBeenCalledWith(
+      "/admin/reempadronamiento/cierre?declaradas=1&cartelera=1&acta=77",
+    );
   });
 });
 

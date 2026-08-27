@@ -14,24 +14,29 @@
 //
 // ── El orden de la declaración, que es lo que hay que leer antes de tocar ────
 //   1. Autorización.
-//   2. Selección: dedupe y tope del lote. Se corta ACÁ, ANTES de resolver el
-//      acta: un lote rechazado no puede dejar un asiento fantasma en un libro
-//      que la asociación presenta ante la IGJ.
+//   2. Selección: dedupe.
 //   3. Precondición del cierre: la 2ª instancia tiene que estar VENCIDA. Se
 //      revalida contra la base y no se confía en la pantalla — mientras el plazo
 //      corre el vecino todavía se puede presentar, y declararle la baja
 //      convertiría una demora suya en una expulsión.
-//   4. Primer paso: se devuelve a quiénes se va a dar de baja, con nombre,
+//   4. Presupuesto de RED del lote, resuelto contra la base y ANTES de resolver
+//      el acta: un lote rechazado no puede dejar un asiento fantasma en un libro
+//      que la asociación presenta ante la IGJ.
+//   5. Primer paso: se devuelve a quiénes se va a dar de baja, con nombre,
 //      número, vía de notificación y cuántos avisos se le cursaron, todo
 //      resuelto contra la base. No se escribe nada.
-//   5. Segundo paso: recién ahí se crea (o se elige) el acta y corre el lote.
-//   6. Post-lote, y siempre DESPUÉS de que las bajas están asentadas: los
+//   6. Segundo paso: recién ahí se crea (o se elige) el acta y corre el lote.
+//   7. Post-lote, y siempre DESPUÉS de que las bajas están asentadas: los
 //      correos, con el presupuesto de la corrida.
 //
-// El molde entero —dos pasos con huella, tope antes del acta, per-socio en
-// serie, baldes separados, `discardUnusedMinute` si no entró nadie, sin redirect
-// con fallos parciales— es el del lote de cesantía por mora
-// (`/admin/tesoreria/deudores/actions.ts`), y sus razones valen igual acá.
+// El molde entero —dos pasos con huella, la guarda del lote antes del acta,
+// per-socio en serie, baldes separados, `discardUnusedMinute` si no entró nadie,
+// sin redirect con fallos parciales— es el del lote de cesantía por mora
+// (`/admin/tesoreria/deudores/actions.ts`), y sus razones valen igual acá. Lo
+// único que se apartó del molde es QUÉ mide la guarda: allá los socios pueden
+// tener débito automático y acá casi nunca (son adherentes), así que el tope de
+// nombres se reemplazó por el conteo de llamadas a Mercado Pago que la tanda va
+// a hacer de verdad. Ver `WITHDRAWAL_DEBIT_CALL_BUDGET` en `reregistration/close`.
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -52,11 +57,13 @@ import {
   resolveMinuteId,
 } from "@/lib/members/minute-form";
 import { prisma } from "@/lib/prisma";
+// La regla del presupuesto se importa del módulo PURO y no del dominio: es una
+// función sin base, y así el test de la action no tiene que doblarla.
+import { debitBudgetBlock } from "@/lib/reregistration/close";
 import { canPrepareClose } from "@/lib/reregistration/rules";
 import { withdrawalConfirmToken, type WithdrawalConfirmTarget } from "@/lib/reregistration/withdrawal-confirm";
 import {
   WITHDRAWAL_AUDIT_ENTITY,
-  WITHDRAWAL_BATCH_MAX,
   WITHDRAWAL_RETRY_AUDIT_ACTION,
   withdrawals,
 } from "@/lib/reregistration/withdrawals";
@@ -94,6 +101,15 @@ export type WithdrawalState = {
    *  `deferred` es un contador porque el tope se dimensiona a la tanda y por lo
    *  tanto no puede alcanzarse; queda por si el default cambia. */
   notices?: { emailed: number; board: number; failed: string[]; blocked: string[]; deferred: number };
+  /** EL ACTA QUE ESTA TANDA USÓ, ya creada y con su nombre definitivo.
+   *
+   *  Viaja para que la pantalla la pueda ofrecer seleccionada en la tanda
+   *  siguiente. Sin esto, al terminar una tanda el selector volvía a "Acta nueva"
+   *  con el número anterior todavía tipeado —una invitación a asentar dos veces
+   *  la misma reunión de la Comisión— y la lista de actas existentes era la de
+   *  cuando se montó la página, así que la recién creada no estaba. Medido en el
+   *  ensayo del 26/08/2026. */
+  minute?: { id: number; label: string };
   confirm?: {
     token: string;
     minuteLabel: string;
@@ -146,16 +162,6 @@ export async function declareWithdrawalsAction(
     };
   }
 
-  // El tope se aplica ANTES de tocar el libro de actas. El dominio lo vuelve a
-  // aplicar, pero si se aplicara sólo allá el acta ya estaría creada.
-  if (ids.length > WITHDRAWAL_BATCH_MAX) {
-    return {
-      error:
-        `Seleccionaste ${ids.length} convocados y el lote acepta hasta ${WITHDRAWAL_BATCH_MAX} por vez. ` +
-        "Declaralos en tandas: cada baja cancela además el débito automático en Mercado Pago y eso lleva su tiempo.",
-    };
-  }
-
   // El acta se parsea aparte y nunca combinada con otro schema:
   // `minuteSelectionSchema` es un `z.union` y `parseForm` sólo sabe recorrer un
   // ZodObject con `.shape`.
@@ -196,6 +202,17 @@ export async function declareWithdrawalsAction(
         "Recargá la pantalla: puede que se hayan presentado o que su desenlace ya esté resuelto.",
     };
   }
+
+  // LA GUARDA DEL LOTE, y se aplica ANTES de tocar el libro de actas (el dominio
+  // la vuelve a aplicar, pero si se aplicara sólo allá el acta ya estaría creada).
+  //
+  // Lo que cuesta tiempo no son los nombres: son las cancelaciones de débito en
+  // Mercado Pago que la baja dispara después del commit, ~1,2 s cada una contra
+  // los 60 s del proxy. Se cuentan contra la BASE y sobre los socios de la lista
+  // viva —no sobre lo que mandó el formulario— y en esta etapa casi siempre da
+  // cero: los convocados son adherentes y la categoría no habilita el débito.
+  const blockedByDebits = debitBudgetBlock(await withdrawals.countDebitCalls(targets.map((t) => t.memberId)));
+  if (blockedByDebits) return { error: blockedByDebits };
 
   // Primer paso, o segundo paso sobre algo distinto de lo confirmado: se muestra
   // a quiénes se va a dar de baja y en qué acta, y no se escribe nada.
@@ -285,6 +302,18 @@ export async function declareWithdrawalsAction(
   }));
   const unstamped = outcome.unstamped.map((id) => ({ memberId: memberOf(id), name: name(id) }));
 
+  // Cómo se llama el acta que acaba de recibir el asiento. Se resuelve por ID y
+  // no reusando el label del paso de confirmación, que para un acta nueva dice
+  // "(acta nueva, se crea al confirmar)": ahora existe y tiene nombre propio.
+  // Best-effort: si la consulta falla, el lote YA está asentado y lo único que
+  // se pierde es la comodidad de la tanda siguiente.
+  let minute: { id: number; label: string } | undefined;
+  try {
+    minute = { id: minuteId, label: await describeMinuteSelection(prisma, { minuteId }) };
+  } catch (e) {
+    console.error("[bajas] el lote salió pero no se pudo nombrar el acta", minuteId, e);
+  }
+
   // Con éxito PARCIAL —o con cualquier aviso que no salió— no se redirige: el
   // querystring no tiene dónde poner los motivos, y esos avisos son lo único que
   // dice a quién se le declaró la baja sin notificarle. El `revalidatePath` es lo
@@ -309,11 +338,19 @@ export async function declareWithdrawalsAction(
       debitFailures: debitFailures.length > 0 ? debitFailures : undefined,
       unstamped: unstamped.length > 0 ? unstamped : undefined,
       notices,
+      minute,
     };
   }
 
   // Fuera del try: `redirect` señaliza con una excepción y un catch se la comería.
-  redirect(`${BASE}?declaradas=${outcome.declared.length}&cartelera=${notices.board}`);
+  //
+  // `acta` viaja en el querystring porque acá el estado de la action se pierde:
+  // es el único camino por el que la pantalla se entera de qué acta usó la tanda
+  // que acaba de terminar, y sin eso el selector vuelve a "Acta nueva" con el
+  // número anterior tipeado. Es un ID, no un dato personal (Ley 25.326).
+  redirect(
+    `${BASE}?declaradas=${outcome.declared.length}&cartelera=${notices.board}&acta=${minuteId}`,
+  );
 }
 
 /** El proceso, y nada más: las dos acciones que lo llevan resuelven contra la
