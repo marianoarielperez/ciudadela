@@ -55,6 +55,20 @@ export type UploadState = { error?: string; uploaded?: { type: string; count: nu
 export type SubmitState = { error?: string; done?: boolean };
 export type PayState = { error?: string; redirectUrl?: string };
 
+/** Espejo cliente del `DniCheckState` del server (paso 1 "Tu DNI"). La misma
+ *  advertencia que `CreateState`: la equivalencia se sostiene a mano. */
+export type DniCheckState =
+  | { kind: "idle" }
+  | { kind: "ok" }
+  | {
+      kind: "blocked";
+      code: "already_member" | "in_progress" | "visit_office" | "debt" | "rejected_wait";
+      maskedName: string | null;
+      pendingCount?: number;
+      retryAtIso?: string;
+    }
+  | { kind: "error"; error: string };
+
 /** Lo que el wizard sabe de una solicitud YA creada. Se arma en el servidor
  *  (`/asociate/retomar/[token]`) o se deriva del borrador apenas el paso 3
  *  contesta. Es lo que decide qué pantalla se muestra: `started` sigue en los
