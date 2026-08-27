@@ -216,6 +216,19 @@ describe("emailPaymentLinkAction con exención vigente", () => {
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
+  it("a un eximido SIN email el motivo que se lee es la exención, no la casilla", async () => {
+    // El orden de las dos guardas es el mensaje: "no tiene un email válido"
+    // manda al operador a cargarle la casilla para poder mandarle un cobro que
+    // no corresponde. Lo que hay que decirle es que está eximido.
+    mocks.findUnique.mockResolvedValueOnce({
+      id: 14, fullName: "Juan Pérez", email: null, emailStatus: "none",
+    });
+    mocks.exemptionFindFirst.mockResolvedValueOnce(EXEMPT);
+    const r = await emailPaymentLinkAction({}, resendForm());
+    expect(r.error).toBe(NOTICE);
+    expect(mocks.sendToMember).not.toHaveBeenCalled();
+  });
+
   it("sin exención el reenvío sigue saliendo", async () => {
     mocks.findUnique.mockResolvedValueOnce({
       id: 14, fullName: "Juan Pérez", email: "juan@example.com", emailStatus: "verified",

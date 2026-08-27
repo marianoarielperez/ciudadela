@@ -235,13 +235,15 @@ export default async function SocioPage(props: {
                 {member.status === "active" && (
                   <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/suspension`}>Suspender</Link></Button>
                 )}
-                {/* Se dibuja solo cuando eximir es posible (vigente, sin
-                    exención, y el que mira es superadmin): la ficha no exime a
-                    nadie, lleva a Tesorería → Exenciones con el socio elegido.
+                {/* Se dibuja solo cuando eximir es posible (vigente, de
+                    categoría ACTIVA —el Art. 7 inc. a.4 exime a los activos—,
+                    sin exención, y el que mira es superadmin): la ficha no exime
+                    a nadie, lleva a Tesorería → Exenciones con el socio elegido.
                     La baja queda última, que es donde va lo destructivo. */}
                 <ExemptAction
                   memberId={member.id}
                   status={member.status}
+                  category={member.category}
                   exempted={exemption !== null}
                   superadmin={superadmin}
                 />

@@ -22,6 +22,7 @@
 // `exemptionPeriods` (y el último mes es inclusive en las dos). El tope de meses
 // tampoco se copia: llega por prop desde `MAX_EXEMPTION_MONTHS`.
 import { useActionState, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { FormMessage } from "@/components/admin/form-message";
 import { MinutePicker } from "@/components/admin/minute-picker";
 import { TextareaField, useSyncedForm } from "@/components/admin/synced-fields";
@@ -138,8 +139,14 @@ export function GrantExemptionForm({
               <strong>{periodLabel(periods[0])}</strong> a{" "}
               <strong>{periodLabel(periods[periods.length - 1])}</strong>.
             </p>
-            <details>
-              <summary className="inline-flex min-h-11 cursor-pointer items-center text-xs text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+            {/* El `inline-flex` del <summary> pisa su `display: list-item`, y
+                con él se va el triangulito nativo: sin ninguna marca, la línea
+                se lee como un texto celeste cualquiera y nadie descubre que hay
+                algo para abrir. La flecha explícita repone esa señal y gira al
+                desplegarse, que es lo que el triángulo hacía solo. */}
+            <details className="group">
+              <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1 text-xs text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+                <ChevronRight aria-hidden className="size-3 transition-transform group-open:rotate-90" />
                 Ver los meses uno por uno
               </summary>
               <p className={cn(NUM, "pt-1 text-xs break-words")}>{periods.join(" · ")}</p>

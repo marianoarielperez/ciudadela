@@ -15,13 +15,17 @@
 //
 // ── El acta huérfana ────────────────────────────────────────────────────────
 // El servicio abre su propia transacción y revalida las seis guardas del §5. Si
-// acá creáramos el acta primero y el servicio rechazara después (deuda, débito
-// vivo, otra exención vigente), el acta quedaría asentada sin ningún movimiento:
-// basura en el libro que la asociación presenta ante la IGJ. La resolución es la
-// misma que la de las acciones societarias de la ficha (`socios/[id]/actions.ts`):
-// pre-validar lo que se pueda ANTES de tocar el acta, y compensar con
-// `discardUnusedMinute` si aun así falla — que borra sólo si el acta era nueva y
-// no la está usando nadie.
+// acá creáramos el acta primero y el servicio rechazara después, el acta quedaría
+// asentada sin ningún movimiento: basura en el libro que la asociación presenta
+// ante la IGJ. La resolución es la misma que la de las acciones societarias de la
+// ficha (`socios/[id]/actions.ts`), y son las DOS mitades:
+//   · **pre-validar** lo barato y frecuente ANTES de tocar el acta — la ficha, su
+//     categoría y la exención que ya rige, que es por donde se rechaza casi
+//     siempre (dos consultas, con los textos del dominio para no divergir);
+//   · **compensar** con `discardUnusedMinute` lo que sólo se sabe adentro de la
+//     transacción (deuda, débito cobrable, la carrera con el devengo del día 1)
+//     — que borra sólo si el acta era nueva y no la está usando nadie.
+// Lo mismo vale para la anulación, que lee la fila antes de resolver el acta.
 //
 // ── Qué se audita ───────────────────────────────────────────────────────────
 // Ids, períodos y conteos. La NOTA no: es texto libre del operador y puede
@@ -37,7 +41,9 @@ import {
   createsNewMinute, discardUnusedMinute, minuteSelectionSchema, resolveMinuteId,
 } from "@/lib/members/minute-form";
 import { prisma } from "@/lib/prisma";
-import { exemptions, exemptionToPeriod, MAX_EXEMPTION_MONTHS } from "@/lib/treasury/exemptions";
+import {
+  activeExemption, exemptions, exemptionToPeriod, GRANT_GUARD_MESSAGES, MAX_EXEMPTION_MONTHS,
+} from "@/lib/treasury/exemptions";
 
 // Sin `export`: en un módulo "use server" todo lo exportado es un endpoint.
 type State = { error?: string };
@@ -125,6 +131,25 @@ export async function grantExemptionAction(_prev: State, formData: FormData): Pr
 
   const sel = parseMinuteSelection(formData);
   if (!sel.ok) return { error: sel.error };
+
+  // ── Pre-validación ANTES de tocar el libro de actas ─────────────────────────
+  // Las TRES guardas baratas del asiento —la ficha, su categoría y la exención
+  // que ya rige— son también las que más rechazan: el operador llega desde la
+  // ficha de un adherente, o vuelve a asentar sobre alguien que ya está eximido.
+  // Con el acta creada primero, cada uno de esos rechazos frecuentes dejaba un
+  // acta asentada sin ningún movimiento. Las otras tres (deuda, débito cobrable
+  // y la carrera con el devengo) piden consultas caras y siguen compensándose
+  // con `discardUnusedMinute`. Los textos salen del dominio para que el operador
+  // lea lo mismo se corte donde se corte, y el dominio revalida LAS SEIS adentro
+  // de su transacción: esto es pre-validación, nunca la defensa.
+  const [member, inForce] = await Promise.all([
+    prisma.member.findUnique({ where: { id: memberId }, select: { category: true, status: true } }),
+    activeExemption(prisma, memberId),
+  ]);
+  if (!member) return { error: GRANT_GUARD_MESSAGES.noMember };
+  if (member.category !== "active") return { error: GRANT_GUARD_MESSAGES.category(member.category) };
+  if (member.status !== "active") return { error: GRANT_GUARD_MESSAGES.status(member.status) };
+  if (inForce) return { error: GRANT_GUARD_MESSAGES.alreadyInForce(inForce.toPeriod) };
 
   const createdMinute = createsNewMinute(sel.data);
   let minuteId: number;

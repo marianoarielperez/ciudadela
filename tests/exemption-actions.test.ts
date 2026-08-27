@@ -30,6 +30,16 @@ const auth = vi.hoisted(() => ({
 }));
 const service = vi.hoisted(() => ({ grant: vi.fn(), revoke: vi.fn() }));
 const prismaMock = vi.hoisted(() => ({
+  // La pre-validación del asiento: la ficha y su categoría. Por defecto un socio
+  // activo y vigente, que es el camino que llega al servicio.
+  member: {
+    findUnique: vi.fn(
+      async () =>
+        ({ category: "active", status: "active" }) as
+          | { category: string; status: string }
+          | null,
+    ),
+  },
   minute: {
     findUnique: vi.fn(async ({ where }: { where: { id: number } }) => ({
       id: where.id,
@@ -47,6 +57,9 @@ const prismaMock = vi.hoisted(() => ({
   feeExemption: {
     count: vi.fn(async () => 0),
     findUnique: vi.fn(async () => ({ memberId: 42, revokedAt: null }) as { memberId: number; revokedAt: Date | null } | null),
+    // `activeExemption` corre DE VERDAD en la pre-validación del asiento (el
+    // módulo se mockea spreando el original): por defecto no hay ninguna vigente.
+    findFirst: vi.fn(async () => null as null | { id: number; toPeriod: string }),
   },
 }));
 
@@ -110,7 +123,9 @@ function revokeForm(over: Record<string, string> = {}): FormData {
 beforeEach(() => {
   vi.clearAllMocks();
   auth.result = { ok: true, actorId: 9 };
+  prismaMock.member.findUnique.mockResolvedValue({ category: "active", status: "active" });
   prismaMock.feeExemption.findUnique.mockResolvedValue({ memberId: 42, revokedAt: null });
+  prismaMock.feeExemption.findFirst.mockResolvedValue(null);
   prismaMock.minute.create.mockResolvedValue({ id: 77 });
 });
 
@@ -198,6 +213,45 @@ describe("grantExemptionAction", () => {
 
     expect(result?.error).toBe("El socio ya tiene una exención vigente.");
     expect(prismaMock.minute.delete).not.toHaveBeenCalled();
+  });
+
+  // Las tres guardas BARATAS se pre-validan antes de crear el acta: son los
+  // rechazos frecuentes, y con el acta creada primero cada uno dejaba un acta
+  // huérfana que después había que salir a borrar.
+  it("un ADHERENTE se corta ANTES de crear el acta, con el texto del dominio", async () => {
+    prismaMock.member.findUnique.mockResolvedValue({ category: "adherent", status: "active" });
+
+    const result = await grantExemptionAction({}, grantForm());
+
+    expect(result?.error).toContain("Adherente");
+    expect(prismaMock.minute.create).not.toHaveBeenCalled();
+    expect(prismaMock.minute.delete).not.toHaveBeenCalled();
+    expect(service.grant).not.toHaveBeenCalled();
+  });
+
+  it("un socio SUSPENDIDO tampoco llega al libro de actas", async () => {
+    prismaMock.member.findUnique.mockResolvedValue({ category: "active", status: "suspended" });
+    const result = await grantExemptionAction({}, grantForm());
+    expect(result?.error).toContain("Suspendido");
+    expect(prismaMock.minute.create).not.toHaveBeenCalled();
+    expect(service.grant).not.toHaveBeenCalled();
+  });
+
+  it("una exención YA VIGENTE se corta antes del acta: es el rechazo más frecuente", async () => {
+    prismaMock.feeExemption.findFirst.mockResolvedValue({ id: 3, toPeriod: "2027-08" });
+
+    const result = await grantExemptionAction({}, grantForm());
+
+    expect(result?.error).toContain("agosto 2027");
+    expect(prismaMock.minute.create).not.toHaveBeenCalled();
+    expect(service.grant).not.toHaveBeenCalled();
+  });
+
+  it("un socio que no existe no crea el acta", async () => {
+    prismaMock.member.findUnique.mockResolvedValue(null);
+    const result = await grantExemptionAction({}, grantForm());
+    expect(result?.error).toBe("El socio no existe.");
+    expect(prismaMock.minute.create).not.toHaveBeenCalled();
   });
 
   it("rechaza más de 24 meses sin tocar el libro de actas ni el servicio", async () => {

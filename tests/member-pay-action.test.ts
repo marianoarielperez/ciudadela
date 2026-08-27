@@ -63,7 +63,12 @@ describe("startMemberPaymentAction", () => {
     mocks.findUniqueOrThrow.mockResolvedValueOnce({ id: 14, category: "active" });
     mocks.exemptionFindFirst.mockResolvedValueOnce({ id: 3, toPeriod: "2027-08", minuteId: 12 });
     const r = await startMemberPaymentAction({}, form());
-    expect(r.error).toBe("Tenés una exención de cuota vigente hasta agosto 2027: no hay ninguna cuota que pagar.");
+    // El HECHO sale del constructor compartido (`memberExemptionFact`, en
+    // `debit-adhesion.ts`) y es palabra por palabra el del banner de la cuenta,
+    // el de la tarjeta de `/mi` y el del bloqueo del débito; lo propio de esta
+    // action es la cola. Antes lo decía con otras palabras ("Tenés una exención
+    // de cuota vigente hasta…") y el vecino veía dos frases para un solo hecho.
+    expect(r.error).toBe("Estás eximido de la cuota hasta agosto 2027: no hay ninguna cuota que pagar.");
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
     // El mensaje del SOCIO no nombra el acta: el número de acta es la referencia

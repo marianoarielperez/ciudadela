@@ -18,9 +18,9 @@ import { parseForm } from "@/lib/forms";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { PAYMENT_LINK_ERRORS, paymentLinks } from "@/lib/mp/payment-link";
 import { MAX_LINK_FEES } from "@/lib/mp/references";
+import { memberExemptionFact } from "@/lib/members/debit-adhesion";
 import { prisma } from "@/lib/prisma";
 import { activeExemption } from "@/lib/treasury/exemptions";
-import { periodLabel } from "@/lib/treasury/periods";
 
 export type PayState = { error?: string; redirectUrl?: string };
 
@@ -64,13 +64,13 @@ export async function startMemberPaymentAction(_prev: PayState, formData: FormDa
   // evitar: se le estarían cobrando por adelantado meses que la Comisión no
   // trató, con un recibo numerado que después hay que anular de la serie.
   //
-  // El acta NO se le nombra al socio (a diferencia del aviso del operador): acá
-  // el hecho útil es hasta cuándo no le van a cobrar.
+  // El hecho lo redacta `memberExemptionFact`, la misma frase que el banner de
+  // esta pantalla, la tarjeta de `/mi` y el bloqueo del débito: el vecino ve tres
+  // de esas cuatro en el mismo minuto. El acta NO se le nombra (a diferencia del
+  // aviso del operador): acá lo útil es hasta cuándo no le van a cobrar.
   const exemption = await activeExemption(prisma, member.id);
   if (exemption) {
-    return {
-      error: `Tenés una exención de cuota vigente hasta ${periodLabel(exemption.toPeriod)}: no hay ninguna cuota que pagar.`,
-    };
+    return { error: `${memberExemptionFact(exemption.toPeriod)}: no hay ninguna cuota que pagar.` };
   }
 
   let r;

@@ -20,7 +20,7 @@ import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { minuteName } from "@/lib/members/labels";
 import type { ActiveExemption } from "@/lib/treasury/exemptions";
 import { periodLabel } from "@/lib/treasury/periods";
-import type { MemberStatus } from "@/generated/prisma/client";
+import type { MemberCategory, MemberStatus } from "@/generated/prisma/client";
 
 /** Lo que la ficha necesita de la exención vigente. Sale de `activeExemption`
  *  —LA función compartida— y no de un `where` propio de esta pantalla: lo que la
@@ -76,20 +76,27 @@ export function ExemptionNotice({ exemption }: { exemption: FichaExemption | nul
 /** El botón del encabezado. Lleva a Exenciones con el socio ya elegido
  *  (`?socio=`), que es donde se asienta: la ficha no exime a nadie.
  *
- *  Las tres condiciones son las mismas que la pantalla de destino pre-valida y
- *  que `grant` revalida adentro de su transacción. Acá se esconde el botón para
- *  no mandar al operador a una puerta cerrada, no para defender nada.
+ *  Cuatro condiciones, y tres de ellas son guardas del asiento que la pantalla
+ *  de destino pre-valida y `grant` revalida adentro de su transacción: **socio
+ *  vigente**, **categoría activa** (el Art. 7 inc. a.4 exime a los socios
+ *  ACTIVOS: un adherente llega a una pantalla que le contesta "cambiala de
+ *  categoría con acta si corresponde") y **sin exención vigente**. La cuarta es
+ *  de rol. Lo que NO se mira acá son las guardas caras —deuda y débito
+ *  cobrable—: cuestan dos consultas por render de la ficha y su lugar es la
+ *  pantalla que ya las hace. Acá se esconde el botón para no mandar al operador
+ *  a una puerta cerrada, no para defender nada.
  *
  *  Sin `min-h-11`: comparte fila con los otros botones del encabezado de la
  *  ficha, que van con el alto por defecto, y uno más alto que los demás se lee
  *  como otra cosa. */
-export function ExemptAction({ memberId, status, exempted, superadmin }: {
+export function ExemptAction({ memberId, status, category, exempted, superadmin }: {
   memberId: number;
   status: MemberStatus;
+  category: MemberCategory;
   exempted: boolean;
   superadmin: boolean;
 }) {
-  if (!superadmin || exempted || status !== "active") return null;
+  if (!superadmin || exempted || status !== "active" || category !== "active") return null;
   return (
     <Button asChild variant="outline">
       <Link href={`/admin/tesoreria/exenciones?socio=${memberId}`}>Eximir de cuota</Link>

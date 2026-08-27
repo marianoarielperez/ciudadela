@@ -1134,10 +1134,23 @@ materializadas y **no** por una corrida forzada: hasta el 01/10/2026 su ventana
 está vacía y una corrida no probaría nada. De esa sesión salieron las dos tandas de
 arreglos que cierran el módulo.
 
-**Lo que queda por mirar en vivo**: los tres controles nuevos de la ficha (badge
-"Eximido", aviso con el acta y botón "Eximir de cuota", los tres con test de
-pantalla) y el padrón electoral con un eximido adentro — está al día, así que
-figura y vota. Ninguno de los dos escribe nada.
+**Los dos pendientes de esa lista se miraron en vivo** en una tercera sesión con el
+operador, después del commit de la Tarea 5 (27/08/2026), y los dos pasaron: en la
+ficha, el botón **"Eximir de cuota"** aparece para el superadmin sobre un socio
+vigente sin exención y lleva a Exenciones con el socio ya cargado (`?socio=`);
+con la exención asentada, la ficha muestra el badge **"Eximido"** y el aviso que
+nombra el **acta Comisión Directiva N° 124** —no el id de la fila—, y el botón
+desaparece. El **padrón electoral** lista al eximido N° 14 como **HABILITADO**: no
+tiene cuotas pendientes, así que figura y vota. Ninguno de los dos escribe nada.
+
+De esa sesión salió además la ronda final de arreglos: la anulación revalida la
+vigencia adentro de su transacción (una exención **vencida** llegaba con su
+`revokedAt` en null y el cerrojo optimista no la veía, así que se le estampaba a la
+ficha un movimiento `fee_exemption_revoked` con acta por un hecho que nunca ocurrió),
+el botón de la ficha mira también la **categoría** (guarda 1 del asiento: el Art. 7
+exime a los ACTIVOS), el asiento pre-valida las tres guardas baratas antes de crear el
+acta, y las cuatro superficies del panel del socio dicen el hecho de la exención con
+una sola frase compartida.
 
 La suite queda en **3221 tests verdes** (210 archivos, 7 skips), `lint` y `build`
 limpios.

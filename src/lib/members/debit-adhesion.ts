@@ -79,6 +79,41 @@ export function adhesionVerdict(input: {
   return { ok: true };
 }
 
+/** EL hecho de la exención como se le dice AL SOCIO, en una sola definición.
+ *
+ *  Lo dicen cuatro superficies del panel del vecino —el banner de `/mi/cuenta`,
+ *  el rechazo de "Pagar ahora", el bloqueo del débito y la tarjeta de `/mi`— y
+ *  llegó a estar redactado de dos maneras distintas. No es prolijidad: el mismo
+ *  vecino ve tres de esas cuatro en el mismo minuto, y dos frases distintas para
+ *  el mismo hecho se leen como dos situaciones distintas.
+ *
+ *  Devuelve la frase SIN puntuación final: cada pantalla la cierra con un punto
+ *  o le agrega su cola ("…: no hay nada que debitar"). El hecho es lo que se
+ *  comparte; la consecuencia es de cada pantalla.
+ *
+ *  Vive acá y no al lado de `adminExemptionNotice` —su gemelo del operador, en
+ *  `treasury/exemptions.ts`— por una razón mecánica: ese módulo arma su singleton
+ *  de Prisma al evaluarse, y `debit-adhesion.ts` es PURO y se prueba sin base.
+ *  Importarlo desde acá rompería las dos cosas.
+ *
+ *  El ACTA no se nombra: su número es la referencia con la que el operador ubica
+ *  la decisión en el libro, y al vecino no le dice nada. */
+export function memberExemptionFact(toPeriod: string): string {
+  return `Estás eximido de la cuota hasta ${periodLabel(toPeriod)}`;
+}
+
+/** El TONO del bloqueo, que no es el mismo para todos los motivos. Una exención
+ *  es una decisión que la Comisión tomó A FAVOR del socio: no hay nada mal ni
+ *  nada que él tenga que resolver, así que va neutral. Los otros cuatro sí son
+ *  algo que le falta o que le impide adherirse hoy, y van en ámbar.
+ *
+ *  Es una función y no un ternario en la pantalla porque la regla es de este
+ *  módulo —el mismo que redacta el mensaje—, y así una pantalla nueva no puede
+ *  pintar de advertencia lo que las otras muestran como un hecho. */
+export function adhesionBlockTone(v: Exclude<AdhesionVerdict, { ok: true }>): "neutral" | "warning" {
+  return v.reason === "exempted" ? "neutral" : "warning";
+}
+
 export function adhesionBlockMessage(v: Exclude<AdhesionVerdict, { ok: true }>): string {
   switch (v.reason) {
     case "category":
@@ -90,9 +125,8 @@ export function adhesionBlockMessage(v: Exclude<AdhesionVerdict, { ok: true }>):
     case "no_email":
       return "Para adherir el débito necesitás un email cargado en tu ficha. Cargalo en Mis datos.";
     case "exempted":
-      // Al socio NO se le nombra el acta: el número es la referencia con la que
-      // el operador ubica la decisión en el libro, y acá el hecho que importa es
-      // hasta cuándo no le van a cobrar.
-      return `Estás eximido de la cuota hasta ${periodLabel(v.until)}: no hay nada que debitar.`;
+      // El hecho sale del constructor compartido; lo único de esta pantalla es
+      // la cola, que es la consecuencia concreta acá: no hay nada que debitar.
+      return `${memberExemptionFact(v.until)}: no hay nada que debitar.`;
   }
 }

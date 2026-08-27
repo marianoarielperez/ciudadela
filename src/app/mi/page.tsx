@@ -5,6 +5,7 @@ import { MemberCard } from "@/components/mi/member-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatARS, formatDateAR } from "@/lib/format";
+import { memberExemptionFact } from "@/lib/members/debit-adhesion";
 import { electoralStatusFor } from "@/lib/mi/identity";
 import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
@@ -12,7 +13,7 @@ import { openWizardProcess } from "@/lib/reregistration/current";
 import { currentDeadline } from "@/lib/reregistration/rules";
 import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { currentPeriod, periodLabel } from "@/lib/treasury/periods";
+import { currentPeriod } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, categoryPaysFee, debtAmount } from "@/lib/treasury/rules";
 
 export const dynamic = "force-dynamic";
@@ -236,7 +237,7 @@ export default async function MiHomePage() {
               // puerta cerrada. Se le dice el HECHO, que es lo que explica por
               // qué no hay nada que ofrecerle acá.
               <p className="text-sm text-muted-foreground">
-                Estás eximido de la cuota hasta {periodLabel(exemption.toPeriod)}.
+                {`${memberExemptionFact(exemption.toPeriod)}.`}
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">No estás adherido.</p>

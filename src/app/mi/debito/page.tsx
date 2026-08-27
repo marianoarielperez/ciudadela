@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { memberPayLimiter } from "@/lib/auth/rate-limiter";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatARS } from "@/lib/format";
-import { adhesionBlockMessage } from "@/lib/members/debit-adhesion";
+import { adhesionBlockMessage, adhesionBlockTone } from "@/lib/members/debit-adhesion";
 import { memberDebit } from "@/lib/members/member-debit";
 import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
@@ -167,7 +167,11 @@ export default async function MiDebitoPage(props: {
           la vecinal.
         </FormMessage>
       ) : !preview.verdict.ok ? (
-        <FormMessage kind="warning" box>
+        // El TONO sale del mismo módulo que redacta el mensaje: una exención es
+        // una decisión de la Comisión a favor del socio y va NEUTRA —pintarla de
+        // ámbar le diría que hay algo mal—, y el resto de los motivos sigue en
+        // advertencia porque son cosas que le faltan o que lo frenan hoy.
+        <FormMessage kind={adhesionBlockTone(preview.verdict)} box>
           {adhesionBlockMessage(preview.verdict)}
         </FormMessage>
       ) : preview.unit === null ? (

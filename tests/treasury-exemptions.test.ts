@@ -837,6 +837,24 @@ describe("revoke", () => {
     ]);
   });
 
+  it("una exención VENCIDA no se anula: no se estampa un movimiento falso en el historial", async () => {
+    // La pestaña sólo ofrece anular las VIGENTES, pero con el `?anular=` de una
+    // pestaña vieja —o un reenvío del formulario— llega igual una que ya venció.
+    // El cerrojo optimista de más abajo no la ve (su `revokedAt` sigue en null),
+    // así que sin esta revalidación la ficha del socio se llevaba un asiento
+    // `fee_exemption_revoked` con su acta por un hecho que nunca ocurrió: la
+    // exención no se levantó, se terminó sola.
+    const w = granted({ fromPeriod: "2025-09", toPeriod: "2026-08", months: 12 }, []);
+    const r = await service(w).svc.revoke(REVOKE);
+
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toContain("venció");
+    // NADA escrito: ni la fecha, ni el acta de anulación, ni el movimiento.
+    expect(w.exemptions[0].revokedAt).toBeNull();
+    expect(w.exemptions[0].revokeMinuteId).toBeNull();
+    expect(w.movements).toHaveLength(0);
+  });
+
   it("una exención que no existe no rompe", async () => {
     const w = granted();
     const r = await service(w).svc.revoke({ ...REVOKE, exemptionId: 404 });

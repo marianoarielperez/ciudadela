@@ -66,7 +66,13 @@ describe("ExemptionNotice", () => {
 });
 
 describe("ExemptAction", () => {
-  const base = { memberId: 42, status: "active" as const, exempted: false, superadmin: true };
+  const base = {
+    memberId: 42,
+    status: "active" as const,
+    category: "active" as const,
+    exempted: false,
+    superadmin: true,
+  };
 
   it("el superadmin de un socio vigente sin exención llega a Exenciones con el socio ya elegido", () => {
     const html = render(createElement(ExemptAction, base));
@@ -85,5 +91,16 @@ describe("ExemptAction", () => {
   it("a un socio que no está vigente no se le ofrece: sólo se exime al vigente", () => {
     expect(render(createElement(ExemptAction, { ...base, status: "suspended" }))).toBe("");
     expect(render(createElement(ExemptAction, { ...base, status: "withdrawn" }))).toBe("");
+  });
+
+  it("a un ADHERENTE no se le ofrece: el Art. 7 inc. a.4 exime a los socios activos", () => {
+    // Es la guarda 1 del asiento, y la ficha tiene que mirarla igual que las
+    // otras tres: sin ella el botón mandaba al operador a una pantalla que le
+    // contesta "esta ficha es de categoría Adherente. Cambiala de categoría con
+    // acta si corresponde" — una puerta cerrada con el cartel adentro.
+    expect(render(createElement(ExemptAction, { ...base, category: "adherent" }))).toBe("");
+    for (const category of ["collaborator", "cadet", "honorary", "lifetime"] as const) {
+      expect(render(createElement(ExemptAction, { ...base, category }))).toBe("");
+    }
   });
 });

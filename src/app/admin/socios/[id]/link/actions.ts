@@ -145,15 +145,20 @@ export async function emailPaymentLinkAction(_prev: LinkState, formData: FormDat
     select: { id: true, fullName: true, email: true, emailStatus: true },
   });
   if (!member) return { error: "El socio no existe." };
-  if (!member.email || member.emailStatus === "bounced") {
-    return { error: "El socio no tiene un email válido cargado." };
-  }
   // El reenvío se corta TAMBIÉN, y no por simetría: el link vive 72 h y la
   // Comisión puede asentar la exención en el medio. Un enlace generado ayer
   // sigue cobrando hoy, así que sin esta guarda el operador le mandaría por
   // email un cobro a quien la pantalla le está diciendo que no se le cobra.
+  //
+  // Va ANTES de la guarda del email, y el orden es el mensaje: a un eximido sin
+  // casilla cargada, "no tiene un email válido" lo manda a cargarle el email
+  // para poder mandarle un cobro que no corresponde. El motivo que importa es
+  // que está eximido — el email es lo de menos.
   const exemption = await activeExemption(prisma, member.id);
   if (exemption) return { error: adminExemptionNotice(exemption) };
+  if (!member.email || member.emailStatus === "bounced") {
+    return { error: "El socio no tiene un email válido cargado." };
+  }
 
   try {
     await mailer.sendToMember({

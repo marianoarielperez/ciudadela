@@ -22,7 +22,9 @@
 //
 // El cliente de Prisma se INYECTA (el singleton se arma al final), como en
 // `board/notice.ts`: así el módulo se prueba entero sin base.
-import type { MinuteType, PrismaClient } from "@/generated/prisma/client";
+import type {
+  MemberCategory, MemberStatus, MinuteType, PrismaClient,
+} from "@/generated/prisma/client";
 import { CATEGORY_LABELS, minuteName, STATUS_LABELS } from "@/lib/members/labels";
 import { countChargeable } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
@@ -230,6 +232,30 @@ function toRecord(r: RecordRow): ExemptionRecord {
   };
 }
 
+/** Los mensajes de las TRES guardas baratas del asiento: la ficha, su categoría
+ *  y la exención que ya rige.
+ *
+ *  Se exportan porque la action las pre-valida ANTES de crear el acta —son los
+ *  rechazos frecuentes, y un acta creada para un asiento que no ocurre es basura
+ *  en el libro que la asociación presenta ante la IGJ—. Lo que se comparte es el
+ *  TEXTO, que es la parte que importa: la pre-validación y la revalidación de
+ *  adentro de la transacción tienen que decirle al operador exactamente lo
+ *  mismo, se corte por donde se corte. */
+export const GRANT_GUARD_MESSAGES = {
+  noMember: "El socio no existe.",
+  category: (category: MemberCategory) =>
+    `El Art. 7 inc. a.4 exime a los socios activos, y esta ficha es de categoría ` +
+    `${CATEGORY_LABELS[category]}. Cambiala de categoría con acta si corresponde.`,
+  status: (status: MemberStatus) =>
+    `Sólo se exime a un socio vigente, y esta ficha está en estado ` +
+    `${STATUS_LABELS[status]}. La suspensión es disciplinaria, no eximición: ` +
+    "el suspendido sigue devengando.",
+  alreadyInForce: (toPeriod: string) =>
+    `El socio ya tiene una exención vigente hasta ${periodLabel(toPeriod)}. ` +
+    "La renovación nunca es automática: se asienta una nueva cuando ésta venza, o se anula " +
+    "la vigente con su acta.",
+} as const;
+
 export type GrantInput = {
   memberId: number;
   fromPeriod: string;
@@ -286,6 +312,14 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** Los DOS motivos por los que una anulación no procede, y son distintos: una
+ *  ya anulada tiene su acta y su fecha (el hecho ocurrió, una sola vez); una
+ *  vencida no tiene nada que levantar, porque se terminó sola. */
+const ALREADY_REVOKED_MESSAGE =
+  "Otro administrador ya la anuló: la anulación se asienta una sola vez, con su acta.";
+const NOT_IN_FORCE_MESSAGE =
+  "La exención ya venció: no hay nada que anular. Si la Comisión asienta una nueva, se anula esa.";
+
 export function makeExemptions(deps: Deps) {
   const nowOf = () => deps.now?.() ?? new Date();
 
@@ -325,23 +359,12 @@ export function makeExemptions(deps: Deps) {
             where: { id: input.memberId },
             select: { id: true, category: true, status: true },
           });
-          if (!member) return { ok: false as const, error: "El socio no existe." };
+          if (!member) return { ok: false as const, error: GRANT_GUARD_MESSAGES.noMember };
           if (member.category !== "active") {
-            return {
-              ok: false as const,
-              error:
-                `El Art. 7 inc. a.4 exime a los socios activos, y esta ficha es de categoría ` +
-                `${CATEGORY_LABELS[member.category]}. Cambiala de categoría con acta si corresponde.`,
-            };
+            return { ok: false as const, error: GRANT_GUARD_MESSAGES.category(member.category) };
           }
           if (member.status !== "active") {
-            return {
-              ok: false as const,
-              error:
-                `Sólo se exime a un socio vigente, y esta ficha está en estado ` +
-                `${STATUS_LABELS[member.status]}. La suspensión es disciplinaria, no eximición: ` +
-                "el suspendido sigue devengando.",
-            };
+            return { ok: false as const, error: GRANT_GUARD_MESSAGES.status(member.status) };
           }
 
           // ── Guarda 2: al día ───────────────────────────────────────────────
@@ -387,13 +410,7 @@ export function makeExemptions(deps: Deps) {
           // mismo que los cinco bloqueos de pago y las tres pantallas.
           const other = await activeExemption(tx, input.memberId, now);
           if (other) {
-            return {
-              ok: false as const,
-              error:
-                `El socio ya tiene una exención vigente hasta ${periodLabel(other.toPeriod)}. ` +
-                "La renovación nunca es automática: se asienta una nueva cuando ésta venza, o se anula " +
-                "la vigente con su acta.",
-            };
+            return { ok: false as const, error: GRANT_GUARD_MESSAGES.alreadyInForce(other.toPeriod) };
           }
 
           // ── Guarda 5: el rango ─────────────────────────────────────────────
@@ -525,7 +542,12 @@ export function makeExemptions(deps: Deps) {
      *  El devengo repuebla solo los meses futuros en su próxima corrida: por eso
      *  las filas se borran en vez de pasarse a `pending`. Dejarlas pendientes
      *  sería cobrarle al vecino, el mismo día de la anulación, meses que todavía
-     *  no llegaron. */
+     *  no llegaron.
+     *
+     *  La VIGENCIA se revalida acá adentro (`isInForce`), como `grant` revalida
+     *  sus seis guardas: la pantalla sólo ofrece anular las vigentes, pero el
+     *  `?anular=` de una pestaña vieja llega igual — y una anulación es un
+     *  asiento en la ficha del socio con su acta. */
     async revoke(input: RevokeInput): Promise<RevokeResult> {
       const now = nowOf();
       const current = currentPeriod(now);
@@ -533,9 +555,28 @@ export function makeExemptions(deps: Deps) {
       return deps.db.$transaction(async (tx: Tx) => {
         const exemption = await tx.feeExemption.findUnique({
           where: { id: input.exemptionId },
-          select: { id: true, memberId: true, fromPeriod: true, toPeriod: true },
+          // `revokedAt` y `toPeriod` son lo que `isInForce` necesita: la
+          // vigencia se REVALIDA acá adentro, no se hereda de la pantalla.
+          select: {
+            id: true, memberId: true, fromPeriod: true, toPeriod: true, revokedAt: true,
+          },
         });
         if (!exemption) return { ok: false as const, error: "La exención no existe." };
+
+        // LA VIGENCIA SE REVALIDA, con `isInForce` —LA misma definición que usan
+        // la lista de la pestaña y los cinco bloqueos de cobro—. El cerrojo de
+        // más abajo cubre una sola de las dos formas de "ya no corresponde": ve
+        // la anulada (`revokedAt` escrito) y NO ve la vencida, que llega con su
+        // `revokedAt` en null desde una pestaña vieja o un reenvío del
+        // formulario. Sin esto, esa segunda forma estampaba en la ficha del
+        // socio un movimiento `fee_exemption_revoked` con su acta por un hecho
+        // que nunca ocurrió: la exención no se levantó, se terminó sola.
+        if (!isInForce(exemption, now)) {
+          return {
+            ok: false as const,
+            error: exemption.revokedAt !== null ? ALREADY_REVOKED_MESSAGE : NOT_IN_FORCE_MESSAGE,
+          };
+        }
 
         const minute = await tx.minute.findUnique({
           where: { id: input.revokeMinuteId },
@@ -543,20 +584,18 @@ export function makeExemptions(deps: Deps) {
         });
         if (!minute) return { ok: false as const, error: "El acta de anulación no existe." };
 
-        // CERROJO OPTIMISTA: `revokedAt: null` viaja en el `where`. Dos
-        // operadores mirando la misma pestaña —o un reenvío del formulario— no
-        // pueden pisar la fecha y el acta de la primera anulación, que es el
-        // documento que la asociación presenta si alguien discute la baja de la
-        // exención.
+        // CERROJO OPTIMISTA: `revokedAt: null` viaja en el `where`. La guarda de
+        // vigencia de arriba ya rechazó lo que se podía ver al leer; esto cubre
+        // la CARRERA que no se puede ver así — dos transacciones anulando la
+        // misma fila a la vez—, y es lo que impide pisar la fecha y el acta de la
+        // primera anulación, que es el documento que la asociación presenta si
+        // alguien discute la baja de la exención.
         const locked = await tx.feeExemption.updateMany({
           where: { id: input.exemptionId, revokedAt: null },
           data: { revokedAt: now, revokeMinuteId: minute.id },
         });
         if (locked.count === 0) {
-          return {
-            ok: false as const,
-            error: "Otro administrador ya la anuló: la anulación se asienta una sola vez, con su acta.",
-          };
+          return { ok: false as const, error: ALREADY_REVOKED_MESSAGE };
         }
 
         // Las CUATRO acotaciones del borrado, y ninguna sobra:

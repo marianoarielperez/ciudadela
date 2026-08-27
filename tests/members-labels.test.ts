@@ -3,11 +3,14 @@ import { MovementType } from "@/generated/prisma/enums";
 import { MOVEMENT_LABELS } from "@/lib/members/labels";
 
 // Los movimientos son lo que se lee en la pestaña Historial de la ficha y en la
-// pantalla del acta: un valor sin etiqueta sale crudo en inglés
-// ("fee_exemption_revoked"). El `Record<MovementType, string>` ya obliga a tsc a
-// exigir la clave; lo que se fija acá es lo que tsc NO ve: que ninguna etiqueta
-// quede vacía y que dos movimientos distintos no se llamen igual — en un
-// historial, dos asientos con el mismo rótulo son indistinguibles de un bug.
+// pantalla del acta. Los dos consumidores indexan el mapa SIN respaldo
+// (`MOVEMENT_LABELS[mv.type]`), así que una etiqueta faltante no sale cruda en
+// inglés: sale `undefined`, que React no dibuja — el asiento queda con la fecha
+// y sin decir QUÉ pasó, que es peor, porque no se ve como un error sino como una
+// fila incompleta. El `Record<MovementType, string>` ya obliga a tsc a exigir la
+// clave; lo que se fija acá es lo que tsc NO ve: que ninguna etiqueta quede
+// vacía y que dos movimientos distintos no se llamen igual — en un historial,
+// dos asientos con el mismo rótulo son indistinguibles de un bug.
 // Mismo patrón que `tests/reregistration-labels.test.ts`.
 describe("MOVEMENT_LABELS", () => {
   it("covers every MovementType with a distinct es-AR label", () => {

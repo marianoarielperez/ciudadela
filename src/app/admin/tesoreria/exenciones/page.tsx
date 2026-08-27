@@ -69,11 +69,18 @@ const SECTION_TITLE = "text-sm font-semibold tracking-widest text-muted-foregrou
 type SearchParams = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
-/** Hay un aviso arriba de la pantalla, así que el buscador no se roba el foco:
- *  moverlo se lleva por delante el mensaje sin leer (el criterio de Otros
- *  ingresos, que es el molde de esta pantalla). */
-function hasNotice(sp: SearchParams): boolean {
-  return one(sp.asentada) === "1" || one(sp.anulada) === "1";
+/** ¿Hay un aviso arriba que el foco automático del buscador se llevaría por
+ *  delante? Mover el cursor a un campo tapa el mensaje sin leer (el criterio de
+ *  Otros ingresos, que es el molde de esta pantalla), y los avisos de ESTA
+ *  pantalla son CUATRO, no dos: los dos éxitos y los dos errores.
+ *
+ *  Acá van los tres de nivel de página —el asiento hecho, la anulación hecha y
+ *  el `?anular=` que ya no está vigente—. El cuarto, `?socio=` a un id que no
+ *  existe, recién se sabe después de la consulta y lo resuelve `GrantSection`
+ *  sobre el mismo `autoFocus`. Los errores son justamente los que menos se
+ *  pueden tapar: explican por qué el operador perdió lo que estaba haciendo. */
+function hasNotice(sp: SearchParams, staleRevoke: boolean): boolean {
+  return one(sp.asentada) === "1" || one(sp.anulada) === "1" || staleRevoke;
 }
 
 /** Las actas que ofrecen los selectores, y con qué arranca el modo "Acta
@@ -121,8 +128,10 @@ export default async function ExencionesPage(props: { searchParams: Promise<Sear
   const actas = superadmin ? await loadMinutes(now) : { minutes: [], minuteDefaults: {} };
 
   // La anulación sólo se ofrece sobre una exención VIGENTE, y la lista de
-  // vigentes es la que decide: `revoke` no revalida la vigencia (una vencida
-  // anulada no cambiaría nada), así que la pantalla simplemente nunca la ofrece.
+  // vigentes es la que decide. No es la única barrera: `revoke` revalida la
+  // vigencia adentro de su transacción con `isInForce` —una vencida llega igual
+  // desde una pestaña vieja, y su anulación estamparía en la ficha del socio un
+  // movimiento con acta por un hecho que nunca ocurrió—.
   const anular = Number(one(sp.anular));
   const revokeId = superadmin && Number.isInteger(anular) && anular > 0 ? anular : null;
   const target = revokeId === null ? null : inForce.find((e) => e.id === revokeId) ?? null;
@@ -158,7 +167,7 @@ export default async function ExencionesPage(props: { searchParams: Promise<Sear
 
       <GrantSection
         superadmin={superadmin}
-        autoFocusSearch={!hasNotice(sp)}
+        autoFocusSearch={!hasNotice(sp, revokeId !== null)}
         q={q}
         memberId={memberId}
         current={current}
@@ -341,7 +350,16 @@ function RevokeScreen({ exemption, current, actas }: {
   return (
     <Card>
       <CardHeader>
-        <CardTitle as="h2">Anular la exención de {exemption.member.fullName}</CardTitle>
+        {/* El foco entra en el TÍTULO de la vista y no en el primer control.
+            `?anular=` reemplaza la pantalla entera: quien navega por teclado o
+            con lector venía de un enlace "Anular" de la lista y, sin esto,
+            aterriza con el foco al principio del documento —o directamente en el
+            selector de actas— sin que nada le diga a qué pantalla llegó ni de
+            quién es la exención. `tabIndex={-1}` lo hace enfocable sin meterlo en
+            el orden de tabulación (el patrón del skip link del layout). */}
+        <CardTitle as="h2" tabIndex={-1} autoFocus className="outline-hidden">
+          Anular la exención de {exemption.member.fullName}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
@@ -418,7 +436,11 @@ async function GrantSection({ superadmin, autoFocusSearch, q, memberId, current,
         {member ? (
           <SelectedMember member={member} current={current} actas={actas} />
         ) : (
-          <MemberSearch q={q} autoFocus={autoFocusSearch} />
+          // El CUARTO aviso de la pantalla es el de acá arriba, y como los otros
+          // tres apaga el foco automático: con `?socio=` a un id que no existe,
+          // el buscador se dibuja igual, y moverle el cursor taparía la única
+          // línea que explica por qué la ficha se perdió.
+          <MemberSearch q={q} autoFocus={autoFocusSearch && memberId === null} />
         )}
         <p className="text-sm text-muted-foreground">
           El Art. 7 inc. a.4 exime al socio <strong>activo</strong> de la cuota mensual por hasta{" "}

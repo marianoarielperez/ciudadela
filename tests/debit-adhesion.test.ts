@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  adhesionBlockMessage, adhesionVerdict, nextMonthStartAR,
+  adhesionBlockMessage, adhesionBlockTone, adhesionVerdict, memberExemptionFact, nextMonthStartAR,
 } from "@/lib/members/debit-adhesion";
 
 // La regla de negocio, en una línea: el socio NO puede adherirse si ya pagó
@@ -268,5 +268,46 @@ describe("adhesionBlockMessage", () => {
     expect(adhesionBlockMessage({ ok: false, reason: "exempted", until: "2027-08" })).toBe(
       "Estás eximido de la cuota hasta agosto 2027: no hay nada que debitar.",
     );
+  });
+});
+
+describe("memberExemptionFact", () => {
+  // EL hecho, en una sola definición para las CUATRO superficies del panel del
+  // socio: el banner de `/mi/cuenta`, el rechazo de "Pagar ahora", el bloqueo del
+  // débito y la tarjeta de `/mi`. Llegó a estar redactado de dos maneras, y el
+  // mismo vecino ve tres de esas cuatro en el mismo minuto.
+  it("dice el mes en castellano y NO nombra el acta", () => {
+    expect(memberExemptionFact("2027-08")).toBe("Estás eximido de la cuota hasta agosto 2027");
+    expect(memberExemptionFact("2026-12")).toBe("Estás eximido de la cuota hasta diciembre 2026");
+    expect(memberExemptionFact("2027-08")).not.toContain("acta");
+  });
+
+  it("no cierra la oración: cada pantalla le pone el punto o su cola", () => {
+    // Si trajera el punto, el bloqueo del débito diría "…agosto 2027.: no hay
+    // nada que debitar." Es la razón por la que el constructor devuelve el hecho
+    // pelado y no una oración terminada.
+    expect(memberExemptionFact("2027-08").endsWith(".")).toBe(false);
+    expect(adhesionBlockMessage({ ok: false, reason: "exempted", until: "2027-08" })).toBe(
+      `${memberExemptionFact("2027-08")}: no hay nada que debitar.`,
+    );
+  });
+});
+
+describe("adhesionBlockTone", () => {
+  it("la exención se muestra NEUTRA: es una decisión de la Comisión, no un problema", () => {
+    expect(adhesionBlockTone({ ok: false, reason: "exempted", until: "2027-08" })).toBe("neutral");
+  });
+
+  it("los otros cuatro motivos siguen en advertencia: son cosas que lo frenan hoy", () => {
+    expect(adhesionBlockTone({ ok: false, reason: "category" })).toBe("warning");
+    expect(adhesionBlockTone({ ok: false, reason: "active_subscription" })).toBe("warning");
+    expect(adhesionBlockTone({ ok: false, reason: "no_email" })).toBe("warning");
+    expect(
+      adhesionBlockTone({
+        ok: false,
+        reason: "paid_this_month",
+        availableFrom: new Date("2026-09-01T03:00:00Z"),
+      }),
+    ).toBe("warning");
   });
 });

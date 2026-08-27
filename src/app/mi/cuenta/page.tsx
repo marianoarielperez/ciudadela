@@ -1,10 +1,11 @@
 import { requireMember } from "@/lib/auth/require-member";
+import { memberExemptionFact } from "@/lib/members/debit-adhesion";
 import { hasRecentLinkPayment, readReturnOutcome } from "@/lib/mp/return-status";
 import { prisma } from "@/lib/prisma";
 import { buildPeriodGrid, fetchMemberAccount } from "@/lib/treasury/account";
 import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { currentPeriod, periodLabel } from "@/lib/treasury/periods";
+import { currentPeriod } from "@/lib/treasury/periods";
 import { categoryPaysFee } from "@/lib/treasury/rules";
 import { upcomingPeriods } from "@/lib/treasury/upcoming";
 import { AccountSection } from "@/components/admin/account-section";
@@ -90,12 +91,13 @@ export default async function MiCuentaPage(props: {
 
       {/* Arriba de la cuenta: es la explicación de por qué no hay nada que
           pagar, y abajo de la grilla llegaría tarde. Neutral y no advertencia —
-          la exención es un beneficio que la Comisión votó, no un problema. El
-          acta no se nombra acá: el número es la referencia con la que el
-          operador la ubica en el libro, y al vecino no le dice nada. */}
+          la exención es un beneficio que la Comisión votó, no un problema. La
+          frase sale del constructor compartido (`memberExemptionFact`): las
+          cuatro superficies del panel del socio dicen el mismo hecho con las
+          mismas palabras, y el acta no se nombra en ninguna. */}
       {exemption && (
         <FormMessage kind="neutral" box>
-          Tenés una exención de cuota vigente hasta {periodLabel(exemption.toPeriod)}.
+          {`${memberExemptionFact(exemption.toPeriod)}.`}
         </FormMessage>
       )}
 
