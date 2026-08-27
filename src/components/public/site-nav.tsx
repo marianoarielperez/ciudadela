@@ -44,7 +44,9 @@ export function SiteNav() {
         <li className="sm:hidden">
           <Link
             href="/ingresar"
-            className="block py-2.5 text-base font-medium text-primary underline"
+            // Mismo CTA que en desktop, ancho completo en el cajón y min-h-11
+            // (el mismo mínimo táctil que el resto del menú).
+            className="mt-1 flex min-h-11 items-center justify-center rounded-md bg-primary px-4 text-base font-medium text-primary-foreground outline-hidden transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => setOpen(false)}
           >
             Ingresar
