@@ -104,7 +104,7 @@ export function DniResultPanel({
           <>
             {masked && (
               <span className="block">
-                Encontramos una ficha a nombre de <strong>{masked}</strong>.
+                Encontramos una ficha a nombre de <strong>{masked}</strong>
               </span>
             )}
             <span className={masked ? "mt-2 block" : "block"}>
@@ -116,7 +116,7 @@ export function DniResultPanel({
           <>
             {masked && (
               <span className="block">
-                Encontramos una ficha a nombre de <strong>{masked}</strong>.
+                Encontramos una ficha a nombre de <strong>{masked}</strong>
               </span>
             )}
             <span className={masked ? "mt-2 block" : "block"}>
@@ -156,7 +156,14 @@ export function DniResultPanel({
         </p>
       </div>
 
-      {(blocked.code === "debt" || blocked.code === "visit_office" || blocked.code === "rejected_wait") && (
+      {/* `already_member` también lo lleva (paridad con el viejo BlockedPanel, que lo
+          mostraba siempre): la mayoría del padrón del Libro 1 no tiene cuenta en el sitio
+          —160 vigentes, 37 emails cargados—, así que el botón a /ingresar no alcanza como
+          única salida. `in_progress` queda afuera: su salida es el reenvío del enlace. */}
+      {(blocked.code === "already_member" ||
+        blocked.code === "debt" ||
+        blocked.code === "visit_office" ||
+        blocked.code === "rejected_wait") && (
         <p className="mt-8 text-sm text-muted-foreground">
           Si creés que hay un error, acercate a la sede vecinal o escribinos desde la{" "}
           <Link href="/ubicacion" className={LINK_TARGET}>

@@ -10,7 +10,7 @@
 //     y nadie vuelve a escanear: el `<div>` nuevo queda vacío, sin
 //     `cf-turnstile-response`, y el envío falla SIEMPRE con "No pudimos
 //     verificar que sos una persona".
-//   - En el wizard eso pasaba yendo al paso 3, volviendo al 2 y avanzando otra
+//   - En el wizard eso pasaba yendo al paso 4, volviendo al 3 y avanzando otra
 //     vez (el form se desmonta y se vuelve a montar), y en la pantalla de
 //     bloqueo `in_progress`, donde `StepPersonal` se desmonta y el formulario
 //     de reenvío monta un widget nuevo: el reenvío del enlace no funcionaba

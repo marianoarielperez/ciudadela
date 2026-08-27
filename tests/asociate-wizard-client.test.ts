@@ -45,7 +45,7 @@ const wizard = code(src("app", "(public)", "asociate", "asociate-wizard.tsx"));
 // `{}` inicial), apagaba `hasFile`, y el navegador encontraba el botón
 // `disabled` y NO disparaba el submit. Fallaba el primer clic de toda ranura y
 // todo clic que movía el puntero.
-describe("paso 4: cada ranura de documento es independiente", () => {
+describe("paso 5: cada ranura de documento es independiente", () => {
   it("NO existe un puntero de ranura activa en ninguna de las dos puntas", () => {
     // `activeSlot` es el nombre exacto del puntero que causaba el bug, pero lo
     // que se prohíbe es la clase: cualquier estado del paso que diga CUÁL de
@@ -195,5 +195,12 @@ describe("el wizard de 6 pasos", () => {
     // en silencio (la guarda de navStep lo absorbe y el retome cae un paso antes).
     expect(wizard).toContain("? 6");
     expect(wizard).toContain(": 5;");
+  });
+
+  it("el paso de datos manda el DNI verificado como campo oculto", () => {
+    // El campo visible se quitó en la renumeración: si este hidden muere, el
+    // alta entera falla recién en el submit con "DNI inválido".
+    const stepPersonal = code(src("app", "(public)", "asociate", "step-personal.tsx"));
+    expect(stepPersonal).toContain('<input type="hidden" name="dni" value={draft.dni} />');
   });
 });

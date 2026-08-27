@@ -54,9 +54,16 @@ export async function loadEligibilityInputs(
     applications.findLiveByDni(dni),
     applications.lastRejectionAt(dni),
   ]);
+  let member: EligibilityMember | null = null;
+  if (memberRow) {
+    const { _count, ...rest } = memberRow;
+    member = { ...rest, pendingFees: _count.fees };
+  }
   return {
-    member: memberRow ? { ...memberRow, pendingFees: memberRow._count.fees } : null,
-    liveApplication,
+    member,
+    // El email de la solicitud viva no viaja con los insumos: quien lo necesita
+    // (el reenvío del enlace) lo busca por su cuenta.
+    liveApplication: liveApplication ? { id: liveApplication.id } : null,
     lastRejectionAt,
   };
 }
