@@ -41,6 +41,7 @@ model User {
   incomesVoided          OtherIncome[]        @relation("OtherIncomeVoidedBy")
   decidedRequests        MemberRequest[]      @relation("MemberRequestDecider")
   presentationsValidated Presentation[]
+  feeExemptionsCreated   FeeExemption[]
 
   @@map("users")
 }
@@ -135,6 +136,11 @@ enum MovementType {
   suspension
   suspension_end
   book_migration
+  // Exención de cuota (Art. 7 inc. a.4). El par calca `suspension` /
+  // `suspension_end`: el asiento y su anulación son dos hechos distintos y cada
+  // uno lleva su acta en la pestaña Historial de la ficha.
+  fee_exemption
+  fee_exemption_revoked
 }
 
 enum MemberRequestType {
@@ -261,6 +267,7 @@ model Member {
   payments             Payment[]
   memberRequests       MemberRequest[]
   presentations        Presentation[]
+  feeExemptions        FeeExemption[]
 
   @@index([fullName])
   @@index([status, category])
@@ -306,21 +313,23 @@ model Membership {
 }
 
 model Minute {
-  id              Int                     @id @default(autoincrement())
-  type            MinuteType
-  number          Int
-  date            DateTime
-  description     String?                 @db.VarChar(500)
-  createdById     Int?                    @map("created_by_id")
-  createdBy       User?                   @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt       DateTime                @default(now()) @map("created_at")
-  movements       Movement[]
-  booksOpened     Book[]                  @relation("BookOpeningMinute")
-  booksClosed     Book[]                  @relation("BookClosingMinute")
-  applications    Application[]
-  feeValues       FeeValue[]
-  processesCalled ReregistrationProcess[] @relation("ProcessCallMinute")
-  processesClosed ReregistrationProcess[] @relation("ProcessCloseMinute")
+  id                   Int                     @id @default(autoincrement())
+  type                 MinuteType
+  number               Int
+  date                 DateTime
+  description          String?                 @db.VarChar(500)
+  createdById          Int?                    @map("created_by_id")
+  createdBy            User?                   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt            DateTime                @default(now()) @map("created_at")
+  movements            Movement[]
+  booksOpened          Book[]                  @relation("BookOpeningMinute")
+  booksClosed          Book[]                  @relation("BookClosingMinute")
+  applications         Application[]
+  feeValues            FeeValue[]
+  processesCalled      ReregistrationProcess[] @relation("ProcessCallMinute")
+  processesClosed      ReregistrationProcess[] @relation("ProcessCloseMinute")
+  feeExemptions        FeeExemption[]          @relation("FeeExemptionMinute")
+  feeExemptionsRevoked FeeExemption[]          @relation("FeeExemptionRevokeMinute")
 
   @@unique([type, number])
   @@map("minutes")
@@ -722,6 +731,9 @@ enum FeeStatus {
 enum FeeOrigin {
   accrual
   import
+  // Cuota creada por el asiento de una exención (Art. 7 inc. a.4). Se distingue
+  // del devengo y del import para que la anulación borre exactamente las suyas.
+  exemption
 }
 
 enum PaymentType {
@@ -1100,4 +1112,44 @@ model BoardNotice {
   createdAt     DateTime              @default(now()) @map("created_at")
 
   @@map("board_notices")
+}
+
+// Exención de cuota (Art. 7 inc. a.4) — el registro de las eximiciones que
+// resuelve la Comisión. Va al final y no adentro de Tesorería porque el hecho
+// que asienta es societario (una decisión de la CD con su acta); lo que hace
+// con las cuotas es su consecuencia.
+//
+// De las cuatro FKs, tres son `Restrict` a propósito —la ficha del socio y las
+// DOS actas, la del asiento y la de la anulación—: ni a quién eximieron ni la
+// constancia de por qué se puede borrar por debajo del registro. Sólo
+// `createdById` es `SetNull`: quién lo cargó es trazabilidad, y una cuenta que
+// se da de baja no puede trabar el libro. Corolario de esos tres `Restrict`: la
+// lista de referentes de `discardUnusedMinute` y la enumeración de motivos de
+// `padron/prune.ts` crecen con esta tabla — sin eso el borrado tampoco pasa,
+// pero falla con un error crudo de base en vez del mensaje que el operador
+// puede resolver.
+//
+// Sin `@@unique` de "una sola vigente por socio": MySQL no tiene unique parcial
+// y `revokedAt IS NULL` es justo lo que habría que filtrar. La invariante se
+// verifica dentro de la transacción del asiento, mismo criterio que
+// `member_requests`.
+model FeeExemption {
+  id             Int       @id @default(autoincrement())
+  memberId       Int       @map("member_id")
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  fromPeriod     String    @map("from_period") @db.Char(7) // "YYYY-MM", primer mes eximido
+  toPeriod       String    @map("to_period") @db.Char(7) // último mes eximido, inclusive
+  months         Int // 1..24, redundante a propósito (el acta habla en meses)
+  minuteId       Int       @map("minute_id")
+  minute         Minute    @relation("FeeExemptionMinute", fields: [minuteId], references: [id], onDelete: Restrict)
+  note           String?   @db.VarChar(300) // "contribución en especie: pintura de la sede"
+  createdById    Int?      @map("created_by_id")
+  createdBy      User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  revokedAt      DateTime? @map("revoked_at")
+  revokeMinuteId Int?      @map("revoke_minute_id")
+  revokeMinute   Minute?   @relation("FeeExemptionRevokeMinute", fields: [revokeMinuteId], references: [id], onDelete: Restrict)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([memberId])
+  @@map("fee_exemptions")
 }

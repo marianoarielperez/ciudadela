@@ -25,6 +25,12 @@ export const MOVEMENT_LABELS: Record<MovementType, string> = {
   admission: "Alta", withdrawal: "Baja", category_change: "Cambio de categoría",
   readmission: "Reingreso", suspension: "Suspensión", suspension_end: "Fin de suspensión",
   book_migration: "Migración de libro",
+  // Art. 7 inc. a.4. "Exención anulada" y no "Fin de exención": lo que asienta
+  // `fee_exemption_revoked` es la ANULACIÓN anticipada que decide la Comisión
+  // (spec §2, decisión 9), no el vencimiento del plazo. Confundirlos en el
+  // historial le atribuiría a la CD una decisión que no tomó — el mismo criterio
+  // que separa "Retirada" de "Sin efecto" en REQUEST_STATUS_LABELS.
+  fee_exemption: "Exención de cuota", fee_exemption_revoked: "Exención anulada",
 };
 export const MINUTE_TYPE_LABELS: Record<MinuteType, string> = {
   board: "Comisión Directiva", assembly: "Asamblea",

@@ -166,6 +166,10 @@ describe("discardUnusedMinute", () => {
     /** Procesos que la usan COMO ACTA DE CIERRE (la relación opcional). */
     closeProcesses?: number;
     feeValues?: number;
+    /** Exenciones que la usan como acta del ASIENTO. */
+    feeExemptions?: number;
+    /** Exenciones que la usan como acta de la ANULACIÓN. */
+    feeExemptionRevokes?: number;
   };
 
   function makeDb(counts: Counts, minuteId = 42) {
@@ -185,6 +189,18 @@ describe("discardUnusedMinute", () => {
         },
       },
       feeValue: { count: async () => counts.feeValues ?? 0 },
+      // Mismo criterio que el fake de procesos: mira el `where` en vez de
+      // devolver un número fijo, así una guarda que preguntara sólo por
+      // `minuteId` falla el caso del acta de anulación en vez de pasar de
+      // casualidad.
+      feeExemption: {
+        count: async ({ where }: { where: { OR: Record<string, number>[] } }) => {
+          const asksGrant = where.OR.some((c) => c.minuteId === minuteId);
+          const asksRevoke = where.OR.some((c) => c.revokeMinuteId === minuteId);
+          return (asksGrant ? counts.feeExemptions ?? 0 : 0)
+            + (asksRevoke ? counts.feeExemptionRevokes ?? 0 : 0);
+        },
+      },
       minute: {
         delete: async ({ where }: { where: { id: number } }) => {
           deleted.push(where.id);
@@ -244,6 +260,24 @@ describe("discardUnusedMinute", () => {
   // cuota vigente sin la constancia de la decisión que lo fijó (REG-34).
   it("keeps a minute that backs a fee value", async () => {
     const { db, deleted } = makeDb({ movements: 0, books: 0, feeValues: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  // Las dos FKs de `FeeExemption` a `minutes` son `Restrict`: acá la base sí
+  // rechaza el borrado, pero el resultado es un acta fantasma MÁS un error
+  // técnico encima del error real de la acción — el mismo desenlace que el acta
+  // de convocatoria del M6.
+  it("keeps a minute that backs a fee exemption", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, feeExemptions: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
+  // El acta de la ANULACIÓN cuelga de la otra FK (`revokeMinuteId`): una guarda
+  // que preguntara sólo por `minuteId` la dejaría pasar.
+  it("keeps a minute that revoked a fee exemption", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, feeExemptionRevokes: 1 });
     await discardUnusedMinute(db as never, 42);
     expect(deleted).toEqual([]);
   });

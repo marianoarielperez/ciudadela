@@ -9,9 +9,13 @@ const prismaMock = vi.hoisted(() => ({
   minute: { findUnique: vi.fn(), create: vi.fn(), delete: vi.fn() },
   movement: { count: vi.fn(async () => 0) },
   book: { count: vi.fn(async () => 0) },
-  // Los otros dos referentes de un acta que mira `discardUnusedMinute`.
+  // Los otros tres referentes de un acta que mira `discardUnusedMinute`. Sin
+  // ellos el `count` que falta tira un TypeError que el propio `catch` de la
+  // función se traga: el acta NO se borra y el fallo aparece acá como una
+  // aserción de borrado que no ocurrió.
   reregistrationProcess: { count: vi.fn(async () => 0) },
   feeValue: { count: vi.fn(async () => 0) },
+  feeExemption: { count: vi.fn(async () => 0) },
 }));
 const recorderMock = vi.hoisted(() => ({ recordOne: vi.fn() }));
 const tokensMock = vi.hoisted(() => ({

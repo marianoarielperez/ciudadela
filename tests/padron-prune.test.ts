@@ -5,7 +5,10 @@ import { IMPORT_ADMISSION_DETAIL, pruneBlockReasons, type PrunableMember } from 
 // Es el único caso que `--prune` puede borrar.
 const importedOnly = (over: Partial<PrunableMember> = {}): PrunableMember => ({
   user: null,
-  _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 0 },
+  _count: {
+    applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1,
+    presentations: 0, feeExemptions: 0,
+  },
   movements: [{ type: "admission", detail: IMPORT_ADMISSION_DETAIL }],
   withdrawalReason: "arrears",
   reentryBlocked: false,
@@ -20,11 +23,11 @@ describe("pruneBlockReasons", () => {
   it("blocks on anything the system produced", () => {
     const cases: [Partial<PrunableMember>, RegExp][] = [
       [{ user: { id: 7 } }, /cuenta de acceso/],
-      [{ _count: { applications: 1, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 0 } }, /solicitud/],
-      [{ _count: { applications: 0, mpSubscriptions: 1, payments: 0, fees: 0, memberships: 1, presentations: 0 } }, /Mercado Pago/],
-      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 2, fees: 0, memberships: 1, presentations: 0 } }, /2 pago/],
-      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1, presentations: 0 } }, /21 cuota/],
-      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 2, presentations: 0 } }, /1 libro/],
+      [{ _count: { applications: 1, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 0, feeExemptions: 0 } }, /solicitud/],
+      [{ _count: { applications: 0, mpSubscriptions: 1, payments: 0, fees: 0, memberships: 1, presentations: 0, feeExemptions: 0 } }, /Mercado Pago/],
+      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 2, fees: 0, memberships: 1, presentations: 0, feeExemptions: 0 } }, /2 pago/],
+      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1, presentations: 0, feeExemptions: 0 } }, /21 cuota/],
+      [{ _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 2, presentations: 0, feeExemptions: 0 } }, /1 libro/],
       [{ movements: [{ type: "withdrawal", detail: "Acta 12" }] }, /a mano/],
     ];
     for (const [over, re] of cases) {
@@ -41,11 +44,34 @@ describe("pruneBlockReasons", () => {
   it("blocks on re-registration presentations", () => {
     const reasons = pruneBlockReasons(
       importedOnly({
-        _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1, presentations: 1 },
+        _count: {
+          applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1,
+          presentations: 1, feeExemptions: 0,
+        },
       }),
     );
     expect(reasons).toHaveLength(1);
     expect(reasons[0]).toMatch(/presentación/i);
+  });
+
+  // Misma clase de referente y misma trampa: las dos FKs de `fee_exemptions`
+  // son `Restrict`, así que sin nombrar la exención acá la poda no borra igual
+  // —revienta con un error crudo de base— y el operador no se entera de que lo
+  // que la traba es una decisión de la Comisión asentada en un acta.
+  it("blocks on a recorded fee exemption", () => {
+    const reasons = pruneBlockReasons(
+      importedOnly({
+        _count: {
+          applications: 0, mpSubscriptions: 0, payments: 0, fees: 0, memberships: 1,
+          presentations: 0, feeExemptions: 1,
+        },
+      }),
+    );
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toMatch(/exención/i);
+    // El acta es lo que el operador tiene que ir a buscar: sin nombrarla, el
+    // motivo no le dice por dónde resolverlo.
+    expect(reasons[0]).toMatch(/acta/i);
   });
 
   // REG-04 (Art. 5 inc. 2): el expulsado no reingresa jamás. Su ficha puede no
@@ -84,7 +110,10 @@ describe("pruneBlockReasons", () => {
       importedOnly({
         withdrawalReason: "expulsion",
         reentryBlocked: true,
-        _count: { applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1, presentations: 0 },
+        _count: {
+          applications: 0, mpSubscriptions: 0, payments: 0, fees: 21, memberships: 1,
+          presentations: 0, feeExemptions: 0,
+        },
       }),
     );
     expect(reasons).toHaveLength(2);
