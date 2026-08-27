@@ -2,29 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Activity, CalendarDays, ClipboardCheck, Home, Inbox, Newspaper, ScrollText, Settings, Users, Vote,
-  Wallet,
-} from "lucide-react";
 
-import { isNavItemActive, type AdminNavGroup, type AdminNavIcon } from "@/lib/admin/nav";
+import { NAV_ICONS } from "@/components/admin/nav-icons";
+import { isNavItemActive, type AdminNavGroup } from "@/lib/admin/nav";
 import { cn } from "@/lib/utils";
-
-// El mapa nombre→componente vive acá y no en nav.ts para que la config sea
-// serializable y testeable en node (lucide no carga fuera del bundle cliente).
-const ICONS: Record<AdminNavIcon, typeof Home> = {
-  home: Home,
-  inbox: Inbox,
-  "clipboard-check": ClipboardCheck,
-  users: Users,
-  wallet: Wallet,
-  "scroll-text": ScrollText,
-  newspaper: Newspaper,
-  "calendar-days": CalendarDays,
-  activity: Activity,
-  vote: Vote,
-  settings: Settings,
-};
 
 // La misma lista sirve a la lateral (colapsable) y al cajón móvil (siempre
 // expandido). Ítems con min-h-11 en el cajón vía padding: targets ≥44px.
@@ -45,7 +26,7 @@ export function AdminNavList({ groups, collapsed = false }: {
             </p>
           ))}
           {group.items.map((item) => {
-            const Icon = ICONS[item.icon];
+            const Icon = NAV_ICONS[item.icon];
             const active = isNavItemActive(pathname, item.href);
             return (
               <Link

@@ -18,6 +18,12 @@ export const SITE = {
     kitchen: "Cocina",
     classroom: "Aulas",
   },
+  // Presencia digital de la asociación (la usa el footer). URLs provistas
+  // por el operador el 27/08/2026.
+  social: {
+    facebook: "https://www.facebook.com/vecinalciudadela",
+    whatsapp: "https://whatsapp.com/channel/0029Vb5B4S29sBICFUz8ih1i",
+  },
 } as const;
 
 // Hosts que NO pueden ser la base pública del sitio: si el build los hornea,

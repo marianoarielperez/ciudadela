@@ -478,7 +478,9 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   (campos: id_calle, orden_carga, nombre_calle). Ojo: nombres sin tilde y con comas
   tipo "Pizarro , Francisco" → normalizar para búsqueda.
 - `assets/logo.png` — logo institucional (monocromo celeste, fondo transparente).
-- `assets/hero.jpg` — foto aérea del barrio para el hero (1980×788; generar variantes responsive).
+- `assets/hero-nuevo.jpg` — foto aérea del barrio para el hero de la home (1980×690;
+  generar variantes responsive). `assets/hero.jpg` (1980×788) sigue en el repo: es la
+  que `scripts/generate-assets.ts` recorta para la imagen de Open Graph.
 
 ## Variables de entorno (`.env`)
 

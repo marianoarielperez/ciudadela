@@ -37,7 +37,7 @@ export function SiteHeader() {
           <SiteNav />
           <Link
             href="/ingresar"
-            className="hidden text-sm font-medium text-primary underline sm:inline"
+            className="hidden items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-hidden transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring sm:inline-flex"
           >
             Ingresar
           </Link>
