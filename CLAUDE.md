@@ -388,6 +388,27 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   a firmar. Es la tercera vez que este selector sorprende encadenado; las dos
   anteriores fueron cosméticas y ésta no.
 
+## Patrón que estrenó la exención de cuota (Art. 7 inc. a.4)
+
+- **Un registro con acta + filas MATERIALIZADAS que el núcleo ya sabía tratar.**
+  La exención se asienta en `fee_exemptions` y se materializa como cuotas `exempt`
+  de todo el rango; el devengo saltea el mes porque ya tiene fila y la deuda no la
+  cuenta porque pregunta por `status: "pending"` a secas. Esa garantía es
+  **estructural**, no una línea que diga "exempt", y por eso el módulo entero no
+  modificó **ni un archivo existente** de `src/lib/treasury/*` ni de `src/lib/mp/*`
+  (verificado con `git diff --stat`, no de memoria). Antes de escribir un flag en
+  el núcleo, preguntarse si la fila que ya existe alcanza.
+- **`activeExemption` es la ÚNICA fuente de las cinco guardas de cobro** —efectivo,
+  link, reenvío del link, pago desde `/mi` y adhesión al débito— y de las tres
+  pantallas. Misma lección que `coverageFloor`: con un `where` por camino, alcanza
+  con que uno olvide `revokedAt: null` para que a un vecino se le siga bloqueando
+  el pago después de que la Comisión le anuló la exención.
+- **Un acta se nombra por TIPO y NÚMERO (`minuteName`), nunca por su id.** El id es
+  a dónde lleva el enlace; `Minute` es único por (tipo, número), así que "Acta
+  N° 16" sobre lo que el libro llama Comisión Directiva N° 124 señala otro
+  documento — y suele existir. Es el mismo error que el acta del cierre del
+  Libro 1, encontrado en verificación en vivo las dos veces.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.

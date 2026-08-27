@@ -1071,6 +1071,78 @@ despliegue. Sigue en pie, además, el pendiente operativo que dejó la 6A (corre
 `scripts/fix-withdrawal-reasons.ts` en el VPS).
 
 
+## Exención de cuota (Art. 7 inc. a.4) — **CERRADO** (27/08/2026)
+
+Un módulo chico y fuera de la numeración de etapas: la Comisión exime a un socio
+**activo** de la cuota mensual por hasta **24 meses**, con acta. El aporte
+equivalente o la contribución en especie **constan en el acta, no en tesorería**,
+así que el módulo no registra un peso, no emite recibos y no hace una sola llamada
+de red.
+
+**El diseño en una línea: registro con acta + filas materializadas.** La exención
+se asienta en `fee_exemptions` —con sus DOS actas, la del asiento y la de la
+anulación— y se materializa como cuotas en estado `exempt` en todos los meses del
+rango. El núcleo de plata ya las trataba bien **por construcción**: el devengo
+saltea el mes porque ya tiene fila, y la deuda no la cuenta porque pregunta por
+`status: "pending"` a secas. Por eso **ningún archivo existente de
+`src/lib/treasury/*` ni de `src/lib/mp/*` se modificó**, y no es una impresión sino
+una verificación mecánica: `git diff main..HEAD --stat` sobre esos dos directorios
+más `account-section.tsx`, `digest.ts` y `tests/integration` devuelve **un solo
+archivo, y nuevo** (`src/lib/treasury/exemptions.ts`). Migración
+`20260827120038_fee_exemptions`, tres valores de enum (`FeeOrigin.exemption` y el
+par `MovementType.fee_exemption` / `fee_exemption_revoked`) y las dos guardas que
+crecen con el esquema: `discardUnusedMinute` suma su sexto referente de acta y
+`pruneBlockReasons` su motivo de bloqueo.
+
+- **`activeExemption` es LA función** —la lección de `coverageFloor`—: la
+  consultan los cinco caminos de cobro y las tres pantallas. Un `where` propio por
+  camino que se olvidara del `revokedAt: null` le seguiría bloqueando el pago a un
+  vecino cuya exención la Comisión ya anuló. "Vigente" incluye a la que todavía no
+  empezó: el "no entra ni un peso" rige desde que la Comisión lo resolvió, no desde
+  el primer mes eximido.
+- **Las seis guardas del asiento se revalidan dentro de la transacción** (ficha
+  activa, categoría activa, al día, sin débito que todavía pueda cobrar, sin otra
+  exención vigente, rango y acta): la pantalla las pre-valida para el MENSAJE, y
+  entre lo que el operador ve y el botón puede haber pasado un cobro de mostrador o
+  el cron del día 1. Esa carrera no se tapa: el `createMany` va **sin**
+  `skipDuplicates` —al revés que el devengo y por el motivo inverso— y una cuota
+  del rango aparecida a mitad de camino vuelve todo atrás con un "reintentá".
+- **Los cinco caminos por los que podía entrar plata se cortan**: efectivo,
+  generar el link de pago, **reenviarlo**, pagar desde `/mi/cuenta` y adherirse al
+  débito automático. Cada pantalla y cada action decide por su cuenta, todas
+  leyendo lo mismo, y los textos del socio no nombran el acta: el número le sirve
+  al operador para buscar la decisión en el libro y al vecino no le dice nada.
+- **La anulación se asienta una sola vez, con su acta** (cerrojo optimista con
+  `revokedAt: null` en el `where`), deja exentos el mes corriente y los
+  transcurridos, y borra sólo las exentas **futuras de esa misma exención** —cuatro
+  acotaciones en el `deleteMany`, ninguna de sobra—. El devengo repuebla los meses
+  futuros como cuotas normales en su próxima corrida.
+- **El acta se nombra por tipo y número, nunca por el id de la fila.** `Minute` es
+  único por (tipo, número), así que las dos numeraciones son independientes:
+  "Acta N° 16" sobre una exención asentada por la **Comisión Directiva N° 124**
+  señalaba un documento distinto, que además existe. `minuteName` es el único
+  formateador y el enlace sigue yendo por id. Lo encontró la verificación en vivo,
+  es la misma clase de error que el acta del cierre del Libro 1, y ahora hay tests
+  que lo fijan.
+
+**Verificado en vivo, en local y con el operador mirando** (27/08/2026): el
+circuito entero de asiento y anulación con sus actas, los cinco bloqueos con sus
+mensajes, el listón `E` y el "Estás al día." de la cuenta corriente de la ficha,
+las variantes de `/mi` y la pantalla a 375 px. Que **el devengo no pueda crear
+filas dentro de un rango eximido** se comprobó por consulta SQL contra las filas
+materializadas y **no** por una corrida forzada: hasta el 01/10/2026 su ventana
+está vacía y una corrida no probaría nada. De esa sesión salieron las dos tandas de
+arreglos que cierran el módulo.
+
+**Lo que queda por mirar en vivo**: los tres controles nuevos de la ficha (badge
+"Eximido", aviso con el acta y botón "Eximir de cuota", los tres con test de
+pantalla) y el padrón electoral con un eximido adentro — está al día, así que
+figura y vota. Ninguno de los dos escribe nada.
+
+La suite queda en **3221 tests verdes** (210 archivos, 7 skips), `lint` y `build`
+limpios.
+
+
 ## Lanzamiento (cuando IGJ oficialice)
 
 Ya hecho, antes de tiempo: ~~cambiar `MP_ACCESS_TOKEN` a las credenciales
