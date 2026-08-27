@@ -974,8 +974,9 @@ completo y nadie debería jurar un dato que la pantalla nunca le mostró. La car
 presencial conserva la escotilla: ahí el campo sigue editable, precargado con la
 constante, para la excepción que la Comisión decida aceptar.
 
-3116 tests en verde (7 salteados), build y lint limpios, medidos sobre el commit
-`19dd317`.
+3136 tests en verde (7 salteados), build y lint limpios, medidos sobre el commit
+`ab8aea3` — el último de código de la rama, que incluye el arreglo del acta del
+cierre.
 
 ### El criterio de aceptación, cumplido — el simulacro completo (26/08/2026)
 
@@ -1059,9 +1060,11 @@ migración, numeración, orden, foto, movimientos y plata están todos correctos
 acta 126 existe, es del mismo día y del mismo proceso, de modo que el cierre es
 trazable. Pero el asiento estricto que la asociación presenta ante la IGJ dice un
 número de acta que no es el que el operador cree, y en un libro de registro societario
-el número de acta es *el* dato. **El arreglo está en curso sobre esta misma rama**:
-que la pantalla de cierre abra en "Acta nueva" y que la confirmación diga con todas
-las letras con qué acta se va a cerrar.
+el número de acta es *el* dato. **El arreglo quedó hecho en esta misma rama**
+(commit `ab8aea3`): la pantalla de cierre abre en "Acta nueva" con el número
+siguiente sugerido, y la confirmación dice con todas las letras con qué acta se va
+a cerrar — el resumen y el selector salen de la misma función pura, así que no
+pueden nombrar actas distintas.
 
 **Lo que queda del Módulo 6**: la revisión final de la rama, el merge a `main` y el
 despliegue. Sigue en pie, además, el pendiente operativo que dejó la 6A (correr
