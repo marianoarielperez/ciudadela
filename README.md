@@ -25,7 +25,8 @@ sigev/
 │   └── calles_inicial.csv        ← 40 calles catastrales del barrio
 └── assets/
     ├── logo.png                  ← Logo institucional (celeste #2E9BDF)
-    └── hero.jpg                  ← Foto aérea del barrio (hero de la home)
+    ├── hero-nuevo.jpg            ← Foto aérea del barrio (hero de la home)
+    └── hero.jpg                  ← Foto aérea anterior (imagen de Open Graph)
 ```
 
 ## Cómo arrancar

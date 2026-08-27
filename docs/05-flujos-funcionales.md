@@ -3,7 +3,7 @@
 ## 1. Sitio público
 
 ### Home
-- **Hero**: `assets/hero.jpg` (foto aérea del barrio) con overlay sutil en el tercio
+- **Hero**: `assets/hero-nuevo.jpg` (foto aérea del barrio) con overlay sutil en el tercio
   inferior para legibilidad, logo, nombre de la asociación y los dos botones:
   **ASOCIATE** y **REEMPADRONATE**.
   - `asociate_activo=false` o proceso de re-empadronamiento activo → ASOCIATE se
