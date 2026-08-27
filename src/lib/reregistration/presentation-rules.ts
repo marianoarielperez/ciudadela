@@ -28,6 +28,25 @@ type Err = { ok: false; error: string };
  *  pantalla y el server citen el mismo. */
 export const PRESENTATION_MAX_ANNEXES = 2;
 
+/** El barrio de toda la cohorte del re-empadronamiento, escrito EXACTAMENTE
+ *  como lo escribe el padrón del Libro N° 1 ("Ciudadela": 277 de sus 278
+ *  filas dicen eso, la restante dice "Gasoducto"). El importador copia esa
+ *  columna tal cual, así que cualquier otra grafía acá abriría dos barrios
+ *  distintos en la misma columna del padrón.
+ *
+ *  No es un valor por defecto que el vecino pueda cambiar: la residencia en el
+ *  barrio es requisito ESTATUTARIO del adherente (Art. 5 inc. 3) y la cohorte
+ *  convocada es toda adherente, así que preguntarle el barrio es una pregunta
+ *  sin respuesta posible — o vive en Ciudadela, o su caso no lo resuelve un
+ *  `<select>` sino la sede. El wizard lo MUESTRA fijo y la action lo escribe
+ *  desde acá, sin leerlo del formulario: así tampoco un POST armado a mano
+ *  puede meter otro.
+ *
+ *  El mostrador es el otro caso: ahí llega PRECARGADO con este valor pero
+ *  editable, porque el operador tiene a la persona enfrente y una excepción que
+ *  la Comisión decida aceptar tiene que poder cargarse. */
+export const REREGISTRATION_NEIGHBOURHOOD = "Ciudadela";
+
 /** ¿Esta ranura de documentos admite otro archivo, y qué pasa si lo admite?
  *
  *  Son DOS preguntas distintas y confundirlas rompió el formulario del

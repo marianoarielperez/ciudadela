@@ -30,6 +30,7 @@ import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { PRESENTATION_STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { EDITABLE_STATUSES, presentations } from "@/lib/reregistration/presentation";
+import { REREGISTRATION_NEIGHBOURHOOD } from "@/lib/reregistration/presentation-rules";
 import { wizardOpen } from "@/lib/reregistration/rules";
 import { LIVE_PROCESS_STATUSES } from "@/lib/reregistration/service";
 import { cn } from "@/lib/utils";
@@ -308,7 +309,12 @@ async function MemberForm({ process, memberId }: {
     nationality: pick(presentation.nationality, m.nationality) ?? "",
     occupation: pick(presentation.occupation, m.occupation) ?? "",
     streetNumber: pick(presentation.streetNumber, m.streetNumber) ?? "",
-    neighborhood: pick(presentation.neighborhood, m.neighborhood) ?? "",
+    // El único campo con valor propuesto: la cohorte es toda adherente y vive
+    // en el barrio (Art. 5 inc. 3), así que en el mostrador el operador no
+    // debería tener que tipear "Ciudadela" 160 veces. Sigue EDITABLE, a
+    // diferencia del wizard público: acá está la persona enfrente y una
+    // excepción que la Comisión decida aceptar tiene que poder cargarse.
+    neighborhood: pick(presentation.neighborhood, m.neighborhood) ?? REREGISTRATION_NEIGHBOURHOOD,
     phone: pick(presentation.phone, m.phone) ?? "",
     email: pick(presentation.email, m.email) ?? "",
   };

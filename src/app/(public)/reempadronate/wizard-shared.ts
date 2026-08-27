@@ -9,6 +9,7 @@
 // en `asociate/wizard-shared.ts` es un accidente histórico (fue el primero);
 // lo que importa es que haya UNA.
 import type { DocumentType, PresentationStatus } from "@/generated/prisma/client";
+import { REREGISTRATION_NEIGHBOURHOOD } from "@/lib/reregistration/presentation-rules";
 
 export { CONTROL_HEIGHT, FOCUS_RING, LINK_TARGET } from "../asociate/wizard-shared";
 // El catálogo catastral y la limpieza de "Hernandez , Jose" también son de allá:
@@ -70,6 +71,10 @@ export type PresentationDraft = {
   /** Sólo para mostrar en el combo: al server viaja `streetId`. */
   streetName: string;
   streetNumber: string;
+  /** Fijo en `REREGISTRATION_NEIGHBOURHOOD`, no elegible (Art. 5 inc. 3): el
+   *  paso 2 lo muestra como texto y la action lo escribe desde la constante,
+   *  sin leerlo del formulario. Sigue en el borrador porque el paso 4 arma con
+   *  él el domicilio completo que el vecino jura. */
   neighborhood: string;
   phone: string;
   email: string;
@@ -86,7 +91,10 @@ export const EMPTY_DRAFT: PresentationDraft = {
   streetId: null,
   streetName: "",
   streetNumber: "",
-  neighborhood: "",
+  // Nace con el valor final: no hay pantalla que lo cambie, así que dejarlo
+  // vacío sólo habría hecho que el paso 4 mostrara "Rivadavia 1234, " hasta
+  // que el server contestara.
+  neighborhood: REREGISTRATION_NEIGHBOURHOOD,
   phone: "",
   email: "",
   emailConfirm: "",

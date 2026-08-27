@@ -3,7 +3,9 @@ import { getContactInfo } from "@/lib/config";
 import { formatDateAR, formatDateTimeAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
 import { presentations } from "@/lib/reregistration/presentation";
-import { editabilityOf, type PresentationData } from "@/lib/reregistration/presentation-rules";
+import {
+  editabilityOf, REREGISTRATION_NEIGHBOURHOOD, type PresentationData,
+} from "@/lib/reregistration/presentation-rules";
 import { ReempadronateWizard } from "../../reempadronate-wizard";
 import { ResendLinkForm } from "../../resend-link-form";
 import type { PresentationDraft, PresentationSnapshot } from "../../wizard-shared";
@@ -191,7 +193,11 @@ function draftOf(data: PresentationData, streetName: string): PresentationDraft 
     streetId: data.streetId,
     streetName,
     streetNumber: data.streetNumber ?? "",
-    neighborhood: data.neighborhood ?? "",
+    // Lo guardado NO se relee: el barrio del wizard es fijo y la única salida
+    // del paso 2 es guardar, que lo reescribe con la constante. Mostrar acá
+    // otro valor —el que un operador pudo cargar desde el mostrador— sería
+    // prometerle al vecino un domicilio que su propio envío va a cambiar.
+    neighborhood: REREGISTRATION_NEIGHBOURHOOD,
     phone: data.phone ?? "",
     email,
     // Precargado igual que el email: hacerle repetir la dirección a quien ya la

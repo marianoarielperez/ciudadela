@@ -25,7 +25,8 @@ import { useRef } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { Input } from "@/components/ui/input";
-import { CIVIL_STATUS_OPTIONS, NEIGHBOURHOOD_OPTIONS } from "@/lib/members/card-options";
+import { CIVIL_STATUS_OPTIONS } from "@/lib/members/card-options";
+import { REREGISTRATION_NEIGHBOURHOOD } from "@/lib/reregistration/presentation-rules";
 import { cn } from "@/lib/utils";
 import { StreetPicker } from "../asociate/street-picker";
 import { Field, NavButtons } from "../asociate/wizard-ui";
@@ -40,8 +41,9 @@ import {
 // lo que el vecino elige acá termina, al validarse, en la misma columna que
 // tipea el operador. Tres listas distintas darían "Soltero/a" y "Soltero"
 // conviviendo en el padrón, así que hay UNA sola (`@/lib/members/card-options`).
+//
+// El BARRIO no sale de esa lista y ya no se elige: ver el bloque del domicilio.
 const CIVIL_STATUSES = [...CIVIL_STATUS_OPTIONS];
-const NEIGHBOURHOODS = [...NEIGHBOURHOOD_OPTIONS];
 
 export function StepData({
   draft,
@@ -68,11 +70,10 @@ export function StepData({
   // habilitada, el borrador sigue diciendo otra cosa, nadie ve diferencia, y el
   // reintento persiste un estado civil que el vecino nunca eligió. Se reusa el
   // hook del panel, que es donde el proyecto ya resolvió esto.
+  //
+  // Queda UN solo `<select>` en la pantalla: el barrio dejó de serlo.
   const formRef = useRef<HTMLFormElement>(null);
-  useFormResetSync(formRef, {
-    civilStatus: draft.civilStatus,
-    neighborhood: draft.neighborhood,
-  });
+  useFormResetSync(formRef, { civilStatus: draft.civilStatus });
 
   const emailMismatch =
     draft.email.trim() !== "" &&
@@ -195,32 +196,34 @@ export function StepData({
               onChange={(e) => patch({ streetNumber: e.target.value })}
             />
           </Field>
-          <Field id="neighborhood" label="Barrio">
-            <select
-              id="neighborhood"
-              name="neighborhood"
-              required
-              value={draft.neighborhood}
-              onChange={(e) => patch({ neighborhood: e.target.value })}
+          {/* El barrio NO se elige, y por eso no es un control: los socios
+              adherentes viven en Ciudadela por requisito estatutario (Art. 5
+              inc. 3) y la cohorte convocada es toda adherente, así que la lista
+              desplegable ofrecía cinco respuestas que ninguna presentación
+              válida podía dar. Tampoco viaja en el formulario: lo escribe la
+              action desde `REREGISTRATION_NEIGHBOURHOOD`.
+
+              Se MUESTRA igual, en vez de omitirlo, porque el paso 4 hace jurar
+              el domicilio completo —"Rivadavia 1234, Ciudadela"— y nadie
+              debería declarar bajo juramento un dato que la pantalla nunca le
+              mostró. Como texto y no como campo deshabilitado: un control
+              apagado invita a buscar cómo prenderlo. */}
+          <div className="space-y-1.5">
+            <span className="block text-sm font-medium">Barrio</span>
+            <p
               className={cn(
-                "w-full rounded-lg border border-input bg-background px-3 text-foreground transition-colors",
+                "flex items-center rounded-lg border border-dashed border-border bg-muted/40 px-3 text-foreground",
                 CONTROL_HEIGHT,
-                FOCUS_RING,
-                "focus-visible:border-ring",
-                draft.neighborhood === "" && "text-muted-foreground",
               )}
             >
-              <option value="" disabled>
-                Elegí una opción
-              </option>
-              {NEIGHBOURHOODS.map((n) => (
-                <option key={n} value={n} className="text-foreground">
-                  {n}
-                </option>
-              ))}
-            </select>
-          </Field>
+              {REREGISTRATION_NEIGHBOURHOOD}
+            </p>
+          </div>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Todos los socios adherentes viven en Ciudadela, así que el barrio no se elige. Si te
+          mudaste fuera del barrio, acercate a la sede vecinal.
+        </p>
       </div>
 
       <Field id="phone" label="Teléfono">

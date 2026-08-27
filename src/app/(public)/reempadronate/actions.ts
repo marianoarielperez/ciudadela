@@ -33,6 +33,7 @@ import { prisma } from "@/lib/prisma";
 import { openWizardProcess } from "@/lib/reregistration/current";
 import { civilTodayAr } from "@/lib/applications/wizard";
 import { presentations, PRESENTATION_MAX_ANNEXES } from "@/lib/reregistration/presentation";
+import { REREGISTRATION_NEIGHBOURHOOD } from "@/lib/reregistration/presentation-rules";
 import { presentationResumeUrl as resumeUrl } from "@/lib/reregistration/resume-link";
 import { currentDeadline, lookupVerdict } from "@/lib/reregistration/rules";
 import { verifyTurnstile } from "@/lib/turnstile";
@@ -268,10 +269,8 @@ const dataSchema = z.object({
     .string()
     .min(1, "Ingresá la altura")
     .max(10, "La altura no puede superar los 10 caracteres"),
-  neighborhood: z
-    .string()
-    .min(1, "Elegí tu barrio")
-    .max(60, "El barrio no puede superar los 60 caracteres"),
+  // El BARRIO no está en el schema a propósito: no lo manda el formulario y no
+  // se lee de él. Ver `REREGISTRATION_NEIGHBOURHOOD` y el uso de más abajo.
   phone: z
     .string()
     .min(6, "Ingresá tu teléfono")
@@ -348,7 +347,12 @@ export async function savePresentationDataAction(
       streetId: data.streetId,
       streetText: null,
       streetNumber: data.streetNumber,
-      neighborhood: data.neighborhood,
+      // De la CONSTANTE y no del formulario: la residencia en el barrio es
+      // requisito estatutario del adherente (Art. 5 inc. 3) y la cohorte
+      // convocada es toda adherente, así que no hay barrio que preguntar. Que
+      // el valor no viaje por el `<form>` es lo que impide que un POST armado a
+      // mano meta otro.
+      neighborhood: REREGISTRATION_NEIGHBOURHOOD,
       phone: data.phone,
       email,
     },
