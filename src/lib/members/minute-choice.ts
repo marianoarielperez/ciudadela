@@ -82,10 +82,12 @@ export function offeredMinutes(minutes: MinuteOption[], applied?: MinuteOption |
  *
  *   - `applied` manda: es un "adoptá ésta" explícito de la pantalla (el lote de
  *     bajas, que se declara en tandas contra la misma acta).
- *   - si no, manda `defaultMode`. La pantalla de cierre pide "new": el cierre
- *     del libro merece acta propia, y arrancar en "existente" preselecciona en
- *     silencio la más reciente —el acta del paso anterior— que es exactamente
- *     el error que se cometió en el simulacro.
+ *   - si no, manda `defaultMode`. El cierre del libro y la ANULACIÓN de una
+ *     exención piden "new": los dos son actos que se asientan una sola vez y
+ *     merecen acta propia, y arrancar en "existente" preselecciona en silencio
+ *     la más reciente —el acta del paso anterior en el cierre, la que concedió
+ *     la exención en la anulación—, que es exactamente el error del simulacro y
+ *     el que volvió a aparecer en la verificación en vivo de las exenciones.
  *   - si no hay ninguna de las dos, "existente" con la primera de la lista, que
  *     es el comportamiento histórico de los otros ocho consumidores.
  *

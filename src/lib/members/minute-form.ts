@@ -97,7 +97,7 @@ export function createsNewMinute(sel: MinuteSelection): boolean {
 // entre la creación y el descarte otro admin pudo haberla elegido para su propia
 // acción, y en ese caso el acta ya es parte del libro y no se toca.
 //
-// Son CINCO los referentes de `Minute`, y la lista tiene que crecer con el
+// Son SEIS los referentes de `Minute`, y la lista tiene que crecer con el
 // schema: cada relación nueva que apunte a `minutes` se agrega acá.
 //
 // Los tres que no son movimientos ni libros son fáciles de pasar por alto,
@@ -119,12 +119,22 @@ export function createsNewMinute(sel: MinuteSelection): boolean {
 //   - `FeeValue.minuteId` (M4): la constancia de la decisión de la Comisión que
 //     fijó el valor de cuota vigente (REG-34).
 //
+// El sexto —`FeeExemption`, por sus DOS actas: la del asiento y la de la
+// anulación (Art. 7 inc. a.4)— es de la otra clase: las dos FKs son `Restrict`,
+// así que la base rechaza el borrado. No se pierde nada en silencio, pero el
+// operador termina con un acta fantasma en el libro MÁS un error técnico
+// encima del error real de su acción, que es lo mismo que pasa con el acta de
+// convocatoria del M6.
+//
 // Una consulta por referente y en orden de probabilidad, cortando en la primera
 // que dé positivo: el camino frecuente —el acta recién creada que efectivamente
-// no usa nadie— paga las cinco, y son cinco `COUNT` por índice sobre un camino
+// no usa nadie— paga las seis, y son seis `COUNT` por índice sobre un camino
 // de compensación que ya viene de un error.
 export async function discardUnusedMinute(
-  db: Pick<PrismaClient, "minute" | "movement" | "book" | "application" | "reregistrationProcess" | "feeValue">,
+  db: Pick<
+    PrismaClient,
+    "minute" | "movement" | "book" | "application" | "reregistrationProcess" | "feeValue" | "feeExemption"
+  >,
   minuteId: number,
 ): Promise<void> {
   try {
@@ -139,6 +149,10 @@ export async function discardUnusedMinute(
     });
     if (processes) return;
     if (await db.feeValue.count({ where: { minuteId } })) return;
+    const exemptions = await db.feeExemption.count({
+      where: { OR: [{ minuteId }, { revokeMinuteId: minuteId }] },
+    });
+    if (exemptions) return;
     await db.minute.delete({ where: { id: minuteId } });
   } catch (err) {
     // El error real que ve el usuario es el de la acción que falló; que el

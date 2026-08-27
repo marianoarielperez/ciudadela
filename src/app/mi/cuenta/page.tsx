@@ -1,13 +1,16 @@
 import { requireMember } from "@/lib/auth/require-member";
+import { memberExemptionFact } from "@/lib/members/debit-adhesion";
 import { hasRecentLinkPayment, readReturnOutcome } from "@/lib/mp/return-status";
 import { prisma } from "@/lib/prisma";
 import { buildPeriodGrid, fetchMemberAccount } from "@/lib/treasury/account";
+import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod } from "@/lib/treasury/periods";
 import { categoryPaysFee } from "@/lib/treasury/rules";
 import { upcomingPeriods } from "@/lib/treasury/upcoming";
 import { AccountSection } from "@/components/admin/account-section";
 import { EmptyState } from "@/components/admin/empty-state";
+import { FormMessage } from "@/components/admin/form-message";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PayForm } from "./pay-form";
 import { ReturnNotice } from "./return-notice";
@@ -32,7 +35,7 @@ export default async function MiCuentaPage(props: {
   const outcome = readReturnOutcome(sp);
   // El valor vigente de la cuota no depende del socio: se pide en paralelo con
   // la ficha (mismo criterio que la ficha de socio del panel admin).
-  const [member, feeValue, readmission] = await Promise.all([
+  const [member, feeValue, readmission, exemption] = await Promise.all([
     prisma.member.findUniqueOrThrow({
       where: { id: actor.memberId },
       select: { id: true, category: true, joinedAt: true },
@@ -43,6 +46,9 @@ export default async function MiCuentaPage(props: {
       orderBy: [{ date: "desc" }, { id: "desc" }],
       select: { date: true },
     }),
+    // Art. 7 inc. a.4. La MISMA función que corta en `startMemberPaymentAction`:
+    // lo que acá se esconde es exactamente lo que la action rechaza.
+    activeExemption(prisma, actor.memberId),
   ]);
   const account = await fetchMemberAccount(prisma, member, feeValue);
   const upcoming = upcomingPeriods(account.fees.map((f) => f.period), member.joinedAt, readmission?.date ?? null);
@@ -65,9 +71,11 @@ export default async function MiCuentaPage(props: {
       <div className="space-y-1">
         <h1 className="text-2xl font-bold">Mi cuenta</h1>
         <p className="text-sm text-muted-foreground">
-          {paysFee
+          {paysFee && !exemption
             ? "Tus cuotas y tus recibos. Podés pagar acá con Mercado Pago o en la sede."
-            : "Tus cuotas y tus recibos."}
+            : // Con exención vigente la sección de pago no está: prometerla acá
+              // arriba mandaría al vecino a buscar un botón que no existe.
+              "Tus cuotas y tus recibos."}
         </p>
       </div>
 
@@ -79,6 +87,18 @@ export default async function MiCuentaPage(props: {
           latestPaymentId={latestPaymentId}
           justPaidByLink={justPaidByLink}
         />
+      )}
+
+      {/* Arriba de la cuenta: es la explicación de por qué no hay nada que
+          pagar, y abajo de la grilla llegaría tarde. Neutral y no advertencia —
+          la exención es un beneficio que la Comisión votó, no un problema. La
+          frase sale del constructor compartido (`memberExemptionFact`): las
+          cuatro superficies del panel del socio dicen el mismo hecho con las
+          mismas palabras, y el acta no se nombra en ninguna. */}
+      {exemption && (
+        <FormMessage kind="neutral" box>
+          {`${memberExemptionFact(exemption.toPeriod)}.`}
+        </FormMessage>
       )}
 
       <div className="rounded-xl bg-card p-4 ring-1 ring-foreground/10">
@@ -93,38 +113,48 @@ export default async function MiCuentaPage(props: {
 
       {/* Ancla propia: la tarjeta "Pagar" de /mi manda a `/mi/cuenta#pagar`, o
           sea que el vecino que viene a pagar aterriza directo acá abajo con el
-          estado de su cuenta ya recorrido en el camino. */}
-      <section id="pagar" className="scroll-mt-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Pagar ahora</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!paysFee || account.feeAmount === null ? (
-              // Honorario, vitalicio o cadete — o todavía no hay valor de cuota
-              // vigente. En los dos casos no hay monto que cobrar, y prometer un
-              // checkout que no se va a poder crear es peor que decirlo. El
-              // orden importa en los DOS sentidos: la categoría primero (es un
-              // hecho definitivo), el valor faltante después (es transitorio).
-              <EmptyState
-                size="card"
-                description={
-                  !paysFee
-                    ? "Tu categoría no paga cuota."
-                    : "El valor de la cuota todavía no está publicado. Probá más tarde o consultá en la sede."
-                }
-              />
-            ) : (
-              <PayForm
-                pendingCount={account.pendingCount}
-                feeAmount={account.feeAmount}
-                oldestPending={account.oldestPending}
-                upcoming={upcoming}
-              />
-            )}
-          </CardContent>
-        </Card>
-      </section>
+          estado de su cuenta ya recorrido en el camino.
+
+          Con una exención vigente la sección ENTERA no se renderiza: no hay
+          ninguna cuota que pagar, y ofrecer un checkout que la action rechaza
+          sería mandarlo a Mercado Pago para nada. El banner de arriba ya explica
+          por qué no está. `AccountSection` no se toca: el "Estás al día." que
+          muestra adentro es verdadero — los meses del rango están como `exempt`,
+          no como pendientes. */}
+      {!exemption && (
+        <section id="pagar" className="scroll-mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Pagar ahora</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!paysFee || account.feeAmount === null ? (
+                // Honorario, vitalicio o cadete — o todavía no hay valor de
+                // cuota vigente. En los dos casos no hay monto que cobrar, y
+                // prometer un checkout que no se va a poder crear es peor que
+                // decirlo. El orden importa en los DOS sentidos: la categoría
+                // primero (es un hecho definitivo), el valor faltante después
+                // (es transitorio).
+                <EmptyState
+                  size="card"
+                  description={
+                    !paysFee
+                      ? "Tu categoría no paga cuota."
+                      : "El valor de la cuota todavía no está publicado. Probá más tarde o consultá en la sede."
+                  }
+                />
+              ) : (
+                <PayForm
+                  pendingCount={account.pendingCount}
+                  feeAmount={account.feeAmount}
+                  oldestPending={account.oldestPending}
+                  upcoming={upcoming}
+                />
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
     </div>
   );
 }

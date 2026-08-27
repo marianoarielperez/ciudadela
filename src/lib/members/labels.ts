@@ -25,10 +25,27 @@ export const MOVEMENT_LABELS: Record<MovementType, string> = {
   admission: "Alta", withdrawal: "Baja", category_change: "Cambio de categoría",
   readmission: "Reingreso", suspension: "Suspensión", suspension_end: "Fin de suspensión",
   book_migration: "Migración de libro",
+  // Art. 7 inc. a.4. "Exención anulada" y no "Fin de exención": lo que asienta
+  // `fee_exemption_revoked` es la ANULACIÓN anticipada que decide la Comisión
+  // (spec §2, decisión 9), no el vencimiento del plazo. Confundirlos en el
+  // historial le atribuiría a la CD una decisión que no tomó — el mismo criterio
+  // que separa "Retirada" de "Sin efecto" en REQUEST_STATUS_LABELS.
+  fee_exemption: "Exención de cuota", fee_exemption_revoked: "Exención anulada",
 };
 export const MINUTE_TYPE_LABELS: Record<MinuteType, string> = {
   board: "Comisión Directiva", assembly: "Asamblea",
 };
+/** Cómo se NOMBRA un acta: "Comisión Directiva N° 124".
+ *
+ *  La referencia real de un acta es su TIPO más su NÚMERO —`@@unique([type,
+ *  number])`—, nunca el `id` de la fila: son dos numeraciones independientes, y
+ *  un "acta N° 16" que en realidad es el id de la Comisión Directiva N° 124
+ *  manda al operador a buscar en el libro un documento que existe y no es ése.
+ *  La ficha del socio ya nombraba así sus movimientos; esto es esa misma línea,
+ *  en un solo lugar, para que las pantallas nuevas no vuelvan a mostrar el id. */
+export function minuteName(m: { type: MinuteType; number: number }): string {
+  return `${MINUTE_TYPE_LABELS[m.type]} N° ${m.number}`;
+}
 export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   email_verification: "Verificación de email", password_invitation: "Invitación de contraseña",
   application_result: "Resultado de solicitud", reregistration_first: "Re-empadronamiento (1° aviso)",

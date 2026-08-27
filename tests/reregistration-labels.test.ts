@@ -9,10 +9,16 @@ import {
 } from "@/lib/members/labels";
 
 // Los enums del M6 se muestran en pantallas que lee el vecino y en la cartelera
-// de la sede: un valor sin etiqueta sale crudo en inglés ("in_person"). El
-// `Record<Enum, string>` ya lo exige tsc; lo que se fija acá es lo que tsc no
-// ve: que ninguna etiqueta quede vacía y que dos valores distintos no se
-// llamen igual, que en una lista de presentaciones es indistinguible de un bug.
+// de la sede. Los consumidores indexan el mapa SIN respaldo, así que un valor
+// sin etiqueta no sale crudo en inglés ("in_person"): como hijo JSX sale
+// `undefined`, que React no dibuja — la celda queda VACÍA, que no se lee como un
+// error sino como un dato que falta —; en un template literal saldría el texto
+// "undefined", y un `.toLocaleLowerCase()` directamente revienta
+// (board-panels.tsx y presencial/page.tsx tienen de esos). El
+// `Record<Enum, string>` ya lo exige tsc;
+// lo que se fija acá es lo que tsc no ve: que ninguna etiqueta quede vacía y que
+// dos valores distintos no se llamen igual, que en una lista de presentaciones
+// es indistinguible de un bug.
 function expectComplete(values: readonly string[], labels: Record<string, string>) {
   for (const value of values) {
     expect(labels[value], `falta la etiqueta de "${value}"`).toBeTypeOf("string");

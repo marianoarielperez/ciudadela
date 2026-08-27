@@ -18,7 +18,9 @@ import { parseForm } from "@/lib/forms";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { PAYMENT_LINK_ERRORS, paymentLinks } from "@/lib/mp/payment-link";
 import { MAX_LINK_FEES } from "@/lib/mp/references";
+import { memberExemptionFact } from "@/lib/members/debit-adhesion";
 import { prisma } from "@/lib/prisma";
+import { activeExemption } from "@/lib/treasury/exemptions";
 
 export type PayState = { error?: string; redirectUrl?: string };
 
@@ -51,6 +53,25 @@ export async function startMemberPaymentAction(_prev: PayState, formData: FormDa
     where: { id: actor.memberId },
     select: { id: true, category: true },
   });
+
+  // EXENCIÓN DE CUOTA (Art. 7 inc. a.4): mientras esté vigente el socio no tiene
+  // cuota que pagar, así que no se le crea ninguna preferencia. Que la pantalla
+  // no muestre "Pagar ahora" no alcanza: una server action se despacha por el
+  // id del encabezado `Next-Action`, no por su URL. El núcleo NO se rompe si
+  // igual entrara plata —`allocate` saltea todo período que ya tenga fila, y los
+  // del rango están `exempt`, así que el cobro se imputa a los primeros meses
+  // POSTERIORES a la exención (spec §6)—, y eso es justamente lo que hay que
+  // evitar: se le estarían cobrando por adelantado meses que la Comisión no
+  // trató, con un recibo numerado que después hay que anular de la serie.
+  //
+  // El hecho lo redacta `memberExemptionFact`, la misma frase que el banner de
+  // esta pantalla, la tarjeta de `/mi` y el bloqueo del débito: el vecino ve tres
+  // de esas cuatro en el mismo minuto. El acta NO se le nombra (a diferencia del
+  // aviso del operador): acá lo útil es hasta cuándo no le van a cobrar.
+  const exemption = await activeExemption(prisma, member.id);
+  if (exemption) {
+    return { error: `${memberExemptionFact(exemption.toPeriod)}: no hay ninguna cuota que pagar.` };
+  }
 
   let r;
   try {

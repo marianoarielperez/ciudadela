@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { memberPayLimiter } from "@/lib/auth/rate-limiter";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatARS } from "@/lib/format";
-import { adhesionBlockMessage } from "@/lib/members/debit-adhesion";
+import { adhesionBlockMessage, adhesionBlockTone } from "@/lib/members/debit-adhesion";
 import { memberDebit } from "@/lib/members/member-debit";
 import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
@@ -88,6 +88,14 @@ export default async function MiDebitoPage(props: {
   // Lista NEGRA de un valor (`isNotCancelled`, no `canStillCharge`): acá
   // interesa "¿hay algo que no esté muerto?", no "¿de esto puede salir plata
   // hoy?" — un estado que MP invente mañana se muestra igual, no se esconde.
+  //
+  // Este filtro tiene precedencia sobre el veredicto, así que un eximido con una
+  // suscripción de estado desconocido-pero-no-cancelado vería la tarjeta "Tu
+  // débito" en lugar del mensaje de exención. Es teórico y NO se cambia: la
+  // guarda 3 del asiento impide eximir a quien tenga un débito COBRABLE
+  // (`countChargeable`, lista blanca), y lo que quedaría en pantalla no cobra
+  // plata — es una tarjeta que además le ofrece cancelarlo, que es lo correcto.
+  // Angostar este filtro a `canStillCharge` escondería débitos vivos de verdad.
   const live = subs.filter((s) => isNotCancelled(s.status));
 
   return (
@@ -159,7 +167,11 @@ export default async function MiDebitoPage(props: {
           la vecinal.
         </FormMessage>
       ) : !preview.verdict.ok ? (
-        <FormMessage kind="warning" box>
+        // El TONO sale del mismo módulo que redacta el mensaje: una exención es
+        // una decisión de la Comisión a favor del socio y va NEUTRA —pintarla de
+        // ámbar le diría que hay algo mal—, y el resto de los motivos sigue en
+        // advertencia porque son cosas que le faltan o que lo frenan hoy.
+        <FormMessage kind={adhesionBlockTone(preview.verdict)} box>
           {adhesionBlockMessage(preview.verdict)}
         </FormMessage>
       ) : preview.unit === null ? (

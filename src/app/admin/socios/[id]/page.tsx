@@ -11,7 +11,9 @@ import {
 import { verificationTarget } from "@/lib/members/card-edit";
 import { isNotCancelled } from "@/lib/mp/subscription-status";
 import { arrearsBadgeVariant, memberStatusBadgeVariant } from "@/lib/admin/status-badges";
+import { requireAdmin, requireSuperadmin } from "@/lib/auth/require-admin";
 import { buildPeriodGrid, fetchMemberAccount } from "@/lib/treasury/account";
+import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod } from "@/lib/treasury/periods";
 import { AccountSection } from "@/components/admin/account-section";
@@ -24,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormMessage } from "@/components/admin/form-message";
 import { AutoDebitForm } from "./auto-debit-form";
+import { ExemptAction, ExemptionBadge, ExemptionNotice } from "./exemption-panels";
 import { appealWindowOpen } from "@/lib/reregistration/withdrawals";
 import { confirmAddressAction } from "./actions";
 
@@ -59,7 +62,16 @@ export default async function SocioPage(props: {
   // El valor vigente de la cuota no depende del socio: se pide EN PARALELO con
   // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
   // cada render (mismo criterio que la ruta hermana `[accion]`).
-  const [member, feeValue, subscriptions, appeal] = await Promise.all([
+  const [actor, sa, member, feeValue, subscriptions, appeal, exemption] = await Promise.all([
+    // Quién mira. La sección entera ya está autorizada por `admin/layout.tsx`,
+    // así que estas dos resoluciones NO son la defensa: deciden qué se dibuja
+    // —"Eximir de cuota" es del superadmin, como el valor de cuota (el patrón de
+    // Valores)— y la autorización real la vuelven a hacer la ruta de Exenciones
+    // y sus dos actions contra la fila viva de `User`. Van en este mismo
+    // `Promise.all` porque no dependen del socio: afuera serían dos idas y
+    // vueltas de más en cada render de la ficha.
+    requireAdmin(),
+    requireSuperadmin(),
     // `include` sin `select` explícito: Prisma ya devuelve todas las columnas
     // escalares del socio, `addressPendingReview` incluida, así que el aviso de
     // constatación de más abajo lee `member.addressPendingReview` sin sumar
@@ -109,7 +121,14 @@ export default async function SocioPage(props: {
       orderBy: { id: "desc" },
       select: { appealUntil: true, withdrawalNotifiedAt: true },
     }),
+    // La exención vigente (Art. 7 inc. a.4), por LA función compartida: lo que
+    // la ficha muestra como eximido es exactamente lo que los cinco caminos de
+    // cobro bloquean. Incluye a la que todavía no empezó, y así tiene que ser:
+    // el "no entra ni un peso" rige desde que la Comisión lo resolvió.
+    activeExemption(prisma, memberId),
   ]);
+  if (!actor.ok) return <FormMessage kind="error" box>{actor.error}</FormMessage>;
+  const superadmin = sa.ok;
   if (!member) notFound();
   // Lista NEGRA (`isNotCancelled`), no lista blanca: acá la pregunta no es si va
   // a cobrar sino si se puede AFIRMAR que no hay débito, y un estado que MP
@@ -190,6 +209,13 @@ export default async function SocioPage(props: {
         </FormMessage>
       )}
 
+      {/* Va ÚLTIMO de los cuatro avisos a propósito: los tres de arriba son un
+          problema (plata saliendo, un plazo corriendo, una constatación
+          pendiente) y éste es un hecho. El operador que viene a cobrarle lo lee
+          igual, porque es el que explica por qué las pantallas de cobro lo van a
+          frenar. */}
+      <ExemptionNotice exemption={exemption} />
+
       <PageHeader
         title={member.fullName}
         breadcrumb={[
@@ -209,6 +235,18 @@ export default async function SocioPage(props: {
                 {member.status === "active" && (
                   <Button asChild variant="outline"><Link href={`/admin/socios/${member.id}/suspension`}>Suspender</Link></Button>
                 )}
+                {/* Se dibuja solo cuando eximir es posible (vigente, de
+                    categoría ACTIVA —el Art. 7 inc. a.4 exime a los activos—,
+                    sin exención, y el que mira es superadmin): la ficha no exime
+                    a nadie, lleva a Tesorería → Exenciones con el socio elegido.
+                    La baja queda última, que es donde va lo destructivo. */}
+                <ExemptAction
+                  memberId={member.id}
+                  status={member.status}
+                  category={member.category}
+                  exempted={exemption !== null}
+                  superadmin={superadmin}
+                />
                 <Button asChild variant="destructive"><Link href={`/admin/socios/${member.id}/baja`}>Dar de baja</Link></Button>
               </>
             )}
@@ -234,6 +272,10 @@ export default async function SocioPage(props: {
               Debe {account.pendingCount} {account.pendingCount === 1 ? "cuota" : "cuotas"}
             </Badge>
           )}
+          {/* Al lado de la deuda y no al lado del estado: los dos hablan de la
+              cuota, y "Eximido" es justo el motivo por el que este socio no la
+              devenga. */}
+          <ExemptionBadge exemption={exemption} />
           {member.reentryBlocked && <Badge variant="destructive">Reingreso bloqueado</Badge>}
         </div>
       </PageHeader>

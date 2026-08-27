@@ -15,6 +15,8 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
+import { prisma } from "@/lib/prisma";
+import { activeExemption, adminExemptionNotice } from "@/lib/treasury/exemptions";
 import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { treasuryService, TreasuryError } from "@/lib/treasury/service";
@@ -56,6 +58,20 @@ export async function registerCashPaymentAction(_prev: State, formData: FormData
   const parsed = parseForm(schema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const d = parsed.data;
+
+  // EXENCIÓN DE CUOTA (Art. 7 inc. a.4): al eximido no se le cobra nada por
+  // mostrador mientras la exención esté vigente — "no entra ni un peso" rige
+  // desde el asiento de la Comisión, no desde el primer mes eximido (spec §3.1).
+  //
+  // Se re-consulta acá aunque la pantalla ya lo haya mirado, por lo de siempre:
+  // una server action NO se despacha por su URL y la pantalla se puede saltear.
+  // Y el costo de que se cuele es alto — `registerCashPayment` emite un recibo
+  // NUMERADO, así que deshacerlo es anular una pieza de la serie.
+  //
+  // El concepto no se mira: tampoco un voluntario ni un extraordinario. El
+  // aporte del Art. 7 consta en el acta, no en tesorería (decisión 1).
+  const exemption = await activeExemption(prisma, d.memberId);
+  if (exemption) return { error: adminExemptionNotice(exemption) };
 
   let result;
   try {

@@ -13,6 +13,11 @@ export const TREASURY_TABS: TreasuryTab[] = [
   // trabajo diario y aquélla es de consulta.
   { href: "/admin/tesoreria/otros-ingresos", label: "Otros ingresos" },
   { href: "/admin/tesoreria/valores", label: "Valores de cuota" },
+  // Art. 7 inc. a.4: la Comisión exime a un socio activo de la cuota mensual por
+  // hasta 24 meses. Va última porque es la pestaña que menos se abre —una
+  // exención se asienta cuando la CD lo decide, no todos los días— y porque es
+  // lo contrario de las demás: acá no entra plata, se deja de devengar.
+  { href: "/admin/tesoreria/exenciones", label: "Exenciones" },
 ];
 
 /** Adónde manda `/admin/tesoreria`: la lista de deudores es el trabajo diario. */

@@ -5,11 +5,13 @@ import { MemberCard } from "@/components/mi/member-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireMember } from "@/lib/auth/require-member";
 import { formatARS, formatDateAR } from "@/lib/format";
+import { memberExemptionFact } from "@/lib/members/debit-adhesion";
 import { electoralStatusFor } from "@/lib/mi/identity";
 import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
 import { openWizardProcess } from "@/lib/reregistration/current";
 import { currentDeadline } from "@/lib/reregistration/rules";
+import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, categoryPaysFee, debtAmount } from "@/lib/treasury/rules";
@@ -45,7 +47,7 @@ export default async function MiHomePage() {
   // La página se autoriza sola (el layout corre en paralelo y no la protege).
   const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return null; // el layout ya explica por qué
-  const [member, pendingCount, arrears, feeValue, debitSubs, openProcess] = await Promise.all([
+  const [member, pendingCount, arrears, feeValue, debitSubs, openProcess, exemption] = await Promise.all([
     prisma.member.findUniqueOrThrow({
       where: { id: actor.memberId },
       select: {
@@ -70,6 +72,12 @@ export default async function MiHomePage() {
     // misma que usan el wizard y su action): esta pantalla es `force-dynamic` y
     // no hay nada que cachear. Sin proceso son cero consultas más abajo.
     openWizardProcess(prisma),
+    // Art. 7 inc. a.4. La MISMA función que corta en `startMemberPaymentAction`
+    // y que esconde la sección de pago en `/mi/cuenta`. De acá salen los DOS
+    // atajos que esta pantalla no le ofrece al eximido: "Pagar ahora", que
+    // mandaba a un ancla `#pagar` que esa pantalla ya no renderiza, y
+    // "Adherirme", que terminaba en el bloqueo de `/mi/debito`.
+    activeExemption(prisma, actor.memberId),
   ]);
   // ¿A ESTE socio le falta presentarse? La cohorte se congeló al convocar, así
   // que la fila de `presentations` es la respuesta completa: sin fila no fue
@@ -200,7 +208,7 @@ export default async function MiHomePage() {
             <Link className={LINK_CTA} href="/mi/cuenta">
               Ver mi cuenta →
             </Link>
-            {paysFee && feeValue && (
+            {paysFee && feeValue && !exemption && (
               <Link className={LINK_CTA} href="/mi/cuenta#pagar">
                 Pagar ahora →
               </Link>
@@ -222,12 +230,27 @@ export default async function MiHomePage() {
               <p className="text-sm font-medium text-success">Activo</p>
             ) : debitState === "pending" ? (
               <p className="text-sm font-medium text-muted-foreground">Pendiente de autorización</p>
+            ) : exemption ? (
+              // Art. 7 inc. a.4, misma familia que el atajo "Pagar ahora": sin
+              // esto la tarjeta lo invitaba a adherirse y `/mi/debito` lo
+              // frenaba con el bloqueo de la exención — un viaje de ida a una
+              // puerta cerrada. Se le dice el HECHO, que es lo que explica por
+              // qué no hay nada que ofrecerle acá.
+              <p className="text-sm text-muted-foreground">
+                {`${memberExemptionFact(exemption.toPeriod)}.`}
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">No estás adherido.</p>
             )}
-            <Link className={LINK_CTA} href="/mi/debito">
-              {debitState === "none" ? "Adherirme →" : "Ver mi débito →"}
-            </Link>
+            {/* El eximido con un débito vivo (teórico: la guarda 3 del asiento
+                lo impide) SÍ conserva el enlace: esa tarjeta le ofrece
+                cancelarlo, que es lo que corresponde. Lo que se esconde es la
+                invitación a adherirse. */}
+            {(debitState !== "none" || !exemption) && (
+              <Link className={LINK_CTA} href="/mi/debito">
+                {debitState === "none" ? "Adherirme →" : "Ver mi débito →"}
+              </Link>
+            )}
           </CardContent>
         </Card>
       )}

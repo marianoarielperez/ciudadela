@@ -558,7 +558,7 @@ async function main() {
             _count: {
               select: {
                 applications: true, mpSubscriptions: true, payments: true, fees: true,
-                presentations: true, memberships: true,
+                presentations: true, feeExemptions: true, memberships: true,
               },
             },
             movements: { select: { type: true, detail: true } },

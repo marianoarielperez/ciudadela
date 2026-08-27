@@ -23,6 +23,7 @@ import { formatARS } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
+import { activeExemption, adminExemptionNotice } from "@/lib/treasury/exemptions";
 import { feeValueReader, NO_FEE_VALUE_MESSAGE } from "@/lib/treasury/fee-values";
 import { periodLabel } from "@/lib/treasury/periods";
 import { categoryPaysFee } from "@/lib/treasury/rules";
@@ -43,7 +44,7 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
   if (!Number.isInteger(memberId) || memberId <= 0) notFound();
 
   // El valor vigente no depende del socio: se pide en paralelo con la ficha.
-  const [member, feeValue, readmission] = await Promise.all([
+  const [member, feeValue, readmission, exemption] = await Promise.all([
     prisma.member.findUnique({
       where: { id: memberId },
       include: { memberships: { include: { book: true } } },
@@ -54,6 +55,9 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
       orderBy: [{ date: "desc" }, { id: "desc" }],
       select: { date: true },
     }),
+    // La MISMA función que corta en las dos actions de esta pantalla: lo que acá
+    // se esconde es exactamente lo que el servidor rechaza.
+    activeExemption(prisma, memberId),
   ]);
   if (!member) notFound();
 
@@ -119,7 +123,23 @@ export default async function PaymentLinkPage(props: { params: Promise<{ id: str
               el valor primero, a un vitalicio se le mandaba a registrar un
               monto que igual no va a pagar. `categoryPaysFee` contesta esa
               mitad sin necesitar el valor. */}
-          {!categoryPaysFee(member.category) ? (
+          {exemption ? (
+            // Va PRIMERO en la cadena, por lo mismo que la guarda de exención va
+            // primera en el veredicto de adhesión: se exime a un socio ACTIVO,
+            // así que `categoryPaysFee` lo dejaría pasar y el operador terminaría
+            // leyendo un motivo que no es el que corta. Neutral y no ámbar: no
+            // hay nada roto, hay una decisión de la Comisión.
+            <FormMessage kind="neutral" box as="div">
+              <p>{adminExemptionNotice(exemption)}</p>
+              <p className="mt-2">
+                Mientras esté vigente no se le genera ningún link de pago, ni se reenvía uno
+                anterior. Si la Comisión la dejó sin efecto, anulala con su acta desde{" "}
+                <Link className="underline" href={`/admin/tesoreria/exenciones?socio=${member.id}`}>
+                  Tesorería → Exenciones
+                </Link>.
+              </p>
+            </FormMessage>
+          ) : !categoryPaysFee(member.category) ? (
             // Honorario, vitalicio o cadete: no hay cuota, así que no hay nada
             // que cobrar por link. Se dice y no se muestra el formulario.
             <EmptyState size="card" description="Esta categoría no paga cuota: no hay link que generar." />

@@ -10,11 +10,18 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(async () => {}),
   findUniqueOrThrow: vi.fn(),
   check: vi.fn(() => true),
+  // La guarda de exención (Art. 7 inc. a.4): por defecto "no hay ninguna".
+  exemptionFindFirst: vi.fn(async () => null as null | { id: number; toPeriod: string; minuteId: number }),
   member: vi.fn(async (): Promise<MemberActor> => (
     { ok: false, reason: "anonymous", error: "Ingresá a tu cuenta para ver tu panel de socio." }
   )),
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: { member: { findUniqueOrThrow: mocks.findUniqueOrThrow } } }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    member: { findUniqueOrThrow: mocks.findUniqueOrThrow },
+    feeExemption: { findFirst: mocks.exemptionFindFirst },
+  },
+}));
 vi.mock("@/lib/mp/payment-link", async () => {
   const real = await vi.importActual<typeof import("@/lib/mp/payment-link")>("@/lib/mp/payment-link");
   return { PAYMENT_LINK_ERRORS: real.PAYMENT_LINK_ERRORS, paymentLinks: { create: mocks.create } };
@@ -45,6 +52,28 @@ describe("startMemberPaymentAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.check.mockReturnValue(true);
+    mocks.exemptionFindFirst.mockResolvedValue(null);
+  });
+
+  it("con una exención vigente no se crea ninguna preferencia ni queda asiento", async () => {
+    // Art. 7 inc. a.4: el socio eximido no tiene cuota que pagar. Que la
+    // pantalla esconda "Pagar ahora" no alcanza — una server action no se
+    // despacha por su URL, así que la guarda va también acá.
+    loggedIn();
+    mocks.findUniqueOrThrow.mockResolvedValueOnce({ id: 14, category: "active" });
+    mocks.exemptionFindFirst.mockResolvedValueOnce({ id: 3, toPeriod: "2027-08", minuteId: 12 });
+    const r = await startMemberPaymentAction({}, form());
+    // El HECHO sale del constructor compartido (`memberExemptionFact`, en
+    // `debit-adhesion.ts`) y es palabra por palabra el del banner de la cuenta,
+    // el de la tarjeta de `/mi` y el del bloqueo del débito; lo propio de esta
+    // action es la cola. Antes lo decía con otras palabras ("Tenés una exención
+    // de cuota vigente hasta…") y el vecino veía dos frases para un solo hecho.
+    expect(r.error).toBe("Estás eximido de la cuota hasta agosto 2027: no hay ninguna cuota que pagar.");
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    // El mensaje del SOCIO no nombra el acta: el número de acta es la referencia
+    // del operador para buscar la decisión en el libro.
+    expect(r.error).not.toContain("acta");
   });
 
   it("sin socio no crea preferencia ni audita", async () => {

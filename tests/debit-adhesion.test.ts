@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  adhesionBlockMessage, adhesionVerdict, nextMonthStartAR,
+  adhesionBlockMessage, adhesionBlockTone, adhesionVerdict, memberExemptionFact, nextMonthStartAR,
 } from "@/lib/members/debit-adhesion";
 
 // La regla de negocio, en una línea: el socio NO puede adherirse si ya pagó
@@ -132,7 +132,48 @@ describe("adhesionVerdict", () => {
     expect(v).toEqual({ ok: true });
   });
 
-  it("el orden de las guardas es categoría > suscripción > pago del mes > email", () => {
+  it("una exención vigente bloquea aunque todo lo demás esté libre", () => {
+    // No hay nada que debitar: los meses del rango ya están como `exempt`, y un
+    // débito le cobraría al vecino la cuota que el acta de la Comisión perdona.
+    const v = adhesionVerdict({
+      category: "active",
+      email: "vecino@example.com",
+      subscriptionStatuses: [],
+      paidThisMonth: false,
+      exemptedUntil: "2027-08",
+      at: new Date("2026-08-25T12:00:00Z"),
+    });
+    expect(v).toEqual({ ok: false, reason: "exempted", until: "2027-08" });
+  });
+
+  it("sin exención (null o ausente) el veredicto no cambia", () => {
+    // El parámetro es ADITIVO: los diez casos de arriba no lo pasan y siguen
+    // dando lo mismo. Este caso fija las dos formas de "no hay exención".
+    const base = {
+      category: "active" as const,
+      email: "vecino@example.com",
+      subscriptionStatuses: [],
+      paidThisMonth: false,
+      at: new Date("2026-08-25T12:00:00Z"),
+    };
+    expect(adhesionVerdict({ ...base, exemptedUntil: null })).toEqual({ ok: true });
+    expect(adhesionVerdict(base)).toEqual({ ok: true });
+  });
+
+  it("el orden de las guardas es exención > categoría > suscripción > pago del mes > email", () => {
+    // La exención va PRIMERA: un eximido es socio activo, así que la guarda de
+    // categoría lo dejaría pasar y el mensaje que leería sería otro.
+    expect(
+      adhesionVerdict({
+        category: "honorary",
+        email: null,
+        subscriptionStatuses: ["authorized"],
+        paidThisMonth: true,
+        exemptedUntil: "2027-08",
+        at: new Date("2026-08-25T12:00:00Z"),
+      }),
+    ).toEqual({ ok: false, reason: "exempted", until: "2027-08" });
+
     // Categoría que no paga gana aunque además falte el email.
     expect(
       adhesionVerdict({
@@ -221,5 +262,52 @@ describe("adhesionBlockMessage", () => {
     expect(adhesionBlockMessage({ ok: false, reason: "no_email" })).toBe(
       "Para adherir el débito necesitás un email cargado en tu ficha. Cargalo en Mis datos.",
     );
+  });
+
+  it("exempted nombra el mes en castellano, con `periodLabel`", () => {
+    expect(adhesionBlockMessage({ ok: false, reason: "exempted", until: "2027-08" })).toBe(
+      "Estás eximido de la cuota hasta agosto 2027: no hay nada que debitar.",
+    );
+  });
+});
+
+describe("memberExemptionFact", () => {
+  // EL hecho, en una sola definición para las CUATRO superficies del panel del
+  // socio: el banner de `/mi/cuenta`, el rechazo de "Pagar ahora", el bloqueo del
+  // débito y la tarjeta de `/mi`. Llegó a estar redactado de dos maneras, y el
+  // mismo vecino ve tres de esas cuatro en el mismo minuto.
+  it("dice el mes en castellano y NO nombra el acta", () => {
+    expect(memberExemptionFact("2027-08")).toBe("Estás eximido de la cuota hasta agosto 2027");
+    expect(memberExemptionFact("2026-12")).toBe("Estás eximido de la cuota hasta diciembre 2026");
+    expect(memberExemptionFact("2027-08")).not.toContain("acta");
+  });
+
+  it("no cierra la oración: cada pantalla le pone el punto o su cola", () => {
+    // Si trajera el punto, el bloqueo del débito diría "…agosto 2027.: no hay
+    // nada que debitar." Es la razón por la que el constructor devuelve el hecho
+    // pelado y no una oración terminada.
+    expect(memberExemptionFact("2027-08").endsWith(".")).toBe(false);
+    expect(adhesionBlockMessage({ ok: false, reason: "exempted", until: "2027-08" })).toBe(
+      `${memberExemptionFact("2027-08")}: no hay nada que debitar.`,
+    );
+  });
+});
+
+describe("adhesionBlockTone", () => {
+  it("la exención se muestra NEUTRA: es una decisión de la Comisión, no un problema", () => {
+    expect(adhesionBlockTone({ ok: false, reason: "exempted", until: "2027-08" })).toBe("neutral");
+  });
+
+  it("los otros cuatro motivos siguen en advertencia: son cosas que lo frenan hoy", () => {
+    expect(adhesionBlockTone({ ok: false, reason: "category" })).toBe("warning");
+    expect(adhesionBlockTone({ ok: false, reason: "active_subscription" })).toBe("warning");
+    expect(adhesionBlockTone({ ok: false, reason: "no_email" })).toBe("warning");
+    expect(
+      adhesionBlockTone({
+        ok: false,
+        reason: "paid_this_month",
+        availableFrom: new Date("2026-09-01T03:00:00Z"),
+      }),
+    ).toBe("warning");
   });
 });

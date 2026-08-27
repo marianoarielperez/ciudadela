@@ -388,6 +388,42 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   a firmar. Es la tercera vez que este selector sorprende encadenado; las dos
   anteriores fueron cosméticas y ésta no.
 
+## Patrones que estrenó la exención de cuota (Art. 7 inc. a.4)
+
+- **Un registro con acta + filas MATERIALIZADAS que el núcleo ya sabía tratar.**
+  La exención se asienta en `fee_exemptions` y se materializa como cuotas `exempt`
+  de todo el rango; el devengo saltea el mes porque ya tiene fila y la deuda no la
+  cuenta porque pregunta por `status: "pending"` a secas. Esa garantía es
+  **estructural**, no una línea que diga "exempt", y por eso el módulo entero no
+  modificó **ni un archivo existente** de `src/lib/treasury/*` ni de `src/lib/mp/*`
+  (verificado con `git diff --stat`, no de memoria). Antes de escribir un flag en
+  el núcleo, preguntarse si la fila que ya existe alcanza.
+- **`activeExemption` es la ÚNICA fuente de las cinco guardas de cobro** —efectivo,
+  link, reenvío del link, pago desde `/mi` y adhesión al débito— y de las tres
+  pantallas. Misma lección que `coverageFloor`: con un `where` por camino, alcanza
+  con que uno olvide `revokedAt: null` para que a un vecino se le siga bloqueando
+  el pago después de que la Comisión le anuló la exención.
+- **Un acta se nombra por TIPO y NÚMERO (`minuteName`), nunca por su id.** El id es
+  a dónde lleva el enlace; `Minute` es único por (tipo, número), así que "Acta
+  N° 16" sobre lo que el libro llama Comisión Directiva N° 124 señala otro
+  documento — y suele existir. Es el mismo error que el acta del cierre del
+  Libro 1, encontrado en verificación en vivo las dos veces.
+- **Un cerrojo optimista cubre la CARRERA, no la precondición.** El
+  `updateMany` con `revokedAt: null` de la anulación ve la exención ya anulada y
+  NO ve la vencida, que llega con su `revokedAt` en null desde una pestaña vieja:
+  se anulaba "bien" y le estampaba a la ficha del socio un movimiento
+  `fee_exemption_revoked` **con su acta** por un hecho que nunca ocurrió (la
+  exención no se levantó, se terminó sola). La vigencia se revalida adentro de la
+  transacción con `isInForce` —la misma función de la lista y de los cinco
+  bloqueos—, igual que `grant` revalida sus seis guardas y que `closeBook`
+  revalida las suyas.
+- **Pre-validar lo barato y frecuente ANTES de crear el acta; compensar sólo el
+  resto.** El acta huérfana no se resuelve únicamente con `discardUnusedMinute`:
+  las tres guardas baratas del asiento (ficha, categoría, exención ya vigente)
+  son por donde se rechaza casi siempre, y se miran antes con dos consultas. Los
+  TEXTOS salen del dominio (`GRANT_GUARD_MESSAGES`) para que el operador lea lo
+  mismo se corte donde se corte.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -479,24 +515,28 @@ padrón electoral) y el **Módulo 5** entero (el panel de socio: shell propio de
 débito automático autogestionado desde `/mi/debito` y solicitudes desde
 `/mi/solicitudes`, con `/admin/solicitudes` unificada) están cerrados.
 
-El **Módulo 6 está cerrado entero** (26/08/2026) **en la branch `modulo-6`, sin
-mergear y sin desplegar**: **6A** (`/admin/socios` en Padrón | Libros | Histórico,
-con la foto de cierre en `memberships`), **6B** (el proceso, el wizard público
-REEMPADRONATE, la cola de validación, la carga presencial y la cartelera por lotes con
-días hábiles) y **6C** (checklist de cierre, bajas en lote con su acta y su anexo de
-notificaciones, y el cierre transaccional del libro con migración y renumeración). El
-**simulacro del criterio de aceptación pasó entero en local**: convocatoria con acta,
-35 presentaciones, 34 validadas y 1 rechazada, 7 cesantías por mora, 90 bajas en 4
-tandas, cierre ejecutado por el operador, Libro 2 con 63 socios renumerados y
-verificados posición por posición, las ocho tablas de plata byte-idénticas, y una
-restauración que dejó las 33 tablas iguales a la línea de base. El detalle está en
-`docs/07` y los informes en `.superpowers/sdd/simulacro/`.
+El **Módulo 6 está cerrado, mergeado y DESPLEGADO en producción** (27/08/2026):
+**6A** (`/admin/socios` en Padrón | Libros | Histórico, con la foto de cierre en
+`memberships`), **6B** (el proceso, el wizard público REEMPADRONATE, la cola de
+validación, la carga presencial y la cartelera por lotes con días hábiles) y **6C**
+(checklist de cierre, bajas en lote con su acta y su anexo de notificaciones, y el
+cierre transaccional del libro con migración y renumeración), más el arreglo del acta
+del cierre que dejó el simulacro. El **simulacro del criterio de aceptación había
+pasado entero en local**: convocatoria con acta, 35 presentaciones, 34 validadas y 1
+rechazada, 7 cesantías por mora, 90 bajas en 4 tandas, cierre ejecutado por el
+operador, Libro 2 con 63 socios renumerados y verificados posición por posición, las
+ocho tablas de plata byte-idénticas, y una restauración que dejó las 33 tablas iguales
+a la línea de base. El detalle está en `docs/07` y los informes en
+`.superpowers/sdd/simulacro/`. Sigue en pie el pendiente operativo de la 6A: correr
+`scripts/fix-withdrawal-reasons.ts` en el VPS.
 
-**Lo que falta del Módulo 6**: el arreglo del acta del cierre —el hallazgo del
-simulacro: el selector arranca preseleccionado en la más reciente y la confirmación no
-nombra el acta, así que el cierre quedó asentado con el acta de las bajas—, la
-revisión final de la rama, el merge y el despliegue. Sigue en pie el pendiente
-operativo de la 6A: correr `scripts/fix-withdrawal-reasons.ts` en el VPS.
+La **exención de cuota (Art. 7 inc. a.4) está CERRADA** (27/08/2026) **en la branch
+`fee-exemption`, sin mergear y sin desplegar**: cinco tareas —el dominio con su
+migración, la pestaña Tesorería → Exenciones con asiento y anulación, los cinco cortes
+de cobro, el panel del socio y los tres controles de la ficha—, verificación en vivo
+con el operador (tres sesiones) y una ronda final de arreglos. El módulo no modificó
+**ni un archivo existente** de `src/lib/treasury/*` ni de `src/lib/mp/*`. Lo que falta
+es el merge y el despliegue.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab

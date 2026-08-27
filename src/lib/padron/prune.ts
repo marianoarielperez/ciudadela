@@ -24,6 +24,9 @@ export type PrunableMember = {
      *  base a mitad de la transacción, en vez del mensaje que el operador puede
      *  resolver. */
     presentations: number;
+    /** Exenciones de cuota (Art. 7 inc. a.4). Misma clase de referente y misma
+     *  trampa que las presentaciones: la FK es `Restrict`. */
+    feeExemptions: number;
     /** Incluye la membresía del libro que se está podando. */
     memberships: number;
   };
@@ -64,6 +67,9 @@ export function pruneBlockReasons(member: PrunableMember): string[] {
   if (member.user) reasons.push("tiene cuenta de acceso");
   if (c.applications > 0) reasons.push(`${c.applications} solicitud(es)`);
   if (c.presentations > 0) reasons.push(`${c.presentations} presentación(es) de re-empadronamiento`);
+  // Lo que traba acá es una decisión de la Comisión asentada en un acta, así que
+  // el motivo la nombra: sin eso el operador no sabe por dónde resolverlo.
+  if (c.feeExemptions > 0) reasons.push(`${c.feeExemptions} exención(es) de cuota asentada(s) con acta`);
   if (c.mpSubscriptions > 0) reasons.push(`${c.mpSubscriptions} suscripción(es) de Mercado Pago`);
   if (c.payments > 0) reasons.push(`${c.payments} pago(s)`);
   if (c.fees > 0) reasons.push(`${c.fees} cuota(s)`);

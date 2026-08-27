@@ -18,6 +18,7 @@ import { formatARS } from "@/lib/format";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
 import { prisma } from "@/lib/prisma";
 import { fetchMemberAccount } from "@/lib/treasury/account";
+import { activeExemption, adminExemptionNotice } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { searchMembers } from "@/lib/treasury/member-search";
 import { cashConceptsFor } from "@/lib/treasury/rules";
@@ -45,14 +46,23 @@ export default async function EfectivoPage(props: {
   ]);
 
   if (memberId !== null && member) {
-    // Solo se lee el valor de cuota cuando hace falta: en modo búsqueda nadie
-    // mira este dato y esperarlo alargaba cada tecleo del buscador para nada.
-    const feeValue = await feeValueReader.current();
+    // Solo se leen cuando hace falta: en modo búsqueda nadie mira estos datos y
+    // esperarlos alargaba cada tecleo del buscador para nada.
+    const [feeValue, exemption] = await Promise.all([
+      feeValueReader.current(),
+      // La MISMA función que corta en la action: lo que acá se esconde es
+      // exactamente lo que el servidor rechaza (defensa en profundidad, no dos
+      // criterios distintos).
+      activeExemption(prisma, member.id),
+    ]);
     const account = await fetchMemberAccount(prisma, member, feeValue);
     const number = member.memberships.find((m) => m.book.status === "open")?.memberNumber ?? null;
     // Al cesante sólo se le cobran las cuotas congeladas: el voluntario y el
     // extraordinario son del que hoy es socio (el servicio los rechaza), y sin
     // pendientes tampoco hay cuotas que cobrarle, porque no devenga nuevas.
+    // Al eximido NO se le recortan conceptos acá: el aviso de más abajo
+    // reemplaza al formulario ENTERO, así que este valor ni se mira. Un solo
+    // mecanismo esconde el cobro, no dos.
     const withdrawn = member.status === "withdrawn";
     const concepts = withdrawn
       ? (account.pendingCount > 0 ? cashConceptsFor(member.category).filter((c) => c === "fees") : [])
@@ -100,7 +110,25 @@ export default async function EfectivoPage(props: {
                 </p>
               </FormMessage>
             )}
-            {concepts.length === 0 ? (
+            {exemption ? (
+              // El aviso reemplaza al formulario ENTERO —tampoco un voluntario
+              // ni un extraordinario: el aporte que la Comisión le aceptó a
+              // cambio consta en el acta, no en tesorería (Art. 7 inc. a.4)—, y
+              // no es un `EmptyState` genérico: acá hay un HECHO que el
+              // operador tiene que poder leer
+              // —hasta cuándo y bajo qué acta—, no una lista vacía. Neutral y no
+              // ámbar: no está pasando nada malo, es una decisión de la Comisión.
+              <FormMessage kind="neutral" box as="div">
+                <p>{adminExemptionNotice(exemption)}</p>
+                <p className="mt-2">
+                  Mientras la exención esté vigente no se le cobra nada en esta pantalla. Si la
+                  Comisión la dejó sin efecto, anulala con su acta desde{" "}
+                  <Link className="underline" href={`/admin/tesoreria/exenciones?socio=${member.id}`}>
+                    Tesorería → Exenciones
+                  </Link>.
+                </p>
+              </FormMessage>
+            ) : concepts.length === 0 ? (
               // Un cesante sin cuotas pendientes (o de una categoría que no paga
               // cuota) no tiene nada que pagar acá: los aportes se le rechazan.
               <EmptyState size="card" description="No hay nada para cobrarle en esta pantalla." />
