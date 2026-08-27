@@ -350,13 +350,13 @@ function RevokeScreen({ exemption, current, actas }: {
   return (
     <Card>
       <CardHeader>
-        {/* El foco entra en el TÍTULO de la vista y no en el primer control.
-            `?anular=` reemplaza la pantalla entera: quien navega por teclado o
-            con lector venía de un enlace "Anular" de la lista y, sin esto,
-            aterriza con el foco al principio del documento —o directamente en el
-            selector de actas— sin que nada le diga a qué pantalla llegó ni de
-            quién es la exención. `tabIndex={-1}` lo hace enfocable sin meterlo en
-            el orden de tabulación (el patrón del skip link del layout). */}
+        {/* El foco entra en el TÍTULO de la vista y no en el primer control —
+            pero solo en una carga completa (URL directa, F5): React 19 emite el
+            atributo `autofocus` en el SSR y lo IGNORA en el cliente para todo lo
+            que no sea un control de formulario, así que la navegación blanda
+            desde el enlace "Anular" no mueve el foco. Se deja igual: cubre el
+            deep-link, y `tabIndex={-1}` hace el título enfocable sin meterlo en
+            el orden de tabulación. */}
         <CardTitle as="h2" tabIndex={-1} autoFocus className="outline-hidden">
           Anular la exención de {exemption.member.fullName}
         </CardTitle>

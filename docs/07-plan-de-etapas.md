@@ -1152,7 +1152,7 @@ exime a los ACTIVOS), el asiento pre-valida las tres guardas baratas antes de cr
 acta, y las cuatro superficies del panel del socio dicen el hecho de la exención con
 una sola frase compartida.
 
-La suite queda en **3221 tests verdes** (210 archivos, 7 skips), `lint` y `build`
+La suite queda en **3232 tests verdes** (210 archivos, 7 skips), `lint` y `build`
 limpios.
 
 
