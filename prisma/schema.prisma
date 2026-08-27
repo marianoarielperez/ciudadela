@@ -192,7 +192,7 @@ enum NotificationType {
   // `withdrawal_declared`) ya existían desde el M0.
   //
   // `presentation_rejected` es su propio tipo y no un `generic`: es una
-  // notificación fehaciente del Art. 5° quater —lo que después acredita que al
+  // notificación fehaciente del Art. 5° ter —lo que después acredita que al
   // socio se le avisó antes de la baja— y tiene que poder contarse y buscarse
   // aparte de la observación, que dice algo distinto.
   presentation_received
@@ -394,13 +394,13 @@ model Notification {
   memberId       Int?               @map("member_id")
   member         Member?            @relation(fields: [memberId], references: [id])
   // Notificación dirigida a una solicitud (M3): el destinatario todavía no es
-  // socio, pero el envío tiene que quedar acreditado igual (Art. 5° quater).
+  // socio, pero el envío tiene que quedar acreditado igual (Art. 5° ter).
   applicationId  Int?               @map("application_id")
   application    Application?       @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   // Aviso publicado en la CARTELERA de la sede (M6): la fila de `board_notices`
   // es el hecho institucional —qué se publicó, desde cuándo y hasta cuándo— y
   // ésta es la acreditación por socio de que quedó notificado por esa vía
-  // (Art. 5° quater).
+  // (Art. 5° ter).
   //
   // `SetNull` y no `Cascade` salva la NOTIFICACIÓN, no la acreditación entera:
   // borrado el cartel sobrevive la fila del envío pero se pierde CUÁL cartel lo
@@ -426,7 +426,7 @@ model Notification {
   payloadSummary String?            @map("payload_summary") @db.VarChar(300)
   // Código del error de envío cuando `status = failed` (4C). Nunca la dirección.
   // Una fila `failed` registra un INTENTO, no una acreditación fehaciente
-  // (Art. 5° quater): el correo no salió. Las pantallas que listan
+  // (Art. 5° ter): el correo no salió. Las pantallas que listan
   // notificaciones tienen que poder distinguirlas de una `sent`.
   error          String?            @db.VarChar(200)
   // Período (`YYYY-MM`) al que se refiere el aviso, cuando tiene uno. Hoy lo
@@ -984,7 +984,7 @@ enum PresentationChannel {
 }
 
 // Qué cartel es. La cartelera de la sede es una vía de notificación válida para
-// el socio sin email (Art. 5° quater), y cada instancia publica el suyo.
+// el socio sin email (Art. 5° ter), y cada instancia publica el suyo.
 enum BoardNoticeKind {
   first_instance
   second_instance

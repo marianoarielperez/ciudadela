@@ -71,7 +71,10 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   tarjetas de Inicio. **Tesorería ya está en la lateral** (entre Socios y Actas) y su
   tarjeta del tablero dejó de ser "Próximamente". La fase 4C sumó **Salud** y
   **Padrón electoral** al grupo Sistema, las dos `superadminOnly` — que es display:
-  la autorización real va igual en la ruta y en cada action.
+  la autorización real va igual en la ruta y en cada action. El Módulo 6 sumó
+  **Reempadronamiento** al grupo Gestión (entre Solicitudes y Socios), SIN
+  `superadminOnly`: el admin ve el tablero y valida presentaciones; convocar, declarar
+  bajas y cerrar el libro exigen superadmin en la ruta y en cada action.
 - **Encabezado**: `PageHeader` (`title`, `breadcrumb`, `actions`, `children`). Convenciones
   acordadas: la **entidad va en el `<h1>`** (el nombre del socio, el título de la noticia) y
   la miga lleva la referencia corta; la **última miga es un sustantivo corto** ("Baja",
@@ -301,6 +304,90 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   configuran LAS DOS solapas con la misma URL y clave; costó dos adhesiones medirlo
   (docs/11 J.6, J.1 paso 4 corregido).
 
+## Patrones que estrenó el Módulo 6 (re-empadronamiento y cierre de libro)
+
+- **La cohorte se CONGELA al convocar, y la presentación no toca la ficha hasta que
+  la Comisión valida.** `activate` crea una fila de `presentations` por adherente
+  vigente, y ésa es la lista de convocados para todo el proceso: quien pasa a ser
+  adherente DESPUÉS no fue convocado y no le corre nada. Los datos declarados viven en
+  la presentación hasta que alguien los valida; recién ahí se copian a `Member`, y
+  **el nombre, el DNI, la categoría, el estado y la fecha de ingreso no se escriben
+  nunca desde una pantalla pública** (el DNI no es autenticación: es una llave que
+  cualquiera puede tipear).
+- **El aviso de cartelera es un LOTE, y la fecha fehaciente es cuando se CUMPLE el
+  plazo, no cuando se fija.** La unidad de trabajo del operador es el cartel entero:
+  el sistema arma la lista de quienes no tienen casilla utilizable, y una sola fecha
+  de fijación estampa los veinte días hábiles en todas las filas del lote. La fecha
+  que acredita es `dueAt`, veinte días hábiles después — estampar el día de la
+  fijación le comería al vecino veinte días hábiles de su defensa. El barrido corre
+  **dentro de la misma transacción** que las filas que lo acreditan, y **un correo que
+  no salió no estampa nada**: ni un bloqueo por `EMAIL_ALLOWLIST` ni un `failed`
+  acreditan notificación, y sin notificación no hay resolución oponible ni ventana de
+  recurso corriendo.
+- **Dos aritméticas de plazos, en módulos SEPARADOS que no comparten función, con un
+  solo comparador de vencimiento.** `reregistration/rules.ts` cuenta **días corridos**
+  (30 de 1ª instancia, 10 de 2ª, 30 para interponer el recurso), que es la lectura
+  conservadora del art. 6 del CCyC porque el estatuto no lo aclara;
+  `board/business-days.ts` cuenta **días hábiles**, que es lo que el artículo de la
+  cartelera sí dice con todas las letras. Separados a propósito para que nadie las
+  mezcle: `rules.ts` no importa feriados y no tiene por qué. Pero el **comparador de
+  vencimiento es uno solo** (`hasExpired`, día civil contra día civil: el día del
+  vencimiento todavía no venció) y el **criterio de cohorte también**
+  (`isCohortMember`, con las constantes que además arman la consulta que la congela).
+  Y si a la tabla de feriados le falta el año que el cómputo pisa, el sistema **falla
+  ruidoso** en vez de contar un feriado como hábil y acortarle el plazo a un vecino.
+- **Un acto irreversible se corta en etapas, y sólo la última es una transacción.**
+  Checklist → bajas en lote con su acta → cierre. `closeBook` corre en una
+  `$transaction` **sin una sola llamada de red** y **revalida adentro** las
+  precondiciones que la vista previa ya había mirado: entre la vista previa y el
+  commit puede caerse el último vigente, y ahí abriría un libro vacío. La regla es la
+  de siempre —red adentro de una transacción, no; el PDF del recibo y el
+  `cancelPreapproval` de la baja ya la habían enseñado— y la novedad es que **las
+  precondiciones bloqueantes son `where` compartidos**, no reglas copiadas en la
+  pantalla y en el dominio (la lección de `coverageFloor`).
+- **La foto del libro se escribe por CONJUNTOS, porque fila por fila no entra en el
+  timeout.** El plan daba por sentado que 278 updates entraban holgados en los 5 s de
+  Prisma; medido contra MariaDB, los round trips solos se comían el presupuesto
+  (P2028 a ~5,05 s) y **todo cierre abortaba**. Pasó a ser un `updateMany` por
+  combinación estado × categoría —**las 18 del enum**, no sólo las vistas en una
+  lectura previa, para que cada fila quede estampada con el valor que tiene en la base
+  en ese instante— más un conteo de completitud que **falla cerrado**. La lección de
+  la 4B, otra vez y ahora contra el ORM: **medir antes de suponer**.
+- **El doble de base de los tests tiene que honrar el `where` que recibe, y las
+  guardas se verifican por MUTACIÓN.** Apareció tres veces en este módulo: un fake que
+  re-implementa el filtro en vez de aplicarlo deja cláusulas del `where` real sin
+  ejercitar —el caso concreto fue un `processId` que el doble sintetizaba como
+  constante, así que esa parte del filtro nunca se probó— y el test pasa igual. La
+  única prueba de que una guarda se está probando es **borrarla y ver el test en
+  rojo**; después se restaura.
+- **La renumeración es una función pura, y se verificó a mano contra el resultado
+  real.** `planMigration` ordena por **día civil argentino** de la fecha de ingreso,
+  con desempate por número del libro viejo y después por id, y `assertDensePlan`
+  relee la densidad antes de que se escriba nada. El día civil no es cosmética:
+  colapsa los ingresos del mismo día **en un empate** —con la ventana corriendo de
+  00:00 a 23:59 hora argentina— para que no los ordene la hora en que un
+  administrativo cargó la ficha. En el simulacro los 63 migrados se cotejaron
+  **posición por posición** contra la misma regla reimplementada en SQL puro: 0
+  discrepancias.
+- **Un tope de lote tiene que contar lo que CUESTA, no nombres.** El lote de bajas
+  copió de la cesantía por mora un tope de 25 socios; los 25 eran en realidad el
+  presupuesto de las cancelaciones de débito en MP (~1,2 s cada una contra el timeout
+  de 60 s del proxy), y los convocados del re-empadronamiento son adherentes, que no
+  pueden tener débito: 90 bajas, cero llamadas. Hoy el tope es
+  `WITHDRAWAL_DEBIT_CALL_BUDGET` —llamadas de red, contadas antes de procesar con
+  `isNotCancelled`, el mismo predicado que decide qué se cancela— y la aritmética está
+  escrita al lado. Copiar un límite sin copiar su cuenta convierte una guarda de
+  tiempo en una traba de trabajo.
+- **Un control preseleccionado es una decisión que nadie tomó.** El `MinutePicker`
+  abre en "acta existente" con la primera de la lista —que viene ordenada por fecha
+  descendente, o sea la más reciente— y la pantalla de confirmación no nombra el acta
+  elegida: en el simulacro, el cierre del libro quedó asentado bajo el acta de las
+  bajas de minutos antes, que es el documento que la asociación presenta ante la IGJ.
+  En un acto irreversible, el default tiene que ser el caso normal (un cierre se
+  asienta en su propia acta) y la confirmación tiene que **decir con qué acta** se va
+  a firmar. Es la tercera vez que este selector sorprende encadenado; las dos
+  anteriores fueron cosméticas y ésta no.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -385,21 +472,31 @@ diario a la Comisión vive en `Configuration` y se edita desde
 
 ## Prioridad actual
 
-Módulos 0, 1, 2 y 3 cerrados y desplegados. El **Módulo 4 está cerrado entero**:
-**4A** (cuenta corriente, efectivo, recibos, deudores), **4B** (Mercado Pago:
-webhook que aplica, Checkout Pro, bandeja sin conciliar, ingresos no societarios,
-vinculación de suscripciones, conciliación diaria, lote REG-34) y **4C** (crons de
-devengo / recordatorio / resumen, `Notification.failed` con reenvío, aviso del
-débito rechazado, `/admin/salud`, padrón electoral y la cancelación del débito de MP
-al dar de baja). El **Módulo 5 está cerrado entero**: **5A** (24/08/2026: shell
-propio de `/mi` con pestañas por URL, credencial de socio en el Inicio, `/mi/datos`
-editable, estatuto en PDF autenticado, suspendido en modo "ver + pagar") y **5B**
-(25/08/2026: débito automático autogestionado desde `/mi/debito` —verificado en
-sandbox por los dos caminos, webhook directo y conciliación—, solicitudes de baja
-REG-19 y de cambio de categoría desde `/mi/solicitudes`, la sección
-`/admin/solicitudes` unificada con pestañas Altas | De socios, y el empuje del
-monto a MP en el acto al recategorizar con débito vivo). Sigue el **Módulo 6**:
-re-empadronamiento y cierre de libro. Ver `docs/07`.
+Módulos 0 a 5 cerrados y mergeados a `main`; los 0-3 además desplegados hace tiempo.
+El **Módulo 4** entero (cuenta corriente y efectivo; Mercado Pago con su webhook,
+Checkout Pro, bandeja sin conciliar y conciliación diaria; crons, `/admin/salud` y
+padrón electoral) y el **Módulo 5** entero (el panel de socio: shell propio de `/mi`,
+débito automático autogestionado desde `/mi/debito` y solicitudes desde
+`/mi/solicitudes`, con `/admin/solicitudes` unificada) están cerrados.
+
+El **Módulo 6 está cerrado entero** (26/08/2026) **en la branch `modulo-6`, sin
+mergear y sin desplegar**: **6A** (`/admin/socios` en Padrón | Libros | Histórico,
+con la foto de cierre en `memberships`), **6B** (el proceso, el wizard público
+REEMPADRONATE, la cola de validación, la carga presencial y la cartelera por lotes con
+días hábiles) y **6C** (checklist de cierre, bajas en lote con su acta y su anexo de
+notificaciones, y el cierre transaccional del libro con migración y renumeración). El
+**simulacro del criterio de aceptación pasó entero en local**: convocatoria con acta,
+35 presentaciones, 34 validadas y 1 rechazada, 7 cesantías por mora, 90 bajas en 4
+tandas, cierre ejecutado por el operador, Libro 2 con 63 socios renumerados y
+verificados posición por posición, las ocho tablas de plata byte-idénticas, y una
+restauración que dejó las 33 tablas iguales a la línea de base. El detalle está en
+`docs/07` y los informes en `.superpowers/sdd/simulacro/`.
+
+**Lo que falta del Módulo 6**: el arreglo del acta del cierre —el hallazgo del
+simulacro: el selector arranca preseleccionado en la más reciente y la confirmación no
+nombra el acta, así que el cierre quedó asentado con el acta de las bajas—, la
+revisión final de la rama, el merge y el despliegue. Sigue en pie el pendiente
+operativo de la 6A: correr `scripts/fix-withdrawal-reasons.ts` en el VPS.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab
