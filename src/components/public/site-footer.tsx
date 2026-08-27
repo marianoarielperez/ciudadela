@@ -2,19 +2,15 @@ import Image from "next/image";
 import Link from "next/link";
 
 import logoNegativo from "../../../assets/logo-negativo.png";
+import { PUBLIC_NAV_LINKS } from "@/lib/public-nav";
 import { SITE } from "@/lib/site";
 
 // Footer del sitio público. Mismo motivo que `SiteHeader`: lo comparten el
 // layout de `(public)`, el 404 y la pantalla de error (client component), así
 // que tiene que seguir siendo client-safe — sin async, sin Prisma, solo
 // constantes puras. El teléfono/email de `configuration` NO entran acá.
-
-const NAV_LINKS = [
-  ["/", "Inicio"],
-  ["/noticias", "Noticias"],
-  ["/actividades", "Actividades"],
-  ["/ubicacion", "Ubicación"],
-] as const;
+// La lista de secciones sale de `@/lib/public-nav` (puro), la misma que usa la
+// nav del header: agregar una sección pública se hace en un solo lugar.
 
 // Receta local de link sobre la banda oscura: mismo juego de foco que la
 // lateral del panel (anillo --sidebar-ring sobre --sidebar) y min-h-11 de
@@ -45,7 +41,7 @@ export function SiteFooter() {
           <nav aria-label="Secciones del sitio (pie de página)" className="space-y-2">
             <p className={COLUMN_HEADING}>Secciones</p>
             <ul className="flex flex-col">
-              {NAV_LINKS.map(([href, label]) => (
+              {PUBLIC_NAV_LINKS.map(([href, label]) => (
                 <li key={href}>
                   <Link href={href} className={FOOTER_LINK}>
                     {label}

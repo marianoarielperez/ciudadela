@@ -5,12 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
-const LINKS = [
-  ["/", "Inicio"],
-  ["/noticias", "Noticias"],
-  ["/actividades", "Actividades"],
-  ["/ubicacion", "Ubicación"],
-] as const;
+import { PUBLIC_NAV_LINKS } from "@/lib/public-nav";
 
 export function SiteNav() {
   const [open, setOpen] = useState(false);
@@ -32,7 +27,7 @@ export function SiteNav() {
         id="site-menu"
         className={`${open ? "flex" : "hidden"} absolute inset-x-0 top-full z-10 flex-col gap-1 border-b bg-background p-4 shadow-sm sm:static sm:flex sm:flex-row sm:gap-6 sm:border-0 sm:p-0 sm:shadow-none`}
       >
-        {LINKS.map(([href, label]) => (
+        {PUBLIC_NAV_LINKS.map(([href, label]) => (
           <li key={href}>
             <Link
               href={href}
