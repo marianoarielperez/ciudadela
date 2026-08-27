@@ -10,6 +10,7 @@ import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
 import { openWizardProcess } from "@/lib/reregistration/current";
 import { currentDeadline } from "@/lib/reregistration/rules";
+import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, categoryPaysFee, debtAmount } from "@/lib/treasury/rules";
@@ -45,7 +46,7 @@ export default async function MiHomePage() {
   // La página se autoriza sola (el layout corre en paralelo y no la protege).
   const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return null; // el layout ya explica por qué
-  const [member, pendingCount, arrears, feeValue, debitSubs, openProcess] = await Promise.all([
+  const [member, pendingCount, arrears, feeValue, debitSubs, openProcess, exemption] = await Promise.all([
     prisma.member.findUniqueOrThrow({
       where: { id: actor.memberId },
       select: {
@@ -70,6 +71,11 @@ export default async function MiHomePage() {
     // misma que usan el wizard y su action): esta pantalla es `force-dynamic` y
     // no hay nada que cachear. Sin proceso son cero consultas más abajo.
     openWizardProcess(prisma),
+    // Art. 7 inc. a.4. La MISMA función que corta en `startMemberPaymentAction`
+    // y que esconde la sección de pago en `/mi/cuenta`: sin esto, el atajo de
+    // acá mandaba al eximido a un ancla `#pagar` que esa pantalla ya no
+    // renderiza.
+    activeExemption(prisma, actor.memberId),
   ]);
   // ¿A ESTE socio le falta presentarse? La cohorte se congeló al convocar, así
   // que la fila de `presentations` es la respuesta completa: sin fila no fue
@@ -200,7 +206,7 @@ export default async function MiHomePage() {
             <Link className={LINK_CTA} href="/mi/cuenta">
               Ver mi cuenta →
             </Link>
-            {paysFee && feeValue && (
+            {paysFee && feeValue && !exemption && (
               <Link className={LINK_CTA} href="/mi/cuenta#pagar">
                 Pagar ahora →
               </Link>

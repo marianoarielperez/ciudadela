@@ -57,9 +57,12 @@ export async function startMemberPaymentAction(_prev: PayState, formData: FormDa
   // EXENCIÓN DE CUOTA (Art. 7 inc. a.4): mientras esté vigente el socio no tiene
   // cuota que pagar, así que no se le crea ninguna preferencia. Que la pantalla
   // no muestre "Pagar ahora" no alcanza: una server action se despacha por el
-  // id del encabezado `Next-Action`, no por su URL. Si igual entrara plata, se
-  // imputaría con `allocate` contra meses que están como `exempt` — o quedaría
-  // en la bandeja sin conciliar, que es peor para el vecino que pagó.
+  // id del encabezado `Next-Action`, no por su URL. El núcleo NO se rompe si
+  // igual entrara plata —`allocate` saltea todo período que ya tenga fila, y los
+  // del rango están `exempt`, así que el cobro se imputa a los primeros meses
+  // POSTERIORES a la exención (spec §6)—, y eso es justamente lo que hay que
+  // evitar: se le estarían cobrando por adelantado meses que la Comisión no
+  // trató, con un recibo numerado que después hay que anular de la serie.
   //
   // El acta NO se le nombra al socio (a diferencia del aviso del operador): acá
   // el hecho útil es hasta cuándo no le van a cobrar.

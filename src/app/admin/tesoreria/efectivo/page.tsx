@@ -60,14 +60,11 @@ export default async function EfectivoPage(props: {
     // Al cesante sólo se le cobran las cuotas congeladas: el voluntario y el
     // extraordinario son del que hoy es socio (el servicio los rechaza), y sin
     // pendientes tampoco hay cuotas que cobrarle, porque no devenga nuevas.
-    // Al eximido no se le cobra NADA por acá mientras la exención esté vigente
-    // (Art. 7 inc. a.4): tampoco un voluntario ni un extraordinario, porque el
-    // aporte que la Comisión le aceptó a cambio consta en el acta, no en
-    // tesorería.
+    // Al eximido NO se le recortan conceptos acá: el aviso de más abajo
+    // reemplaza al formulario ENTERO, así que este valor ni se mira. Un solo
+    // mecanismo esconde el cobro, no dos.
     const withdrawn = member.status === "withdrawn";
-    const concepts = exemption
-      ? []
-      : withdrawn
+    const concepts = withdrawn
       ? (account.pendingCount > 0 ? cashConceptsFor(member.category).filter((c) => c === "fees") : [])
       : cashConceptsFor(member.category);
     return (
@@ -114,8 +111,11 @@ export default async function EfectivoPage(props: {
               </FormMessage>
             )}
             {exemption ? (
-              // El aviso reemplaza al formulario entero, y no es un `EmptyState`
-              // genérico: acá hay un HECHO que el operador tiene que poder leer
+              // El aviso reemplaza al formulario ENTERO —tampoco un voluntario
+              // ni un extraordinario: el aporte que la Comisión le aceptó a
+              // cambio consta en el acta, no en tesorería (Art. 7 inc. a.4)—, y
+              // no es un `EmptyState` genérico: acá hay un HECHO que el
+              // operador tiene que poder leer
               // —hasta cuándo y bajo qué acta—, no una lista vacía. Neutral y no
               // ámbar: no está pasando nada malo, es una decisión de la Comisión.
               <FormMessage kind="neutral" box as="div">
