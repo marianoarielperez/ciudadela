@@ -41,7 +41,7 @@ import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { memberStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin, requireSuperadmin } from "@/lib/auth/require-admin";
 import { formatDateAR } from "@/lib/format";
-import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, STATUS_LABELS } from "@/lib/members/labels";
+import { CATEGORY_LABELS, MINUTE_TYPE_LABELS, minuteName, STATUS_LABELS } from "@/lib/members/labels";
 import type { MinuteDraftDefaults, MinuteOption } from "@/lib/members/minute-choice";
 import { countChargeable } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
@@ -214,6 +214,11 @@ function rangeLabel(e: { fromPeriod: string; toPeriod: string }): string {
   return `${periodLabel(e.fromPeriod)} a ${periodLabel(e.toPeriod)}`;
 }
 
+/** El enlace al acta: LLEVA por `id` —que es la clave de la fila— y DICE tipo y
+ *  número, que es como el acta se identifica en el libro y lo único con lo que
+ *  el operador puede ir a buscarla. Nombrarla por el id (el "Acta #16" que leyó
+ *  la verificación en vivo sobre la Comisión Directiva N° 124) apunta a otro
+ *  documento, porque las dos numeraciones son independientes. */
 function MinuteLink({ id, children }: { id: number; children: React.ReactNode }) {
   return <Link className={INLINE_LINK} href={`/admin/actas/${id}`}>{children}</Link>;
 }
@@ -268,7 +273,7 @@ function InForceCard({ exemption, current, now, superadmin }: {
           )}
         </p>
         <p className="text-sm">
-          <MinuteLink id={exemption.minuteId}>Acta #{exemption.minuteId}</MinuteLink>
+          <MinuteLink id={exemption.minuteId}>Acta {minuteName(exemption.minute)}</MinuteLink>
         </p>
         {/* La nota es texto libre del operador ("contribución en especie:
             pintura de la sede") y se lee acá, que es panel de admin: no viaja a
@@ -309,11 +314,13 @@ function PastCard({ exemption }: { exemption: ExemptionRecord }) {
           {revoked ? `Anulada el ${formatDateAR(exemption.revokedAt!)}` : "Vencida"}
         </Badge>
         <span className="text-muted-foreground">
-          <MinuteLink id={exemption.minuteId}>Acta #{exemption.minuteId}</MinuteLink>
-          {exemption.revokeMinuteId !== null && (
+          <MinuteLink id={exemption.minuteId}>Acta {minuteName(exemption.minute)}</MinuteLink>
+          {exemption.revokeMinuteId !== null && exemption.revokeMinute !== null && (
             <>
               {" · anulación: "}
-              <MinuteLink id={exemption.revokeMinuteId}>Acta #{exemption.revokeMinuteId}</MinuteLink>
+              <MinuteLink id={exemption.revokeMinuteId}>
+                Acta {minuteName(exemption.revokeMinute)}
+              </MinuteLink>
             </>
           )}
         </span>
@@ -340,7 +347,7 @@ function RevokeScreen({ exemption, current, actas }: {
         <p className="text-sm text-muted-foreground">
           <span className={NUM}>N° {exemption.member.memberNumber ?? "—"}</span> ·{" "}
           {rangeLabel(exemption)} · asentada por{" "}
-          <MinuteLink id={exemption.minuteId}>acta #{exemption.minuteId}</MinuteLink>
+          <MinuteLink id={exemption.minuteId}>acta {minuteName(exemption.minute)}</MinuteLink>
         </p>
         <FormMessage kind="warning" box as="div" role="none">
           <p>
@@ -551,7 +558,7 @@ async function SelectedMember({ member, current, actas }: {
       return (
         <>
           Ya tiene una exención vigente hasta <strong>{periodLabel(active.toPeriod)}</strong> (
-          <MinuteLink id={active.minuteId}>acta #{active.minuteId}</MinuteLink>). La renovación
+          <MinuteLink id={active.minuteId}>acta {minuteName(active.minute)}</MinuteLink>). La renovación
           nunca es automática: se asienta una nueva cuando ésta venza, o se anula la vigente con su
           acta.
         </>

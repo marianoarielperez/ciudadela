@@ -17,7 +17,7 @@ import {
 } from "@/lib/members/minute-choice";
 
 // Los tipos viven en `minute-choice.ts` (puro, sin React) y se re-exportan desde
-// acá porque es de donde los importan los nueve consumidores.
+// acá porque es de donde los importan los diez consumidores.
 export type { MinuteOption, MinuteChoice, MinuteDraftDefaults };
 
 export function MinutePicker({ minutes, applied, defaultMode, newDefaults, onChoiceChange }: {
@@ -41,13 +41,16 @@ export function MinutePicker({ minutes, applied, defaultMode, newDefaults, onCho
    *  encima con un render de más. */
   applied?: MinuteOption | null;
   /** Con qué modo arranca cuando no hay `applied`. Por omisión "existing" con la
-   *  primera de la lista, que es lo que hacen ocho de los nueve consumidores.
+   *  primera de la lista, que es lo que hacen ocho de los diez consumidores.
    *
-   *  La pantalla de cierre del libro pide "new" a propósito: la lista viene
+   *  Los otros dos piden "new" a propósito, y por la misma razón: la lista viene
    *  ordenada por fecha descendente, así que la preseleccionada es siempre la
-   *  más reciente, y en una ceremonia de cierre esa es casi seguro el acta del
-   *  paso anterior. En el simulacro el cierre del Libro N° 1 quedó asentado con
-   *  el acta de las bajas por exactamente eso. */
+   *  más reciente. En una ceremonia de cierre esa es casi seguro el acta del
+   *  paso anterior —en el simulacro el cierre del Libro N° 1 quedó asentado con
+   *  el acta de las bajas por exactamente eso—, y en la anulación de una
+   *  exención es el acta que la CONCEDIÓ, que fue lo que se vio en la
+   *  verificación en vivo del módulo. Un acto que se asienta una sola vez
+   *  arranca sin acta elegida. */
   defaultMode?: "existing" | "new";
   /** Valores con los que arranca el modo "Acta nueva" (tipo, número sugerido por
    *  tipo, fecha). El número sugerido acompaña al tipo si el operador lo cambia

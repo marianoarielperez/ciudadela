@@ -36,8 +36,17 @@ export function RevokeExemptionForm({ exemptionId, backHref, minutes, minuteDefa
   minuteDefaults: MinuteDraftDefaults;
 }) {
   const [state, formAction, pending] = useActionState(revokeExemptionAction, {});
+  // `defaultMode: "new"`, como el cierre del libro y por el mismo motivo: la
+  // anulación se asienta en SU acta, no en la del paso anterior. Arrancar en
+  // "Acta existente" preselecciona la primera de la lista, que viene ordenada
+  // por fecha descendente —la más reciente—, y en una exención recién asentada
+  // esa es justo el acta que la CONCEDIÓ. La verificación en vivo abrió la
+  // anulación de la exención de la Comisión Directiva N° 124 con la N° 124 ya
+  // elegida: la anulación habría quedado firmada con el acta que la otorga.
+  // El estado inicial se calcula con la MISMA función que usa el selector, así
+  // que el resumen de abajo y el control no pueden diverger.
   const [choice, setChoice] = useState<MinuteChoice>(() =>
-    initialMinuteChoice({ minutes, newDefaults: minuteDefaults }),
+    initialMinuteChoice({ minutes, defaultMode: "new", newDefaults: minuteDefaults }),
   );
   const minute = describeMinuteChoice(choice);
 
@@ -45,7 +54,12 @@ export function RevokeExemptionForm({ exemptionId, backHref, minutes, minuteDefa
     <form action={formAction} className="space-y-4 rounded-md border border-destructive/40 p-3">
       <input type="hidden" name="exemptionId" value={exemptionId} />
 
-      <MinutePicker minutes={minutes} newDefaults={minuteDefaults} onChoiceChange={setChoice} />
+      <MinutePicker
+        minutes={minutes}
+        defaultMode="new"
+        newDefaults={minuteDefaults}
+        onChoiceChange={setChoice}
+      />
 
       <p className="text-sm">
         <span className="font-medium">Acta de la anulación:</span> {minute.text}

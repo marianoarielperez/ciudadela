@@ -31,8 +31,16 @@ function deps(over: {
   otherSubs?: Array<{ status: string }>;
   latestSub?: { preapprovalId: string; status: string } | null;
   /** La exención vigente que `activeExemption` encuentra, o `null` (el caso
-   *  normal). Sólo `toPeriod` importa acá: es lo único que el veredicto lee. */
-  exemption?: { id: number; toPeriod: string; minuteId: number } | null;
+   *  normal). Sólo `toPeriod` importa para el veredicto —el socio lee el mes,
+   *  no el acta—, pero la fila viene con la forma que pide el `select` real,
+   *  acta incluida: un doble que devuelve menos de lo que se pidió deja de
+   *  describir lo que pasa en producción. */
+  exemption?: {
+    id: number;
+    toPeriod: string;
+    minuteId: number;
+    minute: { type: "board" | "assembly"; number: number };
+  } | null;
 } = {}) {
   const member: MemberRow = {
     id: 14, category: "active", email: "vecino@x.com", status: "active",
@@ -150,7 +158,7 @@ describe("memberDebit.start", () => {
   it("una exención vigente bloquea SIN llamar al gateway, y la consulta es la compartida", async () => {
     // El eximido no tiene nada que debitar (Art. 7 inc. a.4): un preapproval le
     // cobraría todos los meses la cuota que el acta le perdona.
-    const d = deps({ exemption: { id: 3, toPeriod: "2027-08", minuteId: 12 } });
+    const d = deps({ exemption: { id: 3, toPeriod: "2027-08", minuteId: 12, minute: { type: "board", number: 124 } } });
     const r = await d.service.start({ memberId: 14 });
     expect(r).toEqual({
       ok: false,
@@ -173,7 +181,7 @@ describe("memberDebit.start", () => {
     // este cruce sólo puede venir de algo anterior a la exención. Aun así el
     // orden está fijado: el mensaje que el vecino lee es el de la exención.
     const d = deps({
-      exemption: { id: 3, toPeriod: "2026-12", minuteId: 12 },
+      exemption: { id: 3, toPeriod: "2026-12", minuteId: 12, minute: { type: "board", number: 124 } },
       subs: [{ status: "authorized" }],
       paidCount: 1,
     });
@@ -262,7 +270,7 @@ describe("memberDebit.preview", () => {
     // Lo que `/mi/debito` muestra deshabilitado es exactamente lo que `start`
     // rechaza, porque los dos pasan por `verdictFor`. Sin este caso, la
     // pantalla podría ofrecer un botón que la action después contesta que no.
-    const d = deps({ exemption: { id: 3, toPeriod: "2027-08", minuteId: 12 } });
+    const d = deps({ exemption: { id: 3, toPeriod: "2027-08", minuteId: 12, minute: { type: "board", number: 124 } } });
     const r = await d.service.preview({ memberId: 14 });
     expect(r.verdict).toEqual({ ok: false, reason: "exempted", until: "2027-08" });
     expect(d.gateway.getPreapproval).not.toHaveBeenCalled();

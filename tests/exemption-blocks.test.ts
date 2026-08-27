@@ -31,7 +31,15 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(async () => {}),
   findUnique: vi.fn(),
   feeCount: vi.fn(async () => 0),
-  exemptionFindFirst: vi.fn(async () => null as null | { id: number; toPeriod: string; minuteId: number }),
+  exemptionFindFirst: vi.fn(
+    async () =>
+      null as null | {
+        id: number;
+        toPeriod: string;
+        minuteId: number;
+        minute: { type: "board" | "assembly"; number: number };
+      },
+  ),
   admin: vi.fn(async (): Promise<AdminActor> => ({ ok: true, actorId: 9 })),
 }));
 
@@ -67,8 +75,12 @@ import { createPaymentLinkAction, emailPaymentLinkAction } from "@/app/admin/soc
 import { sealPaymentLink } from "@/lib/mp/payment-link-seal";
 import { adminExemptionNotice } from "@/lib/treasury/exemptions";
 
-const EXEMPT = { id: 3, toPeriod: "2027-08", minuteId: 12 };
-const NOTICE = "El socio está eximido de la cuota hasta agosto 2027 (acta N° 12).";
+// El acta se nombra por TIPO y NÚMERO, que es su referencia en el libro: el
+// `id` de la fila (12) y el número del acta (124) son numeraciones
+// independientes, y el mensaje viejo —"acta N° 12"— apuntaba a un documento
+// distinto del que respalda la exención.
+const EXEMPT = { id: 3, toPeriod: "2027-08", minuteId: 12, minute: { type: "board" as const, number: 124 } };
+const NOTICE = "El socio está eximido de la cuota hasta agosto 2027 (acta Comisión Directiva N° 124).";
 const MP_URL = "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=abc";
 const EXPIRES = new Date("2026-08-26T15:00:00.000Z");
 
@@ -106,8 +118,12 @@ beforeEach(() => {
 });
 
 describe("el mensaje compartido", () => {
-  it("es UNA sola definición y nombra el mes y el acta", () => {
+  it("es UNA sola definición y nombra el mes y el acta POR SU REFERENCIA", () => {
     expect(adminExemptionNotice(EXEMPT)).toBe(NOTICE);
+    // El `id` de la fila NO se muestra: "acta N° 12" es una referencia falsa —
+    // hay un acta N° 12 en el libro y no es ésta—, y el operador que no está de
+    // acuerdo con el bloqueo la usa justamente para ir a buscar la decisión.
+    expect(adminExemptionNotice(EXEMPT)).not.toContain(`acta N° ${EXEMPT.minuteId}`);
   });
 });
 

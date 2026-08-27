@@ -21,7 +21,9 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import type { FeeOrigin, FeeStatus, MemberCategory, MemberStatus } from "@/generated/prisma/client";
+import type {
+  FeeOrigin, FeeStatus, MemberCategory, MemberStatus, MinuteType,
+} from "@/generated/prisma/client";
 import { fetchDebtors } from "@/lib/treasury/debtors";
 import {
   activeExemption,
@@ -53,7 +55,10 @@ type MemberRow = {
 };
 type FeeRow = { memberId: number; period: string; status: FeeStatus; origin: FeeOrigin };
 type SubRow = { memberId: number | null; status: string };
-type MinuteRow = { id: number; number: number; date: Date };
+// El `type` no está de adorno: la referencia de un acta es el par tipo+número
+// (`@@unique([type, number])`), y es lo que las pantallas y el aviso del
+// operador nombran desde que se dejó de mostrar el `id`.
+type MinuteRow = { id: number; type: MinuteType; number: number; date: Date };
 type ExemptionRow = {
   id: number;
   memberId: number;
@@ -189,15 +194,33 @@ function uniqueViolation(): Error {
   return Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
 }
 
-function withMember(world: World, row: ExemptionRow) {
-  const m = world.members.find((x) => x.id === row.memberId);
-  return {
-    ...row,
-    member: {
+/** La fila con las relaciones QUE EL `select` PIDIÓ, resueltas contra el mundo y
+ *  no inventadas: el socio, el acta que respalda la exención y —si la anularon—
+ *  la de la anulación.
+ *
+ *  Se mira el `select` de verdad, y ahí está la gracia: un doble que adjunta
+ *  siempre las tres deja el `select` de producción sin probar, y borrarle el
+ *  `minute` dejaría la suite en verde mientras las pantallas se quedan sin acta
+ *  que nombrar (la lección del M6: el doble tiene que honrar lo que recibe).
+ *  Si una fila apuntara a un acta que el mundo no tiene, la relación viene
+ *  `null` y el `toRecord` de producción la muestra como tal: el doble no la
+ *  fabrica para taparlo. */
+function withRelations(world: World, row: ExemptionRow, select?: Record<string, unknown>) {
+  const minute = (id: number | null) => {
+    const found = id === null ? undefined : world.minutes.find((x) => x.id === id);
+    return found ? { type: found.type, number: found.number } : null;
+  };
+  const out: Record<string, unknown> = { ...row };
+  if (select?.minute) out.minute = minute(row.minuteId);
+  if (select?.revokeMinute) out.revokeMinute = minute(row.revokeMinuteId);
+  if (select?.member) {
+    const m = world.members.find((x) => x.id === row.memberId);
+    out.member = {
       fullName: m?.fullName ?? "",
       memberships: m && m.memberNumber !== null ? [{ memberNumber: m.memberNumber }] : [],
-    },
-  };
+    };
+  }
+  return out;
 }
 
 function fakeDb(world: World) {
@@ -270,13 +293,23 @@ function fakeDb(world: World) {
         world.exemptions.find((e) => matchesWhere(e, where)) ?? null,
       ),
       findFirst: vi.fn(
-        async ({ where, orderBy }: { where: Record<string, unknown>; orderBy?: OrderBy | OrderBy[] }) =>
-          applyOrder(world.exemptions.filter((e) => matchesWhere(e, where)), orderBy)[0] ?? null,
+        async (
+          { where, orderBy, select }:
+            { where: Record<string, unknown>; orderBy?: OrderBy | OrderBy[]; select?: Record<string, unknown> },
+        ) => {
+          const hit = applyOrder(world.exemptions.filter((e) => matchesWhere(e, where)), orderBy)[0];
+          // Con las relaciones que el `select` pida: `activeExemption` pide el
+          // acta ahí mismo, y los cinco bloqueos la nombran en su mensaje.
+          return hit ? withRelations(world, hit, select) : null;
+        },
       ),
       findMany: vi.fn(
-        async ({ where, orderBy }: { where: Record<string, unknown>; orderBy?: OrderBy | OrderBy[] }) =>
+        async (
+          { where, orderBy, select }:
+            { where: Record<string, unknown>; orderBy?: OrderBy | OrderBy[]; select?: Record<string, unknown> },
+        ) =>
           applyOrder(world.exemptions.filter((e) => matchesWhere(e, where)), orderBy).map((e) =>
-            withMember(world, e),
+            withRelations(world, e, select),
           ),
       ),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
@@ -346,8 +379,11 @@ function fakeDb(world: World) {
   return { db, tx };
 }
 
-const MINUTE = { id: 7, number: 12, date: new Date("2026-09-10T15:00:00Z") };
-const REVOKE_MINUTE = { id: 8, number: 13, date: new Date("2026-09-20T15:00:00Z") };
+// Los ids (7 y 8) y los números (12 y 13) se eligen DISTINTOS a propósito: si
+// alguna pantalla o mensaje volviera a nombrar el acta por su `id`, los casos
+// que fijan el texto se ponen rojos en vez de coincidir por casualidad.
+const MINUTE: MinuteRow = { id: 7, type: "board", number: 12, date: new Date("2026-09-10T15:00:00Z") };
+const REVOKE_MINUTE: MinuteRow = { id: 8, type: "board", number: 13, date: new Date("2026-09-20T15:00:00Z") };
 
 function world(over: Partial<World> = {}): World {
   return {
@@ -442,6 +478,11 @@ describe("activeExemption", () => {
     const { tx } = fakeDb(w);
     const found = await activeExemption(tx as never, 1, NOW);
     expect(found).toMatchObject({ id: 1, fromPeriod: "2026-09", toPeriod: "2027-08", months: 12, minuteId: 7 });
+    // El ACTA viaja con la fila: el `minuteId` es a dónde lleva el enlace, y el
+    // par tipo+número es lo que las cinco bocas del bloqueo tienen que decir.
+    // Pedirla aparte en cada pantalla era una consulta de más y cinco formas
+    // distintas de nombrar el mismo documento.
+    expect(found?.minute).toEqual({ type: "board", number: 12 });
   });
 
   it("no devuelve la anulada ni la vencida", async () => {
@@ -852,6 +893,14 @@ describe("listInForce e history", () => {
     expect(revoked?.minuteId).toBe(7);
     expect(revoked?.revokeMinuteId).toBe(8);
     expect(revoked?.revokedAt).toEqual(NOW);
+    // Las DOS actas vienen nombradas, no numeradas por id: la tarjeta del
+    // historial dice "Acta Comisión Directiva N° 12 · anulación: Acta Comisión
+    // Directiva N° 13", que es como se las busca en el libro.
+    expect(revoked?.minute).toEqual({ type: "board", number: 12 });
+    expect(revoked?.revokeMinute).toEqual({ type: "board", number: 13 });
+    // La que venció sola no tiene acta de anulación, y eso no es un hueco: es
+    // la otra mitad del historial.
+    expect(history.find((e) => e.id === 3)?.revokeMinute).toBeNull();
   });
 });
 

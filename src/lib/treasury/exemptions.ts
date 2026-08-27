@@ -22,8 +22,8 @@
 //
 // El cliente de Prisma se INYECTA (el singleton se arma al final), como en
 // `board/notice.ts`: así el módulo se prueba entero sin base.
-import type { PrismaClient } from "@/generated/prisma/client";
-import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/members/labels";
+import type { MinuteType, PrismaClient } from "@/generated/prisma/client";
+import { CATEGORY_LABELS, minuteName, STATUS_LABELS } from "@/lib/members/labels";
 import { countChargeable } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
 import {
@@ -81,6 +81,14 @@ export function isInForce(
   return e.revokedAt === null && comparePeriods(e.toPeriod, currentPeriod(at)) >= 0;
 }
 
+/** El acta que respalda una exención, como se la NOMBRA: tipo y número.
+ *
+ *  Viaja junto al `minuteId` y no en su lugar: el id es a dónde LLEVA el enlace
+ *  (`/admin/actas/{id}`) y el par tipo+número es lo que el operador LEE y busca
+ *  en el libro. Mostrar el id como si fuera la referencia del acta era señalar
+ *  un documento equivocado (ver `minuteName`). */
+export type ExemptionMinute = { type: MinuteType; number: number };
+
 /** Lo que las cinco guardas de bloqueo y las tres pantallas necesitan saber de
  *  una exención vigente. Sin datos del socio: quien pregunta ya lo tiene. */
 export type ActiveExemption = {
@@ -89,8 +97,11 @@ export type ActiveExemption = {
   toPeriod: string;
   months: number;
   minuteId: number;
+  minute: ExemptionMinute;
   note: string | null;
 };
+
+const MINUTE_NAME_SELECT = { select: { type: true, number: true } } as const;
 
 const EXEMPTION_SELECT = {
   id: true,
@@ -98,6 +109,10 @@ const EXEMPTION_SELECT = {
   toPeriod: true,
   months: true,
   minuteId: true,
+  // El acta viene con la fila y no la busca cada pantalla: son cinco bocas que
+  // tienen que nombrar el mismo documento, y la relación es obligatoria en el
+  // esquema, así que no cuesta una consulta aparte ni puede venir vacía.
+  minute: MINUTE_NAME_SELECT,
   note: true,
 } as const;
 
@@ -141,9 +156,14 @@ export async function activeExemption(
  *
  *  Vive acá y no en las pantallas porque es dato del dominio de la exención, y
  *  este módulo ya importa `periodLabel`. Recibe sólo los dos campos que usa: le
- *  sirve tanto un `ActiveExemption` como cualquier fila que los traiga. */
-export function adminExemptionNotice(e: { toPeriod: string; minuteId: number }): string {
-  return `El socio está eximido de la cuota hasta ${periodLabel(e.toPeriod)} (acta N° ${e.minuteId}).`;
+ *  sirve tanto un `ActiveExemption` como cualquier fila que los traiga.
+ *
+ *  El acta se nombra por TIPO y NÚMERO, que es su referencia en el libro. Decía
+ *  "acta N° 16" con el `id` de la fila, y eso no es una referencia sino otra
+ *  acta: la verificación en vivo leyó "acta N° 16" sobre una exención asentada
+ *  por la Comisión Directiva N° 124. */
+export function adminExemptionNotice(e: { toPeriod: string; minute: ExemptionMinute }): string {
+  return `El socio está eximido de la cuota hasta ${periodLabel(e.toPeriod)} (acta ${minuteName(e.minute)}).`;
 }
 
 /** Una exención con su socio, para las dos listas de la pestaña. */
@@ -152,6 +172,9 @@ export type ExemptionRecord = ActiveExemption & {
   member: { fullName: string; memberNumber: number | null };
   revokedAt: Date | null;
   revokeMinuteId: number | null;
+  /** El acta de la ANULACIÓN, con el mismo criterio que `minute`: null cuando la
+   *  exención venció sola, que es la otra mitad del historial. */
+  revokeMinute: ExemptionMinute | null;
   createdAt: Date;
 };
 
@@ -160,6 +183,7 @@ const RECORD_SELECT = {
   memberId: true,
   revokedAt: true,
   revokeMinuteId: true,
+  revokeMinute: MINUTE_NAME_SELECT,
   createdAt: true,
   member: {
     select: {
@@ -180,6 +204,7 @@ type RecordRow = ActiveExemption & {
   memberId: number;
   revokedAt: Date | null;
   revokeMinuteId: number | null;
+  revokeMinute: ExemptionMinute | null;
   createdAt: Date;
   member: { fullName: string; memberships: Array<{ memberNumber: number }> };
 };
@@ -192,9 +217,11 @@ function toRecord(r: RecordRow): ExemptionRecord {
     toPeriod: r.toPeriod,
     months: r.months,
     minuteId: r.minuteId,
+    minute: r.minute,
     note: r.note,
     revokedAt: r.revokedAt,
     revokeMinuteId: r.revokeMinuteId,
+    revokeMinute: r.revokeMinute,
     createdAt: r.createdAt,
     member: {
       fullName: r.member.fullName,

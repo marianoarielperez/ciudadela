@@ -12,7 +12,7 @@ import { openWizardProcess } from "@/lib/reregistration/current";
 import { currentDeadline } from "@/lib/reregistration/rules";
 import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { currentPeriod } from "@/lib/treasury/periods";
+import { currentPeriod, periodLabel } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, categoryPaysFee, debtAmount } from "@/lib/treasury/rules";
 
 export const dynamic = "force-dynamic";
@@ -72,9 +72,10 @@ export default async function MiHomePage() {
     // no hay nada que cachear. Sin proceso son cero consultas más abajo.
     openWizardProcess(prisma),
     // Art. 7 inc. a.4. La MISMA función que corta en `startMemberPaymentAction`
-    // y que esconde la sección de pago en `/mi/cuenta`: sin esto, el atajo de
-    // acá mandaba al eximido a un ancla `#pagar` que esa pantalla ya no
-    // renderiza.
+    // y que esconde la sección de pago en `/mi/cuenta`. De acá salen los DOS
+    // atajos que esta pantalla no le ofrece al eximido: "Pagar ahora", que
+    // mandaba a un ancla `#pagar` que esa pantalla ya no renderiza, y
+    // "Adherirme", que terminaba en el bloqueo de `/mi/debito`.
     activeExemption(prisma, actor.memberId),
   ]);
   // ¿A ESTE socio le falta presentarse? La cohorte se congeló al convocar, así
@@ -228,12 +229,27 @@ export default async function MiHomePage() {
               <p className="text-sm font-medium text-success">Activo</p>
             ) : debitState === "pending" ? (
               <p className="text-sm font-medium text-muted-foreground">Pendiente de autorización</p>
+            ) : exemption ? (
+              // Art. 7 inc. a.4, misma familia que el atajo "Pagar ahora": sin
+              // esto la tarjeta lo invitaba a adherirse y `/mi/debito` lo
+              // frenaba con el bloqueo de la exención — un viaje de ida a una
+              // puerta cerrada. Se le dice el HECHO, que es lo que explica por
+              // qué no hay nada que ofrecerle acá.
+              <p className="text-sm text-muted-foreground">
+                Estás eximido de la cuota hasta {periodLabel(exemption.toPeriod)}.
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">No estás adherido.</p>
             )}
-            <Link className={LINK_CTA} href="/mi/debito">
-              {debitState === "none" ? "Adherirme →" : "Ver mi débito →"}
-            </Link>
+            {/* El eximido con un débito vivo (teórico: la guarda 3 del asiento
+                lo impide) SÍ conserva el enlace: esa tarjeta le ofrece
+                cancelarlo, que es lo que corresponde. Lo que se esconde es la
+                invitación a adherirse. */}
+            {(debitState !== "none" || !exemption) && (
+              <Link className={LINK_CTA} href="/mi/debito">
+                {debitState === "none" ? "Adherirme →" : "Ver mi débito →"}
+              </Link>
+            )}
           </CardContent>
         </Card>
       )}
