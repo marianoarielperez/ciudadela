@@ -174,3 +174,19 @@ describe("el token de retome queda en la dirección apenas la solicitud existe",
     expect(config).toContain('{ key: "Referrer-Policy", value: "strict-origin-when-cross-origin" }');
   });
 });
+
+// ── Paso 1 "Tu DNI" (spec 2026-08-27): la aritmética que protege el retome ──
+//
+// La renumeración 5→6 no tiene cobertura de comportamiento (no hay jsdom), así
+// que se fijan los DOS literales que, mal corridos, romperían el retome o
+// permitirían reenviar el paso de datos sobre una solicitud con preapproval.
+describe("el wizard de 6 pasos", () => {
+  it("declara 6 pasos y el DNI es el paso 1", () => {
+    expect(wizard).toContain("const TOTAL_STEPS = 6;");
+    expect(wizard).toContain('1: "Tu DNI",');
+  });
+
+  it("con la solicitud creada no se navega por debajo del paso 5", () => {
+    expect(wizard).toContain("const step = resumeToken && navStep < 5 ? 5 : navStep;");
+  });
+});
