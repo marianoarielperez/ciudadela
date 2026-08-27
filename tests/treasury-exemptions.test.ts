@@ -22,6 +22,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import type { FeeOrigin, FeeStatus, MemberCategory, MemberStatus } from "@/generated/prisma/client";
+import { fetchDebtors } from "@/lib/treasury/debtors";
 import {
   activeExemption,
   exemptionPeriods,
@@ -108,6 +109,19 @@ function matchesValue(actual: unknown, expected: unknown): boolean {
   if (expected === null) return actual === null || actual === undefined;
   if (typeof expected === "object") {
     const ops = Object.keys(expected as object);
+    // Filtro de RELACIÓN (`member: { status: … }`, el `where` del groupBy de
+    // deudores): ninguna clave es un operador y del otro lado hay un objeto. Se
+    // resuelve con el mismo `matchesWhere`, así que la cláusula anidada tampoco
+    // se da por supuesta. Si la fila no trae la relación, cae al `throw` de
+    // abajo — que es lo correcto: el test se olvidó de sembrarla.
+    if (
+      ops.every((o) => !OPERATORS.has(o)) &&
+      typeof actual === "object" &&
+      actual !== null &&
+      !(actual instanceof Date)
+    ) {
+      return matchesWhere(actual as Record<string, unknown>, expected as Record<string, unknown>);
+    }
     const unknown = ops.filter((o) => !OPERATORS.has(o));
     if (unknown.length > 0) {
       throw new Error(
@@ -299,7 +313,16 @@ function fakeDb(world: World) {
   };
 
   const db = {
-    ...tx,
+    // EL "TODO ADENTRO DE LA TRANSACCIÓN" SE PRUEBA ACÁ, por lo que este objeto
+    // NO tiene. Si `db` copiara los modelos de `tx`, reescribir una guarda de
+    // `tx.member` a `deps.db.member` dejaría la suite en verde y las seis
+    // dejarían de correr bajo el mismo lock. Acá cualquier `deps.db.<modelo>`
+    // extraviado revienta con un TypeError.
+    //
+    // La ÚNICA lectura legítima fuera de la transacción es la de las dos
+    // pestañas (`list`), y por eso se expone `feeExemption` con `findMany` y con
+    // nada más: un `deps.db.feeExemption.findFirst` en una guarda tampoco pasa.
+    feeExemption: { findMany: tx.feeExemption.findMany },
     // Transacción de mentira con ROLLBACK de verdad: sin esto, una carrera que
     // revienta a mitad de camino dejaría el mundo a medio escribir y el test no
     // podría afirmar que "no se guardó nada".
@@ -411,28 +434,31 @@ describe("activeExemption", () => {
     createdAt: NOW, ...over,
   });
 
+  // Se lee por `tx` y no por `db`: `activeExemption` acepta cualquier handle con
+  // `feeExemption`, y la guarda 4 del asiento la llama justamente con el de la
+  // transacción.
   it("devuelve la vigente con lo que las pantallas necesitan", async () => {
     const w = world({ exemptions: [row()] });
-    const { db } = fakeDb(w);
-    const found = await activeExemption(db as never, 1, NOW);
+    const { tx } = fakeDb(w);
+    const found = await activeExemption(tx as never, 1, NOW);
     expect(found).toMatchObject({ id: 1, fromPeriod: "2026-09", toPeriod: "2027-08", months: 12, minuteId: 7 });
   });
 
   it("no devuelve la anulada ni la vencida", async () => {
     for (const over of [{ revokedAt: NOW }, { toPeriod: "2026-08" }]) {
-      const { db } = fakeDb(world({ exemptions: [row(over)] }));
-      expect(await activeExemption(db as never, 1, NOW)).toBeNull();
+      const { tx } = fakeDb(world({ exemptions: [row(over)] }));
+      expect(await activeExemption(tx as never, 1, NOW)).toBeNull();
     }
   });
 
   it("devuelve la que todavía no empezó", async () => {
-    const { db } = fakeDb(world({ exemptions: [row({ fromPeriod: "2026-11", toPeriod: "2027-10" })] }));
-    expect(await activeExemption(db as never, 1, NOW)).not.toBeNull();
+    const { tx } = fakeDb(world({ exemptions: [row({ fromPeriod: "2026-11", toPeriod: "2027-10" })] }));
+    expect(await activeExemption(tx as never, 1, NOW)).not.toBeNull();
   });
 
   it("no devuelve la de otro socio", async () => {
-    const { db } = fakeDb(world({ exemptions: [row({ memberId: 2 })] }));
-    expect(await activeExemption(db as never, 1, NOW)).toBeNull();
+    const { tx } = fakeDb(world({ exemptions: [row({ memberId: 2 })] }));
+    expect(await activeExemption(tx as never, 1, NOW)).toBeNull();
   });
 });
 
@@ -552,8 +578,14 @@ describe("grant — las seis guardas", () => {
   });
 
   it("guarda 5: un mes de inicio con formato roto no llega a la base", async () => {
-    const r = await service(world()).svc.grant({ ...GRANT, fromPeriod: "octubre" });
+    const w = world();
+    const r = await service(w).svc.grant({ ...GRANT, fromPeriod: "octubre" });
     expect(r.ok).toBe(false);
+    // El mensaje EXACTO, como los hermanos: un `ok === false` a secas se pondría
+    // verde también si cortara la guarda de la categoría o la del acta.
+    expect(r.ok === false && r.error).toContain("AAAA-MM");
+    expect(w.exemptions).toHaveLength(0);
+    expect(w.fees).toHaveLength(0);
   });
 
   it("guarda 6: sin acta no hay asiento", async () => {
@@ -602,6 +634,9 @@ describe("grant — el asiento", () => {
   it("el detalle del movimiento no lleva un solo dato personal", async () => {
     const w = world();
     await service(w).svc.grant({ ...GRANT, note: "pintura de la sede" });
+    // La nota es la contribución en especie que la Comisión valuó: llega tal cual
+    // a la fila, que es de donde la leen las dos pestañas.
+    expect(w.exemptions[0].note).toBe("pintura de la sede");
     const detail = String(w.movements[0].detail);
     expect(detail).not.toContain("Pérez");
     expect(detail).not.toContain("Juan");
@@ -829,7 +864,13 @@ describe("el núcleo trata `exempt` por OMISIÓN (invariante estructural)", () =
   // que alguien cambie el filtro de deudores a `status: { in: ["pending",
   // "paid"] }`, o que el devengo empiece a leer sólo las pendientes, el eximido
   // pasaría a deber los meses que la Comisión le perdonó y ninguna pantalla lo
-  // diría. Estos dos casos son la chicharra.
+  // diría. Estos casos son la chicharra.
+  //
+  // Los dos LLAMAN AL CÓDIGO DE PRODUCCIÓN de esos módulos —`periodsToAccrue` de
+  // `rules.ts` y `fetchDebtors` de `debtors.ts`—, no a una copia de su `where`:
+  // un pin que se afirma contra el doble del propio test no puede ponerse rojo
+  // por ningún cambio en `src/`, que es exactamente lo que no se quiere de una
+  // chicharra.
   it("el devengo no vuelve a crear un período que ya tiene fila exenta", () => {
     const member = { status: "active" as MemberStatus, category: "active" as MemberCategory,
       joinedAt: new Date("2020-03-15T12:00:00Z"), readmittedAt: null };
@@ -842,17 +883,75 @@ describe("el núcleo trata `exempt` por OMISIÓN (invariante estructural)", () =
     expect(periods).toContain("2026-11");
   });
 
-  it("una cuota exenta no entra en un conteo de pendientes", async () => {
-    // Es la forma exacta del `where` con que `debtors.ts` arma la lista de
-    // deudores (`{ status: "pending", … }`) y con que la guarda 2 de este
-    // módulo pregunta si el socio está al día.
+  // El doble de base de `fetchDebtors`, que es el OTRO módulo del núcleo que
+  // este bloque fija. Honra el `where` real —incluido el filtro de relación
+  // `member: { status: … }`— con el mismo `matchesWhere` que el resto del
+  // archivo: si de `debtors.ts` desapareciera el `status: "pending"` a secas, las
+  // exentas entrarían acá y los dos casos de abajo se pondrían rojos.
+  function debtorsDb(w: World) {
+    return {
+      fee: {
+        groupBy: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          const rows = w.fees
+            .map((f) => ({ ...f, member: w.members.find((m) => m.id === f.memberId) ?? null }))
+            .filter((f) => matchesWhere(f, where));
+          const counts = new Map<number, number>();
+          for (const f of rows) counts.set(f.memberId, (counts.get(f.memberId) ?? 0) + 1);
+          return [...counts].map(([memberId, n]) => ({ memberId, _count: { _all: n } }));
+        }),
+      },
+      member: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
+          w.members
+            .filter((m) => matchesWhere(m, where))
+            .map((m) => ({
+              ...m,
+              memberships:
+                m.memberNumber === null ? [] : [{ memberNumber: m.memberNumber, book: { status: "open" } }],
+              payments: [],
+              street: null,
+              streetText: null,
+              streetNumber: null,
+              phone: null,
+              email: null,
+              emailStatus: "none",
+            })),
+        ),
+      },
+    };
+  }
+
+  it("una cuota exenta no es deuda: `fetchDebtors` cuenta sólo la pendiente", async () => {
+    // Se ejercita el módulo REAL (`@/lib/treasury/debtors`), no el doble: acá se
+    // llama `fetchDebtors`, y el `where` que decide es el de producción.
+    const w = world({
+      fees: [
+        { memberId: 1, period: "2026-08", status: "pending", origin: "accrual" },
+        { memberId: 1, period: "2026-10", status: "exempt", origin: "exemption" },
+        { memberId: 1, period: "2026-11", status: "exempt", origin: "exemption" },
+      ],
+    });
+    const rows = await fetchDebtors(debtorsDb(w) as never, {}, null);
+    expect(rows).toHaveLength(1);
+    // UNA, no tres: las dos exentas no engrosan la deuda del eximido.
+    expect(rows[0]).toMatchObject({ memberId: 1, pendingCount: 1, level: 1 });
+  });
+
+  it("un socio con TODAS sus cuotas exentas no aparece en la lista de deudores", async () => {
+    // El caso del eximido al día, que es el normal: si el filtro de deudores se
+    // ampliara alguna vez a otros estados, este vecino aparecería reclamado por
+    // meses que la Comisión le perdonó, y con acta.
     const w = world({
       fees: [
         { memberId: 1, period: "2026-10", status: "exempt", origin: "exemption" },
         { memberId: 1, period: "2026-11", status: "exempt", origin: "exemption" },
       ],
     });
-    const { tx } = fakeDb(w);
-    expect(await tx.fee.count({ where: { memberId: 1, status: "pending" } })).toBe(0);
+    expect(await fetchDebtors(debtorsDb(w) as never, {}, null)).toEqual([]);
   });
+
+  // La otra mitad de la garantía —que la guarda 2 de ESTE módulo tampoco cuenta
+  // una exenta como deuda— la fija "una exenta que ya estaba en el rango no se
+  // duplica ni rompe", más arriba: ahí el socio tiene una cuota exenta y el
+  // asiento pasa igual.
 });

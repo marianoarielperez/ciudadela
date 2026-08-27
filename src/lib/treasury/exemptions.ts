@@ -156,12 +156,16 @@ const RECORD_SELECT = {
   },
 } as const;
 
+/** `member` NO es opcional: la relación es obligatoria en el esquema
+ *  (`member Member @relation(...)`, sin `?`), así que Prisma la infiere no nula y
+ *  la fila viene siempre con su socio. Tipearla `| null` obligaba a castear el
+ *  resultado del `findMany` y a inventar un `?? ""` que nunca corría. */
 type RecordRow = ActiveExemption & {
   memberId: number;
   revokedAt: Date | null;
   revokeMinuteId: number | null;
   createdAt: Date;
-  member: { fullName: string; memberships: Array<{ memberNumber: number }> } | null;
+  member: { fullName: string; memberships: Array<{ memberNumber: number }> };
 };
 
 function toRecord(r: RecordRow): ExemptionRecord {
@@ -177,8 +181,8 @@ function toRecord(r: RecordRow): ExemptionRecord {
     revokeMinuteId: r.revokeMinuteId,
     createdAt: r.createdAt,
     member: {
-      fullName: r.member?.fullName ?? "",
-      memberNumber: r.member?.memberships[0]?.memberNumber ?? null,
+      fullName: r.member.fullName,
+      memberNumber: r.member.memberships[0]?.memberNumber ?? null,
     },
   };
 }
@@ -255,7 +259,7 @@ export function makeExemptions(deps: Deps) {
       orderBy: inForce ? [{ fromPeriod: "asc" }, { id: "asc" }] : [{ id: "desc" }],
       select: RECORD_SELECT,
     });
-    return (rows as RecordRow[]).map(toRecord);
+    return rows.map(toRecord);
   }
 
   return {
@@ -333,10 +337,12 @@ export function makeExemptions(deps: Deps) {
           }
 
           // ── Guarda 4: una sola vigente ─────────────────────────────────────
-          const other = await tx.feeExemption.findFirst({
-            where: { memberId: input.memberId, revokedAt: null, toPeriod: { gte: current } },
-            select: { id: true, toPeriod: true },
-          });
+          // Por `activeExemption` y no por un `where` propio: es LA función
+          // compartida de "vigente" (la lección de `coverageFloor`), y una
+          // segunda copia a mano es justo lo que su docblock advierte. `Tx`
+          // satisface su `Pick` de lectura, así que la guarda mira exactamente lo
+          // mismo que los cinco bloqueos de pago y las tres pantallas.
+          const other = await activeExemption(tx, input.memberId, now);
           if (other) {
             return {
               ok: false as const,
