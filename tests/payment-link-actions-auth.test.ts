@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(async () => {}),
   findUnique: vi.fn(),
   feeCount: vi.fn(),
+  // Las dos actions consultan la exención (Art. 7 inc. a.4) antes de tocar MP y
+  // antes de tocar el mailer. Acá siempre "no hay": los cortes por exención se
+  // prueban en `exemption-blocks.test.ts`.
+  exemptionFindFirst: vi.fn(async () => null),
   // Tipado explícito: sin él TS infiere la forma del rechazo y el
   // `mockResolvedValueOnce` del caso autorizado no compila.
   admin: vi.fn(async (): Promise<AdminActor> => (
@@ -18,7 +22,11 @@ const mocks = vi.hoisted(() => ({
   )),
 }));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: mocks.findUnique }, fee: { count: mocks.feeCount } },
+  prisma: {
+    member: { findUnique: mocks.findUnique },
+    fee: { count: mocks.feeCount },
+    feeExemption: { findFirst: mocks.exemptionFindFirst },
+  },
 }));
 vi.mock("@/lib/mp/payment-link", async () => {
   // El mapa de mensajes es real: si un mensaje cambia, el test que lo pinea

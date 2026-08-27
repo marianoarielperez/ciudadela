@@ -19,6 +19,8 @@ import { mpErrorLog } from "@/lib/mp/error-log";
 import { PAYMENT_LINK_ERRORS, paymentLinks } from "@/lib/mp/payment-link";
 import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { prisma } from "@/lib/prisma";
+import { activeExemption } from "@/lib/treasury/exemptions";
+import { periodLabel } from "@/lib/treasury/periods";
 
 export type PayState = { error?: string; redirectUrl?: string };
 
@@ -51,6 +53,22 @@ export async function startMemberPaymentAction(_prev: PayState, formData: FormDa
     where: { id: actor.memberId },
     select: { id: true, category: true },
   });
+
+  // EXENCIÓN DE CUOTA (Art. 7 inc. a.4): mientras esté vigente el socio no tiene
+  // cuota que pagar, así que no se le crea ninguna preferencia. Que la pantalla
+  // no muestre "Pagar ahora" no alcanza: una server action se despacha por el
+  // id del encabezado `Next-Action`, no por su URL. Si igual entrara plata, se
+  // imputaría con `allocate` contra meses que están como `exempt` — o quedaría
+  // en la bandeja sin conciliar, que es peor para el vecino que pagó.
+  //
+  // El acta NO se le nombra al socio (a diferencia del aviso del operador): acá
+  // el hecho útil es hasta cuándo no le van a cobrar.
+  const exemption = await activeExemption(prisma, member.id);
+  if (exemption) {
+    return {
+      error: `Tenés una exención de cuota vigente hasta ${periodLabel(exemption.toPeriod)}: no hay ninguna cuota que pagar.`,
+    };
+  }
 
   let r;
   try {

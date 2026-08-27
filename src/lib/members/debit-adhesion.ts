@@ -10,7 +10,7 @@
 import type { MemberCategory, PaymentType } from "@/generated/prisma/client";
 import { formatDateAR } from "@/lib/format";
 import { canStillCharge } from "@/lib/mp/subscription-status";
-import { addMonths, currentPeriod, periodMonth, periodYear } from "@/lib/treasury/periods";
+import { addMonths, currentPeriod, periodLabel, periodMonth, periodYear } from "@/lib/treasury/periods";
 import { categoryPaysFee } from "@/lib/treasury/rules";
 
 /** Los tipos de pago que cuentan como "ya pagó la cuota de este mes" para la
@@ -24,7 +24,10 @@ export const ADHESION_BLOCKING_TYPES: readonly PaymentType[] = ["debit", "link",
 export type AdhesionVerdict =
   | { ok: true }
   | { ok: false; reason: "category" | "active_subscription" | "no_email" }
-  | { ok: false; reason: "paid_this_month"; availableFrom: Date };
+  | { ok: false; reason: "paid_this_month"; availableFrom: Date }
+  /** `until` es un `toPeriod` (AAAA-MM), no una fecha: la exención se vota por
+   *  MESES calendario (Art. 7 inc. a.4) y el mensaje nombra el mes, no un día. */
+  | { ok: false; reason: "exempted"; until: string };
 
 /** El 1° del mes civil argentino SIGUIENTE, a las 00:00 AR (= 03:00Z), para el
  *  "podés adherirte desde el…" — mismo criterio de corrimiento que
@@ -39,6 +42,11 @@ export function nextMonthStartAR(at: Date): Date {
 /** Orden de las guardas: cada una corta antes de mirar la siguiente, así que
  *  el orden importa y está fijado por el brief (Task 11).
  *
+ *  0) Exención de cuota vigente (Art. 7 inc. a.4): no hay nada que debitar.
+ *     Va PRIMERA a propósito — se exime a un socio ACTIVO (guarda 1 del
+ *     asiento), así que la guarda de categoría lo dejaría pasar y el vecino
+ *     terminaría con un mandato de cobro mensual contra el acta que se lo
+ *     perdona. Es aditiva: sin exención el veredicto es exactamente el de antes.
  *  1) Categoría que no paga cuota: no hay débito que adherir, sin importar
  *     nada más.
  *  2) Suscripción todavía cobrable (`canStillCharge`: authorized, pending o
@@ -52,8 +60,14 @@ export function adhesionVerdict(input: {
   email: string | null;
   subscriptionStatuses: string[];
   paidThisMonth: boolean;
+  /** El `toPeriod` de la exención vigente del socio, o `null`. Lo resuelve el
+   *  llamador con `activeExemption` —LA función compartida—, nunca con un
+   *  `where` propio. Opcional para que los llamadores que todavía no la
+   *  consultan sigan compilando: ausente equivale a "no hay exención". */
+  exemptedUntil?: string | null;
   at: Date;
 }): AdhesionVerdict {
+  if (input.exemptedUntil) return { ok: false, reason: "exempted", until: input.exemptedUntil };
   if (!categoryPaysFee(input.category)) return { ok: false, reason: "category" };
   if (input.subscriptionStatuses.some(canStillCharge)) {
     return { ok: false, reason: "active_subscription" };
@@ -75,5 +89,10 @@ export function adhesionBlockMessage(v: Exclude<AdhesionVerdict, { ok: true }>):
       return `Ya abonaste una cuota este mes. Podés adherirte desde el ${formatDateAR(v.availableFrom)}.`;
     case "no_email":
       return "Para adherir el débito necesitás un email cargado en tu ficha. Cargalo en Mis datos.";
+    case "exempted":
+      // Al socio NO se le nombra el acta: el número es la referencia con la que
+      // el operador ubica la decisión en el libro, y acá el hecho que importa es
+      // hasta cuándo no le van a cobrar.
+      return `Estás eximido de la cuota hasta ${periodLabel(v.until)}: no hay nada que debitar.`;
   }
 }

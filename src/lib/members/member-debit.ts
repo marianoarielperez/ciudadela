@@ -21,6 +21,7 @@ import { subscriptionReason } from "@/lib/mp/reason";
 import { memberSubscriptionReference } from "@/lib/mp/references";
 import { countChargeable, isKnownDead } from "@/lib/mp/subscription-status";
 import { prisma } from "@/lib/prisma";
+import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { currentPeriod, periodMonth, periodYear, type Period } from "@/lib/treasury/periods";
 import { feeAmountFor, type FeeValueAmounts } from "@/lib/treasury/rules";
@@ -54,8 +55,12 @@ function codeOf(e: unknown): string {
 
 type Deps = {
   // `fee` y `movement` son para el `preview` (los próximos períodos y el
-  // reingreso); el resto lo comparten los cuatro métodos.
-  db: Pick<PrismaClient, "$transaction" | "member" | "mpSubscription" | "payment" | "fee" | "movement">;
+  // reingreso); `feeExemption` es de `verdictFor` (la guarda de exención); el
+  // resto lo comparten los cuatro métodos.
+  db: Pick<
+    PrismaClient,
+    "$transaction" | "member" | "mpSubscription" | "payment" | "fee" | "movement" | "feeExemption"
+  >;
   gateway: Pick<MpGateway, "createPreapproval" | "getPreapproval" | "cancelPreapproval">;
   feeValues: { current(at?: Date): Promise<FeeValueAmounts | null> };
   baseUrl: () => string;
@@ -75,7 +80,7 @@ export function makeMemberDebit(deps: Deps) {
   async function verdictFor(member: { id: number; category: MemberCategory; email: string | null }): Promise<AdhesionVerdict> {
     const at = now();
     const memberId = member.id;
-    const [paidThisMonth, subs] = await Promise.all([
+    const [paidThisMonth, subs, exemption] = await Promise.all([
       // "¿Ya pagó una cuota este mes calendario?" — la lista de tipos que
       // cuentan vive en `debit-adhesion.ts` (incluye `entry` por REG-14).
       deps.db.payment.count({
@@ -87,12 +92,17 @@ export function makeMemberDebit(deps: Deps) {
         },
       }),
       deps.db.mpSubscription.findMany({ where: { memberId }, select: { status: true } }),
+      // `activeExemption` y no un `where` propio: es LA función compartida por
+      // los cinco caminos de pago. Va en el mismo `Promise.all` porque es una
+      // lectura más, no una guarda escalonada — el ORDEN lo pone el veredicto.
+      activeExemption(deps.db, memberId, at),
     ]);
     return adhesionVerdict({
       category: member.category,
       email: member.email,
       subscriptionStatuses: subs.map((s) => s.status),
       paidThisMonth: paidThisMonth > 0,
+      exemptedUntil: exemption?.toPeriod ?? null,
       at,
     });
   }

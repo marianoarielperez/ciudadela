@@ -88,6 +88,14 @@ export default async function MiDebitoPage(props: {
   // Lista NEGRA de un valor (`isNotCancelled`, no `canStillCharge`): acá
   // interesa "¿hay algo que no esté muerto?", no "¿de esto puede salir plata
   // hoy?" — un estado que MP invente mañana se muestra igual, no se esconde.
+  //
+  // Este filtro tiene precedencia sobre el veredicto, así que un eximido con una
+  // suscripción de estado desconocido-pero-no-cancelado vería la tarjeta "Tu
+  // débito" en lugar del mensaje de exención. Es teórico y NO se cambia: la
+  // guarda 3 del asiento impide eximir a quien tenga un débito COBRABLE
+  // (`countChargeable`, lista blanca), y lo que quedaría en pantalla no cobra
+  // plata — es una tarjeta que además le ofrece cancelarlo, que es lo correcto.
+  // Angostar este filtro a `canStillCharge` escondería débitos vivos de verdad.
   const live = subs.filter((s) => isNotCancelled(s.status));
 
   return (

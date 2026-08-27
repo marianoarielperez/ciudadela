@@ -30,6 +30,9 @@ function deps(over: {
   cancelSub?: { preapprovalId: string; status: string } | null;
   otherSubs?: Array<{ status: string }>;
   latestSub?: { preapprovalId: string; status: string } | null;
+  /** La exención vigente que `activeExemption` encuentra, o `null` (el caso
+   *  normal). Sólo `toPeriod` importa acá: es lo único que el veredicto lee. */
+  exemption?: { id: number; toPeriod: string; minuteId: number } | null;
 } = {}) {
   const member: MemberRow = {
     id: 14, category: "active", email: "vecino@x.com", status: "active",
@@ -62,6 +65,10 @@ function deps(over: {
     },
     fee: { findMany: vi.fn(async () => (over.feePeriods ?? []).map((period) => ({ period }))) },
     movement: { findFirst: vi.fn(async () => over.readmission ?? null) },
+    // `activeExemption` corre REAL contra este doble: el `where` que arma —con
+    // su `revokedAt: null` y su `toPeriod: { gte }`— es la mitad de lo que se
+    // está probando, y reimplementarlo acá lo dejaría sin ejercitar.
+    feeExemption: { findFirst: vi.fn(async () => over.exemption ?? null) },
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
   };
   const gateway = {
@@ -140,6 +147,41 @@ describe("memberDebit.start", () => {
     });
   });
 
+  it("una exención vigente bloquea SIN llamar al gateway, y la consulta es la compartida", async () => {
+    // El eximido no tiene nada que debitar (Art. 7 inc. a.4): un preapproval le
+    // cobraría todos los meses la cuota que el acta le perdona.
+    const d = deps({ exemption: { id: 3, toPeriod: "2027-08", minuteId: 12 } });
+    const r = await d.service.start({ memberId: 14 });
+    expect(r).toEqual({
+      ok: false,
+      error: "Estás eximido de la cuota hasta agosto 2027: no hay nada que debitar.",
+    });
+    expect(d.gateway.createPreapproval).not.toHaveBeenCalled();
+    expect(d.db.$transaction).not.toHaveBeenCalled();
+    // El `where` sale de `activeExemption`, no de este módulo: `revokedAt: null`
+    // (una anulada no bloquea) y `toPeriod >= mes corriente` (una vencida
+    // tampoco). Y el mes corriente es el del reloj INYECTADO, no el de hoy.
+    expect(d.db.feeExemption.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { memberId: 14, revokedAt: null, toPeriod: { gte: "2026-09" } },
+      }),
+    );
+  });
+
+  it("la exención gana sobre las otras guardas: ni siquiera se le nombra la suscripción", async () => {
+    // Guarda 3 del asiento impide eximir a alguien con débito cobrable, así que
+    // este cruce sólo puede venir de algo anterior a la exención. Aun así el
+    // orden está fijado: el mensaje que el vecino lee es el de la exención.
+    const d = deps({
+      exemption: { id: 3, toPeriod: "2026-12", minuteId: 12 },
+      subs: [{ status: "authorized" }],
+      paidCount: 1,
+    });
+    const r = await d.service.start({ memberId: 14 });
+    expect((r as { error: string }).error).toContain("eximido");
+    expect(d.gateway.createPreapproval).not.toHaveBeenCalled();
+  });
+
   it("sin valor de cuota vigente corta ANTES de llamar a MP", async () => {
     const d = deps({ fee: null });
     const r = await d.service.start({ memberId: 14 });
@@ -214,6 +256,16 @@ describe("memberDebit.preview", () => {
     const d = deps({ subs: [{ status: "authorized" }] });
     const r = await d.service.preview({ memberId: 14 });
     expect(r.verdict).toEqual({ ok: false, reason: "active_subscription" });
+  });
+
+  it("la pantalla ve el MISMO veredicto de exención que la action: `verdictFor` es uno solo", async () => {
+    // Lo que `/mi/debito` muestra deshabilitado es exactamente lo que `start`
+    // rechaza, porque los dos pasan por `verdictFor`. Sin este caso, la
+    // pantalla podría ofrecer un botón que la action después contesta que no.
+    const d = deps({ exemption: { id: 3, toPeriod: "2027-08", minuteId: 12 } });
+    const r = await d.service.preview({ memberId: 14 });
+    expect(r.verdict).toEqual({ ok: false, reason: "exempted", until: "2027-08" });
+    expect(d.gateway.getPreapproval).not.toHaveBeenCalled();
   });
 });
 

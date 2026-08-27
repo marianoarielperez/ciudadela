@@ -130,6 +130,22 @@ export async function activeExemption(
   });
 }
 
+/** El aviso que leen las DOS pantallas de cobro del operador —efectivo y link
+ *  de pago— y sus TRES actions (registrar efectivo, generar link, reenviarlo).
+ *
+ *  Una sola definición, por el mismo motivo que `activeExemption`: son cinco
+ *  lugares que tienen que decir lo mismo, y el operador que lee "eximido hasta
+ *  septiembre" en la pantalla no puede recibir otra fecha del servidor. Nombra
+ *  el ACTA porque el destinatario es el operador: si no está de acuerdo con el
+ *  bloqueo, el número es por dónde empieza a buscar la decisión en el libro.
+ *
+ *  Vive acá y no en las pantallas porque es dato del dominio de la exención, y
+ *  este módulo ya importa `periodLabel`. Recibe sólo los dos campos que usa: le
+ *  sirve tanto un `ActiveExemption` como cualquier fila que los traiga. */
+export function adminExemptionNotice(e: { toPeriod: string; minuteId: number }): string {
+  return `El socio está eximido de la cuota hasta ${periodLabel(e.toPeriod)} (acta N° ${e.minuteId}).`;
+}
+
 /** Una exención con su socio, para las dos listas de la pestaña. */
 export type ExemptionRecord = ActiveExemption & {
   memberId: number;

@@ -22,6 +22,7 @@ import { isPaymentLinkSealValid, sealPaymentLink } from "@/lib/mp/payment-link-s
 import { MAX_LINK_FEES } from "@/lib/mp/references";
 import { prisma } from "@/lib/prisma";
 import { countPendingFees } from "@/lib/treasury/account";
+import { activeExemption, adminExemptionNotice } from "@/lib/treasury/exemptions";
 
 export type LinkState = {
   error?: string;
@@ -51,6 +52,13 @@ export async function createPaymentLinkAction(_prev: LinkState, formData: FormDa
     select: { id: true, category: true, status: true },
   });
   if (!member) return { error: "El socio no existe." };
+  // EXENCIÓN DE CUOTA (Art. 7 inc. a.4): mientras esté vigente no se le genera
+  // ningún link. Misma clase de guarda que la del cesante de acá abajo —y por el
+  // mismo motivo: la pantalla se puede saltear escribiendo la URL— pero con un
+  // desenlace peor si se cuela, porque acá el link SÍ cobra: la plata entraría
+  // contra un acta que la perdona y el recibo saldría numerado.
+  const exemption = await activeExemption(prisma, member.id);
+  if (exemption) return { error: adminExemptionNotice(exemption) };
   // Un cesante no devenga (REG-16): lo único que se le puede cobrar es la deuda
   // congelada al momento de la baja. Sin esta guarda el link se generaba igual,
   // el vecino pagaba, `registerPayment` devolvía `no_pending_withdrawn` y la
@@ -140,6 +148,12 @@ export async function emailPaymentLinkAction(_prev: LinkState, formData: FormDat
   if (!member.email || member.emailStatus === "bounced") {
     return { error: "El socio no tiene un email válido cargado." };
   }
+  // El reenvío se corta TAMBIÉN, y no por simetría: el link vive 72 h y la
+  // Comisión puede asentar la exención en el medio. Un enlace generado ayer
+  // sigue cobrando hoy, así que sin esta guarda el operador le mandaría por
+  // email un cobro a quien la pantalla le está diciendo que no se le cobra.
+  const exemption = await activeExemption(prisma, member.id);
+  if (exemption) return { error: adminExemptionNotice(exemption) };
 
   try {
     await mailer.sendToMember({

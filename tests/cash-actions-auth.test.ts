@@ -8,13 +8,17 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(),
   sendEmail: vi.fn(),
   audit: vi.fn(async () => {}),
+  // La guarda de exención (Art. 7 inc. a.4) consulta antes de tocar el
+  // servicio. Acá siempre devuelve "no hay": lo que este archivo prueba es
+  // otra cosa. Los cortes por exención viven en `exemption-blocks.test.ts`.
+  exemptionFindFirst: vi.fn(async () => null),
   // Tipado explícito: sin él TS infiere la forma del rechazo y el
   // `mockResolvedValueOnce` del caso autorizado no compila.
   admin: vi.fn(async (): Promise<AdminActor> => (
     { ok: false, reason: "not_admin", error: "Necesitás permisos de administrador." }
   )),
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/lib/prisma", () => ({ prisma: { feeExemption: { findFirst: mocks.exemptionFindFirst } } }));
 vi.mock("@/lib/treasury/service", () => ({
   treasuryService: { registerCashPayment: mocks.register },
   TreasuryError: class extends Error {},

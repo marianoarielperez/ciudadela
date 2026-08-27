@@ -132,7 +132,48 @@ describe("adhesionVerdict", () => {
     expect(v).toEqual({ ok: true });
   });
 
-  it("el orden de las guardas es categoría > suscripción > pago del mes > email", () => {
+  it("una exención vigente bloquea aunque todo lo demás esté libre", () => {
+    // No hay nada que debitar: los meses del rango ya están como `exempt`, y un
+    // débito le cobraría al vecino la cuota que el acta de la Comisión perdona.
+    const v = adhesionVerdict({
+      category: "active",
+      email: "vecino@example.com",
+      subscriptionStatuses: [],
+      paidThisMonth: false,
+      exemptedUntil: "2027-08",
+      at: new Date("2026-08-25T12:00:00Z"),
+    });
+    expect(v).toEqual({ ok: false, reason: "exempted", until: "2027-08" });
+  });
+
+  it("sin exención (null o ausente) el veredicto no cambia", () => {
+    // El parámetro es ADITIVO: los diez casos de arriba no lo pasan y siguen
+    // dando lo mismo. Este caso fija las dos formas de "no hay exención".
+    const base = {
+      category: "active" as const,
+      email: "vecino@example.com",
+      subscriptionStatuses: [],
+      paidThisMonth: false,
+      at: new Date("2026-08-25T12:00:00Z"),
+    };
+    expect(adhesionVerdict({ ...base, exemptedUntil: null })).toEqual({ ok: true });
+    expect(adhesionVerdict(base)).toEqual({ ok: true });
+  });
+
+  it("el orden de las guardas es exención > categoría > suscripción > pago del mes > email", () => {
+    // La exención va PRIMERA: un eximido es socio activo, así que la guarda de
+    // categoría lo dejaría pasar y el mensaje que leería sería otro.
+    expect(
+      adhesionVerdict({
+        category: "honorary",
+        email: null,
+        subscriptionStatuses: ["authorized"],
+        paidThisMonth: true,
+        exemptedUntil: "2027-08",
+        at: new Date("2026-08-25T12:00:00Z"),
+      }),
+    ).toEqual({ ok: false, reason: "exempted", until: "2027-08" });
+
     // Categoría que no paga gana aunque además falte el email.
     expect(
       adhesionVerdict({
@@ -220,6 +261,12 @@ describe("adhesionBlockMessage", () => {
   it("no_email", () => {
     expect(adhesionBlockMessage({ ok: false, reason: "no_email" })).toBe(
       "Para adherir el débito necesitás un email cargado en tu ficha. Cargalo en Mis datos.",
+    );
+  });
+
+  it("exempted nombra el mes en castellano, con `periodLabel`", () => {
+    expect(adhesionBlockMessage({ ok: false, reason: "exempted", until: "2027-08" })).toBe(
+      "Estás eximido de la cuota hasta agosto 2027: no hay nada que debitar.",
     );
   });
 });
