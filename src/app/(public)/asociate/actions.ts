@@ -9,9 +9,10 @@ import { z } from "zod";
 import type { Application } from "@/generated/prisma/client";
 import { audit } from "@/lib/audit";
 import {
-  applicationCreateLimiter, applicationStatusLimiter, publicTokenLimiter,
-  resumeResendLimiter, resumeResendTargetLimiter,
+  applicationCreateLimiter, applicationStatusLimiter, asociateDniCheckLimiter,
+  publicTokenLimiter, resumeResendLimiter, resumeResendTargetLimiter,
 } from "@/lib/auth/rate-limiter";
+import { dniCheckVerdict } from "@/lib/applications/dni-check";
 import { MAX_ANNEXES, requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { checkEligibility } from "@/lib/applications/eligibility";
 import { loadEligibilityInputs } from "@/lib/applications/eligibility-inputs";
@@ -57,6 +58,20 @@ type SubmitState = { error?: string; done?: boolean };
 // de abajo, donde reintentar crearía una SEGUNDA suscripción en MP. Los demás errores
 // de `startPaymentAction` NO lo llevan, porque ahí sí se puede reintentar.
 type PayState = { error?: string; redirectUrl?: string; blocked?: true };
+// El estado del chequeo temprano por DNI (paso 1, spec 2026-08-27). `blocked`
+// lleva CÓDIGOS y el nombre enmascarado; la prosa la escribe la pantalla
+// (`dni-result-panel.tsx`). El espejo cliente vive en `wizard-shared.ts`.
+type DniCheckState =
+  | { kind: "idle" }
+  | { kind: "ok" }
+  | {
+      kind: "blocked";
+      code: "already_member" | "in_progress" | "visit_office" | "debt" | "rejected_wait";
+      maskedName: string | null;
+      pendingCount?: number;
+      retryAtIso?: string;
+    }
+  | { kind: "error"; error: string };
 
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const ASOCIATE_CLOSED =
@@ -328,6 +343,60 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   });
 
   return { created: { resumeToken: created.resumeToken } };
+}
+
+// El chequeo temprano por DNI del paso 1 "Tu DNI" (spec 2026-08-27). Es una
+// CORTESÍA de UX, no una guarda: `createApplicationAction` sigue corriendo
+// `checkEligibility` entero en el envío del paso de datos, pase lo que pase
+// acá, sobre los MISMOS insumos (`loadEligibilityInputs`).
+//
+// NO SE AUDITA (misma doctrina que el lookup de REEMPADRONATE): un asiento por
+// intento dejaría registrado qué DNI consultó cada IP — un dato personal que
+// hoy no existe (docs/08, Ley 25.326).
+//
+// Y NO REVALIDA (`revalidatePath`/`revalidateTag`): es una action del wizard,
+// y la invariante del `replaceState` del retome depende de que ninguna lo haga
+// (ver el comentario largo de `asociate-wizard.tsx`).
+export async function checkDniAction(_prev: DniCheckState, formData: FormData): Promise<DniCheckState> {
+  const { ip } = await requestMeta();
+
+  // Las mismas dos causales de la guarda 0 de la creación (documentadas arriba
+  // en largo), con lectura DIRECTA porque son guardas de autorización. La de
+  // los textos legales NO va acá: este paso no acepta nada, y esa guarda
+  // protege el registro de la aceptación.
+  if (!(await configReader.getBool(CONFIG_KEYS.asociateActivo))) {
+    return { kind: "error", error: ASOCIATE_CLOSED };
+  }
+  const openProcess = await openWizardProcess(prisma);
+  if (openProcess !== null) {
+    return { kind: "error", error: reregistrationClosed(currentDeadline(openProcess)) };
+  }
+
+  // El orden es `allows` → captcha → formato → `record` → padrón, el de
+  // siempre (createApplicationAction lo documenta en largo). El cupo es
+  // PROPIO (`asociateDniCheckLimiter`, 5/15 min por IP): gastar chequeos no
+  // puede dejar sin envío a quien ya llegó al paso de datos.
+  if (!asociateDniCheckLimiter.allows(ip)) return { kind: "error", error: TOO_MANY };
+  const captcha = await verifyTurnstile(String(formData.get("cf-turnstile-response") ?? ""), ip);
+  if (!captcha) return { kind: "error", error: NO_CAPTCHA };
+
+  const parsed = parseForm(z.object({ dni: dniSchema }), formData);
+  if (!parsed.ok) return { kind: "error", error: parsed.error };
+  const dni = parsed.data.dni; // ya normalizado: parseForm recorta y el regex deja sólo dígitos
+
+  // Desde acá se toca el padrón, así que el intento se cobra.
+  asociateDniCheckLimiter.record(ip);
+
+  const inputs = await loadEligibilityInputs(prisma, applicationService, dni);
+  const verdict = dniCheckVerdict({ ...inputs, now: new Date() });
+  if (verdict.ok) return { kind: "ok" };
+  return {
+    kind: "blocked",
+    code: verdict.code,
+    maskedName: verdict.maskedName,
+    ...(verdict.code === "debt" ? { pendingCount: verdict.pendingCount } : {}),
+    ...(verdict.code === "rejected_wait" ? { retryAtIso: verdict.retryAt.toISOString() } : {}),
+  };
 }
 
 // Reenvío del enlace de retome. Formulario público y anónimo con un DNI adentro:
