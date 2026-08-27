@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // `src/lib/config.ts` exporta el singleton `configReader = makeConfigReader(prisma)`,
 // así que importarlo construye el PrismaClient real en tiempo de import. Los tests
@@ -9,11 +9,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // los lectores cacheados (`getLegalTexts`), que no reciben la base por parámetro
 // sino que usan el singleton.
 const rows = vi.hoisted(() => ({}) as Record<string, unknown>);
+// El proceso de re-empadronamiento que ve `openWizardProcess` (lo usa
+// `getActiveReregistration`). Es un solo proceso porque la clave de
+// configuración apunta a uno solo, y el fake HONRA el `where.id` que le dan en
+// vez de devolver siempre la fila: un doble que ignora el where prueba que la
+// función corre, no que consulte lo que dice consultar (lección de la fase 6B).
+const processRow = vi.hoisted(
+  () =>
+    ({ current: null }) as {
+      current: null | { id: number; status: string; firstEndsAt: Date; secondEndsAt: Date | null };
+    },
+);
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     configuration: {
       findUnique: async ({ where }: { where: { key: string } }) =>
         where.key in rows ? { key: where.key, value: rows[where.key] } : null,
+    },
+    reregistrationProcess: {
+      findUnique: async ({ where }: { where: { id: number } }) =>
+        processRow.current !== null && processRow.current.id === where.id
+          ? processRow.current
+          : null,
     },
   },
 }));
@@ -22,7 +39,13 @@ vi.mock("@/lib/prisma", () => ({
 // reemplaza por la función tal cual, igual que en tests/config-actions.test.ts.
 vi.mock("next/cache", () => ({ unstable_cache: (fn: unknown) => fn }));
 
-import { CONFIG_KEYS, getLegalTexts, makeConfigReader, parseRecipients } from "@/lib/config";
+import {
+  CONFIG_KEYS,
+  getActiveReregistration,
+  getLegalTexts,
+  makeConfigReader,
+  parseRecipients,
+} from "@/lib/config";
 
 type Row = { key: string; value: unknown } | null;
 
@@ -96,6 +119,62 @@ describe("getLegalTexts", () => {
   it("devuelve null por cada texto que falta o está vacío", async () => {
     rows[CONFIG_KEYS.termsText] = "   ";
     expect(await getLegalTexts()).toEqual({ terms: null, privacyConsent: null });
+  });
+});
+
+// El lector que el SITIO PÚBLICO CACHEADO usa para saber si hay un
+// re-empadronamiento en curso y hasta cuándo. Lo que se fija acá es la
+// invariante que su docblock declara crítica y que hasta ahora sostenía sólo un
+// comentario: EL PLAZO VIAJA COMO TEXTO, NUNCA COMO `Date`.
+//
+// Por qué importa: `unstable_cache` guarda el valor con `JSON.stringify`, así
+// que un `Date` devuelto por la función cacheada vuelve como `Date` en el fallo
+// de caché y como string en el acierto. Es un bug que sólo aparece en
+// producción y bajo carga —en el test el envoltorio está mockeado y nunca
+// serializa—, así que lo único que puede protegerlo es una aserción sobre el
+// TIPO de lo que sale.
+describe("getActiveReregistration", () => {
+  // El reloj se congela: desde que `currentDeadline` calla los plazos vencidos,
+  // "25/09/2026" sólo significa lo mismo si "hoy" no se mueve. Sólo `Date`: no
+  // hay temporizadores en este camino y falsearlos colgaría los `await`.
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-01T15:00:00Z")); // 12:00 en Argentina
+  });
+  afterAll(() => { vi.useRealTimers(); });
+
+  beforeEach(() => {
+    for (const key of Object.keys(rows)) delete rows[key];
+    processRow.current = null;
+  });
+
+  function seedProcess(over: { status?: string; secondEndsAt?: Date } = {}) {
+    rows[CONFIG_KEYS.reregistrationProcessId] = "7";
+    processRow.current = {
+      id: 7,
+      status: over.status ?? "first_instance",
+      firstEndsAt: new Date("2026-09-25T12:00:00.000Z"),
+      secondEndsAt: over.secondEndsAt ?? null,
+    };
+  }
+
+  it("con proceso abierto: el plazo sale como TEXTO ya formateado, no como Date", async () => {
+    seedProcess();
+
+    const result = await getActiveReregistration();
+
+    expect(result).toEqual({ deadline: "25/09/2026" });
+    // La aserción que vale: el tipo. `toEqual` sobre un string pasaría igual si
+    // alguien devolviera un `Date` que casualmente se compare, y sobre todo no
+    // diría nada del día en que el caché acierta.
+    expect(typeof result?.deadline).toBe("string");
+    expect(result?.deadline).not.toBeInstanceOf(Date);
+  });
+
+  it("sin proceso: null, y el sitio funciona como siempre", async () => {
+    const result = await getActiveReregistration();
+
+    expect(result).toBeNull();
   });
 });
 

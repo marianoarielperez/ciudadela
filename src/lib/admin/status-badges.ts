@@ -1,7 +1,9 @@
 // Mapa único estado→variante de Badge. Antes cada pantalla tenía su ternario y
 // divergieron: un suspendido se veía "secondary" en el padrón y "outline" en su
 // propia ficha. El del padrón era el más expresivo: queda como canónico.
-import type { ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, UnmatchedStatus } from "@/generated/prisma/client";
+import type {
+  ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, PresentationStatus, UnmatchedStatus,
+} from "@/generated/prisma/client";
 import type { CronState, PendingReceiptState } from "@/lib/admin/health";
 import type { BackupState } from "@/lib/admin/health-backup";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
@@ -112,4 +114,20 @@ export function subscriptionStatusBadgeVariant(status: string): BadgeVariant {
   if (status === "paused") return "secondary";
   if (status === "cancelled") return "destructive";
   return "outline";
+}
+
+// Los seis estados de una presentación de re-empadronamiento (M6). Mismo
+// criterio que las solicitudes: "default" (celeste) es "acá hay trabajo", el
+// verde es el desenlace bueno, y lo que todavía no ocurrió va con borde fino.
+//
+// `withdrawn` es la baja declarada por no re-empadronarse: es terminal y grave,
+// pero no es una alarma para el operador —es el resultado previsto del
+// Art. 9° bis— así que va apagado y no en rojo. El rojo queda para el rechazo,
+// que sí es una decisión que alguien tomó y puede revisarse.
+export function presentationStatusBadgeVariant(status: PresentationStatus): BadgeVariant {
+  if (status === "submitted") return "default";
+  if (status === "validated") return "success";
+  if (status === "observed") return "secondary";
+  if (status === "rejected") return "destructive";
+  return "outline"; // pending, withdrawn
 }

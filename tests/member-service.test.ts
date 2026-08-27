@@ -33,6 +33,21 @@ const LIVE_TOKENS: FakeToken[] = [
   { id: 5, memberId: 2, purpose: "email_verification", usedAt: null }, // de otro socio
 ];
 
+type FakeRequest = {
+  id: number; memberId: number; type: string; status: string; cancelledAt: Date | null;
+};
+
+// Las solicitudes que ya viven cuando llega la acción societaria. La baja tiene
+// que cerrar las pendientes DEL socio que da de baja —quedarían para siempre en
+// la bandeja, inaplicables y sin que el socio pueda retirarlas— y no tocar ni
+// las ya decididas ni las de otro socio.
+const LIVE_REQUESTS: FakeRequest[] = [
+  { id: 71, memberId: 1, type: "withdrawal", status: "pending", cancelledAt: null },
+  { id: 72, memberId: 1, type: "category_change", status: "pending", cancelledAt: null },
+  { id: 73, memberId: 1, type: "withdrawal", status: "accepted", cancelledAt: null }, // ya decidida
+  { id: 74, memberId: 2, type: "withdrawal", status: "pending", cancelledAt: null }, // de otro socio
+];
+
 function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
   const state = {
     member: { id: 1, status: "active", category: "adherent", reentryBlocked: false,
@@ -48,6 +63,7 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
     // Los `where` con los que se contaron las cuotas: la baja tiene que contar
     // las del socio que da de baja y sólo las pendientes.
     feeCounts: [] as Record<string, unknown>[],
+    requests: LIVE_REQUESTS.map((r) => ({ ...r })),
   };
   const openBooks = config.openBooks ?? [{ id: 1, number: 1, status: "open" }];
   const db = {
@@ -65,6 +81,7 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         tokens: state.tokens.map((t) => ({ ...t })),
         users: state.users.map((u) => ({ ...u })),
         userUpdates: [...state.userUpdates],
+        requests: state.requests.map((r) => ({ ...r })),
       };
       try {
         return await cb(db);
@@ -76,6 +93,7 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         state.tokens = snapshot.tokens;
         state.users = snapshot.users;
         state.userUpdates = snapshot.userUpdates;
+        state.requests = snapshot.requests;
         throw err;
       }
     }),
@@ -125,6 +143,27 @@ function makeFakeDb(member: Record<string, unknown>, config: FakeConfig = {}) {
         state.userUpdates.push({ id: where.id, ...data });
         Object.assign(row, data);
         return { ...row };
+      },
+    },
+    // Imita el filtro del motor con los tres predicados del `where`, igual que
+    // `actionToken.deleteMany`: si la baja cancelara con un `where` incompleto
+    // —sin `memberId`, sin `status` o sin la exclusión de la solicitud que se
+    // está aplicando— tiene que notarse acá y no en producción.
+    memberRequest: {
+      updateMany: async ({
+        where, data,
+      }: {
+        where: { memberId?: number; status?: string; id?: { not?: number } };
+        data: Record<string, unknown>;
+      }) => {
+        const hit = state.requests.filter(
+          (r) =>
+            (where.memberId === undefined || r.memberId === where.memberId) &&
+            (where.status === undefined || r.status === where.status) &&
+            (where.id?.not === undefined || r.id !== where.id.not),
+        );
+        for (const r of hit) Object.assign(r, data);
+        return { count: hit.length };
       },
     },
     member: {
@@ -247,6 +286,80 @@ describe("memberService.withdraw", () => {
       .rejects.toThrow(/movement insert failed/);
     expect(state.member.status).toBe("active");
     expect(state.tokens.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  // M6A Task 5. Una baja por otro camino —cesantía por mora, baja declarada por
+  // la Comisión— dejaba viva la solicitud que el socio había presentado: seguía
+  // contando en el badge de la pestaña y en la tarjeta del tablero, el socio ya
+  // no podía retirarla (`requireMember` corta al dado de baja) y aplicarla era
+  // imposible porque `canWithdraw` la rechaza. Al operador sólo le quedaba
+  // rechazarla, con un correo que decía "rechazada" sin serlo.
+  it("cancels the pending requests of the member it withdraws, and nobody else's", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 });
+    const byId = Object.fromEntries(state.requests.map((r) => [r.id, r]));
+    expect(byId[71].status).toBe("superseded");
+    expect(byId[71].cancelledAt).toBeInstanceOf(Date);
+    // Las dos pendientes, sea cual sea el tipo: una de cambio de categoría
+    // sobre un socio dado de baja es igual de inaplicable que una de baja.
+    expect(byId[72].status).toBe("superseded");
+    // Una ya decidida no se re-escribe: perdería su `decidedAt`/`decidedById`.
+    expect(byId[73].status).toBe("accepted");
+    expect(byId[73].cancelledAt).toBeNull();
+    // Y la de otro socio no se toca.
+    expect(byId[74].status).toBe("pending");
+  });
+
+  // El estado propio es lo que hace verdadera a la pantalla: `cancelled` lo
+  // escribe el socio cuando retira su propia solicitud, y la bandeja lo redacta
+  // como "Retirada por el socio". Una baja por mora no la retiró nadie, así que
+  // se asienta `superseded` — el operador lee "Sin efecto por la baja del socio"
+  // y no una acción que el socio nunca hizo.
+  it("marks the requests it closes as superseded, never as cancelled by the member", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 });
+    const byId = Object.fromEntries(state.requests.map((r) => [r.id, r]));
+    expect(byId[71].status).toBe("superseded");
+    expect(byId[72].status).toBe("superseded");
+    // Ninguna termina en `cancelled`: ése es el retiro voluntario del socio.
+    expect(state.requests.some((r) => r.status === "cancelled")).toBe(false);
+  });
+
+  // La trampa: `withdrawAction` marca la solicitud como `accepted` DESPUÉS del
+  // commit, y `markAccepted` filtra por `status: "pending"`. Sin la excepción,
+  // la baja cancelaba justo la solicitud que se estaba aplicando y el marcado
+  // posterior no encontraba nada: quedaba "cancelada" en vez de "aceptada",
+  // sin el vínculo con el acta y con un `console.error` como único rastro.
+  it("spares the request that is being applied, so it can still be marked accepted", async () => {
+    const { db, state } = makeFakeDb({});
+    const svc = makeMemberService(db as never);
+    await svc.withdraw({ memberId: 1, reason: "resignation", minuteId: 10, actorId: 2, sparedRequestId: 71 });
+    const byId = Object.fromEntries(state.requests.map((r) => [r.id, r]));
+    expect(byId[71].status).toBe("pending");
+    expect(byId[71].cancelledAt).toBeNull();
+    // La excepción es de UNA solicitud, no de todas: el resto se cierra igual.
+    expect(byId[72].status).toBe("superseded");
+  });
+
+  it("goes through with the withdrawal when there is no pending request to cancel", async () => {
+    const { db, state } = makeFakeDb({});
+    // Sin nada pendiente el `updateMany` devuelve `count: 0`, que no es un
+    // error: la baja no depende de haber cancelado algo.
+    for (const r of state.requests) r.status = "accepted";
+    const svc = makeMemberService(db as never);
+    const updated = await svc.withdraw({ memberId: 1, reason: "death", minuteId: 10, actorId: 2 });
+    expect(updated.status).toBe("withdrawn");
+    expect(state.movements[0]).toMatchObject({ type: "withdrawal" });
+  });
+
+  it("keeps the pending requests alive when the withdrawal rolls back", async () => {
+    const { db, state } = makeFakeDb({}, { failMovementCreate: true });
+    const svc = makeMemberService(db as never);
+    await expect(svc.withdraw({ memberId: 1, reason: "arrears", minuteId: 10, actorId: 2 }))
+      .rejects.toThrow(/movement insert failed/);
+    expect(state.requests.filter((r) => r.status === "pending").map((r) => r.id)).toEqual([71, 72, 74]);
   });
 });
 

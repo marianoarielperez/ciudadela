@@ -181,9 +181,12 @@ describe("MinuteEditError", () => {
 });
 
 describe("parseMinuteDate", () => {
-  // Después de mediodía UTC: las fechas civiles se anclan a las 12:00 UTC
-  // (ver civilDateUtc), así que "hoy" tiene que compararse contra un `now`
-  // posterior a esa hora o el propio día de hoy se rechazaría por "futuro".
+  // Las fechas civiles se anclan a las 12:00 UTC (ver civilDateUtc). El fixture
+  // quedó después de esa hora de cuando el tope era el INSTANTE: con aquel tope,
+  // el propio día de hoy se rechazaba por "futuro" hasta las 09:00 argentinas.
+  // Hoy el tope es el día civil (ver el encabezado de minute-date.ts) y el caso
+  // de la madrugada tiene su propio test más abajo; el fixture se deja como
+  // estaba para no tocar lo que ya estaba fijado.
   const NOW = new Date("2026-08-19T18:00:00Z").getTime();
 
   it("anchors the civil day at UTC noon like the rest of the system", () => {
@@ -218,5 +221,21 @@ describe("parseMinuteDate", () => {
     expect(parseMinuteDate("1900-01-01", NOW).ok).toBe(true);
     expect(parseMinuteDate("2026-08-19", NOW).ok).toBe(true);
     expect(parseMinuteDate("2026-08-20", NOW).ok).toBe(false);
+  });
+
+  // El acta de cierre del libro la propone la pantalla fechada HOY. Con el tope
+  // contra el instante, una ceremonia de cierre a las 8 de la mañana se caía con
+  // "tiene que estar entre 1900 y hoy": el mediodía UTC del día civil todavía no
+  // había llegado. El tope es el DÍA, y mañana sigue siendo futuro.
+  it("acepta el día de hoy también de madrugada, y sigue rechazando mañana", () => {
+    // 06:00 en Argentina del 19/08: 09:00 UTC, antes del mediodía UTC.
+    const EARLY = new Date("2026-08-19T09:00:00Z").getTime();
+    expect(parseMinuteDate("2026-08-19", EARLY).ok).toBe(true);
+    expect(parseMinuteDate("2026-08-20", EARLY).ok).toBe(false);
+    // Y a las 23:00 de acá, cuando UTC ya está en el día siguiente, el día
+    // siguiente TODAVÍA no vale: el día civil se resuelve en Argentina.
+    const LATE = new Date("2026-08-20T02:00:00Z").getTime();
+    expect(parseMinuteDate("2026-08-19", LATE).ok).toBe(true);
+    expect(parseMinuteDate("2026-08-20", LATE).ok).toBe(false);
   });
 });

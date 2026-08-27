@@ -209,7 +209,7 @@ Acciones:
   **Domicilio electrónico**: si la ficha ya tenía **esa misma dirección** en
   estado `verificado`, la verificación **se conserva** aunque la solicitud nueva
   venga sin verificar (decisión de Mariano, confirmada el 20/08/2026). El
-  domicilio electrónico ya estaba acreditado ante la vecinal (Art. 5° quater) y
+  domicilio electrónico ya estaba acreditado ante la vecinal (Art. 5° ter) y
   degradarlo a `declarado` por no volver a hacer clic dejaría al reingresante sin
   invitación al portal sin ningún motivo. Si la dirección **cambió**, manda la de
   la solicitud y hay que verificarla de nuevo.
@@ -475,19 +475,39 @@ accesos a las demás secciones.
 ## 8. REEMPADRONATE (wizard público, Art. 9° bis)
 
 Precondición: proceso en `primera_instancia` o `segunda_instancia`.
+**El wizard no tiene ningún paso de pago** (decisión del operador, 25/08/2026): a
+diferencia de ASOCIATE, acá no se ofrece pagar, ni adherir débito, ni cambiar monto.
+El adherente sólo se re-empadrona.
 
 **Paso 1 — Identificación** (privacidad primero):
-- Inputs: **DNI + apellido** (coincidencia exacta de DNI y parcial de apellido,
-  case/tilde-insensitive) → si matchea un adherente vigente del proceso, muestra
-  nombre enmascarado "¿Sos M****** P.?" para confirmar. Si no matchea, mensaje
-  genérico "No encontramos una coincidencia" (sin revelar si el DNI existe).
-  Rate limit estricto (p. ej. 5 intentos/15 min por IP) + Turnstile.
-- Nota operativa: esto requiere que los DNI de los 124 adherentes estén cargados
-  ANTES de abrir el proceso (modo carga de fichas). El proceso no puede activarse
-  si hay adherentes vigentes sin DNI (validación al activar, con listado de faltantes).
+- Input: **DNI solo** (+ Turnstile). Si el DNI corresponde a un adherente vigente
+  convocado en ESTE proceso, muestra el nombre enmascarado "¿Sos M****** P.?" para
+  que el socio se reconozca sin que el sistema le revele el nombre de un tercero;
+  al confirmar, sigue al paso 2. Cualquier otro caso —DNI inexistente, no adherente,
+  no convocado, baja— da **el mismo cartel genérico** que lo invita a acercarse a la
+  sede: el veredicto negativo es uno solo y no lleva motivo ni id, así que quien
+  tipea un DNI ajeno no puede deducir nada del padrón.
+  Rate limit propio (5 intentos/15 min por IP) + Turnstile, en el mismo orden de
+  guardas que ASOCIATE (cupo → captcha → formato → cobro del intento → padrón).
+- Quien **ya se presentó** no vuelve a entrar por acá: va a la pantalla de estado de
+  su propia presentación —que no muestra ningún dato cargado— y puede pedir que le
+  reenviemos el enlace. Una presentación **observada** se subsana siempre por el
+  enlace del correo: entrar por el paso 1 acuña una llave nueva y rota la anterior,
+  y el DNI no es una contraseña.
+- Nota operativa: el DNI es la única llave, así que los DNI de los adherentes
+  vigentes tienen que estar cargados ANTES de convocar (el padrón importado los trae
+  completos). El sistema **no** valida esa precondición al activar: un adherente sin
+  DNI queda igual en la cohorte y no puede identificarse por la web — su vía es la
+  carga presencial en la sede.
 
-**Paso 2 — Confirmación/actualización de datos**: domicilio (calle del catálogo +
-altura), teléfono, email (obligatorio declarar uno; dispara verificación).
+**Paso 2 — Datos** (la ficha completa, sin el nombre): fecha de nacimiento, estado
+civil, nacionalidad, ocupación, domicilio (calle del catálogo + altura; el **barrio
+no se elige**: es "Ciudadela" y se muestra como texto, porque el paso 4 hace jurar el
+domicilio completo y nadie debería jurar un dato que la pantalla no le mostró),
+teléfono y **email obligatorio** (dispara verificación). El nombre y el DNI no se
+editan: son el ancla de identidad y se corrigen en la sede. **Precarga: únicamente el
+email si la ficha ya lo tenía**; todo lo demás se tipea de cero, porque el DNI no es
+autenticación y precargar expondría datos ajenos.
 
 **Paso 3 — Documentación**: DNI frente y dorso obligatorios + hasta 2 anexos
 (factura de servicios, etc.) para acreditar domicilio.

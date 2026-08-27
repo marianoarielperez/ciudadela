@@ -4,14 +4,16 @@ import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { PageHeader } from "@/components/admin/page-header";
 import { FormMessage } from "@/components/admin/form-message";
+import { EmptyState } from "@/components/admin/empty-state";
 import { prisma } from "@/lib/prisma";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { addMonths, currentPeriod } from "@/lib/treasury/periods";
+import { addMonths, civilDayOf, currentPeriod } from "@/lib/treasury/periods";
 import { formatARS, formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
 import { listDivergent } from "@/lib/mp/fee-value-batch";
 import { ConfigForm } from "./config-form";
 import { FeeValueForm } from "./fee-value-form";
+import { HolidayForm, HolidayRow } from "./holidays-form";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Configuración — SIGeV" };
@@ -80,6 +82,37 @@ export default async function ConfigPage(props: {
   // último día del mes, UTC ya está en el mes siguiente y la sugerencia se
   // adelantaría un mes entero.
   const suggestedValidFrom = `${addMonths(currentPeriod(), 1)}-01`;
+
+  // ── Feriados (M6) ──────────────────────────────────────────────────────────
+  // Se listan los de HOY EN ADELANTE, que son los únicos que se pueden corregir:
+  // un feriado pasado ya participó de plazos computados y la tabla lo conserva
+  // como calendario histórico (la action lo vuelve a chequear).
+  //
+  // Y se muestra la COBERTURA por año, que es el dato del que depende que el
+  // aviso de cartelera se pueda computar: `businessDayEnd` trata un año civil
+  // con cero filas como "nadie lo cargó" —la Ley 27.399 fija nueve feriados
+  // inamovibles de fecha fija, así que un año sin ninguno no existe— y falla en
+  // vez de contar el 1° de enero como día hábil.
+  const today = civilDayOf();
+  const [futureHolidays, allHolidays] = await Promise.all([
+    prisma.holiday.findMany({
+      where: { date: { gte: today } },
+      orderBy: { date: "asc" },
+      select: { id: true, date: true, label: true },
+    }),
+    prisma.holiday.findMany({ orderBy: { date: "asc" }, select: { date: true } }),
+  ]);
+  // Por año civil ARGENTINO. Las filas están en el mediodía UTC de su día civil,
+  // así que `getUTCFullYear` es el año de acá y no el del reloj del server.
+  const coverage = new Map<number, number>();
+  for (const h of allHolidays) {
+    const year = h.date.getUTCFullYear();
+    coverage.set(year, (coverage.get(year) ?? 0) + 1);
+  }
+  // El 1° de enero del año siguiente al último cargado: el hueco más probable es
+  // "se acabó el calendario", y sugerir esa fecha es sugerir empezar a taparlo.
+  const lastYear = Math.max(today.getUTCFullYear(), ...coverage.keys());
+  const suggestedHoliday = `${lastYear + 1}-01-01`;
 
   // Recién registrado un valor: cuántas suscripciones de Mercado Pago quedaron
   // cobrando otra cosa. Es el momento en que el superadmin tiene que enterarse
@@ -154,6 +187,51 @@ export default async function ConfigPage(props: {
                 <span>Desde {formatDateAR(h.validFrom)}{h.minuteId ? ` · acta #${h.minuteId}` : " · sin acta"}</span>
                 <span className="font-mono tabular-nums">{formatARS(h.activeAmount)} / {formatARS(h.sharedAmount)}</span>
               </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="max-w-2xl space-y-4 border-t pt-6">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+          Cartelera — feriados
+        </h2>
+        {sp.feriado === "1" && <FormMessage kind="success" box>Feriado cargado.</FormMessage>}
+        {sp.feriado === "2" && <FormMessage kind="success" box>Feriado borrado.</FormMessage>}
+        <p className="text-sm text-muted-foreground">
+          Los veinte días hábiles de la notificación por cartelera (Art. 5° ter) se cuentan sobre
+          esta tabla: lunes a viernes menos los feriados nacionales. Un feriado que falte se cuenta
+          como día hábil y le acorta el plazo al vecino, así que el aviso de cartelera se niega a
+          computar un plazo que entre en un año sin cargar.{" "}
+          <strong>Los días no laborables con fines turísticos (los &ldquo;puentes&rdquo;) no van
+          acá</strong>: son días de opción, no feriados, y alargarían los plazos sin fundamento.
+        </p>
+        <p className="text-sm">
+          Años cargados:{" "}
+          {coverage.size === 0 ? (
+            <span className="text-warning">ninguno.</span>
+          ) : (
+            [...coverage.entries()]
+              .sort((a, b) => a[0] - b[0])
+              .map(([year, count]) => `${year} (${count})`)
+              .join(" · ")
+          )}
+        </p>
+        <HolidayForm suggestedDate={suggestedHoliday} />
+        {futureHolidays.length === 0 ? (
+          <EmptyState
+            size="card"
+            description="No hay feriados cargados de hoy en adelante."
+          />
+        ) : (
+          <ul className="list-none divide-y p-0 text-sm">
+            {futureHolidays.map((h) => (
+              <HolidayRow
+                key={h.id}
+                id={h.id}
+                label={h.label}
+                dateLabel={formatDateAR(h.date)}
+              />
             ))}
           </ul>
         )}

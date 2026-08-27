@@ -8,6 +8,9 @@ import { searchStreets } from "@/lib/streets/search";
 import { cn } from "@/lib/utils";
 import { CONTROL_HEIGHT, streetLabel, type StreetOption } from "./wizard-shared";
 
+const DEFAULT_NOT_FOUND_HINT =
+  "Esa calle no está en el barrio. Revisá cómo la escribiste o volvé arriba y elegí «En otro barrio».";
+
 /** Reusa `searchStreets` —la misma búsqueda del modo carga del panel: normaliza
  *  tildes, tolera el ordinal de "1º de mayo", parte "Hernandez , Jose" en tokens
  *  y matchea también el código catastral— en vez de inventar otra normalización.
@@ -21,11 +24,21 @@ export function StreetPicker({
   streetId,
   streetName,
   onPick,
+  notFoundHint = DEFAULT_NOT_FOUND_HINT,
 }: {
   streets: StreetOption[];
   streetId: number | null;
   streetName: string;
   onPick: (street: StreetOption | null) => void;
+  /** Qué decir cuando lo tipeado no matchea ninguna calle del catálogo. El
+   *  texto por defecto manda a la rama «En otro barrio» del paso 1 de ASOCIATE,
+   *  que el wizard de re-empadronamiento NO tiene: allá la cohorte es de
+   *  adherentes, que por el Art. 5 viven en el barrio, y la salida es la sede.
+   *  Es una prop y no un componente aparte porque todo lo demás —la
+   *  normalización de `searchStreets`, el combo accesible, el respiro del blur
+   *  en el celular— es exactamente lo mismo, y de eso no puede haber dos
+   *  copias. */
+  notFoundHint?: string;
 }) {
   const [query, setQuery] = useState(streetName);
   const [open, setOpen] = useState(false);
@@ -138,8 +151,7 @@ export function StreetPicker({
           // Ayuda del campo mientras se tipea, no respuesta a una acción: con
           // `role="alert"` el lector de pantalla interrumpiría en cada tecla.
           <FormMessage kind="warning" role="none" className="text-xs">
-            Esa calle no está en el barrio. Revisá cómo la escribiste o volvé arriba y elegí
-            «En otro barrio».
+            {notFoundHint}
           </FormMessage>
         ) : (
           <p className="text-xs text-muted-foreground">

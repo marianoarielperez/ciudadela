@@ -5,7 +5,7 @@ import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
   | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings"
-  | "activity" | "vote";
+  | "activity" | "vote" | "clipboard-check";
 
 export type AdminNavItem = {
   href: string;
@@ -26,6 +26,12 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       // Primero la bandeja: es el trabajo diario del panel (lo que entró y hay
       // que resolver), y el padrón es la consulta.
       { href: "/admin/solicitudes", label: "Solicitudes", icon: "inbox" },
+      // El re-empadronamiento va entre la bandeja y el padrón porque mientras
+      // el proceso corre ES el trabajo diario: la cola de presentaciones se
+      // atiende como se atiende la de altas. NO lleva `superadminOnly` —
+      // validar presentaciones es tarea del admin común—; convocar y abrir la
+      // 2ª instancia cortan solas en la ruta y en cada action.
+      { href: "/admin/reempadronamiento", label: "Reempadronamiento", icon: "clipboard-check" },
       { href: "/admin/socios", label: "Socios", icon: "users" },
       // Tesorería va pegada al padrón: se entra desde la ficha del socio y se
       // vuelve a ella. Las actas quedan al final del grupo, que es donde se

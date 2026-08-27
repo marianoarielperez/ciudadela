@@ -25,4 +25,10 @@ export const CONFIG_KEYS = {
    *  una pantalla que lo escribe (`/admin/padron-electoral`) y la clave vive en
    *  un solo lugar. */
   electionsOngoing: "elecciones_en_curso",
+  /** Id del proceso de re-empadronamiento VIVO (M6). Hay a lo sumo uno por vez
+   *  y la tabla guarda todos los que hubo, así que "cuál es el de ahora" es un
+   *  dato de configuración y no una columna de `reregistration_processes`.
+   *  Nombre en castellano por el precedente de `asociate_activo` y
+   *  `elecciones_en_curso`: las claves de config son datos, no código. */
+  reregistrationProcessId: "reempadronamiento_proceso_id",
 } as const;

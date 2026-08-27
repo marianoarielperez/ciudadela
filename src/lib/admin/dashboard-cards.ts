@@ -35,6 +35,12 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
         href: "/admin/solicitudes",
         cta: "Ver la bandeja",
       },
+      {
+        title: "Reempadronamiento",
+        description: "Proceso de depuración de adherentes y cierre de libro (Art. 9° bis).",
+        href: "/admin/reempadronamiento",
+        cta: "Ver el proceso",
+      },
       { title: "Socios", description: "Padrón, fichas y estado de cada socio.", href: "/admin/socios", cta: "Ver el padrón" },
       {
         title: "Tesorería",

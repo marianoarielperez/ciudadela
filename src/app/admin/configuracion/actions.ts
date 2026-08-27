@@ -26,8 +26,10 @@ import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { parseForm } from "@/lib/forms";
-import { parseCivilDate } from "@/lib/dates";
+import { civilDateUtc, parseCivilDate } from "@/lib/dates";
 import { CONFIG_KEYS } from "@/lib/config";
+import { isUniqueViolation } from "@/lib/treasury/unique-violation";
+import { civilDayOf } from "@/lib/treasury/periods";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
@@ -259,4 +261,143 @@ export async function createFeeValueAction(
   });
   // Fuera de cualquier try: `redirect` funciona tirando una excepción.
   redirect("/admin/configuracion?cuota=1");
+}
+
+// ── Feriados (M6, cartelera) ──────────────────────────────────────────────────
+//
+// Por qué esta tabla se edita a mano desde el panel: la notificación por
+// cartelera del Art. 5° ter se cuenta en veinte días HÁBILES, y hábil es lunes a
+// viernes menos feriado nacional. Un feriado que falte en la tabla se cuenta
+// como día hábil y le ACORTA el plazo al vecino — de ese plazo cuelgan la
+// validez de su baja y su ventana de recurso. Los trasladables cambian por
+// decreto cada año y `scripts/seed-holidays.ts` sólo sembró 2026 y 2027, así
+// que sin ABM la única forma de corregir una fecha sería un deploy.
+//
+// Va con `requireSuperadmin` como el resto de esta pantalla, y por el mismo
+// motivo que el valor de cuota: es un parámetro del que dependen derechos, no
+// carga de datos.
+//
+// EL FORMATO ES LA REGLA. La fecha se guarda SIEMPRE con `parseCivilDate` —el
+// mediodía UTC del día civil argentino, el criterio con el que el proyecto
+// guarda toda fecha civil—. No es estética: `businessDayEnd` EXIGE ese formato y
+// falla ruidoso ante cualquier otro, porque una fila a medianoche UTC son las
+// 21:00 del día anterior en Argentina y el feriado se contaría el día
+// equivocado, engañando además a la guarda de cobertura del propio módulo. Y
+// porque el unique de la tabla es por INSTANTE y no por día: dos filas del mismo
+// día con horas distintas la base no las rechaza. Escribir canónico es lo que
+// hace que ese unique sirva de algo.
+
+/** Cuántos años para adelante se acepta cargar un feriado. */
+const HOLIDAY_YEARS_AHEAD = 5;
+
+const holidaySchema = z.object({
+  // El mensaje va también en `z.string(...)`: sin la clave en el POST, zod ni
+  // llega al regex y devuelve su texto por defecto EN INGLÉS.
+  date: z
+    .string("Ingresá la fecha del feriado.")
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ingresá la fecha del feriado."),
+  label: z
+    .string("Ingresá el nombre del feriado.")
+    .trim()
+    .min(3, "El nombre del feriado tiene que tener al menos 3 caracteres.")
+    // 80 es el ancho de la columna: arriba de eso lo rechazaría MariaDB y el
+    // superadmin vería un error de Prisma en crudo.
+    .max(80, "El nombre del feriado no puede superar los 80 caracteres."),
+});
+
+export async function createHolidayAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await requireSuperadmin();
+  if (!actor.ok) return { error: actor.error };
+  const parsed = parseForm(holidaySchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+
+  // El regex es sólo de forma: `parseCivilDate` rechaza el día que no existe
+  // ("2027-02-31", que `civilDateUtc` rodaría al 03/03 en silencio) y el año mal
+  // tipeado, y devuelve el mediodía UTC canónico.
+  //
+  // Y el año se acota por ARRIBA además de por abajo, que es la mitad que
+  // faltaba: sin tope, un "9999" tipeado de más entra como fila válida, no lo
+  // rechaza ningún unique, y queda para siempre en una tabla de la que cuelgan
+  // plazos —el borrado sólo alcanza a los feriados futuros, así que sacarlo
+  // después es posible pero nadie lo va a ver—. Cinco años es holgado: el
+  // calendario oficial se publica con uno o dos de anticipación.
+  const maxYear = civilDayOf().getUTCFullYear() + HOLIDAY_YEARS_AHEAD;
+  const date = parseCivilDate(parsed.data.date, {
+    minYear: 2020,
+    maxDate: civilDateUtc(maxYear, 12, 31),
+    invalidError: "La fecha del feriado no existe en el calendario.",
+    rangeError:
+      `El año del feriado tiene que estar entre 2020 y ${maxYear}: el calendario oficial se ` +
+      `publica con uno o dos años de anticipación.`,
+  });
+  if (!date.ok) return { error: date.error };
+
+  try {
+    const row = await prisma.holiday.create({
+      data: { date: date.value, label: parsed.data.label },
+    });
+    await audit({
+      userId: actor.actorId,
+      action: "holiday_create",
+      entity: "holiday",
+      entityId: row.id,
+      detail: { date: parsed.data.date, label: parsed.data.label },
+      ip: await clientIp(),
+    });
+  } catch (e) {
+    // El unique de `date`. Con el formato canónico garantizado, "ya está" es la
+    // única lectura posible de ese choque.
+    if (isUniqueViolation(e)) return { error: "Ese día ya está cargado como feriado." };
+    throw e;
+  }
+
+  redirect("/admin/configuracion?feriado=1");
+}
+
+const deleteHolidaySchema = z.object({
+  id: z.coerce
+    .number("El feriado seleccionado no es válido.")
+    .int("El feriado seleccionado no es válido.")
+    .positive("El feriado seleccionado no es válido."),
+});
+
+export async function deleteHolidayAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await requireSuperadmin();
+  if (!actor.ok) return { error: actor.error };
+  const parsed = parseForm(deleteHolidaySchema, formData);
+  if (!parsed.ok) return { error: parsed.error };
+
+  const row = await prisma.holiday.findUnique({
+    where: { id: parsed.data.id },
+    select: { id: true, date: true, label: true },
+  });
+  if (!row) return { error: "Ese feriado ya no está cargado." };
+
+  // Sólo se borra de HOY en adelante, y la pantalla lista sólo eso. Un feriado
+  // pasado ya participó de plazos que están computados y guardados en `due_at`:
+  // borrarlo no los cambia, pero sí cambiaría el resultado de asentar una
+  // fijación con fecha retroactiva, que es un camino que existe (el operador
+  // asienta el lunes un cartel que colgó el viernes). Ante la duda, la tabla
+  // conserva el pasado y se corrige el futuro.
+  if (row.date.getTime() < civilDayOf().getTime()) {
+    return { error: "Un feriado que ya pasó no se borra: la tabla conserva el calendario histórico." };
+  }
+
+  await prisma.holiday.delete({ where: { id: row.id } });
+  await audit({
+    userId: actor.actorId,
+    action: "holiday_delete",
+    entity: "holiday",
+    entityId: row.id,
+    detail: { date: row.date.toISOString(), label: row.label },
+    ip: await clientIp(),
+  });
+
+  redirect("/admin/configuracion?feriado=2");
 }

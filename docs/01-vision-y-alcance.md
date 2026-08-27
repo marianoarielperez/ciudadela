@@ -69,7 +69,7 @@ reciben una invitación "creá tu contraseña" cuando se les registra un email.
    gana la interpretación más conservadora del estatuto.
 2. **Trazabilidad ante la IGJ.** El sistema espeja los libros físicos (registro de
    asociados y actas). Todo movimiento tiene acta, fecha y responsable.
-3. **Notificación fehaciente.** El email es el "domicilio electrónico" del Art. 5° quater:
+3. **Notificación fehaciente.** El email es el "domicilio electrónico" del Art. 5° ter:
    se verifica, se registran envíos y rebotes, y existe el mecanismo subsidiario de cartelera.
 4. **Escala chica, robustez alta.** ~70-300 registros, decenas de usuarios. Nada de
    sobre-ingeniería: monolito Next.js, una base MariaDB, un VPS.

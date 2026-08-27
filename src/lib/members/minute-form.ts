@@ -97,16 +97,34 @@ export function createsNewMinute(sel: MinuteSelection): boolean {
 // entre la creación y el descarte otro admin pudo haberla elegido para su propia
 // acción, y en ese caso el acta ya es parte del libro y no se toca.
 //
-// Son TRES los referentes de `Minute`, no dos. `Application.minuteId` (M3) es el
-// más fácil de pasar por alto porque un RECHAZO no asienta ningún movimiento:
-// el acta del rechazo tiene cero movimientos y cero libros, o sea que "parece"
-// sin usar. Y como la relación es `onDelete: SetNull`, borrarla no falla por
-// clave foránea: deja el rechazo sin constancia en actas, en silencio, contra el
-// Art. 5 inc. 7. Secuencia real: A crea el acta N en un asiento masivo, B la
-// elige desde un desplegable ya renderizado para rechazar una solicitud, el lote
-// de A falla y la compensación de A se lleva puesta la constancia de B.
+// Son CINCO los referentes de `Minute`, y la lista tiene que crecer con el
+// schema: cada relación nueva que apunte a `minutes` se agrega acá.
+//
+// Los tres que no son movimientos ni libros son fáciles de pasar por alto,
+// porque un acta que sólo respalda a uno de ellos tiene cero movimientos y cero
+// libros: "parece" sin usar. Y los tres son `onDelete: SetNull`, así que el
+// borrado NO falla por clave foránea — deja al referente sin constancia en
+// actas, en silencio, que es la peor forma de perderla:
+//
+//   - `Application.minuteId` (M3): el acta de un RECHAZO no asienta ningún
+//     movimiento (Art. 5 inc. 7). Secuencia real: A crea el acta N en un asiento
+//     masivo, B la elige desde un desplegable ya renderizado para rechazar una
+//     solicitud, el lote de A falla y la compensación de A se lleva puesta la
+//     constancia de B.
+//   - `ReregistrationProcess.closeMinuteId` (M6): es el acta que documenta el
+//     CIERRE del Libro N° 1 ante la IGJ, el documento más importante del módulo.
+//     (`callMinuteId`, la convocatoria, es obligatoria: ahí la base sí rechaza el
+//     borrado, pero el resultado es un acta fantasma más un error técnico en
+//     medio de una acción societaria. Las dos se chequean en la misma consulta.)
+//   - `FeeValue.minuteId` (M4): la constancia de la decisión de la Comisión que
+//     fijó el valor de cuota vigente (REG-34).
+//
+// Una consulta por referente y en orden de probabilidad, cortando en la primera
+// que dé positivo: el camino frecuente —el acta recién creada que efectivamente
+// no usa nadie— paga las cinco, y son cinco `COUNT` por índice sobre un camino
+// de compensación que ya viene de un error.
 export async function discardUnusedMinute(
-  db: Pick<PrismaClient, "minute" | "movement" | "book" | "application">,
+  db: Pick<PrismaClient, "minute" | "movement" | "book" | "application" | "reregistrationProcess" | "feeValue">,
   minuteId: number,
 ): Promise<void> {
   try {
@@ -116,6 +134,11 @@ export async function discardUnusedMinute(
     });
     if (books) return;
     if (await db.application.count({ where: { minuteId } })) return;
+    const processes = await db.reregistrationProcess.count({
+      where: { OR: [{ callMinuteId: minuteId }, { closeMinuteId: minuteId }] },
+    });
+    if (processes) return;
+    if (await db.feeValue.count({ where: { minuteId } })) return;
     await db.minute.delete({ where: { id: minuteId } });
   } catch (err) {
     // El error real que ve el usuario es el de la acción que falló; que el

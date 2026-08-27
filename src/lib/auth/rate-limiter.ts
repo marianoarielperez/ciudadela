@@ -265,3 +265,45 @@ export const MEMBER_EDIT_LIMIT = 6
  *  mejor que la IP). El cambio de email además consume los cupos de
  *  verificación existentes (verificationMemberLimiter) al enviar el correo. */
 export const memberEditLimiter = createRateLimiter({ limit: MEMBER_EDIT_LIMIT, windowMs: 60_000 })
+
+export const REREGISTRATION_LOOKUP_WINDOW_MS = 15 * 60_000
+export const REREGISTRATION_LOOKUP_LIMIT = 5
+export const REREGISTRATION_RESEND_WINDOW_MS = 60 * 60_000
+export const REREGISTRATION_RESEND_LIMIT = 3
+
+/** Búsqueda por DNI del paso 1 de REEMPADRONATE, por IP.
+ *
+ *  Es el mismo riesgo que raciona `applicationCreateLimiter` y con una diana
+ *  más chica: el formulario contesta "¿Sos M****** P.?" contra un padrón de
+ *  ~160 vigentes, así que sin techo sería un barredor de DNIs con confirmación
+ *  de nombre parcial. Detrás de Turnstile, pero el captcha encarece el intento
+ *  automatizado y no raciona al humano persistente.
+ *
+ *  Ventana de 15 minutos y no de una hora (el resto de los formularios
+ *  públicos usan una): acá el vecino LEGÍTIMO puede necesitar reintentar el
+ *  mismo día —tipea mal el DNI, el captcha vence mientras busca el documento,
+ *  vuelve a entrar desde el enlace del correo—, y del otro lado del CGNAT de
+ *  una operadora móvil de Comodoro puede haber varios vecinos convocados a la
+ *  vez. Cinco cada quince minutos deja pasar eso y sigue siendo un techo. */
+export const reregistrationLookupLimiter = createRateLimiter({
+  limit: REREGISTRATION_LOOKUP_LIMIT,
+  windowMs: REREGISTRATION_LOOKUP_WINDOW_MS,
+})
+
+/** Reenvío del enlace de una presentación YA enviada, por DNI pedido. Espejo de
+ *  `resumeResendTargetLimiter`: dispara un correo hacia afuera desde un
+ *  formulario anónimo, y el techo por IP no protege a un socio concreto si
+ *  quien molesta rota de origen.
+ *
+ *  La clave es el DNI y no la IP a propósito: lo que raciona es la inundación
+ *  del buzón de un vecino identificable, no el volumen de un origen. Se
+ *  consulta y se registra SIEMPRE, exista o no la presentación, para que el
+ *  techo mismo no revele si ese DNI ya se presentó.
+ *
+ *  Lo estrena la Task 11, que es la que suma la action de reenvío; vive acá
+ *  desde ahora porque `rate-limiter.ts` define todos los presupuestos juntos y
+ *  es donde se comparan entre sí. */
+export const reregistrationResendLimiter = createRateLimiter({
+  limit: REREGISTRATION_RESEND_LIMIT,
+  windowMs: REREGISTRATION_RESEND_WINDOW_MS,
+})

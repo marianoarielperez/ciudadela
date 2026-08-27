@@ -17,6 +17,9 @@ import { updateMemberAction, type SaveState } from "./actions";
 import { FormMessage } from "@/components/admin/form-message";
 import { SendVerificationForm } from "@/components/admin/send-verification-form";
 import { StreetAutocomplete, type StreetOption } from "@/components/admin/street-autocomplete";
+import {
+  civilStatusOptions, NATIONALITY_OPTIONS, NEIGHBOURHOOD_OPTIONS,
+} from "@/lib/members/card-options";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { EMAIL_STATUS_LABELS } from "@/lib/members/labels";
@@ -36,9 +39,13 @@ export type MemberData = {
   hasAccount: boolean;
 };
 
-const CIVIL_STATUS = ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Separado/a", "Unión convivencial"];
-const NATIONALITIES = ["Argentina", "Boliviana", "Chilena", "Paraguaya", "Peruana", "Uruguaya", "Brasileña", "Venezolana"];
-const NEIGHBOURHOODS = ["Ciudadela", "Pueyrredón", "Standard", "Roca", "General Mosconi", "Laprida"];
+// Las tres listas y el armado del <select> viven en `@/lib/members/card-options`:
+// las mismas tres las escriben el wizard público de re-empadronamiento y la
+// carga presencial del panel, y las tres terminan en esta misma columna del
+// padrón. Tres copias divergen y la divergencia se ve meses después, con
+// "Soltero/a" y "Soltero" conviviendo en el mismo campo.
+const NATIONALITIES = [...NATIONALITY_OPTIONS];
+const NEIGHBOURHOODS = [...NEIGHBOURHOOD_OPTIONS];
 
 // El orden de tabulación es el orden del DOM, y el orden del DOM es el de la
 // ficha de papel: quien carga lee de arriba a abajo y no debería tener que
@@ -55,12 +62,6 @@ function digitsOnly(raw: string): string {
 // Un valor viejo que no está en la lista (el padrón trae "Soltero" sin barra)
 // tiene que seguir siendo una opción: si no, el select mostraría vacío y al
 // guardar borraría un dato que nadie pidió borrar.
-function civilStatusOptions(current: string | null): Array<[string, string]> {
-  const values = [...CIVIL_STATUS];
-  if (current && !values.includes(current)) values.unshift(current);
-  return [["", "—"], ...values.map((v) => [v, v] as [string, string])];
-}
-
 export function CargaForm(props: {
   member: MemberData;
   // Lo calcula la página con `verificationTarget`, la misma función que la

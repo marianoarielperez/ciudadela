@@ -1,13 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  fetchPadron, fetchPadronPage, PADRON_PAGE_SIZE, padronWhere, parsePadronFilters,
-  parsePadronPage,
+  fetchPadron, fetchPadronCounts, fetchPadronPage, PADRON_PAGE_SIZE, padronWhere,
+  parsePadronFilters, parsePadronPage,
 } from "@/lib/members/query";
 
 describe("parsePadronFilters", () => {
   it("keeps only known values", () => {
     expect(parsePadronFilters({ q: "perez", category: "adherent", status: "nope", email: "sin", dni: "con" }))
       .toEqual({ q: "perez", category: "adherent", email: "sin", dni: "con" });
+  });
+});
+
+// ── El filtro "vigentes" ──────────────────────────────────────────────────────
+//
+// `vigentes` no es un `MemberStatus`: es el valor de filtro que hace que el chip
+// "Vigentes 160" lleve a esas mismas 160 filas. Antes el chip apuntaba al padrón
+// sin filtrar (279 filas) porque el enum no puede expresar "activo o
+// suspendido", y el número prometido no coincidía con la lista.
+describe("parsePadronFilters — vigentes", () => {
+  it("accepts vigentes as a status value", () => {
+    expect(parsePadronFilters({ status: "vigentes" })).toEqual({ status: "vigentes" });
+  });
+  it("still rejects anything that is neither a status nor vigentes", () => {
+    expect(parsePadronFilters({ status: "vigente" })).toEqual({});
+    expect(parsePadronFilters({ status: "todos" })).toEqual({});
+  });
+  it("combines with a category, which is what the Activos/Adherentes chips send", () => {
+    expect(parsePadronFilters({ status: "vigentes", category: "adherent" }))
+      .toEqual({ status: "vigentes", category: "adherent" });
   });
 });
 
@@ -23,6 +43,33 @@ describe("padronWhere", () => {
   it("maps email filter", () => {
     expect(JSON.stringify(padronWhere({ email: "verificado" }))).toContain("verified");
     expect(JSON.stringify(padronWhere({ email: "sin" }))).toContain("none");
+  });
+
+  it("resolves vigentes to the two statuses that make up a padron member", () => {
+    expect(padronWhere({ status: "vigentes" })).toMatchObject({
+      member: { status: { in: ["active", "suspended"] } },
+    });
+  });
+
+  it("keeps a plain status as an equality, not an `in`", () => {
+    expect(padronWhere({ status: "suspended" })).toMatchObject({ member: { status: "suspended" } });
+  });
+
+  it("crosses vigentes with the category (the Activos and Adherentes chips)", () => {
+    expect(padronWhere({ status: "vigentes", category: "active" })).toMatchObject({
+      member: { status: { in: ["active", "suspended"] }, category: "active" },
+    });
+  });
+
+  // Cada rama del OR de búsqueda arrastra los demás filtros: buscar un apellido
+  // con "Vigentes" puesto no puede devolver las bajas que matchean el nombre.
+  it("carries vigentes into every branch of the text search", () => {
+    const w = padronWhere({ status: "vigentes", q: "perez" });
+    const branches = w.OR ?? [];
+    expect(branches.length).toBeGreaterThan(0);
+    for (const b of branches) {
+      expect(JSON.stringify(b)).toContain('"status":{"in":["active","suspended"]}');
+    }
   });
 });
 
@@ -120,5 +167,60 @@ describe("fetchPadronPage", () => {
     const res = await fetchPadronPage(db, { q: "nadie" }, 1);
     expect(res).toMatchObject({ total: 0, page: 1, pageCount: 1, rows: [] });
     expect((findMany.mock.calls[0] ?? [{}])[0].skip).toBe(0);
+  });
+});
+
+// ── Resumen del libro abierto (chips del listado) ─────────────────────────────
+//
+// Los cinco números se leen como un DESGLOSE ("160 vigentes = 36 activos + 124
+// adherentes"), y por eso el groupBy cruza estado × categoría en vez de contar
+// cada eje por separado: con dos conteos sueltos, "Activos" se llevaría también
+// a las bajas de categoría activa y la suma dejaría de cerrar.
+describe("fetchPadronCounts", () => {
+  type Group = { status: string; category: string; _count: number };
+  function fakeDb(groups: Group[]) {
+    const groupBy = vi.fn<(args: Record<string, unknown>) => Promise<Group[]>>(async () => groups);
+    return { db: { member: { groupBy } } as never, groupBy };
+  }
+
+  it("counts the open book once, crossing status and category", async () => {
+    const { db, groupBy } = fakeDb([]);
+    await fetchPadronCounts(db);
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    const [arg] = groupBy.mock.calls[0] ?? [{}];
+    expect(arg.by).toEqual(["status", "category"]);
+    // El resumen es del libro ABIERTO: sin este `where`, los socios que
+    // quedaron en libros cerrados sumarían en los chips del padrón vigente.
+    expect(arg.where).toEqual({ memberships: { some: { book: { status: "open" } } } });
+  });
+
+  it("derives the five numbers: vigentes = active + suspended, and the breakdown lives inside them", async () => {
+    const { db } = fakeDb([
+      { status: "active", category: "active", _count: 36 },
+      { status: "active", category: "adherent", _count: 122 },
+      { status: "suspended", category: "adherent", _count: 2 },
+      { status: "withdrawn", category: "active", _count: 40 },
+      { status: "withdrawn", category: "adherent", _count: 78 },
+    ]);
+    expect(await fetchPadronCounts(db)).toEqual({
+      vigentes: 160, activos: 36, adherentes: 124, suspendidos: 2, bajas: 118,
+    });
+  });
+
+  it("ignores categories that are neither active nor adherent, without losing them from vigentes", async () => {
+    const { db } = fakeDb([
+      { status: "active", category: "honorary", _count: 3 },
+      { status: "suspended", category: "cadet", _count: 1 },
+    ]);
+    expect(await fetchPadronCounts(db)).toEqual({
+      vigentes: 4, activos: 0, adherentes: 0, suspendidos: 1, bajas: 0,
+    });
+  });
+
+  it("reports zeros on an empty book instead of throwing", async () => {
+    const { db } = fakeDb([]);
+    expect(await fetchPadronCounts(db)).toEqual({
+      vigentes: 0, activos: 0, adherentes: 0, suspendidos: 0, bajas: 0,
+    });
   });
 });

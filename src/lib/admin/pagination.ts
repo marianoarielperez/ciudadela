@@ -1,5 +1,7 @@
-// Paginación por querystring compartida por las listas de tesorería. El padrón
-// y la bandeja conservan su implementación propia (no se tocan en esta fase).
+// Paginación por querystring de todas las listas largas: tesorería (recibos,
+// sin conciliar, otros ingresos), las bandejas de solicitudes, las noticias del
+// sitio público y —desde el rediseño del listado— el padrón, que hasta entonces
+// tenía su propia copia escrita a mano dentro de la pantalla.
 export function parsePage(sp: Record<string, string | string[] | undefined>): number {
   const raw = Array.isArray(sp.page) ? sp.page[0] : sp.page;
   const n = Number(raw);

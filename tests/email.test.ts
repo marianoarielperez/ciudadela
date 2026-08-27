@@ -7,7 +7,10 @@ import { makeMailer } from "@/lib/email";
 import {
   boardDigestEmail,
   feeReminderEmail, invitationEmail, loginEmailMovedNotice, loginEmailVerification,
-  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite, receiptEmail, verificationEmail,
+  passwordResetEmail, paymentLinkEmail, paymentRejectedEmail, portalInvite,
+  presentationObservedEmail, presentationReceivedEmail, presentationRejectedEmail,
+  receiptEmail,
+  reregistrationCallEmail, reregistrationSecondEmail, verificationEmail,
 } from "@/lib/email/templates";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import { rejectionReason } from "@/lib/mp/rejection-reasons";
@@ -49,6 +52,10 @@ describe("templates", () => {
       verificationEmail({ url: "https://x/v/t" }),
       invitationEmail({ name: "Ana", url: "https://x/i/t" }),
       passwordResetEmail({ url: "https://x/r/t" }),
+      reregistrationCallEmail({ url: "https://x/reempadronate", firstEndsAt: EXPIRES }),
+      reregistrationSecondEmail({ url: "https://x/reempadronate", secondEndsAt: EXPIRES }),
+      presentationReceivedEmail({ url: "https://x/reempadronate/retomar/t", submittedAt: EXPIRES }),
+      presentationObservedEmail({ url: "https://x/reempadronate/retomar/t", observation: "Falta el dorso" }),
     ];
     for (const m of rendered) {
       expect(m.subject).toContain("Vecinal Ciudadela");
@@ -354,6 +361,217 @@ describe("templates", () => {
       // Nada sobre lo que no medimos, y ninguna acción sin destino.
       expect(body).not.toContain("da de baja el débito");
       expect(body).not.toContain("volver a autorizarlo");
+    }
+  });
+
+  // La convocatoria del Art. 9° bis sale de una sola vez a toda la cohorte de
+  // adherentes y abre un plazo de treinta días del que cuelga la condición de
+  // socio. Tres cosas la hacen útil: el enlace al wizard, la fecha límite
+  // ESCRITA (no "en 30 días", que obliga al vecino a contar desde una fecha que
+  // no sabe) y la vía presencial, porque buena parte del padrón no usa la web.
+  it("la convocatoria lleva el enlace al wizard, la fecha límite y la vía presencial", () => {
+    const m = reregistrationCallEmail({ url: "https://x/reempadronate", firstEndsAt: EXPIRES });
+    expect(m.subject).toContain("26/08/2026");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("sede vecinal");
+      expect(body).toContain("no tiene ningún costo");
+      // No saluda por nombre, y la plantilla ni siquiera lo recibe: el mensaje
+      // es idéntico para los ciento y pico y se arma UNA vez.
+      expect(body).not.toContain("Hola ");
+    }
+    expect(reregistrationCallEmail.length).toBe(1);
+  });
+
+  // Es la ÚLTIMA notificación antes de una baja estatutaria, así que el
+  // apercibimiento con la cita del artículo tiene que estar: es lo que la hace
+  // oponible. Y no puede afirmar que el socio no presentó nada: el correo va a
+  // TODOS los que no tienen presentación aprobada, y ahí entran el observado (se
+  // le registró la presentación y se le pidió corregir) y el rechazado (se le
+  // registró y se le rechazó). Decirles que "no lo registramos" es un dato falso
+  // en el aviso previo a la baja, y les regala el recurso del inc. d).
+  it("el último plazo apercibe con el artículo y no afirma que el socio no presentó nada", () => {
+    const m = reregistrationSecondEmail({ url: "https://x/reempadronate", secondEndsAt: EXPIRES });
+    expect(m.subject).toContain("26/08/2026");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("apercibimiento de baja");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("treinta días");
+      // Verdadero para los cuatro casos que reciben este correo: el que no
+      // presentó nada, el observado, el rechazado y el que retiró su
+      // presentación.
+      expect(body).toContain("aprobado");
+      expect(body).not.toContain("no registramos");
+    }
+  });
+
+  // La constancia es la PRUEBA del plazo: es lo que el socio puede mostrar si
+  // alguna vez se discute si se presentó dentro de los treinta días. Por eso
+  // lleva fecha Y hora, y por eso dice que hay que guardarla.
+  it("la constancia lleva la fecha y hora del envío y el enlace de retorno", () => {
+    const m = presentationReceivedEmail({
+      url: "https://x/reempadronate/retomar/tok",
+      submittedAt: EXPIRES,
+    });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate/retomar/tok");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("15:40");
+      expect(body).toContain("constancia");
+      // No nombra al socio, y la plantilla no puede recibir el nombre: el
+      // enlace ya es el secreto, y un dedazo en la dirección no puede regalar
+      // el nombre de quien se re-empadronó (Ley 25.326).
+      expect(body).not.toContain("Hola ");
+    }
+    expect(presentationReceivedEmail.length).toBe(1);
+  });
+
+  // La observación es lo único que le dice al vecino qué corregir: el texto del
+  // operador viaja TAL CUAL. Y tiene que decir que el plazo sigue corriendo,
+  // que es la diferencia entre subsanar a tiempo y una baja.
+  it("la observación lleva el pedido textual del operador y avisa que el plazo corre", () => {
+    const m = presentationObservedEmail({
+      url: "https://x/reempadronate/retomar/tok",
+      observation: "La foto del dorso salió movida & no se lee el domicilio",
+    });
+    expect(m.text).toContain("La foto del dorso salió movida & no se lee el domicilio");
+    // En el HTML el texto del operador se escapa como todo lo que entra desde
+    // la base: un "&" suelto rompería el markup.
+    expect(m.html).toContain("movida &amp; no se lee");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("https://x/reempadronate/retomar/tok");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("sigue corriendo");
+    }
+  });
+
+  // La MISMA plantilla es la del reenvío del enlace cuando la presentación está
+  // observada, y ahí va SIN la nota del operador: ésa ya viajó en el correo
+  // original, y repetirla en dos correos que pueden divergir deja al vecino sin
+  // saber cuál manda. Lo que no puede faltar nunca es lo accionable: que hay
+  // algo para corregir, por dónde entrar y hasta cuándo.
+  it("sin la nota del operador dice igual qué hacer, y con fecha límite", () => {
+    const m = presentationObservedEmail({
+      url: "https://x/reempadronate/retomar/tok",
+      deadline: EXPIRES,
+    });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("corrijas");
+      expect(body).toContain("https://x/reempadronate/retomar/tok");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("Art. 9° bis");
+      expect(body).toContain("sigue corriendo");
+      // Y nada de lo que dice la CONSTANCIA: a quien ya se le revisó y ya se le
+      // pidió corregir, "la Comisión va a revisar lo que cargaste" lo manda a
+      // esperar cuando tiene que actuar.
+      expect(body).not.toContain("va a revisar lo que cargaste");
+    }
+  });
+
+  // Sin plazo corriendo no se inventa uno: el correo cae al "cuanto antes".
+  it("sin fecha límite no imprime ninguna", () => {
+    const m = presentationObservedEmail({ url: "https://x/t" });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Hacelo cuanto antes");
+      expect(body).not.toMatch(/hasta el \d{2}\/\d{2}\/\d{4}/);
+    }
+  });
+
+  // ── El RECHAZO ────────────────────────────────────────────────────────────
+  // Hasta hoy no avisaba nada: el vecino se quedaba tranquilo creyendo que su
+  // trámite estaba hecho y se enteraba con la baja, cuando ya no había nada
+  // que corregir.
+  it("el rechazo dice que no se aceptó, el motivo textual y hasta cuándo", () => {
+    const m = presentationRejectedEmail({
+      note: "La foto del frente es de otra persona & no coincide con el padrón",
+      deadline: EXPIRES,
+    });
+    expect(m.subject).toContain("Vecinal Ciudadela");
+    // El motivo del operador viaja TAL CUAL, igual que la observación:
+    // resumirlo o reformatearlo sería cambiarle el motivo a la Comisión.
+    expect(m.text).toContain("La foto del frente es de otra persona & no coincide con el padrón");
+    expect(m.html).toContain("otra persona &amp; no coincide");
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("no lo aceptó");
+      // Lo accionable, que es el motivo entero de este correo.
+      expect(body).toContain("sede vecinal");
+      expect(body).toContain("26/08/2026");
+      expect(body).toContain("Art. 9° bis");
+    }
+    expect(m.text).not.toContain("<");
+    expect(m.text).toContain("Asociación Vecinal del Barrio Ciudadela");
+  });
+
+  // NO lleva enlace, y no es un olvido: una presentación rechazada NO está en
+  // `EDITABLE_STATUSES`, así que el enlace de retome la rebota con "ya fue
+  // resuelta por la Comisión". Un botón que muere en la primera pantalla es
+  // peor que no ofrecer ninguno: manda al vecino a pelearse con el sitio en vez
+  // de a la sede, que es lo único que le resuelve el trámite.
+  it("no ofrece un enlace que la presentación rechazada ya no acepta", () => {
+    const m = presentationRejectedEmail({ note: "x", deadline: EXPIRES });
+    expect(m.text).not.toContain("http");
+    expect(m.html).not.toContain("href");
+  });
+
+  // La regla que este módulo aprendió por las malas: un correo que tranquiliza
+  // a quien tiene que actuar es peor que no mandarlo.
+  it("no tranquiliza: dice que hay algo que hacer y qué pasa si no lo hace", () => {
+    const m = presentationRejectedEmail({ note: "x", deadline: EXPIRES });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("volver a presentarte");
+      expect(body).toContain("baja");
+      // Nada del acuse ni de la observación: al rechazado, "la Comisión va a
+      // revisar lo que cargaste" y "entrá por el enlace" le mienten.
+      expect(body).not.toContain("va a revisar lo que cargaste");
+      expect(body).not.toContain("Entrá por este enlace");
+    }
+  });
+
+  // El motivo es OPCIONAL en la pantalla (`reject` acepta la nota vacía), así
+  // que el correo tiene que valerse sin ella en vez de imprimir un hueco.
+  it("sin motivo escrito no inventa uno, pero sigue diciendo qué hacer", () => {
+    const m = presentationRejectedEmail({ deadline: EXPIRES });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("no lo aceptó");
+      expect(body).toContain("sede vecinal");
+      expect(body).not.toContain("Motivo");
+    }
+  });
+
+  it("sin fecha límite corriente tampoco imprime una", () => {
+    const m = presentationRejectedEmail({ note: "x" });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Hacelo cuanto antes");
+      expect(body).not.toMatch(/hasta el \d{2}\/\d{2}\/\d{4}/);
+    }
+  });
+
+  // Mismo criterio que la constancia y la observación: el nombre del socio no
+  // entra, y la plantilla ni siquiera puede recibirlo (Ley 25.326). Un dedazo
+  // en la dirección declarada no puede regalarle a un tercero el nombre de
+  // quien se re-empadronó ni que le rechazaron el trámite.
+  it("no nombra al socio", () => {
+    const m = presentationRejectedEmail({ note: "x", deadline: EXPIRES });
+    for (const body of [m.text, m.html]) expect(body).not.toContain("Hola ");
+  });
+
+  it("las plantillas del re-empadronamiento escapan la url en el html", () => {
+    const url = "https://x/reempadronate?a=1&b=2";
+    for (const m of [
+      reregistrationCallEmail({ url, firstEndsAt: EXPIRES }),
+      reregistrationSecondEmail({ url, secondEndsAt: EXPIRES }),
+      presentationReceivedEmail({ url, submittedAt: EXPIRES }),
+      presentationObservedEmail({ url, observation: "Falta el dorso" }),
+    ]) {
+      expect(m.html).toContain("a=1&amp;b=2");
+      expect(m.html).not.toContain("a=1&b=2");
+      // En el texto plano el enlace viaja crudo: ahí no hay markup que romper y
+      // un `&amp;` sería un enlace que no funciona al copiarlo.
+      expect(m.text).toContain(url);
     }
   });
 });

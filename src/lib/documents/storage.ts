@@ -45,6 +45,88 @@ export function makeDocumentStore(db: Pick<PrismaClient, "document">, rootDir?: 
   // Se resuelve por llamada, no al construir: el store es un singleton de
   // módulo y UPLOADS_DIR puede no estar leída todavía cuando se evalúa.
   const root = () => rootDir ?? uploadsDir();
+  // El cuerpo COMPARTIDO por los dos dueños de documentos que hoy existen: la
+  // solicitud de alta y la presentación de re-empadronamiento (M6). Las dos
+  // guardan igual —mismos magic bytes, mismo tope, misma regla de reemplazo—
+  // y lo único que cambia es la carpeta, el `ownerType` y cómo se llama el id
+  // en el mensaje de error.
+  //
+  // Se factorizó en vez de copiarse: la parte delicada es el reemplazo
+  // best-effort de más abajo (la carrera de dos subidas del mismo tipo), y de
+  // esa clase de código no puede haber dos versiones que diverjan en silencio.
+  async function saveOwned(input: {
+    ownerType: "application" | "presentation";
+    ownerId: number;
+    folder: string;
+    /** Cómo nombrar al dueño en el mensaje del id inválido. */
+    ownerLabel: string;
+    type: DocumentType;
+    data: Buffer;
+  }): Promise<{ id: number }> {
+    if (input.data.length === 0 || input.data.length > MAX_DOCUMENT_BYTES) {
+      throw new Error("El archivo supera el máximo de 10 MB o está vacío.");
+    }
+    // La ruta se arma con este id: un NaN o un string con "../" escaparía de
+    // UPLOADS_DIR. El tipo `number` es promesa de compilación, no garantía de
+    // runtime (un caller en JS puro, un `as any`, un Number(searchParams)).
+    if (!Number.isInteger(input.ownerId) || input.ownerId <= 0) {
+      throw new Error(`${input.ownerLabel} inválida.`);
+    }
+    const kind = sniffDocument(input.data);
+    if (!kind) throw new Error("Formato no admitido: subí una foto JPG/PNG/WebP o un PDF.");
+
+    const relative = path.posix.join(
+      input.folder,
+      String(input.ownerId),
+      `${randomUUID()}.${kind.ext}`,
+    );
+    const absolute = path.join(root(), relative);
+    await mkdir(path.dirname(absolute), { recursive: true });
+    await writeFile(absolute, input.data);
+
+    const previous =
+      input.type === "annex"
+        ? null
+        : await db.document.findFirst({
+            where: {
+              ownerType: input.ownerType,
+              ownerId: input.ownerId,
+              type: input.type,
+            },
+          });
+    const created = await db.document.create({
+      data: {
+        ownerType: input.ownerType,
+        ownerId: input.ownerId,
+        type: input.type,
+        path: relative,
+        mime: kind.mime,
+        size: input.data.length,
+      },
+    });
+    if (previous) {
+      // Best-effort COMPLETO: si dos subidas del mismo tipo entran a la vez,
+      // las dos leen el mismo `previous` y la segunda encuentra la fila ya
+      // borrada (P2025). Eso no puede convertirse en "no pudimos guardar el
+      // archivo" para un documento que sí quedó guardado: `deleteMany` no
+      // falla si no hay nada que borrar, y el unlink de un archivo ya borrado
+      // tampoco importa.
+      //
+      // Lo que esto NO hace es serializar: de esa carrera pueden quedar DOS
+      // filas del mismo `type` (las dos con foto nueva, así que el admin ve
+      // duplicado, nunca un documento viejo resucitado). El arreglo de fondo
+      // es un unique sobre `(ownerType, ownerId, type)` para los tipos que no
+      // son `annex` —los anexos son varios a propósito—, y eso pide migración.
+      try {
+        await db.document.deleteMany({ where: { id: previous.id } });
+        await unlink(path.join(root(), previous.path));
+      } catch {
+        /* best-effort: la fila nueva ya está */
+      }
+    }
+    return { id: created.id };
+  }
+
   return {
     // Reemplaza el documento anterior del mismo tipo: re-subir el frente del
     // DNI no acumula versiones (el vecino corrigió una foto movida). Los
@@ -52,73 +134,38 @@ export function makeDocumentStore(db: Pick<PrismaClient, "document">, rootDir?: 
     // `type` (el tope lo aplica la action del wizard). El borrado del archivo
     // viejo es best-effort: un unlink fallido no puede dejar la solicitud sin
     // su documento nuevo.
-    async saveApplicationDocument(input: {
+    saveApplicationDocument(input: {
       applicationId: number;
       type: DocumentType;
       data: Buffer;
     }): Promise<{ id: number }> {
-      if (input.data.length === 0 || input.data.length > MAX_DOCUMENT_BYTES) {
-        throw new Error("El archivo supera el máximo de 10 MB o está vacío.");
-      }
-      // La ruta se arma con este id: un NaN o un string con "../" escaparía de
-      // UPLOADS_DIR. El tipo `number` es promesa de compilación, no garantía de
-      // runtime (un caller en JS puro, un `as any`, un Number(searchParams)).
-      if (!Number.isInteger(input.applicationId) || input.applicationId <= 0) {
-        throw new Error("Solicitud inválida.");
-      }
-      const kind = sniffDocument(input.data);
-      if (!kind) throw new Error("Formato no admitido: subí una foto JPG/PNG/WebP o un PDF.");
-
-      const relative = path.posix.join(
-        "applications",
-        String(input.applicationId),
-        `${randomUUID()}.${kind.ext}`,
-      );
-      const absolute = path.join(root(), relative);
-      await mkdir(path.dirname(absolute), { recursive: true });
-      await writeFile(absolute, input.data);
-
-      const previous =
-        input.type === "annex"
-          ? null
-          : await db.document.findFirst({
-              where: {
-                ownerType: "application",
-                ownerId: input.applicationId,
-                type: input.type,
-              },
-            });
-      const created = await db.document.create({
-        data: {
-          ownerType: "application",
-          ownerId: input.applicationId,
-          type: input.type,
-          path: relative,
-          mime: kind.mime,
-          size: input.data.length,
-        },
+      return saveOwned({
+        ownerType: "application",
+        ownerId: input.applicationId,
+        folder: "applications",
+        ownerLabel: "Solicitud",
+        type: input.type,
+        data: input.data,
       });
-      if (previous) {
-        // Best-effort COMPLETO: si dos subidas del mismo tipo entran a la vez,
-        // las dos leen el mismo `previous` y la segunda encuentra la fila ya
-        // borrada (P2025). Eso no puede convertirse en "no pudimos guardar el
-        // archivo" para un documento que sí quedó guardado: `deleteMany` no
-        // falla si no hay nada que borrar, y el unlink de un archivo ya borrado
-        // tampoco importa.
-        //
-        // Lo que esto NO hace es serializar: de esa carrera pueden quedar DOS
-        // filas del mismo `type` (las dos con foto nueva, así que el admin ve
-        // duplicado, nunca un documento viejo resucitado). El arreglo de fondo
-        // es un unique sobre `(ownerType, ownerId, type)` para los tipos que no
-        // son `annex` —los anexos son varios a propósito—, y eso pide migración.
-        try {
-          await db.document.deleteMany({ where: { id: previous.id } });
-          await unlink(path.join(root(), previous.path));
-        } catch {
-          /* best-effort: la fila nueva ya está */
-        }
-      }
-      return { id: created.id };
+    },
+
+    /** La misma operación para el re-empadronamiento del Art. 9° bis (M6): los
+     *  documentos cuelgan de la PRESENTACIÓN y no de la ficha del socio, porque
+     *  hasta que la Comisión valide, lo que el vecino subió es una declaración
+     *  suya y no un dato del padrón. */
+    savePresentationDocument(input: {
+      presentationId: number;
+      type: DocumentType;
+      data: Buffer;
+    }): Promise<{ id: number }> {
+      return saveOwned({
+        ownerType: "presentation",
+        ownerId: input.presentationId,
+        folder: "presentations",
+        ownerLabel: "Presentación",
+        type: input.type,
+        data: input.data,
+      });
     },
 
     async readDocumentFile(doc: { path: string }): Promise<Buffer> {

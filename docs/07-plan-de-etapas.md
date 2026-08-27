@@ -619,19 +619,457 @@ El CA original del módulo "un socio paga 2 cuotas atrasadas por link en sandbox
 ya había quedado verificado en la fase 4B (Checkout Pro desde `/mi/cuenta`,
 pago real de $12.000); el del circuito de baja es el CA-5B-3 de arriba.
 
-## Módulo 6 — Re-empadronamiento y cierre de libro
-Wizard público (DNI+apellido enmascarado, rate limit), activación con validaciones
-(DNIs completos, 180 días, 90 días IGJ), notificaciones 1ª/2ª instancia (email +
-circuito cartelera con PDF y días hábiles), tablero, validación de presentaciones
-con subsanación, borrador de acta de bajas, **cierre transaccional de libro** con
-vista previa, migración, renumeración por antigüedad y export del nuevo padrón.
+## Módulo 6 — Re-empadronamiento y cierre de libro — **CERRADO** (26/08/2026)
+Wizard público (identificación por **DNI solo**, con confirmación por nombre
+enmascarado, Turnstile y rate limit propio), convocatoria con acta que **congela la
+cohorte** de adherentes vigentes, notificaciones de 1ª y 2ª instancia (email +
+circuito de cartelera con PDF imprimible y plazo en días hábiles sobre la tabla de
+feriados), tablero del proceso, validación de presentaciones con observación y
+subsanación, declaración de bajas en lote con su acta y el anexo de notificaciones
+que pide REG-23, y **cierre transaccional de libro** con vista previa, migración,
+renumeración por antigüedad y export del nuevo padrón.
 
-CA (staging con datos reales cargados): simulacro completo — activar proceso de
-prueba, presentar 3 adherentes (1 validado, 1 observado que subsana, 1 sin respuesta),
-vencer plazos con fechas simuladas, cerrar libro → Libro 2 con los vigentes no
-adherentes + 2 validados, renumerados por antigüedad, con el sin-respuesta dado de
-baja con `recurso_hasta` correcto; el Libro 1 queda cerrado y consultable; restaurar
-backup revierte el simulacro.
+Dos cosas que el alcance original daba por sentadas y el diseño descartó: la
+identificación es por DNI **y no por DNI + apellido** (decisión 8 de la spec), y
+**no hay validaciones de calendario** al convocar — ni los 180 días pre-electorales
+de REG-26 ni la periodicidad de dos años, que en el estatuto es un techo ("depurar al
+menos cada dos años") y no un piso (decisión 5). Lo que sí valida la convocatoria es
+que no pueda **nacer vencida**, porque no hay ninguna pantalla para cancelar un
+proceso.
+
+CA (**en local**, con los datos reales del padrón cargados — enmienda del 25/08/2026:
+el plan decía "staging con datos reales", y el staging `sigev.redaccion.ar` se dio de
+baja el 20/08/2026): simulacro completo — activar proceso de prueba, presentar 3
+adherentes (1 validado, 1 observado que subsana, 1 sin respuesta), vencer plazos con
+fechas simuladas, cerrar libro → Libro 2 con los vigentes no adherentes + 2
+validados, renumerados por antigüedad, con el sin-respuesta dado de baja con
+`recurso_hasta` correcto; el Libro 1 queda cerrado y consultable; restaurar backup
+revierte el simulacro. **Cumplido, y a una escala mucho mayor que la pedida**: el
+detalle medido está al final de este módulo.
+
+Se ejecutó en tres fases: **6A** (`/admin/socios` reorganizado, sin proceso),
+**6B** (proceso, wizard público y cartelera) y **6C** (cierre de libro). El diseño
+está en `docs/superpowers/specs/2026-08-25-modulo-6-reempadronamiento-design.md` y
+el plan en `docs/superpowers/plans/2026-08-25-modulo-6-reempadronamiento.md`.
+
+### Fase 6A — `/admin/socios` reorganizado — **CERRADA** (26/08/2026)
+
+Produce software terminado por sí sola: nada de esta fase depende del proceso de
+re-empadronamiento, y es la que deja la sección Socios en condiciones de recibirlo.
+
+Migración `20260826105006_membership_close_snapshot`, **estrictamente aditiva**:
+las dos columnas `status_at_close` / `category_at_close` en `memberships`, ENUM y
+NULL. Hoy están vacías; las llena el cierre de libro de la 6C, y hasta entonces el
+detalle de un libro cae al valor vivo del socio (el fallback decide **por campo**,
+con `??`, y por presencia de la columna y no por `book.status`, para no abrir una
+segunda fuente de verdad). Apta para `migrate deploy` sobre la base con socios reales.
+
+**Qué quedó andando** (5 tareas, 16 commits):
+
+- **Pestañas por URL en la sección Socios**: Padrón | Libros | Histórico
+  (`src/lib/admin/socios-tabs.ts` puro + `SociosTabs` + `layout.tsx`), mismo molde
+  que las de Solicitudes de la 5B. La regla de matcheo es "el prefijo más
+  específico gana": todo lo que no cuelga de `libros` o `historico` es Padrón, así
+  que la ficha, la baja y el alta siguen marcando su pestaña.
+- **El Padrón rediseñado**: chips-resumen que **filtran exactamente lo que
+  cuentan** —se sumó el filtro "vigentes", que antes no se podía expresar—,
+  filtros con los tokens del panel, tabla en escritorio que colapsa a tarjetas en
+  móvil, íconos de estado de email y de débito, y la paginación compartida.
+- **La pestaña Libros**: una tarjeta por libro con su total de asentados, detalle
+  consultable, export a Excel por route handler **auditado**
+  (`/api/admin/libros/[numero]/export`), y el bloque "Libros" en la ficha del
+  socio. Sin N+1 en ningún camino: el listado usa `_count` y el detalle son dos
+  consultas fijas.
+- **La pestaña Histórico**: todas las personas que alguna vez pasaron por la
+  vecinal, con el **veredicto de reingreso** al lado de cada una
+  (`src/lib/members/history.ts`), reutilizando el mismo criterio que el wizard.
+  Un fallecido y una ficha anulada por duplicado **no** muestran el chip verde de
+  "puede reasociarse": la pantalla no puede decir que sí donde el alta dice que no.
+- **Una baja no deja solicitudes pendientes vivas.** `memberService.withdraw`
+  cierra, en su misma transacción, las `member_requests` `pending` del socio: a una
+  solicitud de un socio dado de baja sólo le quedaba **el rechazo** —seguía contando
+  en el badge de la pestaña "De socios" y en la tarjeta del tablero, aplicarla la
+  rechazaban las reglas estatutarias y el socio ya no podía retirarla porque
+  `requireMember` le cierra el panel—, y rechazarla le mandaba un correo que decía
+  "rechazada" sobre algo que nadie rechazó. Va en el servicio y no en la pantalla,
+  por el mismo motivo que `debtAtWithdrawal`: hoy lo llevan por igual la baja
+  individual y el lote de cesantía por mora, y lo heredarán las bajas en lote del
+  re-empadronamiento cuando lleguen (fase 6C). La solicitud que se está
+  **aplicando** queda exceptuada (`sparedRequestId`, que pasa `withdrawAction`
+  cuando la baja viene de la bandeja): `markAccepted` corre después del commit y
+  filtra por `pending`, así que sin la excepción la solicitud terminaba cerrada por
+  la baja en vez de "aceptada" y perdía el vínculo con el acta.
+- **Y el cierre tiene estado propio: `superseded` ("Sin efecto").** Reusar
+  `cancelled` —el retiro voluntario del socio— hacía que la bandeja redactara
+  "Retirada por el socio el …" sobre una solicitud que cerró una cesantía por mora:
+  un panel que documenta decisiones estatutarias no puede afirmar un hecho que no
+  ocurrió, y en la base los dos casos eran indistinguibles. La migración
+  `member_request_superseded_status` sólo ensancha el `ENUM` de
+  `member_requests.status`; la bandeja dice "Quedó sin efecto por la baja del
+  socio", y `/mi/solicitudes` aclara que no hace falta que el socio haga nada.
+
+**Una inserción no planificada, disparada por datos reales del operador** (Task 4b):
+el importador del padrón **no tenía caso para "expulsión"** y la mapeaba a `other`,
+que no bloquea nada; el bloqueo de reingreso usa doble criterio
+(`reentryBlocked || withdrawalReason === "expulsion"`), así que con el motivo mal
+puesto no lo frenaba nadie. Se agregó el mapeo, un módulo puro
+(`src/lib/padron/withdrawal-fix.ts`) y un script acotado y auditado
+(`scripts/fix-withdrawal-reasons.ts`) para reconciliar motivos de baja contra la
+planilla. Y se cerraron los dos agujeros que abrió el propio arreglo: una expulsión
+**no se puede degradar** por una celda de planilla (se reporta como discrepancia
+para resolver con acta) y `import-padron --update-existing` **no puede apagar** un
+`reentryBlocked` puesto por acta desde el panel.
+
+2622 tests, build y lint limpios.
+
+**Pendiente del operador, accionable:** correr `scripts/fix-withdrawal-reasons.ts`
+en el VPS (bloque copiable en `.superpowers/sdd/task-4b-report.md`). En la base
+local ya corrió; en producción el socio N° 38 sigue asentado como baja por mora
+cuando fue expulsión. Queda además una discrepancia que el script **no** corrige
+porque necesita acta: el socio N° 2, que la planilla da por vigente y la base tiene
+de baja por mora.
+
+### Fase 6B — El proceso, el wizard público y la cartelera — **CERRADA** (26/08/2026)
+
+Es la fase que pone el re-empadronamiento del Art. 9° bis en marcha de punta a
+punta: la Comisión convoca, el vecino se presenta por la web o en la sede, la
+Comisión valida, y a quien no tiene casilla se lo notifica por cartelera. Lo
+único que NO entra acá es el final del camino —declarar las bajas y cerrar el
+libro—: eso es la fase 6C.
+
+Dos migraciones, las dos **aditivas** y aptas para `migrate deploy` sobre la base
+con socios reales: `20260826130029_reregistration_process` (las tablas
+`reregistration_processes`, `presentations`, `holidays` y `board_notices`, más la
+columna `board_notice_id` y los valores nuevos del ENUM de `notifications`) y
+`20260826160000_presentation_rejected_notification` (un valor más en ese mismo
+ENUM). Ninguna toca una fila existente.
+
+**Qué quedó andando** (9 tareas, 37 commits):
+
+- **La aritmética, pura y en dos módulos separados a propósito.**
+  `src/lib/reregistration/rules.ts` tiene los plazos del artículo —30 días para la
+  1ª instancia, 10 para la 2ª, 30 para interponer el recurso— en **días corridos**,
+  que es la lectura conservadora del art. 6 del CCyC porque el estatuto no lo
+  aclara. `src/lib/board/business-days.ts` tiene la cartelera en **días hábiles**,
+  que es lo que su artículo (5° ter) sí dice con todas las letras. Están separados
+  para que nadie las mezcle: `rules.ts` no importa feriados y no tiene por qué.
+  Los dos son puros —no tocan Prisma ni el reloj— y se prueban en tabla, porque de
+  esta cuenta cuelga la baja de un socio real. Hay **un solo comparador de plazos**
+  (`hasExpired`, que compara día civil contra día civil: el día del vencimiento
+  todavía no venció) y **un solo criterio de cohorte** (`isCohortMember`, con las
+  constantes que además arman la consulta que la congela), por la misma razón por
+  la que el Módulo 4 comparte `coverageFloor`.
+- **El servicio que convoca.** `reregistration.activate` abre el proceso contra el
+  libro abierto y un acta, **congela la cohorte** de adherentes vigentes creando
+  una fila de `presentations` por socio, y notifica: email a quien tiene casilla
+  utilizable, aviso de cartelera a quien no. `reregistration.startSecond` abre la
+  segunda instancia —10 días más, "bajo apercibimiento de baja"— sobre los que
+  siguen sin presentarse. Cinco plantillas nuevas de correo en `templates.ts`
+  (convocatoria, 2ª instancia, constancia de presentación, observación y rechazo),
+  todas por el mailer de siempre: allowlist en el transporte, `Notification.failed`
+  con el código del fallo y presupuesto de correos por corrida.
+- **La sección `/admin/reempadronamiento`**: estado vacío cuando no hay proceso,
+  pantalla de convocatoria con acta (superadmin) y tablero con la línea de proceso,
+  los conteos de la instancia y el bloque de cartelera. La convocatoria **no puede
+  nacer vencida**: una fecha de más de treinta días atrás se rechaza con el plazo
+  ya calculado, porque no hay ninguna pantalla para cancelar un proceso.
+- **El wizard público `/reempadronate`, completo.** Identificación por DNI con
+  **nombre enmascarado** para que el socio se reconozca sin que el sistema le
+  revele el nombre de un tercero, ficha (los mismos campos que el alta, sin el
+  nombre), documentos, declaración jurada, constancia por correo con enlace de
+  retome, y subsanación de lo observado por ese enlace. Turnstile en el paso 1 y en
+  el reenvío del enlace —los dos formularios anónimos—, rate limits propios, y
+  `robots: noindex` en la ruta con token. Los documentos van a
+  `UPLOADS_DIR/presentations/`, nunca a `public/`.
+- **Una presentación observada no se reabre tipeando el DNI.** Entrar por el paso 1
+  acuña una llave nueva y rota la anterior; si el DNI reabriera lo observado,
+  cualquiera que tipeara ese número —que no es una contraseña— le mataría al socio
+  el enlace del buzón justo cuando le corre el plazo para subsanar. Se entra
+  siempre por el enlace del correo, y el paso 1 ofrece reenviarlo.
+- **La cola de validación** (`/admin/reempadronamiento/presentaciones`) con la
+  ficha de cada presentación al lado de lo que dice el padrón, **visor de
+  documentos por ruta autenticada con un asiento por cada vista**, y las tres
+  decisiones: validar —que escribe la ficha del socio—, observar con el motivo que
+  le llega al vecino, y rechazar. Y **carga presencial** para el socio que se
+  acerca a la sede: el mismo circuito, cargado por el operador.
+- **La cartelera por lotes**, que es la unidad de trabajo real del operador: el
+  sistema arma la lista de destinatarios sin casilla utilizable, genera el **PDF
+  imprimible** a pedido —con el molde de los recibos, pero sin guardarlo en
+  disco: se arma y se devuelve—, y el operador asienta
+  **una sola fecha de fijación** que estampa el plazo de veinte días hábiles en
+  todas las filas del lote. Un email que rebota después del envío masivo cae como
+  tarea puntual en un aviso propio. Y el **ABM de feriados** en
+  `/admin/configuracion` (superadmin), que es la tabla sobre la que se cuentan esos
+  días hábiles: si falta el año que el cómputo pisa, el sistema **falla ruidoso** en
+  vez de contar un feriado como hábil y acortarle el plazo a un vecino.
+- **Los puntos de entrada del sitio público** (esta última tarea): mientras hay un
+  proceso en 1ª o 2ª instancia, la portada ofrece **REEMPADRONATE** con el mismo
+  protagonismo que ASOCIATE, y **las asociaciones quedan suspendidas** —la
+  asociación está depurando su padrón, no es momento de sumar gente—: la portada y
+  `/asociate` lo muestran con la fecha hasta la que dura, y la acción que crea una
+  solicitud corta por sí misma. Esa fecha es la del plazo que corre; **si el plazo
+  venció y la Comisión todavía no abrió la 2ª instancia ni cerró el proceso, las
+  tres superficies dejan de citar fecha** y dicen sólo que la suspensión sigue
+  mientras dure el trámite. Una fecha pasada le afirmaría al vecino que ya puede
+  asociarse en la misma pantalla que se lo impide, y quién calla ese plazo es una
+  sola función (`currentDeadline`), así que las tres no pueden divergir.
+  En el panel del socio, el adherente convocado que tiene algo pendiente ve el
+  llamado con su fecha límite, en dos versiones: **si todavía no se presentó**, el
+  botón lo lleva al trámite; **si se presentó y la Comisión se lo observó**, lo
+  lleva a pedir el reenvío de su enlace, porque una presentación observada no se
+  reabre tipeando el DNI. Es la gente que ya tiene cuenta, la que más fácil se
+  pierde el correo.
+
+**Auditoría nueva**, siempre con ids y conteos y nunca con DNI, email ni
+domicilios (Ley 25.326): `reregistration_call`, `reregistration_second`,
+`presentation_submit`, `presentation_validate` / `_observe` / `_reject` /
+`_unreject`, `presentation_document_upload`, `presentation_document_view`,
+`board_notice_post`, `board_notice_other` y `board_notice_pdf`.
+
+2992 tests en verde (7 salteados), build y lint limpios.
+
+**Lo que hay que saber para operar la fase:**
+
+- **Convocar manda correos de verdad.** Es un envío masivo a los adherentes con
+  casilla, y arranca un plazo estatutario de treinta días. No es una pantalla para
+  probar.
+- **Quién ve el wizard lo decide la clave `reempadronamiento_proceso_id`** de
+  `Configuration`, no una consulta por estado: de esa clave dependen el botón de la
+  portada y la suspensión de ASOCIATE, y si el proceso vivo y la clave divergen, el
+  tablero del panel **avisa de la divergencia** en vez de que cada pantalla adivine.
+- **Las pantallas públicas son cacheadas y se invalidan por tag.** Convocar y abrir
+  la 2ª instancia llaman `updateTag("config")`, que es lo que hace que la portada
+  cambie en el acto: aparece REEMPADRONATE, se suspenden las asociaciones y, al
+  abrir la 2ª instancia, la fecha citada pasa a ser la de la segunda. La vuelta la
+  cerró la fase 6C: la action que cierra el libro apaga el proceso y llama a lo
+  mismo, verificado en el simulacro —apenas se cerró, la portada volvió a ofrecer
+  ASOCIATE sin banner—. Sin eso, el sitio habría seguido ofreciendo un trámite
+  terminado hasta que el caché venciera solo.
+- **La cartelera necesita los feriados del año cargados.** El seed
+  (`scripts/seed-holidays.ts`) trae los nacionales; los "puentes" turísticos no
+  cuentan como feriado a propósito.
+
+
+### Fase 6C — El cierre del libro — **CERRADA** (26/08/2026)
+
+Es el final del camino: declarar las bajas de quien no se re-empadronó y cerrar el
+Libro N° 1 para abrir el N° 2. **Sin migración nueva** — las dos columnas de la foto
+(`status_at_close` / `category_at_close`) las había dejado la 6A, vacías, esperando
+justamente esto.
+
+**Qué quedó andando** (3 tareas planificadas — 15, 16 y 17 — y 14 commits):
+
+- **El cierre es de tres etapas y nunca un solo botón.** Etapa A, el checklist; etapa
+  B, las bajas; etapa C, la transacción. Cada una es una pantalla, y ninguna encadena
+  a la siguiente sin que el operador la mire.
+- **Etapa A — el checklist**, con el veredicto de dos niveles del molde de
+  `/admin/salud`: lo que **bloquea** en rojo (presentaciones esperando decisión,
+  convocados sin desenlace) y lo que sólo advierte, debajo. Las cuatro filas se
+  dibujan siempre, y una fila en cero se redacta **en positivo**: un checklist que
+  lista los ceros igual que los problemas no se puede leer de un vistazo. Quién
+  bloquea no se decide en la pantalla — llega decidido por el ya puro `closeBlockers`.
+  **La mora avisa y nunca actúa**: el estatuto manda aplicar también ese criterio en
+  la depuración, pero la cesantía por mora es otra causa y tiene su acta propia. Si
+  esta pantalla se frenara en ella, el operador terminaría declarando cesantías desde
+  acá sólo para poder cerrar — que es exactamente lo que el proyecto prometió no
+  automatizar.
+- **Etapa B — las bajas en lote**, con una tarjeta por persona y, debajo de cada una,
+  **qué se le notificó, por qué vía y en qué fecha**: ése es el anexo que el acta
+  necesita (REG-23), no un adorno de pantalla. Una tarjeta sin ninguna notificación
+  acreditada se marca en rojo. El lote sigue el molde del de cesantía por mora:
+  confirmación en dos pasos con **huella de la selección**, socio por socio en serie
+  por el camino de `withdrawWithDebits`, `discardUnusedMinute` si no pasó nadie, y
+  **cuatro cubetas de resultado** porque significan cuatro cosas distintas para el
+  operador (declarada; falló y sigue siendo socia; ya no es socia pero le siguen
+  cobrando; ya no es socia pero la presentación quedó sin estampar y el cartel la va
+  a saltear). La action revalida contra la fila viva que la segunda instancia haya
+  vencido **de verdad**: mientras el plazo corre, el vecino todavía puede presentarse.
+- **Una baja que nadie recibió no es oponible, y ahora tiene nombre y reintento.** Un
+  correo bloqueado por `EMAIL_ALLOWLIST` viajaba como un CONTADOR, y se imprimía
+  dentro de la caja verde de éxito. Tres cosas lo hacían grave: la allowlist está
+  definida en producción hasta el lanzamiento, así que ése es el camino ordinario y
+  no una anécdota; un bloqueo **no escribe fila `Notification`**, así que no queda
+  nada en la base; y la persona ya no es socia vigente, así que desaparece de la
+  lista de pendientes al recargar. En cuanto el operador refrescaba, el nombre de
+  alguien dado de baja sin aviso no existía en ningún lado. Ahora los bloqueados
+  viajan **con nombre**, junto a los fallidos, en la caja roja; hay una sección
+  permanente **"Bajas declaradas sin notificar"** que se arma de la base en cada
+  carga —no sólo en el instante posterior a la tanda—; y el reintento (superadmin,
+  auditado por persona) reusa `notifyWithdrawal`, de modo que un reintento exitoso
+  estampa la fecha fehaciente y la ventana de recurso por el **mismo camino único**
+  que el lote. La pantalla también es honesta sobre lo que no puede hacer: a quien no
+  tiene casilla utilizable no se lo notifica desde ahí, y un bloqueo repetido lo dice
+  — reintentar otra vez no cambia nada mientras esa lista exista.
+- **Por cartelera se notifica cuando se CUMPLEN los veinte días hábiles**, nunca
+  cuando se fija el cartel: estampar el día de la fijación le comería al vecino veinte
+  días hábiles de su defensa. El barrido que estampa `withdrawalNotifiedAt` y la
+  ventana de 30 días corre **dentro de la misma transacción** que las filas que lo
+  acreditan, y nunca pisa una ventana que ya está corriendo. Y un correo que no salió
+  no estampa nada.
+- **Etapa C — la transacción única, solo-DB.** `closeBook` corre el cierre entero en
+  una `$transaction` **sin una sola llamada de red**: revalida adentro las dos
+  precondiciones bloqueantes (la vista previa puede quedar vieja), congela la foto en
+  **todas** las membresías del libro que cierra —las bajas históricas incluidas—,
+  cierra el libro y abre el número siguiente **con la misma acta**, renumera con
+  `planMigration` (con `assertDensePlan` releyendo la densidad antes de escribir),
+  asienta un movimiento `book_migration` por migrante fechado por el acta de cierre,
+  cierra el proceso y limpia la clave pública de `Configuration`. Un mutex por clave
+  más las revalidaciones de adentro hacen que un segundo cierre concurrente falle con
+  un error legible. Los dos `where` bloqueantes viven en el módulo puro `close.ts`,
+  así que el checklist, la vista previa y la revalidación de adentro los **comparten
+  literalmente** (la lección de `coverageFloor`).
+- **La foto no entraba en el timeout de 5 s de Prisma, y se midió.** El plan afirmaba
+  que 278 updates fila por fila entraban holgados; contra la MariaDB local, los 279
+  viajes de ida y vuelta se comían el presupuesto entero (P2028 a ~5,05 s) y **todo
+  cierre abortaba** — limpiamente, sin escribir nada y descartando el acta recién
+  creada, que es lo que también mostró el simulacro. La foto pasó a ser **por
+  conjuntos**: un `updateMany` por combinación estado × categoría (las 18 del enum, y
+  no sólo las vistas en una lectura previa, para que cada fila quede estampada con el
+  valor que tiene en la base en ese instante), seguido de un conteo de completitud que
+  **falla cerrado** si alguna membresía quedó sin foto. La transacción lleva además un
+  techo explícito de 15 s de aire para el VPS compartido. Un cierre real por pantalla
+  commitea en menos de 2 s. La lección de la 4B otra vez: **medir antes de suponer**.
+- **El asiento del cierre es estricto.** `book_close` es el caso en que el asiento
+  **es** la señal ante la IGJ, así que va con `auditStrict`, post-commit, con ids y
+  conteos y sin nombres ni DNIs. Si falla no deshace un cierre ya commiteado: le llega
+  al operador como advertencia en la pantalla de resumen. La action además invalida el
+  tag `config` del sitio público — la vuelta que la 6B había dejado explícitamente
+  pendiente.
+- **Un tope tiene que contar lo que cuesta, no nombres.** El lote heredó del de
+  cesantía por mora un tope de 25 **socios**, y por eso el operador declaró las 90
+  bajas del simulacro en cuatro tandas. Los 25 venían de otra cuenta: en el lote de
+  mora cada baja puede disparar una cancelación de débito en Mercado Pago después del
+  commit (~1,2 s medido) y 25 × 1,2 s ≈ 30 s contra el timeout de 60 s del proxy. Pero
+  los convocados acá son **adherentes**, y esa categoría no puede tener débito
+  automático: las 90 bajas del ensayo hicieron **cero** llamadas a Mercado Pago. El
+  tope de nombres desapareció y los 25 quedaron como lo que siempre fueron, un
+  presupuesto de **llamadas de red** (`WITHDRAWAL_DEBIT_CALL_BUDGET`), con su
+  aritmética escrita al lado: antes de procesar se cuenta cuántos de los
+  seleccionados tienen un débito que no se sabe muerto —con `isNotCancelled`, el mismo
+  predicado que usa `withdrawWithDebits` para decidir qué cancela—, y si el lote se
+  pasa, la pantalla lo rechaza con los dos números y pide separar a los que tienen
+  débito. El mismo commit arregló la fricción del selector de acta **entre tandas**
+  que había medido el simulacro: la action devuelve el acta que usó, la pantalla la
+  resuelve por id y el selector la ofrece ya elegida.
+- **Y no se abre un libro vacío.** La pantalla de confirmación ya escondía el
+  formulario cuando no quedaba nadie que migrar, pero la transacción no revalidaba esa
+  condición: si el último vigente se caía entre la vista previa y el commit, se abría
+  un Libro 2 sin nadie. La guarda vive en el paso 5, sobre las mismas filas que ya se
+  leyeron para la foto, y no en una consulta aparte que sería una **segunda definición
+  de "socio vigente"** capaz de divergir de ésta.
+
+**Auditoría nueva**: `reregistration_withdrawal`, `reregistration_withdrawal_retry` y
+`book_close`, siempre con ids, códigos y conteos — nunca con nombres, DNI ni
+direcciones (Ley 25.326).
+
+**Una inserción no planificada, disparada por el simulacro**: el wizard público pedía
+el **barrio** con una lista de seis opciones cuyas otras cinco respuestas ninguna
+presentación válida podía dar — los adherentes viven en Ciudadela por requisito
+estatutario (Art. 5 inc. 3) y la cohorte convocada es toda adherente. El valor vive
+ahora en una sola constante del módulo puro de reglas y **lo escribe la action**:
+sacar el `<select>` solo no protegía nada, porque un POST armado a mano podía poner
+cualquier cadena de 60 caracteres en la columna del padrón. La pantalla lo **muestra
+como texto** —no como campo deshabilitado— porque el paso 4 hace jurar el domicilio
+completo y nadie debería jurar un dato que la pantalla nunca le mostró. La carga
+presencial conserva la escotilla: ahí el campo sigue editable, precargado con la
+constante, para la excepción que la Comisión decida aceptar.
+
+3136 tests en verde (7 salteados), build y lint limpios, medidos sobre el commit
+`ab8aea3` — el último de código de la rama, que incluye el arreglo del acta del
+cierre.
+
+### El criterio de aceptación, cumplido — el simulacro completo (26/08/2026)
+
+Se corrió **en local**, sobre la base con el padrón real (279 fichas, 160 vigentes),
+con backup previo verificado por SHA-256 y sin tocar producción. Los informes de las
+seis etapas, con todos los números, las consultas y los comandos, están en
+`.superpowers/sdd/simulacro/`. El CA pedía tres presentaciones: se ejercitaron 35, y
+la depuración y el cierre se hicieron sobre el padrón entero.
+
+- [x] **Convocatoria con acta.** Proceso abierto desde la pantalla con acta nueva
+      (Comisión Directiva N° 124), cohorte **congelada en 124 adherentes vigentes**:
+      24 con casilla utilizable —los 24 correos quedaron **bloqueados por
+      `EMAIL_ALLOWLIST`**, que es lo que corresponde en local— y **100 al cartel de
+      1ª instancia**. 24 + 100 = 124. La portada pasó a ofrecer REEMPADRONATE y a
+      suspender las asociaciones en el acto.
+- [x] **35 presentaciones** sobre la cohorte, elegidas al azar con semilla
+      reproducible. **Cuatro pasaron por el wizard público real** —tres del guion, una
+      de ellas **observada por la Comisión y subsanada por el enlace del correo**, más
+      una que el operador hizo por su cuenta desde otra sesión mientras corría el
+      ensayo— y las 31 restantes se cargaron por el módulo de dominio. Al subsanar, el
+      `submittedAt` **conservó el instante original**: la corrección no le mueve al
+      vecino la prueba del plazo.
+- [x] **34 validadas y 1 rechazada**, ninguna quedó sin decidir. Cotejo campo por
+      campo de una validada contra su ficha: los datos declarados llegaron, y el
+      **nombre, el DNI, la categoría, el estado y la fecha de ingreso no se tocaron**,
+      que es exactamente lo que el módulo promete.
+- [x] **Cesantía por mora: 7 socios**, con **acta propia** (CD N° 125) y su asiento
+      por persona. Son los 7 activos con cuatro o más cuotas impagas; ningún adherente
+      vigente calificaba, así que la depuración por mora y el re-empadronamiento no se
+      cruzan.
+- [x] **90 bajas por no re-empadronarse**, declaradas **desde la pantalla** en 4
+      tandas con **una sola acta** (CD N° 126): 90 declaradas, 0 fallos, 0 débitos que
+      cancelar. Las cuatro tandas fueron por el tope de 25 nombres que traía el lote,
+      que este mismo ensayo hizo desaparecer (ver la fase 6C). El padrón quedó en **63 vigentes = 29 activos + 34 adherentes
+      re-empadronados**.
+- [x] **Carteles y fechas fehacientes.** Los tres avisos (1ª instancia, 2ª instancia y
+      bajas) se fijaron el 26/08/2026 y quedaron fehacientes el **23/09/2026**; los
+      veinte días hábiles se cruzaron **a mano contra el almanaque, sin usar el código
+      del proyecto**, y coincidieron en los tres. La **ventana de recurso** quedó en
+      **23/10/2026** —30 días corridos desde la fecha fehaciente— estampada en las
+      **74** personas notificadas por cartel, y **no** en las 16 cuyo correo bloqueó la
+      allowlist: a quien no se enteró no se le puede arrancar el plazo de defensa. Esas
+      16 aparecieron **con nombre** en la pantalla de bajas sin notificar, y el
+      reintento se apretó de verdad (volvió a bloquear, no estampó nada, y lo dijo).
+- [x] **Cierre del libro, ejecutado por el operador** desde la pantalla. Libro 1
+      `closed`, Libro 2 `open`, **63 membresías renumeradas 1..63 sin huecos ni
+      repetidos**. El orden se verificó **posición por posición** contra una
+      reimplementación de la regla en SQL puro (día civil argentino de la fecha de
+      ingreso ASC → número viejo ASC → id ASC): **0 discrepancias sobre 63**. Un alta
+      con número viejo 307 pero ingreso del 20/08 quedó **delante** de la del 306 con
+      ingreso del 21/08: la antigüedad manda sobre el número viejo, como se acordó.
+- [x] **La foto del Libro 1: las 279 membresías** con estado y categoría congelados,
+      **0 divergencias** contra la ficha viva y ninguna fila alterada — la numeración
+      vieja quedó intacta, con sus 28 huecos. El libro cerrado se consulta y se
+      exporta: `libro-1.xlsx` con 279 socios y `libro-2.xlsx` con 63, verificados
+      abriendo el ZIP y contando las filas de la hoja, no por el tamaño del archivo.
+- [x] **La plata no se movió un byte.** Las ocho tablas de dinero (`fees`, `payments`,
+      `receipts`, `mp_subscriptions`, `other_incomes`, `fee_values`,
+      `mp_unmatched_payments`, `receipt_sequences`) se compararon por **contenido** —el
+      dump de la línea de base cargado en una base auxiliar y `CHECKSUM TABLE …
+      EXTENDED` de los dos lados—: idénticas. Las fechas de ingreso de las 279 fichas,
+      idénticas. Lo único que se escribió fuera de las tablas del proceso fueron los
+      160 movimientos esperados: 7 cesantías + 90 bajas + 63 migraciones.
+- [x] **La restauración revirtió el simulacro entero**: las **33 tablas** de la base
+      quedaron byte-idénticas a la línea de base. El procedimiento exacto quedó escrito
+      en el informe de la etapa 6, con su traducción a producción: **PM2 abajo antes de
+      restaurar** (si la app sigue escribiendo, el resultado no es ni el dump ni el
+      estado previo), dump del estado actual primero, verificación del SHA del dump a
+      restaurar, y `pm2 restart` después — el `touch next.config.ts` es un truco de
+      dev.
+
+**El hallazgo del simulacro, y no es menor: el cierre quedó asentado con el acta de
+las bajas.** El Libro 1 se cerró y el Libro 2 se abrió bajo el acta **CD N° 126** —la
+de las 90 bajas, creada minutos antes— y no bajo un acta propia; no existe ninguna
+acta 127 en la base. No fue un error de tipeo del operador: la pantalla de
+confirmación monta el selector de acta sin preselección explícita, el selector abre en
+"acta existente" con la primera de la lista ya elegida, y la lista viene ordenada por
+fecha descendente — o sea, la más reciente. El panel de confirmación tampoco nombra el
+acta elegida, así que no hay dónde darse cuenta. **Ninguno de los datos se rompió**:
+migración, numeración, orden, foto, movimientos y plata están todos correctos, y el
+acta 126 existe, es del mismo día y del mismo proceso, de modo que el cierre es
+trazable. Pero el asiento estricto que la asociación presenta ante la IGJ dice un
+número de acta que no es el que el operador cree, y en un libro de registro societario
+el número de acta es *el* dato. **El arreglo quedó hecho en esta misma rama**
+(commit `ab8aea3`): la pantalla de cierre abre en "Acta nueva" con el número
+siguiente sugerido, y la confirmación dice con todas las letras con qué acta se va
+a cerrar — el resumen y el selector salen de la misma función pura, así que no
+pueden nombrar actas distintas.
+
+**Lo que queda del Módulo 6**: la revisión final de la rama, el merge a `main` y el
+despliegue. Sigue en pie, además, el pendiente operativo que dejó la 6A (correr
+`scripts/fix-withdrawal-reasons.ts` en el VPS).
+
 
 ## Lanzamiento (cuando IGJ oficialice)
 

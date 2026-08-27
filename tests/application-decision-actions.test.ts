@@ -17,6 +17,9 @@ const prismaMock = vi.hoisted(() => ({
   minute: { findUnique: vi.fn(), create: vi.fn(), delete: vi.fn() },
   movement: { count: vi.fn(async () => 0) },
   book: { count: vi.fn(async () => 0) },
+  // Los otros dos referentes de un acta que mira `discardUnusedMinute`.
+  reregistrationProcess: { count: vi.fn(async () => 0) },
+  feeValue: { count: vi.fn(async () => 0) },
   mpSubscription: { updateMany: vi.fn(), findUnique: vi.fn() },
   $transaction: vi.fn(),
 }));

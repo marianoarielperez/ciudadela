@@ -221,6 +221,12 @@ export async function withdrawAction(_p: State, formData: FormData): Promise<Sta
           memberId, minuteId, actorId,
           reason: data.reason as WithdrawalReason,
           detail: data.detail as string | undefined,
+          // M6A Task 5: la baja cancela las solicitudes pendientes del socio,
+          // pero NO la que este mismo acto está aplicando: `markAccepted`
+          // corre más abajo, después del commit, y busca `status: "pending"`.
+          // Sin esta excepción la solicitud terminaba "cancelada" en vez de
+          // "aceptada" y perdía el vínculo con el acta.
+          ...(data.requestId ? { sparedRequestId: data.requestId as number } : {}),
         });
         // La baja YA commiteó: lo que sigue es piggyback sobre un acto que ya
         // pasó, y por eso NADA de esto puede tumbar el redirect de éxito. Las

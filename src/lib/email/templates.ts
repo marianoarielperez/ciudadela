@@ -1,7 +1,7 @@
 // es-AR transactional email copy. Keep text and html in sync: un cliente que no
 // renderiza HTML tiene que entender el mensaje completo, enlace incluido.
 import type { MemberRequestType, PaymentType } from "@/generated/prisma/client";
-import { formatARS, formatDateTimeAR } from "@/lib/format";
+import { formatARS, formatDateAR, formatDateTimeAR } from "@/lib/format";
 import { PAYMENT_LINK_TTL_HOURS } from "@/lib/mp/references";
 import type { MemberEmailTokenPurpose } from "@/lib/tokens";
 // Los dos son módulos puros (sin Prisma): importarlos acá no arrastra el cliente
@@ -583,5 +583,364 @@ ${noteHtml}
   return {
     message: { subject: `Tu solicitud de ${kind} fue ${verdict} — Vecinal Ciudadela`, text, html },
     summary: `solicitud de ${kind} ${verdict}`,
+  };
+}
+
+/** Convocatoria al re-empadronamiento del Art. 9° bis (M6, 1ª instancia).
+ *
+ *  Sale de una sola vez a TODA la cohorte de adherentes vigentes —hoy 124— y es
+ *  el correo que abre un plazo estatutario de treinta días del que cuelga la
+ *  condición de socio. Por eso dice tres cosas y en este orden: qué resolvió la
+ *  Comisión, hasta cuándo hay tiempo (con la fecha escrita, no "en 30 días") y
+ *  por dónde se hace. La alternativa presencial va SIEMPRE: el Art. 9° bis a)
+ *  admite las dos vías y buena parte del padrón no usa la web.
+ *
+ *  No saluda por nombre y la plantilla ni siquiera lo recibe: el mensaje es el
+ *  mismo para los ciento y pico, se arma UNA vez y se manda a todos. Nada de lo
+ *  que dice es un dato personal, así que un correo que llegue a la casilla
+ *  equivocada no revela nada de nadie. */
+export function reregistrationCallEmail(opts: { url: string; firstEndsAt: Date }): Rendered {
+  const until = formatDateAR(opts.firstEndsAt);
+  const title = "Re-empadronamiento de socios adherentes";
+  return {
+    subject: `${title} — tenés tiempo hasta el ${until} — Vecinal Ciudadela`,
+    text: `La Comisión Directiva de la ${ORG} convocó el re-empadronamiento de los socios adherentes (Art. 9° bis del estatuto).
+
+Figurás en el padrón como socio adherente, así que para conservar tu condición de socio tenés que ratificar tus datos antes del ${until} inclusive.
+
+Podés hacerlo de dos maneras:
+
+1. Por internet, en este enlace:
+
+${opts.url}
+
+2. En persona, acercándote a la sede vecinal con tu DNI.
+
+Te vamos a pedir tus datos actualizados y una foto o copia de tu DNI. Es un trámite corto y no tiene ningún costo.
+
+Si ya te re-empadronaste, ignorá este correo.${SIGNATURE}`,
+    html: layout(title, `<p>La Comisión Directiva de la ${esc(ORG)} convocó el <strong>re-empadronamiento de los socios adherentes</strong> (Art. 9° bis del estatuto).</p>
+<p>Figurás en el padrón como socio adherente, así que para conservar tu condición de socio tenés que ratificar tus datos <strong>antes del ${esc(until)}</strong> inclusive.</p>
+${button(opts.url, "Re-empadronarme")}
+<p>También podés hacerlo <strong>en persona</strong>, acercándote a la sede vecinal con tu DNI.</p>
+<p>Te vamos a pedir tus datos actualizados y una foto o copia de tu DNI. Es un trámite corto y no tiene ningún costo.</p>
+<p>Si ya te re-empadronaste, ignorá este correo.</p>`),
+  };
+}
+
+/** Segunda instancia del Art. 9° bis (M6): el aviso con APERCIBIMIENTO.
+ *
+ *  Va a todos los que NO tienen presentación aprobada, que son cuatro casos
+ *  distintos: el que no presentó nada, el que presentó y quedó OBSERVADO, el que
+ *  presentó y fue RECHAZADO y el que retiró su presentación. Por eso el correo
+ *  abre diciendo que no tenemos el re-empadronamiento APROBADO y no que "no lo
+ *  registramos": a dos de esos cuatro sí se les registró la presentación —y al
+ *  rechazado se le registró y se le rechazó—, así que afirmar lo contrario sería
+ *  un dato falso en la última notificación antes de una baja estatutaria, y le
+ *  regalaría al socio un argumento para el recurso del inc. d).
+ *
+ *  Es la última notificación antes de que la Comisión resuelva la baja. Tiene que decir con
+ *  todas las letras qué está en juego —el estatuto exige el apercibimiento para
+ *  que la baja sea oponible— y al mismo tiempo no sonar a intimación de estudio
+ *  jurídico: del otro lado hay un vecino que probablemente no abrió el correo
+ *  anterior. De ahí el orden: primero que todavía está a tiempo y cómo, y recién
+ *  después la consecuencia de no hacerlo. */
+export function reregistrationSecondEmail(opts: { url: string; secondEndsAt: Date }): Rendered {
+  const until = formatDateAR(opts.secondEndsAt);
+  const title = "Último plazo para re-empadronarte";
+  return {
+    subject: `${title} — hasta el ${until} — Vecinal Ciudadela`,
+    text: `Todavía no tenemos aprobado tu re-empadronamiento, así que la ${ORG} te concede un último plazo: tenés tiempo hasta el ${until} inclusive.
+
+Podés hacerlo por internet, en este enlace:
+
+${opts.url}
+
+O en persona, acercándote a la sede vecinal con tu DNI.
+
+Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, bajo apercibimiento de baja (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.
+
+Si ya te avisamos que tu re-empadronamiento quedó aprobado, ignorá este correo. Si te pedimos que corrijas algo, entrá por el enlace y completalo antes de esa fecha: mientras no esté aprobado, el plazo sigue corriendo.${SIGNATURE}`,
+    html: layout(title, `<p>Todavía no tenemos aprobado tu re-empadronamiento, así que la ${esc(ORG)} te concede un último plazo: tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>
+${button(opts.url, "Re-empadronarme")}
+<p>También podés hacerlo <strong>en persona</strong>, acercándote a la sede vecinal con tu DNI.</p>
+<p>Te lo pedimos ahora porque, vencido ese plazo y sin respuesta de tu parte, la Comisión Directiva declarará tu baja como socio, <strong>bajo apercibimiento de baja</strong> (Art. 9° bis del estatuto). Si eso ocurriera, se te va a notificar y vas a tener treinta días para presentar un recurso.</p>
+<p>Si ya te avisamos que tu re-empadronamiento quedó aprobado, ignorá este correo. Si te pedimos que corrijas algo, entrá por el enlace y completalo antes de esa fecha: mientras no esté aprobado, el plazo sigue corriendo.</p>`),
+  };
+}
+
+/** LA CONSTANCIA del re-empadronamiento (M6 §5.3). Hace dos cosas a la vez, y
+ *  las dos importan:
+ *
+ *  1. Es el ACUSE con fecha y hora. `submittedAt` es lo único que acredita que
+ *     el socio se presentó dentro de los treinta días del Art. 9° bis, y de eso
+ *     cuelga su condición de socio: el correo se lo deja por escrito en su
+ *     buzón, que es lo que puede mostrar si alguna vez se discute el plazo. Por
+ *     eso lleva la hora y no sólo el día.
+ *  2. Lleva el ENLACE, que es la única forma de volver a ver la presentación.
+ *     El wizard entrega su llave contra un DNI —que no es autenticación—, así
+ *     que el acceso con datos vive acá: el buzón es lo que demuestra que la
+ *     presentación es suya.
+ *
+ *  No saluda por nombre a propósito: el enlace ya es un secreto y el nombre no
+ *  agrega nada que el destinatario no sepa, pero sí se lo regalaría a quien
+ *  reciba el correo por un dedazo en la dirección (Ley 25.326, docs/08). Mismo
+ *  criterio que `verificationEmail`. */
+export function presentationReceivedEmail(opts: { url: string; submittedAt: Date }): Rendered {
+  const when = formatDateTimeAR(opts.submittedAt);
+  const title = "Recibimos tu re-empadronamiento";
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `La ${ORG} recibió tu re-empadronamiento el ${when}.
+
+Guardá este correo: es la constancia de que te presentaste dentro del plazo.
+
+La Comisión Directiva va a revisar lo que cargaste. Si falta o hay que corregir algo, te vamos a escribir a esta misma dirección.
+
+Con este enlace podés volver a ver tu re-empadronamiento:
+
+${opts.url}
+
+Es un enlace personal: no se lo pases a nadie.${SIGNATURE}`,
+    html: layout(title, `<p>La ${esc(ORG)} recibió tu re-empadronamiento el <strong>${esc(when)}</strong>.</p>
+<p>Guardá este correo: es la constancia de que te presentaste dentro del plazo.</p>
+<p>La Comisión Directiva va a revisar lo que cargaste. Si falta o hay que corregir algo, te vamos a escribir a esta misma dirección.</p>
+${button(opts.url, "Ver mi re-empadronamiento")}
+<p>Es un enlace personal: no se lo pases a nadie.</p>`),
+  };
+}
+
+/** La OBSERVACIÓN: la Comisión revisó la presentación y necesita una
+ *  corrección (M6 §5.4, decisión 13 — las observaciones van siempre por email).
+ *
+ *  ES TAMBIÉN EL CORREO DEL REENVÍO DEL ENLACE cuando la presentación está
+ *  observada, y de ahí que sus dos parámetros de contenido sean opcionales.
+ *  Antes ese reenvío mandaba la CONSTANCIA, que a un observado le dice dos
+ *  cosas falsas —"la Comisión va a revisar lo que cargaste" y "si hay que
+ *  corregir algo te vamos a escribir"— y, peor, lo tranquiliza: lo manda a
+ *  esperar justo cuando lo que tiene que hacer es actuar antes de una fecha, y
+ *  de esa fecha cuelga su condición de socio.
+ *
+ *  `observation` — el pedido TEXTUAL del operador — viaja tal cual cuando está:
+ *  es lo único que le dice al vecino qué arreglar, y resumirlo o reformatearlo
+ *  sería cambiarle el pedido. Va escapado en el HTML como todo lo que entra
+ *  desde la base.
+ *
+ *  Y se OMITE a propósito en el reenvío. La nota ya viajó en el correo original
+ *  de la observación; repetirla acá la pondría en dos correos que pueden
+ *  divergir —el operador puede haberla editado en el medio— y el vecino no
+ *  tendría cómo saber cuál manda. Sin ella el correo dice lo que sí es cierto
+ *  siempre: que hay algo para corregir, que el detalle está en el correo de la
+ *  observación, por dónde entrar y hasta cuándo.
+ *
+ *  `deadline` es el último día del plazo que corre (`currentDeadline`), y es la
+ *  mitad accionable del mensaje: "cuanto antes" no es una fecha, y el vecino no
+ *  puede reconstruir un plazo estatutario por su cuenta. Es opcional porque
+ *  puede no haber plazo corriendo (proceso fuera de sus dos instancias): en ese
+ *  caso el correo no inventa uno.
+ *
+ *  Dice que el plazo SIGUE CORRIENDO porque es verdad y porque callarlo sería
+ *  la diferencia entre subsanar a tiempo y una baja: mientras la presentación
+ *  no esté validada, el Art. 9° bis cuenta igual. Y el orden es el mismo que el
+ *  del aviso de la 2ª instancia: primero qué hacer y para cuándo, después la
+ *  consecuencia — del otro lado hay un vecino, no una contraparte. */
+export function presentationObservedEmail(opts: {
+  url: string;
+  observation?: string | null;
+  deadline?: Date | null;
+}): Rendered {
+  const title = "Tenemos que pedirte una corrección";
+  const until = opts.deadline ? formatDateAR(opts.deadline) : null;
+  // El plazo primero, y con fecha si la hay: es lo único de este correo que el
+  // vecino no puede averiguar solo.
+  const deadlineText = until
+    ? `Tenés tiempo hasta el ${until} inclusive: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.`
+    : "Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.";
+  const deadlineHtml = until
+    ? `<p>Tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`
+    : `<p>Hacelo cuanto antes: mientras tu re-empadronamiento no esté aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`;
+  const opening = opts.observation
+    ? `Revisamos tu re-empadronamiento en la ${ORG} y necesitamos que corrijas lo siguiente:
+
+${opts.observation}`
+    : `Revisamos tu re-empadronamiento en la ${ORG} y te pedimos que corrijas algo. El detalle de qué es te lo mandamos por correo cuando lo revisamos.`;
+  const openingHtml = opts.observation
+    ? `<p>Revisamos tu re-empadronamiento en la ${esc(ORG)} y necesitamos que corrijas lo siguiente:</p>
+<p style="border-left:3px solid #0079BC;padding-left:12px;margin:16px 0">${esc(opts.observation)}</p>`
+    : `<p>Revisamos tu re-empadronamiento en la ${esc(ORG)} y te pedimos que corrijas algo. El detalle de qué es te lo mandamos por correo cuando lo revisamos.</p>`;
+  return {
+    subject: `${title} en tu re-empadronamiento — Vecinal Ciudadela`,
+    text: `${opening}
+
+Entrá por este enlace, corregilo y volvé a enviarlo:
+
+${opts.url}
+
+Vas a encontrar tus datos como los cargaste: sólo tenés que cambiar lo que te pedimos.
+
+${deadlineText}${SIGNATURE}`,
+    html: layout(title, `${openingHtml}
+${button(opts.url, "Corregir mi re-empadronamiento")}
+<p>Vas a encontrar tus datos como los cargaste: sólo tenés que cambiar lo que te pedimos.</p>
+${deadlineHtml}`),
+  };
+}
+
+/** EL RECHAZO: la Comisión revisó la presentación y NO la aceptó (M6 §5.4).
+ *
+ *  Hasta que existió esta plantilla el rechazo no avisaba nada, y esa es
+ *  exactamente la forma del daño: el vecino se quedaba tranquilo creyendo que
+ *  su trámite estaba hecho mientras el plazo del Art. 9° bis le corría en
+ *  contra, y se enteraba con la notificación de la BAJA — cuando ya no había
+ *  nada que corregir. Un rechazo silencioso es peor que una observación
+ *  silenciosa: de la observación el vecino puede volver por su cuenta, del
+ *  rechazo no.
+ *
+ *  NO LLEVA ENLACE, y no es un olvido. `rejected` no está en
+ *  `EDITABLE_STATUSES` (`presentation-rules.ts`), así que la llave de retome
+ *  rebota con "Tu re-empadronamiento ya fue resuelto por la Comisión": un botón
+ *  que muere en la primera pantalla manda al vecino a pelearse con el sitio en
+ *  vez de a la sede, que es lo único que le resuelve el trámite. Por eso la
+ *  única salida que ofrece el correo es la presencial —donde el operador
+ *  revierte el rechazo y lo carga con él, o le vuelve a habilitar la web— y por
+ *  eso la plantilla ni siquiera RECIBE una url: no hay forma de meterle una por
+ *  descuido desde el llamador.
+ *
+ *  `note` es el motivo TEXTUAL de la Comisión y viaja tal cual, escapado en el
+ *  HTML como todo lo que entra desde la base. Es opcional porque en la pantalla
+ *  el motivo lo es: sin él el correo dice lo que igual es cierto —que no se
+ *  aceptó y que en la sede le explican por qué— en vez de imprimir un hueco.
+ *
+ *  El ORDEN es el mismo que el del aviso de la 2ª instancia y el de la
+ *  observación: primero qué hacer y para cuándo, y recién al final la
+ *  consecuencia. Pero la consecuencia VA: la regla que este módulo aprendió por
+ *  las malas es que un correo que tranquiliza a quien tiene que actuar es peor
+ *  que no mandarlo. Tampoco nombra al socio, por lo mismo que la constancia: un
+ *  dedazo en la dirección declarada no puede regalarle a un tercero el nombre
+ *  de quien se re-empadronó ni el hecho de que le rechazaron el trámite
+ *  (Ley 25.326, docs/08). */
+export function presentationRejectedEmail(opts: {
+  note?: string | null;
+  deadline?: Date | null;
+}): Rendered {
+  const title = "Tu re-empadronamiento no fue aceptado";
+  const until = opts.deadline ? formatDateAR(opts.deadline) : null;
+  const opening = opts.note
+    ? `La Comisión Directiva de la ${ORG} revisó tu re-empadronamiento y no lo aceptó.
+
+Motivo:
+
+${opts.note}`
+    : `La Comisión Directiva de la ${ORG} revisó tu re-empadronamiento y no lo aceptó. Si querés saber por qué, preguntanos en la sede vecinal.`;
+  const openingHtml = opts.note
+    ? `<p>La Comisión Directiva de la ${esc(ORG)} revisó tu re-empadronamiento y <strong>no lo aceptó</strong>.</p>
+<p>Motivo:</p>
+<p style="border-left:3px solid #0079BC;padding-left:12px;margin:16px 0">${esc(opts.note)}</p>`
+    : `<p>La Comisión Directiva de la ${esc(ORG)} revisó tu re-empadronamiento y <strong>no lo aceptó</strong>. Si querés saber por qué, preguntanos en la sede vecinal.</p>`;
+  // El plazo, con fecha si la hay: es lo único de este correo que el vecino no
+  // puede averiguar solo.
+  const deadlineText = until
+    ? `Tenés tiempo hasta el ${until} inclusive.`
+    : "Hacelo cuanto antes: mientras no tengamos tu re-empadronamiento aprobado, el plazo del Art. 9° bis sigue corriendo.";
+  const deadlineHtml = until
+    ? `<p>Tenés tiempo <strong>hasta el ${esc(until)}</strong> inclusive.</p>`
+    : `<p>Hacelo cuanto antes: mientras no tengamos tu re-empadronamiento aprobado, el plazo del Art. 9° bis sigue corriendo.</p>`;
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `${opening}
+
+Todavía estás a tiempo de volver a presentarte. Acercate a la sede vecinal con tu DNI y lo hacemos ahí mismo con vos; si preferís volver a hacerlo por internet, pedinos en la sede que te habilitemos el trámite de nuevo.
+
+${deadlineText}
+
+Si el plazo vence sin que vuelvas a presentarte, vas a figurar como no re-empadronado y la Comisión Directiva puede declarar tu baja como socio (Art. 9° bis del estatuto).${SIGNATURE}`,
+    html: layout(title, `${openingHtml}
+<p><strong>Todavía estás a tiempo de volver a presentarte.</strong> Acercate a la sede vecinal con tu DNI y lo hacemos ahí mismo con vos; si preferís volver a hacerlo por internet, pedinos en la sede que te habilitemos el trámite de nuevo.</p>
+${deadlineHtml}
+<p>Si el plazo vence sin que vuelvas a presentarte, vas a figurar como no re-empadronado y la Comisión Directiva puede declarar tu baja como socio (Art. 9° bis del estatuto).</p>`),
+  };
+}
+
+/** LA BAJA DECLARADA (M6 §9 etapa B, Art. 9° bis inc. c).
+ *
+ *  Es la notificación más grave que manda el sistema: le dice a un vecino que
+ *  dejó de ser socio de la asociación. Y es además el punto de partida de un
+ *  plazo —desde que queda fehaciente le corren treinta días corridos para
+ *  recurrir ante la primera asamblea ordinaria (Art. 9° bis d)—, así que el
+ *  correo TIENE que nombrar la fecha: es lo único de este mensaje que el vecino
+ *  no puede averiguar solo, y de ella depende su derecho de defensa.
+ *
+ *  El orden está invertido respecto de los otros correos del módulo, y a
+ *  propósito. En la convocatoria, la observación y el rechazo primero va qué
+ *  hacer y recién al final la consecuencia, porque el vecino todavía está a
+ *  tiempo. Acá la consecuencia YA OCURRIÓ: empezar por "podés recurrir" sobre
+ *  alguien que no sabe que lo dieron de baja sería incomprensible. Primero el
+ *  hecho y su fundamento, después qué puede hacer al respecto y hasta cuándo.
+ *
+ *  No saluda por nombre y la plantilla ni siquiera lo recibe, igual que la
+ *  convocatoria: un dedazo en la dirección declarada no puede regalarle a un
+ *  tercero el nombre de quien perdió la condición de socio (Ley 25.326,
+ *  docs/08). Lo que sí dice, porque es lo que hace oponible la resolución, es
+ *  cuál es la causal y de qué artículo sale.
+ *
+ *  Tampoco lleva enlace: no hay ninguna pantalla donde interponer un recurso
+ *  —el Art. 9° bis d) lo dirige a la ASAMBLEA, no a la web— y un botón que
+ *  muriera en la primera pantalla mandaría al vecino a pelearse con el sitio en
+ *  vez de a la sede. Misma razón por la que `presentationRejectedEmail` ni
+ *  recibe una url. */
+/** Qué avisos se le cursaron EFECTIVAMENTE antes de la baja. No es decorado:
+ *  ver el comentario de la frase de abajo. */
+export type WithdrawalNoticesServed = {
+  /** La convocatoria al re-empadronamiento (Art. 9° bis). */
+  first: boolean;
+  /** El último plazo, que es el que lleva el apercibimiento de baja. */
+  second: boolean;
+};
+
+/** La primera frase del cuerpo: qué se le avisó antes de resolver la baja.
+ *
+ *  Se CONDICIONA a lo que efectivamente se le cursó, y no es un escrúpulo de
+ *  redacción. La pantalla del lote marca en rojo a quien no tiene ninguna
+ *  notificación cursada pero NO impide declararle la baja —esa decisión es de
+ *  la Comisión, no del software—, así que un texto fijo que dijera siempre "te
+ *  avisamos dos veces" haría que el documento con el que la asociación sostiene
+ *  la resolución abriera con una afirmación falsa y verificable contra su
+ *  propia base. Y es lo primero que leería un recurso ante la asamblea. */
+function noticedSentence(n: WithdrawalNoticesServed): string {
+  if (n.first && n.second) {
+    return "Te habíamos avisado dos veces —la convocatoria y el último plazo— y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).";
+  }
+  if (n.first) {
+    return "Te habíamos notificado la convocatoria al re-empadronamiento y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).";
+  }
+  if (n.second) {
+    return "Te habíamos notificado el último plazo para re-empadronarte y el trámite no llegó a quedar aprobado, así que la Comisión resolvió la baja en los términos del Art. 9° bis inciso c).";
+  }
+  // Ningún aviso acreditado: se dice el hecho y su fundamento, y nada más.
+  return "El trámite no llegó a quedar aprobado dentro del plazo del Art. 9° bis, así que la Comisión resolvió la baja en los términos de su inciso c).";
+}
+
+export function withdrawalDeclaredEmail(opts: {
+  appealUntil: Date;
+  notified: WithdrawalNoticesServed;
+}): Rendered {
+  const until = formatDateAR(opts.appealUntil);
+  const noticed = noticedSentence(opts.notified);
+  // Sin nombrar a la vecinal: el asunto ya lo lleva de sufijo, y "Tu baja
+  // como socio de la Vecinal Ciudadela — Vecinal Ciudadela" es lo que salía.
+  const title = "Tu baja como socio";
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `La Comisión Directiva de la ${ORG} resolvió declarar tu baja como socio adherente por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.
+
+${noticed}
+
+Si no estás de acuerdo, podés recurrir esta resolución ante la primera asamblea ordinaria (Art. 9° bis inciso d). Tenés tiempo para presentar el recurso hasta el ${until} inclusive: acercate a la sede vecinal y dejalo por escrito.
+
+Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.${SIGNATURE}`,
+    html: layout(title, `<p>La Comisión Directiva de la ${esc(ORG)} resolvió <strong>declarar tu baja como socio adherente</strong> por no haberte re-empadronado en el plazo del Art. 9° bis del estatuto.</p>
+<p>${esc(noticed)}</p>
+<p>Si no estás de acuerdo, <strong>podés recurrir</strong> esta resolución ante la primera asamblea ordinaria (Art. 9° bis inciso d). Tenés tiempo para presentar el recurso <strong>hasta el ${esc(until)}</strong> inclusive: acercate a la sede vecinal y dejalo por escrito.</p>
+<p>Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.</p>`),
   };
 }

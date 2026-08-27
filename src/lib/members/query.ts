@@ -3,16 +3,37 @@ import type {
   Member, MemberCategory, MemberStatus, Prisma, PrismaClient, Street,
 } from "@/generated/prisma/client";
 
+// OJO: `vigentes` NO es un valor de `MemberStatus` y no hay que "corregirlo"
+// agregándolo al enum. El enum del Libro tiene tres estados (`active`,
+// `suspended`, `withdrawn`) y "vigente" del padrón son DOS de ellos: el
+// suspendido sigue siendo socio (REG-17). Es un valor del FILTRO, no del
+// dominio, y existe porque el chip "Vigentes 160" del listado tiene que llevar
+// exactamente a esas 160 filas: sin él, el único destino posible era el padrón
+// sin filtrar (279 filas) y el número prometido no coincidía con la lista.
+export type PadronStatusFilter = MemberStatus | "vigentes";
+
+// Los dos estados que componen "vigente". Un solo lugar: lo comparten el filtro
+// de acá y el resumen de `fetchPadronCounts` más abajo.
+const VIGENTE_STATUSES = ["active", "suspended"] as const satisfies readonly MemberStatus[];
+
 export type PadronFilters = {
   q?: string;
   category?: MemberCategory;
-  status?: MemberStatus;
+  status?: PadronStatusFilter;
   email?: "con" | "sin" | "verificado";
   dni?: "con" | "sin";
 };
 
 const CATEGORIES = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"];
-const STATUSES = ["active", "suspended", "withdrawn"];
+const STATUS_FILTERS = [
+  ...VIGENTE_STATUSES, "withdrawn", "vigentes",
+] as const satisfies readonly PadronStatusFilter[];
+
+// Predicado en vez de `includes` + `as`: el `as` taparía el día en que alguien
+// agregue un estado al enum y se olvide de esta lista.
+function isStatusFilter(v: string): v is PadronStatusFilter {
+  return STATUS_FILTERS.some((s) => s === v);
+}
 
 export function parsePadronFilters(sp: Record<string, string | string[] | undefined>): PadronFilters {
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -22,7 +43,7 @@ export function parsePadronFilters(sp: Record<string, string | string[] | undefi
   const category = one(sp.category);
   if (category && CATEGORIES.includes(category)) f.category = category as MemberCategory;
   const status = one(sp.status);
-  if (status && STATUSES.includes(status)) f.status = status as MemberStatus;
+  if (status && isStatusFilter(status)) f.status = status;
   const email = one(sp.email);
   if (email === "con" || email === "sin" || email === "verificado") f.email = email;
   const dni = one(sp.dni);
@@ -33,7 +54,11 @@ export function parsePadronFilters(sp: Record<string, string | string[] | undefi
 export function padronWhere(f: PadronFilters): Prisma.MembershipWhereInput {
   const member: Prisma.MemberWhereInput = {};
   if (f.category) member.category = f.category;
-  if (f.status) member.status = f.status;
+  // "vigentes" se resuelve acá y no en la pantalla: el listado y la exportación
+  // a Excel comparten esta función, así que el archivo sale con el mismo
+  // recorte que el operador está mirando.
+  if (f.status === "vigentes") member.status = { in: [...VIGENTE_STATUSES] };
+  else if (f.status) member.status = f.status;
   if (f.email === "con") member.email = { not: null };
   if (f.email === "sin") member.emailStatus = "none";
   if (f.email === "verificado") member.emailStatus = "verified";
@@ -138,4 +163,54 @@ export async function fetchPadronPage(
     pageCount,
     pageSize: PADRON_PAGE_SIZE,
   };
+}
+
+// ── Resumen del libro abierto (chips del listado) ─────────────────────────────
+//
+// Los cinco números que el listado muestra arriba de los filtros. NO se
+// recalculan con los filtros puestos: son el resumen del LIBRO, no del
+// resultado. Si bajaran al filtrar, el operador perdería la única referencia
+// contra la que compara lo que está mirando ("38 de 160", no "38 de 38").
+//
+// Una sola pasada, y el `groupBy` cruza estado × categoría a propósito: los
+// chips se leen como un DESGLOSE —"160 vigentes = 36 activos + 124 adherentes",
+// que es como la asociación cuenta su padrón— y eso obliga a contar activos y
+// adherentes DENTRO de los vigentes. Con dos conteos sueltos (uno por estado,
+// otro por categoría) "Activos" se llevaría también a las bajas de categoría
+// activa y la suma dejaría de cerrar contra "Vigentes".
+export type PadronDb = Pick<PrismaClient, "member">;
+
+export type PadronCounts = {
+  vigentes: number; activos: number; adherentes: number;
+  suspendidos: number; bajas: number;
+};
+
+export async function fetchPadronCounts(db: PadronDb): Promise<PadronCounts> {
+  const groups = await db.member.groupBy({
+    by: ["status", "category"],
+    // El libro CERRADO tiene sus propios socios (REG-29: la misma persona con
+    // otro número). Sin este `where` el padrón vigente los contaría a todos.
+    where: { memberships: { some: { book: { status: "open" } } } },
+    _count: true,
+  });
+
+  const counts: PadronCounts = {
+    vigentes: 0, activos: 0, adherentes: 0, suspendidos: 0, bajas: 0,
+  };
+  for (const g of groups) {
+    const n = typeof g._count === "number" ? g._count : 0;
+    // "Vigente" es del padrón, no del enum: el suspendido sigue siendo socio
+    // (REG-17), así que suma acá y además en su propio chip. La lista de
+    // estados es la MISMA que usa el filtro `status=vigentes` (VIGENTE_STATUSES,
+    // arriba): si divergieran, el chip volvería a prometer un número que su
+    // propia lista no muestra.
+    if (VIGENTE_STATUSES.some((st) => st === g.status)) {
+      counts.vigentes += n;
+      if (g.category === "active") counts.activos += n;
+      if (g.category === "adherent") counts.adherentes += n;
+    }
+    if (g.status === "suspended") counts.suspendidos += n;
+    if (g.status === "withdrawn") counts.bajas += n;
+  }
+  return counts;
 }

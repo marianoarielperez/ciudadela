@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BookMarked } from "lucide-react";
 import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
@@ -23,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormMessage } from "@/components/admin/form-message";
 import { AutoDebitForm } from "./auto-debit-form";
+import { appealWindowOpen } from "@/lib/reregistration/withdrawals";
 import { confirmAddressAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +59,7 @@ export default async function SocioPage(props: {
   // El valor vigente de la cuota no depende del socio: se pide EN PARALELO con
   // la ficha en vez de esperar a tenerla, que era una ida y vuelta de más en
   // cada render (mismo criterio que la ruta hermana `[accion]`).
-  const [member, feeValue, subscriptions] = await Promise.all([
+  const [member, feeValue, subscriptions, appeal] = await Promise.all([
     // `include` sin `select` explícito: Prisma ya devuelve todas las columnas
     // escalares del socio, `addressPendingReview` incluida, así que el aviso de
     // constatación de más abajo lee `member.addressPendingReview` sin sumar
@@ -96,6 +98,17 @@ export default async function SocioPage(props: {
       orderBy: { createdAt: "desc" },
       select: { preapprovalId: true, status: true, amount: true, linkedManually: true },
     }),
+    // La VENTANA DE RECURSO de una baja por no re-empadronarse (Art. 9° bis d).
+    // Es una fila por proceso y sólo la escribe la etapa de bajas; se pide la
+    // más reciente con fecha estampada. La ficha es la pantalla donde el
+    // operador atiende al vecino que viene a preguntar, así que es donde tiene
+    // que estar: sin esto, el plazo para recurrir vive sólo en un correo que el
+    // socio puede no haber recibido.
+    prisma.presentation.findFirst({
+      where: { memberId, appealUntil: { not: null } },
+      orderBy: { id: "desc" },
+      select: { appealUntil: true, withdrawalNotifiedAt: true },
+    }),
   ]);
   if (!member) notFound();
   // Lista NEGRA (`isNotCancelled`), no lista blanca: acá la pregunta no es si va
@@ -111,6 +124,9 @@ export default async function SocioPage(props: {
   const grid = buildPeriodGrid(account.fees, receiptByPayment, currentPeriod());
 
   const openMembership = member.memberships.find((m) => m.book.status === "open");
+  // Prisma no promete un orden en la relación: el bloque "Libros" los ordena
+  // acá, del más viejo al más nuevo.
+  const bookEntries = [...member.memberships].sort((a, b) => a.book.number - b.book.number);
   // Misma función que usa la server action como guarda: la ficha no decide nada
   // por su cuenta sobre a quién se le puede mandar el acceso (spec §8: el envío
   // se ofrece "desde carga de fichas o ficha").
@@ -139,6 +155,26 @@ export default async function SocioPage(props: {
           {debitPending === 1
             ? " — mientras siga vivo, se le va a seguir cobrando."
             : " — mientras sigan vivos, se le va a seguir cobrando."}
+        </FormMessage>
+      )}
+
+      {/* La ventana de recurso del Art. 9° bis d), mientras sigue abierta. En
+          NEUTRO y no en ámbar: no es un problema ni una tarea pendiente del
+          operador, es un derecho del vecino que todavía corre y que hay que
+          poder contestarle en el mostrador. El último día lo tiene entero — lo
+          decide `appealWindowOpen`, que comparte el comparador de plazos del
+          módulo. */}
+      {appealWindowOpen(appeal?.appealUntil ?? null) && appeal?.appealUntil && (
+        <FormMessage kind="neutral" box>
+          {`Baja recurrible hasta el ${formatDateAR(appeal.appealUntil)} inclusive: el socio puede recurrir esta baja ante la primera asamblea ordinaria (Art. 9° bis inc. d).`}
+          {/* Sin tiempo verbal: por cartelera la fecha fehaciente se estampa al
+              asentar la fijación y cae VEINTE DÍAS HÁBILES DESPUÉS, así que
+              mientras el cartel corre "se lo notificó" afirmaría algo que
+              todavía no pasó. "Notificación fehaciente el ..." es verdadero
+              antes y después. */}
+          {appeal.withdrawalNotifiedAt && (
+            ` Notificación fehaciente el ${formatDateAR(appeal.withdrawalNotifiedAt)}.`
+          )}
         </FormMessage>
       )}
 
@@ -213,40 +249,72 @@ export default async function SocioPage(props: {
           ]}
           panels={{
             ficha: (
-              <Card>
-                <CardHeader><CardTitle>Datos personales</CardTitle></CardHeader>
-                <CardContent>
-                  <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <Field label="DNI" value={member.dni} />
-                    <Field label="Fecha de nacimiento" value={member.birthDate ? formatDateAR(member.birthDate) : null} />
-                    <Field label="Estado civil" value={member.civilStatus} />
-                    <Field label="Nacionalidad" value={member.nationality} />
-                    <Field label="Ocupación" value={member.occupation} />
-                    <Field label="Teléfono" value={member.phone} />
-                    <Field label="Domicilio" value={address || null} />
-                    <Field label="Barrio" value={member.neighborhood} />
-                    <Field label="Email" value={member.email ? `${member.email} (${EMAIL_STATUS_LABELS[member.emailStatus]})` : null} />
-                    {/* El único flag de la ficha que se corrige desde acá: tres
-                        caminos lo suben y ninguno lo bajaba. Ocupa dos celdas
-                        porque lleva la explicación de qué significa. */}
-                    <div className="col-span-2 md:col-span-1">
-                      <dt className="text-xs uppercase text-muted-foreground">Débito automático</dt>
-                      <dd className="mt-1">
-                        <AutoDebitForm memberId={member.id} autoDebit={member.autoDebit} />
-                      </dd>
-                    </div>
-                    <Field label="Fecha de ingreso" value={formatDateAR(member.joinedAt)} />
-                    <Field label="Fecha de egreso" value={member.leftAt ? formatDateAR(member.leftAt) : null} />
-                    {member.withdrawalReason && <Field label="Motivo de baja" value={REASON_LABELS[member.withdrawalReason]} />}
-                    {member.status === "suspended" && (
-                      <Field
-                        label="Suspendido"
-                        value={`${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "?"} — ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "?"}`}
-                      />
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader><CardTitle>Datos personales</CardTitle></CardHeader>
+                  <CardContent>
+                    <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                      <Field label="DNI" value={member.dni} />
+                      <Field label="Fecha de nacimiento" value={member.birthDate ? formatDateAR(member.birthDate) : null} />
+                      <Field label="Estado civil" value={member.civilStatus} />
+                      <Field label="Nacionalidad" value={member.nationality} />
+                      <Field label="Ocupación" value={member.occupation} />
+                      <Field label="Teléfono" value={member.phone} />
+                      <Field label="Domicilio" value={address || null} />
+                      <Field label="Barrio" value={member.neighborhood} />
+                      <Field label="Email" value={member.email ? `${member.email} (${EMAIL_STATUS_LABELS[member.emailStatus]})` : null} />
+                      {/* El único flag de la ficha que se corrige desde acá: tres
+                          caminos lo suben y ninguno lo bajaba. Ocupa dos celdas
+                          porque lleva la explicación de qué significa. */}
+                      <div className="col-span-2 md:col-span-1">
+                        <dt className="text-xs uppercase text-muted-foreground">Débito automático</dt>
+                        <dd className="mt-1">
+                          <AutoDebitForm memberId={member.id} autoDebit={member.autoDebit} />
+                        </dd>
+                      </div>
+                      <Field label="Fecha de ingreso" value={formatDateAR(member.joinedAt)} />
+                      <Field label="Fecha de egreso" value={member.leftAt ? formatDateAR(member.leftAt) : null} />
+                      {member.withdrawalReason && <Field label="Motivo de baja" value={REASON_LABELS[member.withdrawalReason]} />}
+                      {member.status === "suspended" && (
+                        <Field
+                          label="Suspendido"
+                          value={`${member.suspendedFrom ? formatDateAR(member.suspendedFrom) : "?"} — ${member.suspendedTo ? formatDateAR(member.suspendedTo) : "?"}`}
+                        />
+                      )}
+                    </dl>
+                  </CardContent>
+                </Card>
+
+                {/* En qué libros está asentada esta persona. Con un solo libro es
+                    una línea, pero después del re-empadronamiento son dos números
+                    distintos para el mismo socio (REG-29: la antigüedad no se
+                    reinicia), y la ficha es donde se pregunta "¿qué número tenía
+                    antes?". El más viejo primero: se lee como historia. */}
+                <Card size="sm">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <BookMarked className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Libros
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    {bookEntries.length === 0 ? (
+                      <EmptyState size="card" description="No está asentado en ningún libro." />
+                    ) : (
+                      bookEntries.map((m) => (
+                        <p key={m.id} className="text-sm">
+                          Libro <span className="font-mono tabular-nums">{m.book.number}</span>
+                          {" · N° "}
+                          <span className="font-mono tabular-nums">{m.memberNumber}</span>
+                          {m.book.status === "closed" && (
+                            <span className="text-muted-foreground"> · cerrado</span>
+                          )}
+                        </p>
+                      ))
                     )}
-                  </dl>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </div>
             ),
             cuenta: (
               <AccountSection

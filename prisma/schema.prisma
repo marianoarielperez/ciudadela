@@ -11,35 +11,36 @@ datasource db {
 }
 
 model User {
-  id                 Int                  @id @default(autoincrement())
-  email              String               @unique @db.VarChar(191)
-  passwordHash       String               @map("password_hash") @db.VarChar(60)
+  id                     Int                  @id @default(autoincrement())
+  email                  String               @unique @db.VarChar(191)
+  passwordHash           String               @map("password_hash") @db.VarChar(60)
   // Sello del ÚLTIMO cambio de contraseña de esta cuenta. No es informativo:
   // lo comparan `require-admin` y `require-member` contra el momento en que se
   // emitió la sesión (`session.user.authAt`) para cerrar las sesiones que le
   // son anteriores. Nulo = no se escribió ninguna contraseña desde que existe
   // esta columna (filas previas a la migración), y entonces no invalida nada.
-  passwordChangedAt  DateTime?            @map("password_changed_at")
-  name               String?              @db.VarChar(120)
-  active             Boolean              @default(true)
-  lastLoginAt        DateTime?            @map("last_login_at")
-  createdAt          DateTime             @default(now()) @map("created_at")
-  updatedAt          DateTime             @updatedAt @map("updated_at")
-  roles              UserRole[]
-  auditLogs          AuditLog[]
-  member             Member?
-  minutesCreated     Minute[]
-  movementsCreated   Movement[]
-  actionTokens       ActionToken[]
-  newsAuthored       News[]
-  documentsValidated Document[]
-  feeValuesCreated   FeeValue[]           @relation("FeeValueCreatedBy")
-  paymentsRegistered Payment[]            @relation("PaymentRegisteredBy")
-  receiptsVoided     Receipt[]            @relation("ReceiptVoidedBy")
-  unmatchedResolved  MpUnmatchedPayment[] @relation("UnmatchedResolvedBy")
-  incomesRegistered  OtherIncome[]        @relation("OtherIncomeRegisteredBy")
-  incomesVoided      OtherIncome[]        @relation("OtherIncomeVoidedBy")
-  decidedRequests    MemberRequest[]      @relation("MemberRequestDecider")
+  passwordChangedAt      DateTime?            @map("password_changed_at")
+  name                   String?              @db.VarChar(120)
+  active                 Boolean              @default(true)
+  lastLoginAt            DateTime?            @map("last_login_at")
+  createdAt              DateTime             @default(now()) @map("created_at")
+  updatedAt              DateTime             @updatedAt @map("updated_at")
+  roles                  UserRole[]
+  auditLogs              AuditLog[]
+  member                 Member?
+  minutesCreated         Minute[]
+  movementsCreated       Movement[]
+  actionTokens           ActionToken[]
+  newsAuthored           News[]
+  documentsValidated     Document[]
+  feeValuesCreated       FeeValue[]           @relation("FeeValueCreatedBy")
+  paymentsRegistered     Payment[]            @relation("PaymentRegisteredBy")
+  receiptsVoided         Receipt[]            @relation("ReceiptVoidedBy")
+  unmatchedResolved      MpUnmatchedPayment[] @relation("UnmatchedResolvedBy")
+  incomesRegistered      OtherIncome[]        @relation("OtherIncomeRegisteredBy")
+  incomesVoided          OtherIncome[]        @relation("OtherIncomeVoidedBy")
+  decidedRequests        MemberRequest[]      @relation("MemberRequestDecider")
+  presentationsValidated Presentation[]
 
   @@map("users")
 }
@@ -145,7 +146,14 @@ enum MemberRequestStatus {
   pending
   accepted
   rejected
+  // El socio retiró su propia solicitud desde `/mi/solicitudes`.
   cancelled
+  // La solicitud quedó sin objeto porque el socio fue dado de baja por otro
+  // camino (cesantía por mora, baja declarada por la Comisión). NO es lo mismo
+  // que `cancelled`: la bandeja del panel redacta ese estado como "Retirada por
+  // el socio", y acá el socio no tocó nada. Los dos usan `cancelledAt` como
+  // fecha de cierre; lo que los distingue es el estado.
+  superseded
 }
 
 enum MinuteType {
@@ -178,6 +186,18 @@ enum NotificationType {
   request_accepted
   request_rejected
   board_digest
+  // M6: acuse de la presentación de re-empadronamiento, pedido de corrección
+  // cuando la Comisión la observa y aviso de que NO la aceptó. Los tres avisos
+  // del proceso en sí (`reregistration_first`, `reregistration_second`,
+  // `withdrawal_declared`) ya existían desde el M0.
+  //
+  // `presentation_rejected` es su propio tipo y no un `generic`: es una
+  // notificación fehaciente del Art. 5° ter —lo que después acredita que al
+  // socio se le avisó antes de la baja— y tiene que poder contarse y buscarse
+  // aparte de la observación, que dice algo distinto.
+  presentation_received
+  presentation_observed
+  presentation_rejected
   generic
 }
 
@@ -196,50 +216,51 @@ enum NotificationStatus {
 }
 
 model Member {
-  id               Int               @id @default(autoincrement())
-  fullName         String            @map("full_name") @db.VarChar(160)
-  dni              String?           @unique @db.VarChar(12)
-  birthDate        DateTime?         @map("birth_date")
-  civilStatus      String?           @map("civil_status") @db.VarChar(40)
-  nationality      String?           @db.VarChar(60)
-  occupation       String?           @db.VarChar(80)
-  phone            String?           @db.VarChar(40)
-  streetId         Int?              @map("street_id")
-  street           Street?           @relation(fields: [streetId], references: [id])
-  streetText       String?           @map("street_text") @db.VarChar(120)
-  streetNumber     String?           @map("street_number") @db.VarChar(10)
-  neighborhood     String?           @db.VarChar(60)
+  id                   Int               @id @default(autoincrement())
+  fullName             String            @map("full_name") @db.VarChar(160)
+  dni                  String?           @unique @db.VarChar(12)
+  birthDate            DateTime?         @map("birth_date")
+  civilStatus          String?           @map("civil_status") @db.VarChar(40)
+  nationality          String?           @db.VarChar(60)
+  occupation           String?           @db.VarChar(80)
+  phone                String?           @db.VarChar(40)
+  streetId             Int?              @map("street_id")
+  street               Street?           @relation(fields: [streetId], references: [id])
+  streetText           String?           @map("street_text") @db.VarChar(120)
+  streetNumber         String?           @map("street_number") @db.VarChar(10)
+  neighborhood         String?           @db.VarChar(60)
   /// Prendido cuando el SOCIO edita su domicilio desde /mi/datos (M5): queda
   /// "pendiente de constatación" para la CD (docs/05 §7), que lo apaga desde la
   /// ficha. El modo carga del admin NO lo toca.
-  addressPendingReview Boolean        @default(false) @map("address_pending_review")
-  email            String?           @db.VarChar(191)
-  emailStatus      EmailStatus       @default(none) @map("email_status")
-  emailVerifiedAt  DateTime?         @map("email_verified_at")
-  category         MemberCategory
-  status           MemberStatus
-  withdrawalReason WithdrawalReason? @map("withdrawal_reason")
-  joinedAt         DateTime          @map("joined_at")
-  leftAt           DateTime?         @map("left_at")
-  debtAtWithdrawal Boolean           @default(false) @map("debt_at_withdrawal")
-  autoDebit        Boolean           @default(false) @map("auto_debit")
-  reentryBlocked   Boolean           @default(false) @map("reentry_blocked")
-  rejectedUntil    DateTime?         @map("rejected_until")
-  suspendedFrom    DateTime?         @map("suspended_from")
-  suspendedTo      DateTime?         @map("suspended_to")
-  userId           Int?              @unique @map("user_id")
-  user             User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
-  memberships      Membership[]
-  movements        Movement[]
-  notifications    Notification[]
-  tokens           ActionToken[]
-  applications     Application[]
-  mpSubscriptions  MpSubscription[]
-  fees             Fee[]
-  payments         Payment[]
-  memberRequests   MemberRequest[]
+  addressPendingReview Boolean           @default(false) @map("address_pending_review")
+  email                String?           @db.VarChar(191)
+  emailStatus          EmailStatus       @default(none) @map("email_status")
+  emailVerifiedAt      DateTime?         @map("email_verified_at")
+  category             MemberCategory
+  status               MemberStatus
+  withdrawalReason     WithdrawalReason? @map("withdrawal_reason")
+  joinedAt             DateTime          @map("joined_at")
+  leftAt               DateTime?         @map("left_at")
+  debtAtWithdrawal     Boolean           @default(false) @map("debt_at_withdrawal")
+  autoDebit            Boolean           @default(false) @map("auto_debit")
+  reentryBlocked       Boolean           @default(false) @map("reentry_blocked")
+  rejectedUntil        DateTime?         @map("rejected_until")
+  suspendedFrom        DateTime?         @map("suspended_from")
+  suspendedTo          DateTime?         @map("suspended_to")
+  userId               Int?              @unique @map("user_id")
+  user                 User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  memberships          Membership[]
+  movements            Movement[]
+  notifications        Notification[]
+  tokens               ActionToken[]
+  applications         Application[]
+  mpSubscriptions      MpSubscription[]
+  fees                 Fee[]
+  payments             Payment[]
+  memberRequests       MemberRequest[]
+  presentations        Presentation[]
 
   @@index([fullName])
   @@index([status, category])
@@ -247,16 +268,17 @@ model Member {
 }
 
 model Book {
-  id              Int          @id @default(autoincrement())
-  number          Int          @unique
+  id              Int                     @id @default(autoincrement())
+  number          Int                     @unique
   status          BookStatus
-  openedAt        DateTime     @map("opened_at")
-  closedAt        DateTime?    @map("closed_at")
-  openingMinuteId Int?         @map("opening_minute_id")
-  openingMinute   Minute?      @relation("BookOpeningMinute", fields: [openingMinuteId], references: [id], onDelete: SetNull)
-  closingMinuteId Int?         @map("closing_minute_id")
-  closingMinute   Minute?      @relation("BookClosingMinute", fields: [closingMinuteId], references: [id], onDelete: SetNull)
+  openedAt        DateTime                @map("opened_at")
+  closedAt        DateTime?               @map("closed_at")
+  openingMinuteId Int?                    @map("opening_minute_id")
+  openingMinute   Minute?                 @relation("BookOpeningMinute", fields: [openingMinuteId], references: [id], onDelete: SetNull)
+  closingMinuteId Int?                    @map("closing_minute_id")
+  closingMinute   Minute?                 @relation("BookClosingMinute", fields: [closingMinuteId], references: [id], onDelete: SetNull)
   memberships     Membership[]
+  reregistrations ReregistrationProcess[]
 
   @@map("books")
 }
@@ -269,25 +291,36 @@ model Membership {
   book         Book   @relation(fields: [bookId], references: [id])
   memberNumber Int    @map("member_number")
 
+  // Foto del socio AL CERRAR el libro. Nullable porque un libro abierto no
+  // tiene foto todavia y porque nadie las escribe hasta el cierre (REG-36): un
+  // libro cerrado es un documento inmutable, asi que la categoria y el estado
+  // que tenia la persona ese dia se congelan aca en vez de leerse de la ficha
+  // viva, que despues sigue cambiando. Mientras esten en null, las pantallas
+  // de Libros caen a los datos vivos.
+  statusAtClose   MemberStatus?   @map("status_at_close")
+  categoryAtClose MemberCategory? @map("category_at_close")
+
   @@unique([bookId, memberNumber])
   @@unique([memberId, bookId])
   @@map("memberships")
 }
 
 model Minute {
-  id           Int           @id @default(autoincrement())
-  type         MinuteType
-  number       Int
-  date         DateTime
-  description  String?       @db.VarChar(500)
-  createdById  Int?          @map("created_by_id")
-  createdBy    User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt    DateTime      @default(now()) @map("created_at")
-  movements    Movement[]
-  booksOpened  Book[]        @relation("BookOpeningMinute")
-  booksClosed  Book[]        @relation("BookClosingMinute")
-  applications Application[]
-  feeValues    FeeValue[]
+  id              Int                     @id @default(autoincrement())
+  type            MinuteType
+  number          Int
+  date            DateTime
+  description     String?                 @db.VarChar(500)
+  createdById     Int?                    @map("created_by_id")
+  createdBy       User?                   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime                @default(now()) @map("created_at")
+  movements       Movement[]
+  booksOpened     Book[]                  @relation("BookOpeningMinute")
+  booksClosed     Book[]                  @relation("BookClosingMinute")
+  applications    Application[]
+  feeValues       FeeValue[]
+  processesCalled ReregistrationProcess[] @relation("ProcessCallMinute")
+  processesClosed ReregistrationProcess[] @relation("ProcessCloseMinute")
 
   @@unique([type, number])
   @@map("minutes")
@@ -320,22 +353,22 @@ model Movement {
 // REG-19 exige que quede. "Una pendiente por tipo por socio" se garantiza en
 // la transacción de creación (MariaDB no tiene unique parcial).
 model MemberRequest {
-  id                Int                  @id @default(autoincrement())
-  memberId          Int                  @map("member_id")
-  member            Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  id                Int                 @id @default(autoincrement())
+  memberId          Int                 @map("member_id")
+  member            Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
   type              MemberRequestType
-  status            MemberRequestStatus  @default(pending)
-  requestedCategory MemberCategory?      @map("requested_category")
-  message           String?              @db.VarChar(500)
-  text              String               @db.VarChar(2000)
-  createdAt         DateTime             @default(now()) @map("created_at")
-  decidedAt         DateTime?            @map("decided_at")
-  decidedById       Int?                 @map("decided_by_id")
-  decidedBy         User?                @relation("MemberRequestDecider", fields: [decidedById], references: [id], onDelete: SetNull)
-  decisionNote      String?              @map("decision_note") @db.VarChar(500)
-  cancelledAt       DateTime?            @map("cancelled_at")
-  movementId        Int?                 @map("movement_id")
-  movement          Movement?            @relation(fields: [movementId], references: [id], onDelete: SetNull)
+  status            MemberRequestStatus @default(pending)
+  requestedCategory MemberCategory?     @map("requested_category")
+  message           String?             @db.VarChar(500)
+  text              String              @db.VarChar(2000)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  decidedAt         DateTime?           @map("decided_at")
+  decidedById       Int?                @map("decided_by_id")
+  decidedBy         User?               @relation("MemberRequestDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decisionNote      String?             @map("decision_note") @db.VarChar(500)
+  cancelledAt       DateTime?           @map("cancelled_at")
+  movementId        Int?                @map("movement_id")
+  movement          Movement?           @relation(fields: [movementId], references: [id], onDelete: SetNull)
 
   @@index([memberId, status])
   @@index([status, type])
@@ -343,12 +376,13 @@ model MemberRequest {
 }
 
 model Street {
-  id             Int           @id
-  loadOrder      Int           @map("load_order")
-  name           String        @db.VarChar(80)
-  normalizedName String        @map("normalized_name") @db.VarChar(80)
+  id             Int            @id
+  loadOrder      Int            @map("load_order")
+  name           String         @db.VarChar(80)
+  normalizedName String         @map("normalized_name") @db.VarChar(80)
   members        Member[]
   applications   Application[]
+  presentations  Presentation[]
 
   @@index([normalizedName])
   @@index([loadOrder])
@@ -360,9 +394,23 @@ model Notification {
   memberId       Int?               @map("member_id")
   member         Member?            @relation(fields: [memberId], references: [id])
   // Notificación dirigida a una solicitud (M3): el destinatario todavía no es
-  // socio, pero el envío tiene que quedar acreditado igual (Art. 5° quater).
+  // socio, pero el envío tiene que quedar acreditado igual (Art. 5° ter).
   applicationId  Int?               @map("application_id")
   application    Application?       @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  // Aviso publicado en la CARTELERA de la sede (M6): la fila de `board_notices`
+  // es el hecho institucional —qué se publicó, desde cuándo y hasta cuándo— y
+  // ésta es la acreditación por socio de que quedó notificado por esa vía
+  // (Art. 5° ter).
+  //
+  // `SetNull` y no `Cascade` salva la NOTIFICACIÓN, no la acreditación entera:
+  // borrado el cartel sobrevive la fila del envío pero se pierde CUÁL cartel lo
+  // respaldaba, y de esa fecha cuelga el cómputo del plazo de la instancia. Lo
+  // único que protegería la acreditación completa es `Restrict`; la spec fija
+  // `SetNull`, así que la garantía NO está en la clave foránea: hoy ninguna
+  // pantalla borra carteles, y la pantalla que alguna vez los borre tiene que
+  // bloquear el borrado de un cartel ya colgado por su cuenta.
+  boardNoticeId  Int?               @map("board_notice_id")
+  boardNotice    BoardNotice?       @relation(fields: [boardNoticeId], references: [id], onDelete: SetNull)
   type           NotificationType
   via            NotificationVia
   status         NotificationStatus
@@ -378,7 +426,7 @@ model Notification {
   payloadSummary String?            @map("payload_summary") @db.VarChar(300)
   // Código del error de envío cuando `status = failed` (4C). Nunca la dirección.
   // Una fila `failed` registra un INTENTO, no una acreditación fehaciente
-  // (Art. 5° quater): el correo no salió. Las pantallas que listan
+  // (Art. 5° ter): el correo no salió. Las pantallas que listan
   // notificaciones tienen que poder distinguirlas de una `sent`.
   error          String?            @db.VarChar(200)
   // Período (`YYYY-MM`) al que se refiere el aviso, cuando tiene uno. Hoy lo
@@ -897,4 +945,159 @@ model OtherIncome {
   @@index([receivedAt])
   @@index([method])
   @@map("other_incomes")
+}
+
+// ---------------------------------------------------------------------------
+// Módulo 6 — re-empadronamiento (Art. 9° bis) y cierre de libro
+// ---------------------------------------------------------------------------
+
+// Etapas del proceso, en el orden en que ocurren. `preparing` es la etapa
+// previa al primer aviso (el acta ya existe, todavía no salió nada);
+// `closing` es el tramo entre el vencimiento de la 2ª instancia y el cierre
+// del Libro, donde se declaran las bajas de quienes no se presentaron.
+enum ReregistrationStatus {
+  preparing
+  first_instance
+  second_instance
+  closing
+  closed
+}
+
+// Estado de la presentación de UN socio. `pending` es la fila que nace sola al
+// convocar el proceso: existe para poder listar a quién le falta presentarse,
+// no porque el socio haya hecho algo. `withdrawn` es el final del que nunca se
+// presentó y la Comisión le declaró la baja (WithdrawalReason.not_reregistered).
+enum PresentationStatus {
+  pending
+  submitted
+  observed
+  validated
+  rejected
+  withdrawn
+}
+
+// Por dónde entró la presentación. Nulo mientras está `pending`: todavía no
+// entró por ningún lado.
+enum PresentationChannel {
+  web
+  in_person
+}
+
+// Qué cartel es. La cartelera de la sede es una vía de notificación válida para
+// el socio sin email (Art. 5° ter), y cada instancia publica el suyo.
+enum BoardNoticeKind {
+  first_instance
+  second_instance
+  withdrawal
+  other
+}
+
+// El proceso de re-empadronamiento del Art. 9° bis: la Comisión convoca por
+// acta a los socios a ratificar su condición, con dos instancias y sus plazos,
+// y al terminar cierra el Libro y abre el siguiente. Hay uno vivo por vez —
+// cuál es lo dice la clave de configuración `reempadronamiento_proceso_id`—,
+// pero la tabla guarda todos: el proceso cerrado es la prueba de cómo se llegó
+// al Libro nuevo.
+//
+// `bookId` es el libro que este proceso CIERRA (el 1), no el que abre.
+// `igjApprovedAt` y `estimatedElectionAt` son informativos: los llena la
+// Comisión con lo que resuelve la IGJ y no disparan nada.
+model ReregistrationProcess {
+  id                  Int                  @id @default(autoincrement())
+  bookId              Int                  @map("book_id")
+  book                Book                 @relation(fields: [bookId], references: [id])
+  status              ReregistrationStatus
+  calledAt            DateTime             @map("called_at")
+  firstEndsAt         DateTime             @map("first_ends_at")
+  secondEndsAt        DateTime?            @map("second_ends_at")
+  igjApprovedAt       DateTime?            @map("igj_approved_at")
+  estimatedElectionAt DateTime?            @map("estimated_election_at")
+  callMinuteId        Int                  @map("call_minute_id")
+  callMinute          Minute               @relation("ProcessCallMinute", fields: [callMinuteId], references: [id])
+  closeMinuteId       Int?                 @map("close_minute_id")
+  closeMinute         Minute?              @relation("ProcessCloseMinute", fields: [closeMinuteId], references: [id])
+  presentations       Presentation[]
+  boardNotices        BoardNotice[]
+  createdAt           DateTime             @default(now()) @map("created_at")
+
+  @@map("reregistration_processes")
+}
+
+// Lo que el socio presenta para ratificar su condición: sus datos actualizados
+// más el DNI (que viaja en `documents` con `ownerType = presentation`).
+//
+// Los datos NO se copian a la ficha al presentarse: se copian al VALIDAR. Por
+// eso están duplicados acá en vez de editarse sobre `members` — entre la
+// presentación y la decisión de la Comisión puede pasar un mes, y la ficha
+// viva no puede quedar a medio camino de una presentación que después se
+// rechaza. La fila nace `pending` para TODOS los socios alcanzados al convocar,
+// así que su existencia no significa que el socio haya hecho nada.
+//
+// `resumeTokenHash` deja retomar la carga web sin cuenta (el mismo patrón del
+// enlace de retome de ASOCIATE): se guarda el hash, nunca el token.
+model Presentation {
+  id                   Int                   @id @default(autoincrement())
+  processId            Int                   @map("process_id")
+  process              ReregistrationProcess @relation(fields: [processId], references: [id])
+  memberId             Int                   @map("member_id")
+  member               Member                @relation(fields: [memberId], references: [id])
+  status               PresentationStatus    @default(pending)
+  channel              PresentationChannel?
+  birthDate            DateTime?             @map("birth_date")
+  civilStatus          String?               @map("civil_status") @db.VarChar(40)
+  nationality          String?               @db.VarChar(60)
+  occupation           String?               @db.VarChar(80)
+  streetId             Int?                  @map("street_id")
+  street               Street?               @relation(fields: [streetId], references: [id])
+  streetText           String?               @map("street_text") @db.VarChar(120)
+  streetNumber         String?               @map("street_number") @db.VarChar(10)
+  neighborhood         String?               @db.VarChar(60)
+  phone                String?               @db.VarChar(40)
+  email                String?               @db.VarChar(191)
+  resumeTokenHash      String?               @unique @map("resume_token_hash") @db.Char(64)
+  submittedAt          DateTime?             @map("submitted_at")
+  validatedById        Int?                  @map("validated_by_id")
+  validatedBy          User?                 @relation(fields: [validatedById], references: [id], onDelete: SetNull)
+  validatedAt          DateTime?             @map("validated_at")
+  observation          String?               @db.VarChar(500)
+  withdrawalNotifiedAt DateTime?             @map("withdrawal_notified_at")
+  appealUntil          DateTime?             @map("appeal_until")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+
+  // Un socio presenta UNA vez por proceso. Es la invariante de la que dependen
+  // el padrón de faltantes y el conteo de la instancia.
+  @@unique([processId, memberId])
+  @@index([processId, status])
+  @@map("presentations")
+}
+
+// Feriados y días no laborables argentinos, para contar los plazos del proceso
+// en DÍAS HÁBILES. Es una tabla y no una constante porque los trasladables se
+// fijan por decreto cada año: cuando cambian, se corrigen desde el panel y no
+// con un deploy. `date` al mediodía UTC del día civil argentino, como toda
+// fecha civil del proyecto (`civilDateUtc`).
+model Holiday {
+  id    Int      @id @default(autoincrement())
+  date  DateTime @unique
+  label String   @db.VarChar(80)
+
+  @@map("holidays")
+}
+
+// Un cartel publicado en la cartelera FÍSICA de la sede. Es el hecho
+// institucional; a quién notificó lo dicen las `notifications` que lo apuntan.
+// `postedAt`/`dueAt` son nulos mientras el cartel está preparado y todavía no
+// se colgó.
+model BoardNotice {
+  id            Int                   @id @default(autoincrement())
+  processId     Int                   @map("process_id")
+  process       ReregistrationProcess @relation(fields: [processId], references: [id])
+  kind          BoardNoticeKind
+  postedAt      DateTime?             @map("posted_at")
+  dueAt         DateTime?             @map("due_at")
+  notifications Notification[]
+  createdAt     DateTime              @default(now()) @map("created_at")
+
+  @@map("board_notices")
 }

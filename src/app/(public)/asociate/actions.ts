@@ -24,11 +24,14 @@ import {
   applicationReceivedEmail, applicationResumeEmail, verificationEmail, verifyUrl,
 } from "@/lib/email/templates";
 import { parseForm } from "@/lib/forms";
+import { formatDateAR } from "@/lib/format";
 import { checkoutUrlFor } from "@/lib/mp/checkout";
 import { mpErrorLog } from "@/lib/mp/error-log";
 import { mpGateway } from "@/lib/mp/gateway";
 import { subscriptionReason } from "@/lib/mp/reason";
 import { prisma } from "@/lib/prisma";
+import { openWizardProcess } from "@/lib/reregistration/current";
+import { currentDeadline } from "@/lib/reregistration/rules";
 import { tokens } from "@/lib/tokens";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
@@ -57,6 +60,19 @@ type PayState = { error?: string; redirectUrl?: string; blocked?: true };
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const ASOCIATE_CLOSED =
   "Las asociaciones en línea están cerradas en este momento. Para asociarte, acercate a la sede vecinal.";
+// La segunda causal de la guarda 0: mientras corre el re-empadronamiento del
+// Art. 9° bis la asociación está depurando su padrón y no suma gente (diseño M6
+// §11). Lleva la fecha porque es lo único que le sirve al vecino para volver,
+// y NO la lleva cuando `currentDeadline` devuelve `null` —fuera de las dos
+// instancias, o con el plazo ya vencido y el proceso todavía sin cambiar de
+// estado—: la frase sin fecha es verdadera en los dos momentos, y citar una
+// fecha pasada le diría que la suspensión terminó justo en el mensaje que la
+// aplica. Es la misma decisión, y la misma función, que la portada y
+// `/asociate`.
+function reregistrationClosed(deadline: Date | null): string {
+  const until = deadline === null ? "" : ` (hasta el ${formatDateAR(deadline)})`;
+  return `Las asociaciones están suspendidas temporalmente durante el proceso de re-empadronamiento${until}. Para asociarte, acercate a la sede vecinal.`;
+}
 // El formulario tiene un checkbox de aceptación OBLIGATORIO. Si los textos que
 // se aceptan no están cargados, aceptarlos no significa nada y `acceptedTermsAt`
 // quedaría grabado contra la nada: no hay constancia de qué aceptó el vecino
@@ -117,8 +133,9 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // RENDERIZAR, y eso no alcanza: la pestaña que ya estaba abierta cuando la CD
   // lo apagó, y un POST armado a mano, no vuelven a pasar por el render. Esta
   // action es un endpoint público y tiene que decidir por sí misma. Importa de
-  // verdad porque el interruptor es el que suspende ASOCIATE durante el
-  // re-empadronamiento (M6) y es el paso final del checklist de lanzamiento.
+  // verdad porque es el paso final del checklist de lanzamiento. (La suspensión
+  // por re-empadronamiento del M6 NO cuelga de este interruptor: es la causal
+  // que sigue, y corta sola sin que la Comisión tenga que apagar nada.)
   //
   // Va primero por claridad, no por ahorro: `allows` es una consulta en memoria
   // que NO cobra el intento (eso lo hace el `record` de más abajo), así que
@@ -137,6 +154,22 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // src/lib/config.ts sobre caché vs. lectura directa).
   if (!(await configReader.getBool(CONFIG_KEYS.asociateActivo))) {
     return { error: ASOCIATE_CLOSED };
+  }
+
+  // Guarda 0, segunda causal: el proceso de re-empadronamiento en curso.
+  //
+  // No alcanza con que la Comisión apague el interruptor de arriba a mano —de
+  // hecho no tiene por qué tocarlo—: convocar suspende las altas por sí solo, y
+  // la portada y `/asociate` ya lo muestran así. Esta línea es la que lo hace
+  // cierto para un POST, que es lo único que crea una solicitud.
+  //
+  // Lectura DIRECTA con `openWizardProcess`, la MISMA función que usan la
+  // página y las actions del wizard, y NO la cacheada `getActiveReregistration`:
+  // acá es una guarda, y un `null` viejo dejaría entrar altas después de
+  // convocar. Mismo criterio que la lectura del interruptor de arriba.
+  const openProcess = await openWizardProcess(prisma);
+  if (openProcess !== null) {
+    return { error: reregistrationClosed(currentDeadline(openProcess)) };
   }
 
   // Guarda 0 bis: los textos legales tienen que EXISTIR.

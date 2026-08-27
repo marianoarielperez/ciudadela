@@ -41,7 +41,7 @@ Reglas de sistema:
   convocatoria a elecciones hasta la proclamación (flag `elecciones_en_curso` que
   bloquea cambios de categoría).
 
-## Domicilio electrónico y notificaciones (Art. 5° quater)
+## Domicilio electrónico y notificaciones (Art. 5° ter)
 
 - REG-08. Todo email declarado se verifica con doble opt-in (link de confirmación).
   Estado por socio: `sin_email` / `declarado_no_verificado` / `verificado` / `rebotado`.
