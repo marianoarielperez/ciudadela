@@ -127,10 +127,12 @@ Antes de buildear en el VPS, verificar en su `.env`:
   en el próximo deploy.
 - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` = la site key del widget de Cloudflare Turnstile
   (Módulo 3). Todo lo `NEXT_PUBLIC_*` se hornea en el bundle del cliente: si falta
-  o está mal al buildear, el widget del **paso 3 del wizard ASOCIATE** no se
-  renderiza y **nadie puede enviar una solicitud** —la action rechaza el POST sin
-  token de captcha—. Como `AUTH_URL`, cambiarla obliga a re-buildear: reiniciar PM2
-  no alcanza. La `TURNSTILE_SECRET_KEY`, en cambio, se lee en runtime.
+  o está mal al buildear, el widget del wizard ASOCIATE —que lo llevan el **paso 1
+  ("Tu DNI") y el paso 4 (el envío)**— no se renderiza y **nadie puede asociarse**:
+  el vecino se frena ya en el paso 1, sin poder chequear su DNI ni llegar a enviar
+  la solicitud —las dos actions rechazan el POST sin token de captcha—. Como
+  `AUTH_URL`, cambiarla obliga a re-buildear: reiniciar PM2 no alcanza. La
+  `TURNSTILE_SECRET_KEY`, en cambio, se lee en runtime.
 
 ### Verificación post-deploy
 

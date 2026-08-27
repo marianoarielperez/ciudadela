@@ -141,7 +141,7 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
     de Turnstile dura 5 minutos y el paso 4 puede llevar más— y los errores de
     tipeo (son ~16 campos y el formulario reporta uno por vez) no le queman al
     vecino los 5 intentos de la hora. El intento se cobra justo antes de la
-    primera consulta al padrón, que es lo único que hay que racionar.
+    primera consulta al padrón, que es lo único que hay que racionar en este paso.
   - Validar la forma (zod) antes de consultar el padrón no debilita el
     anti-enumeración: la validez de FORMATO no depende del padrón (es zod sobre
     el POST, sin consulta), cada intento sigue costando un captcha resuelto —el
