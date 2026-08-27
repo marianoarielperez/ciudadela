@@ -28,36 +28,40 @@ describe("checkEligibility", () => {
     expect(a).toMatchObject({ ok: false, code: "already_member" });
     expect(s).toEqual(a); // no revelar la suspensión
   });
-  it("expulsado → visit_office genérico (sin revelar el motivo)", () => {
+  it("expulsión asentada → expelled, nombrada con su ratificación por asamblea (decisión 27/08/2026)", () => {
     const r = checkEligibility({ ...base, member: member({ reentryBlocked: true, withdrawalReason: "expulsion" }) });
-    expect(r).toMatchObject({ ok: false, code: "visit_office" });
-    expect((r as { error: string }).error).not.toMatch(/expuls/i);
+    expect(r).toMatchObject({ ok: false, code: "expelled" });
+    const error = (r as { error: string }).error;
+    expect(error).toMatch(/expulsión/);
+    expect(error).toMatch(/asamblea/);
+    expect(error).toMatch(/no puede reingresar/);
   });
-  it("fallecimiento y anulación por duplicado → sede, indistinguibles de la expulsión", () => {
-    const expelled = checkEligibility({
-      ...base,
-      member: member({ reentryBlocked: true, withdrawalReason: "expulsion" }),
-    });
+  it("fallecimiento y anulación por duplicado → sede genérica, indistinguibles entre sí y del flag suelto", () => {
+    const flagOnly = checkEligibility({ ...base, member: member({ reentryBlocked: true }) });
+    expect(flagOnly).toMatchObject({ ok: false, code: "visit_office" });
+    expect((flagOnly as { error: string }).error).not.toMatch(/expuls/i);
     for (const reason of ["death", "duplicate_annulment"] as const) {
       const r = checkEligibility({ ...base, member: member({ withdrawalReason: reason }) });
-      expect(r).toEqual(expelled); // mismo objeto: no se puede distinguir desde afuera
+      expect(r).toEqual(flagOnly); // mismo objeto: no se puede distinguir desde afuera
     }
   });
-  it("expulsión gana a la deuda (precedencia de seguridad)", () => {
+  it("la expulsión gana a la deuda (precedencia de seguridad)", () => {
     const r = checkEligibility({
       ...base,
       member: member({ reentryBlocked: true, withdrawalReason: "expulsion", pendingFees: 1 }),
     });
-    expect(r).toMatchObject({ ok: false, code: "visit_office" });
+    expect(r).toMatchObject({ ok: false, code: "expelled" });
   });
-  it("la doble señal de expulsión funciona por separado", () => {
+  it("la doble señal se separa: el motivo asentado nombra, el flag suelto no afirma nada", () => {
+    // El flag puede venir sucio del import (fix-withdrawal-reasons pendiente):
+    // nunca se afirma una expulsión que la ficha no registra como motivo.
     expect(checkEligibility({ ...base, member: member({ reentryBlocked: true }) })).toMatchObject({
       ok: false,
       code: "visit_office",
     });
     expect(checkEligibility({ ...base, member: member({ withdrawalReason: "expulsion" }) })).toMatchObject({
       ok: false,
-      code: "visit_office",
+      code: "expelled",
     });
   });
   it("bloquea por deuda real aunque la baja no haya sido por mora", () => {

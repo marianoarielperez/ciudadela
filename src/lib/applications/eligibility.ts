@@ -1,19 +1,32 @@
 // Bloqueos del paso 4 del wizard (spec M3 §4). Regla PURA: la action junta los
 // insumos (ficha por DNI, solicitud viva, último rechazo) y esta función decide.
 // Los mensajes son user-facing es-AR y NO revelan más de lo necesario: el
-// suspendido ve lo mismo que el vigente, el expulsado ve lo mismo que
-// cualquier "acercate a la sede" (anti-enumeración + Ley 25.326).
+// suspendido ve lo mismo que el vigente, y fallecimiento y anulación comparten
+// un genérico de sede (anti-enumeración + Ley 25.326). La EXCEPCIÓN es la
+// expulsión asentada como motivo, que desde el 27/08/2026 se nombra con todas
+// las letras (decisión del operador, que revierte para este único caso la
+// indistinguibilidad del 20/08/2026).
 import type { Member } from "@/generated/prisma/client";
 
 export const REJECTION_BLOCK_MONTHS = 6; // REG-05
 
-// Un único literal para TODOS los desvíos a la sede: expulsión, fallecimiento y
-// anulación por duplicado deben ser indistinguibles desde afuera.
+// Un único literal para los desvíos genéricos a la sede: fallecimiento,
+// anulación por duplicado y el flag de bloqueo sin motivo asentado deben ser
+// indistinguibles desde afuera.
 const VISIT_OFFICE_MESSAGE = "No podemos procesar tu solicitud por este medio. Acercate a la sede vecinal.";
+
+// La expulsión asentada se nombra (decisión del operador, 27/08/2026). La
+// ratificación por asamblea es un hecho institucional que el operador afirma
+// para todas las expulsiones del padrón; el "no puede reingresar" es REG-04
+// (Art. 5 inc. 2). El MISMO texto sale en el chequeo temprano del paso 1 y en
+// la guarda del envío del paso 4.
+const EXPELLED_MESSAGE =
+  "La ficha registra la expulsión de la asociación, ratificada por asamblea. Conforme al estatuto, un socio expulsado no puede reingresar.";
 
 export type EligibilityBlock =
   | { code: "in_progress"; error: string; applicationId: number }
   | { code: "already_member"; error: string }
+  | { code: "expelled"; error: string }
   | { code: "visit_office"; error: string }
   | { code: "debt"; error: string }
   | { code: "rejected_wait"; error: string; retryAt: Date };
@@ -59,15 +72,24 @@ export function checkEligibility(input: {
     if (member.status === "active" || member.status === "suspended") {
       return { ok: false, code: "already_member", error: "Ya estás asociado/a a la vecinal." };
     }
-    // 3. Expulsión (REG-04): genérico, sin nombrar el motivo. Doble señal como
-    //    en canReadmit: flag O motivo, cualquiera alcanza.
-    if (member.reentryBlocked || member.withdrawalReason === "expulsion") {
+    // 3. Expulsión ASENTADA como motivo (REG-04): se nombra, con su
+    //    ratificación por asamblea (decisión del operador, 27/08/2026). Sólo el
+    //    motivo registrado habilita este texto: afirmar una expulsión es
+    //    afirmar un hecho sobre la ficha, y el flag suelto no lo acredita.
+    if (member.withdrawalReason === "expulsion") {
+      return { ok: false, code: "expelled", error: EXPELLED_MESSAGE };
+    }
+    // 3bis. Flag de bloqueo SIN la expulsión asentada: el bloqueo rige igual
+    //    (doble señal, como en canReadmit) pero el mensaje queda genérico — el
+    //    dato puede venir sucio del import (fix-withdrawal-reasons pendiente) y
+    //    nunca se afirma una expulsión que la ficha no registra como motivo.
+    if (member.reentryBlocked) {
       return { ok: false, code: "visit_office", error: VISIT_OFFICE_MESSAGE };
     }
-    // 3bis. Fallecimiento o anulación por duplicado (decisión 20/08/2026): un DNI
+    // 3ter. Fallecimiento o anulación por duplicado (decisión 20/08/2026): un DNI
     //    vivo contra una ficha de fallecido es error de datos o suplantación, y la
-    //    ficha anulada tiene su gemela real en el padrón. Mismo mensaje genérico
-    //    que la expulsión: no se revela el motivo, lo resuelve la sede.
+    //    ficha anulada tiene su gemela real en el padrón. Mensaje genérico:
+    //    no se revela el motivo, lo resuelve la sede.
     if (member.withdrawalReason === "death" || member.withdrawalReason === "duplicate_annulment") {
       return { ok: false, code: "visit_office", error: VISIT_OFFICE_MESSAGE };
     }

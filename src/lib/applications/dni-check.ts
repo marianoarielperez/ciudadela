@@ -17,7 +17,7 @@ import type { EligibilityInputs } from "./eligibility-inputs";
 
 export type DniCheckVerdict =
   | { ok: true }
-  | { ok: false; code: "already_member" | "in_progress" | "visit_office"; maskedName: string | null }
+  | { ok: false; code: "already_member" | "in_progress" | "expelled" | "visit_office"; maskedName: string | null }
   | { ok: false; code: "debt"; maskedName: string; pendingCount: number }
   | { ok: false; code: "rejected_wait"; maskedName: string | null; retryAt: Date };
 

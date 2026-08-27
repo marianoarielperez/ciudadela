@@ -19,8 +19,11 @@ de Datos Personales** (Argentina).
   por IP, responde el nombre **enmascarado**, veredictos distinguibles entre sí
   (vigente / trámite / deuda / sede / rechazo) y, en el caso deuda, la
   **cantidad** de cuotas pendientes — nunca montos, nunca el nombre completo,
-  nunca el motivo real de una baja de sede, y el reingreso habilitado es
-  indistinguible de un DNI desconocido.
+  y el reingreso habilitado es indistinguible de un DNI desconocido. La única
+  baja que se nombra es la **expulsión asentada como motivo** ("ratificada por
+  asamblea, no puede reingresar" — decisión del operador, 27/08/2026);
+  fallecimiento, anulación por duplicado y el flag de bloqueo sin motivo
+  registrado conservan el genérico de sede, indistinguibles entre sí.
 - **Conservación**: las imágenes de DNI y anexos se conservan de forma **permanente**
   (decisión institucional: son el respaldo de la validación de identidad), bajo las
   medidas de este documento.

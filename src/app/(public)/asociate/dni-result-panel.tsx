@@ -5,8 +5,10 @@
 // "Probar con otro documento" y "Volver al inicio".
 //
 // Qué revela y qué no (decisiones del operador, 27/08/2026): el nombre viaja
-// ENMASCARADO; la deuda dice la CANTIDAD de cuotas (sin pesos); expulsión,
-// fallecimiento y anulación comparten un único literal de sede, indistinguibles.
+// ENMASCARADO; la deuda dice la CANTIDAD de cuotas (sin pesos); la expulsión
+// ASENTADA se nombra con su ratificación por asamblea (segunda decisión del
+// mismo día, que revirtió la indistinguibilidad para ese único caso);
+// fallecimiento, anulación y el flag suelto siguen con el genérico de sede.
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { FormMessage } from "@/components/admin/form-message";
@@ -21,6 +23,7 @@ type BlockedVerdict = Extract<DniCheckState, { kind: "blocked" }>;
 const HEADINGS: Record<BlockedVerdict["code"], string> = {
   already_member: "Ya estás asociado/a",
   in_progress: "Ya tenés una solicitud en trámite",
+  expelled: "No pudimos seguir",
   visit_office: "No pudimos seguir",
   debt: "No pudimos seguir",
   rejected_wait: "No pudimos seguir",
@@ -100,6 +103,21 @@ export function DniResultPanel({
             </span>
           </>
         )}
+        {blocked.code === "expelled" && (
+          <>
+            {masked && (
+              <span className="block">
+                Encontramos una ficha a nombre de <strong>{masked}</strong>
+              </span>
+            )}
+            <span className={masked ? "mt-2 block" : "block"}>
+              La ficha registra la expulsión de la asociación, ratificada por asamblea.
+            </span>
+            <span className="mt-2 block">
+              Conforme al estatuto, un socio expulsado no puede reingresar.
+            </span>
+          </>
+        )}
         {blocked.code === "visit_office" && (
           <>
             {masked && (
@@ -162,6 +180,7 @@ export function DniResultPanel({
           única salida. `in_progress` queda afuera: su salida es el reenvío del enlace. */}
       {(blocked.code === "already_member" ||
         blocked.code === "debt" ||
+        blocked.code === "expelled" ||
         blocked.code === "visit_office" ||
         blocked.code === "rejected_wait") && (
         <p className="mt-8 text-sm text-muted-foreground">

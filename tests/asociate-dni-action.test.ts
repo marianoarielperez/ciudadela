@@ -230,14 +230,14 @@ describe("checkDniAction — veredictos", () => {
     });
   });
 
-  it("expulsado: visit_office, y la deuda no lo cambia (precedencia)", async () => {
+  it("expulsado: expelled, y la deuda no lo cambia (precedencia)", async () => {
     mocks.prisma.member.findUnique.mockResolvedValue(
       memberRow({ withdrawalReason: "expulsion", pending: 5 }),
     );
 
     expect(await checkDniAction(IDLE, form(VALID))).toStrictEqual({
       kind: "blocked",
-      code: "visit_office",
+      code: "expelled",
       maskedName: maskedName("Castillo Nestor"),
     });
   });

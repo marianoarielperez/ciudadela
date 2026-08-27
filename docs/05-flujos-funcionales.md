@@ -81,8 +81,15 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
   - **Solicitud viva** → el reenvío del enlace de retome, ahí mismo.
   - **Deuda viva** → nombre enmascarado + **cantidad de cuotas pendientes**
     (sin pesos; decisión del operador, 27/08/2026) + "acercate a la sede".
-  - **Expulsión / fallecimiento / anulación** → el mismo literal genérico de
-    sede de siempre, indistinguibles entre sí.
+  - **Expulsión ASENTADA como motivo** → texto propio, con todas las letras:
+    "La ficha registra la expulsión de la asociación, ratificada por asamblea.
+    Conforme al estatuto, un socio expulsado no puede reingresar." (decisión de
+    Mariano, 27/08/2026, que revirtió para este único caso la
+    indistinguibilidad del 20/08). Sólo el MOTIVO registrado lo habilita.
+  - **Fallecimiento / anulación / `reentryBlocked` sin motivo asentado** → el
+    literal genérico de sede de siempre, indistinguibles entre sí (el flag
+    puede venir sucio del import: nunca se afirma una expulsión que la ficha
+    no registra).
   - **Rechazo < 6 meses** → la fecha a partir de la cual puede reintentar.
 - Superado el chequeo, el DNI queda **fijo**: viaja en el rastro de respuestas
   ("Cambiar" vuelve al paso 1 y re-verifica) y el paso 4 ya no tiene campo DNI
@@ -158,15 +165,19 @@ mismos veredictos, pero un POST armado a mano no pasa por él):
 |---|---|
 | Ya tiene una solicitud viva con ese DNI | "Ya tenés una solicitud en trámite" + botón para reenviarse el enlace de retome **al email de aquella solicitud**, que nunca se muestra en pantalla |
 | Socio `vigente` o `suspendido` | "Ya estás asociado/a a la vecinal" (al suspendido no se le revela la suspensión) |
-| Baja por expulsión / `reentryBlocked` (REG-04) | "No podemos procesar tu solicitud por este medio. Acercate a la sede vecinal." — genérico, sin motivo |
+| Baja por **expulsión asentada como motivo** (REG-04) | "La ficha registra la expulsión de la asociación, ratificada por asamblea. Conforme al estatuto, un socio expulsado no puede reingresar." (decisión de Mariano, 27/08/2026) |
+| `reentryBlocked` **sin** la expulsión asentada | El mensaje genérico de sede: el flag puede venir sucio del import (`fix-withdrawal-reasons` pendiente) y nunca se afirma una expulsión que la ficha no registra como motivo |
 | Baja por **fallecimiento** o **anulación por duplicado** | El **mismo** mensaje genérico de sede (decisión de Mariano, 20/08/2026): un DNI vivo contra una ficha de fallecido es error de datos o suplantación, y la ficha anulada tiene su gemela real en el padrón. Ninguna de las dos cosas se discute por un formulario web |
 | **Deuda viva** en la cuenta corriente: una o más cuotas pendientes (REG-16) | "Tenés una deuda pendiente con tesorería. Acercate a la sede vecinal para regularizarla." |
 | Rechazo de menos de 6 meses, sobre la ficha o sobre una solicitud anterior (REG-05) | "No podés presentar una nueva solicitud por el momento" + la fecha exacta a partir de la cual puede reintentar |
 | Cualquier otra baja sin deuda viva (renuncia, mudanza, no re-empadronado, **y también el cesante por mora que ya saldó**) | **Continúa**: la solicitud guarda el `memberId` y el asiento será un **reingreso** sobre la ficha original, no un socio duplicado (REG-25) |
 | DNI desconocido | Continúa (alta común) |
 
-Los mensajes de "sede" no distinguen expulsión de fallecimiento ni de anulación:
-quien golpea el formulario con DNIs ajenos no puede deducir nada del padrón.
+Los mensajes de "sede" genéricos no distinguen fallecimiento, anulación ni el
+flag suelto entre sí. La **expulsión asentada es la única baja que se nombra**
+(decisión de Mariano, 27/08/2026): quien golpea el formulario con DNIs ajenos
+puede saber que ese socio fue expulsado, y ése es el costo aceptado a cambio de
+que el propio expulsado no descubra la verdad recién en la sede.
 
 **Cambio de la fase 4A (decisión del cliente, 22/08/2026):** lo que bloquea por
 deuda es la **cuenta corriente viva**, no la marca histórica `debtAtWithdrawal` del

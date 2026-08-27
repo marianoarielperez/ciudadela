@@ -45,7 +45,7 @@ import { verifyTurnstile } from "@/lib/turnstile";
 type CreateState = {
   error?: string;
   blocked?: {
-    code: "in_progress" | "already_member" | "visit_office" | "debt" | "rejected_wait";
+    code: "in_progress" | "already_member" | "expelled" | "visit_office" | "debt" | "rejected_wait";
     message: string;
     retryAtIso?: string;
   };
@@ -66,7 +66,7 @@ type DniCheckState =
   | { kind: "ok" }
   | {
       kind: "blocked";
-      code: "already_member" | "in_progress" | "visit_office" | "debt" | "rejected_wait";
+      code: "already_member" | "in_progress" | "expelled" | "visit_office" | "debt" | "rejected_wait";
       maskedName: string | null;
       pendingCount?: number;
       retryAtIso?: string;

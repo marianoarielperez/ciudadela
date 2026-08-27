@@ -98,8 +98,17 @@ describe("dniCheckVerdict — bloqueos", () => {
     });
   });
 
+  it("expulsión asentada: expelled con el nombre enmascarado (decisión 27/08/2026)", () => {
+    expect(
+      dniCheckVerdict({ ...base, member: member({ withdrawalReason: "expulsion" }) }),
+    ).toStrictEqual({
+      ok: false,
+      code: "expelled",
+      maskedName: maskedName("Castillo Nestor"),
+    });
+  });
+
   it.each([
-    ["expulsión", member({ withdrawalReason: "expulsion" })],
     ["reentryBlocked sin motivo", member({ withdrawalReason: null, reentryBlocked: true })],
     ["fallecimiento", member({ withdrawalReason: "death" })],
     ["anulación por duplicado", member({ withdrawalReason: "duplicate_annulment" })],
@@ -114,7 +123,7 @@ describe("dniCheckVerdict — bloqueos", () => {
   it("la expulsión gana a la deuda (precedencia heredada de checkEligibility)", () => {
     expect(
       dniCheckVerdict({ ...base, member: member({ withdrawalReason: "expulsion", pendingFees: 5 }) }),
-    ).toMatchObject({ code: "visit_office" });
+    ).toMatchObject({ code: "expelled" });
   });
 
   it("rechazo reciente sobre la ficha: rejected_wait con la fecha y el nombre", () => {
