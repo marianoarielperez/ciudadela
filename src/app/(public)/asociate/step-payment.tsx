@@ -1,5 +1,5 @@
 "use client";
-// Paso 5 del wizard ASOCIATE: pago y envío (docs/05 §2).
+// Paso 6 del wizard ASOCIATE: pago y envío (docs/05 §2).
 //
 // Es el momento en que el vecino se compromete con plata, y la pantalla está
 // escrita para eso: antes del botón hay una BOLETA PREVIA —qué se debita ahora,

@@ -1,5 +1,5 @@
 "use client";
-// Paso 3 del wizard ASOCIATE: los datos personales y el envío que CREA la
+// Paso 4 del wizard ASOCIATE: los datos personales y el envío que CREA la
 // solicitud en la base. Es el único paso que postea a una server action.
 import { useRef } from "react";
 import { FormMessage } from "@/components/admin/form-message";
@@ -73,7 +73,7 @@ export function StepPersonal({
 
   return (
     <form ref={formRef} action={formAction} className="space-y-5">
-      {/* Los pasos 1 y 2 viajan acá, con los nombres exactos del schema de
+      {/* Los pasos 2 y 3 viajan acá, con los nombres exactos del schema de
           createApplicationAction. Los campos de la rama que el vecino NO eligió
           se omiten en vez de emitirse vacíos: no porque el server no los banque
           —`parseForm` traduce el "" a `undefined` para todo campo `.optional()`,
@@ -95,6 +95,10 @@ export function StepPersonal({
       {draft.requestedCategory === "adherent" && (
         <input type="hidden" name="wantsDebit" value={draft.wantsDebit} />
       )}
+      {/* El DNI viene VERIFICADO del paso 1 y se muestra en el rastro de
+          respuestas: cambiarlo es volver ahí (y re-verificar). El server igual
+          revalida la elegibilidad entera en el POST: esto es UX, no una guarda. */}
+      <input type="hidden" name="dni" value={draft.dni} />
 
       <Field id="fullName" label="Nombre y apellido">
         <Input
@@ -109,35 +113,19 @@ export function StepPersonal({
         />
       </Field>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <Field id="dni" label="DNI" hint="Sin puntos ni espacios.">
-          <Input
-            id="dni"
-            name="dni"
-            className={CONTROL_HEIGHT}
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={9}
-            required
-            aria-describedby="dni-hint"
-            value={draft.dni}
-            onChange={(e) => patch({ dni: e.target.value.replace(/\D/g, "") })}
-          />
-        </Field>
-        <Field id="birthDate" label="Fecha de nacimiento" hint="Tenés que ser mayor de 18 años.">
-          <Input
-            id="birthDate"
-            name="birthDate"
-            type="date"
-            className={CONTROL_HEIGHT}
-            autoComplete="bday"
-            required
-            aria-describedby="birthDate-hint"
-            value={draft.birthDate}
-            onChange={(e) => patch({ birthDate: e.target.value })}
-          />
-        </Field>
-      </div>
+      <Field id="birthDate" label="Fecha de nacimiento" hint="Tenés que ser mayor de 18 años.">
+        <Input
+          id="birthDate"
+          name="birthDate"
+          type="date"
+          className={CONTROL_HEIGHT}
+          autoComplete="bday"
+          required
+          aria-describedby="birthDate-hint"
+          value={draft.birthDate}
+          onChange={(e) => patch({ birthDate: e.target.value })}
+        />
+      </Field>
 
       <div className="grid gap-5 sm:grid-cols-2">
         <Field id="civilStatus" label="Estado civil">

@@ -48,26 +48,53 @@ lugar de una actividad.
 Precondición: `asociate_activo=true` y sin re-empadronamiento en curso.
 Aceptación de términos + consentimiento de datos personales (textos en
 `Configuracion`, **texto plano** editable por el superadmin) y **Turnstile
-validado server-side en el paso 3** — que es el único paso que escribe en la
-base y el único que puede filtrar información del padrón. Los pasos 1 y 2 no
-tocan la base; los 4 y 5 ya operan sobre una solicitud creada y se autentican
-con el token de retome.
+validado server-side en los pasos 1 y 4** — el 1 consulta el padrón con un DNI
+suelto y el 4 es el que escribe en la base. Los pasos 2 y 3 no tocan la base;
+los 5 y 6 ya operan sobre una solicitud creada y se autentican con el token de
+retome.
 
-**Arquitectura**: `/asociate` es una sola ruta con un componente cliente de 5
-pasos. El paso 3 crea la `Application` y devuelve el **token de retome** (crudo
-solo en el cliente; en la base vive su sha256). Un refresh antes del paso 3
-pierde el progreso — son dos pantallas cortas, se aceptó a cambio de no escribir
-filas basura. A partir del paso 3, `/asociate/retomar/[token]` rehidrata la
+**Arquitectura**: `/asociate` es una sola ruta con un componente cliente de 6
+pasos. El paso 4 crea la `Application` y devuelve el **token de retome** (crudo
+solo en el cliente; en la base vive su sha256). Un refresh antes del paso 4
+pierde el progreso — son tres pantallas cortas, se aceptó a cambio de no escribir
+filas basura. A partir del paso 4, `/asociate/retomar/[token]` rehidrata la
 solicitud en el paso que corresponda; ese mismo enlace es el `back_url` del
 checkout de MP y el que viaja en el email de recordatorio de pago.
 
-**Paso 1 — ¿Dónde vivís?**
+**Paso 1 — Tu DNI** (chequeo temprano, spec 2026-08-27)
+- Campo DNI + Turnstile. La action (`checkDniAction`) corre el orden de guardas
+  de siempre —interruptor → proceso de re-empadronamiento → cupo (`allows`) →
+  captcha → zod → cobro (`record`) → padrón— con un **limitador propio de
+  5 intentos / 15 min por IP** (`asociateDniCheckLimiter`), separado del cupo
+  de creación. **No audita** (misma doctrina que el lookup de REEMPADRONATE:
+  un asiento por intento registraría qué DNI consultó cada IP).
+- Los insumos y el juez son LOS MISMOS del envío del paso 4:
+  `loadEligibilityInputs` + `checkEligibility`. El paso 1 es una cortesía de
+  UX; la guarda real sigue en el POST del paso 4.
+- Veredictos (la prosa la escribe la pantalla; el server manda códigos):
+  - **DNI desconocido o ex-socio habilitado** → continúa al paso 2, y los dos
+    casos son **indistinguibles**: que exista una ficha no se le dice a un
+    visitante anónimo; el `memberId` se re-resuelve al crear.
+  - **Vigente o suspendido** → "Ya estás asociado/a" con el **nombre
+    enmascarado** ("N***** C.", la misma `maskedName` de REEMPADRONATE) y
+    botón al panel de socio (`/ingresar`).
+  - **Solicitud viva** → el reenvío del enlace de retome, ahí mismo.
+  - **Deuda viva** → nombre enmascarado + **cantidad de cuotas pendientes**
+    (sin pesos; decisión del operador, 27/08/2026) + "acercate a la sede".
+  - **Expulsión / fallecimiento / anulación** → el mismo literal genérico de
+    sede de siempre, indistinguibles entre sí.
+  - **Rechazo < 6 meses** → la fecha a partir de la cual puede reintentar.
+- Superado el chequeo, el DNI queda **fijo**: viaja en el rastro de respuestas
+  ("Cambiar" vuelve al paso 1 y re-verifica) y el paso 4 ya no tiene campo DNI
+  (viaja como hidden).
+
+**Paso 2 — ¿Dónde vivís?**
 - Opción A: "En el Barrio Ciudadela" → buscador de calle con autocompletado sobre
   la tabla Calle (matchea `nombre_normalizado` y también `orden_carga` numérico;
   ej.: "hernandez", "Hernández", "1906" encuentran "Hernandez , Jose"). + campo altura.
 - Opción B: "En otro barrio" → calle y barrio a mano (texto libre).
 
-**Paso 2 — Categoría**
+**Paso 3 — Categoría**
 - Si Ciudadela: elegir **ACTIVO** ($X/mes obligatoria, voz y voto, puede ocupar cargos)
   o **ADHERENTE** (cuota voluntaria de $Y, voz sin voto en asambleas, vota en elecciones).
   Los montos se leen de los **dos** Planes de MP (caché de 24 h): "SOCIO ACTIVO"
@@ -82,9 +109,10 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
   deberá acreditar vinculación con el barrio (inmueble, familiar residente, o
   comercio/actividad en la zona).
 
-**Paso 3 — Tus datos**
-- Nombre y apellido, DNI, fecha de nacimiento (validar 18+), estado civil,
-  nacionalidad, ocupación, teléfono, email (con confirmación de tipeo).
+**Paso 4 — Tus datos**
+- Nombre y apellido, fecha de nacimiento (validar 18+), estado civil,
+  nacionalidad, ocupación, teléfono, email (con confirmación de tipeo). El **DNI
+  no se vuelve a pedir**: quedó fijado en el paso 1 y viaja como campo oculto.
 - Orden de las guardas al enviar: **interruptor de ASOCIATE → consulta del cupo
   → Turnstile → zod → consumo del cupo → bloqueos por DNI → creación**.
   - El **interruptor** (`asociate_activo`) se revalida en la server action, no
@@ -110,10 +138,10 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
   - El **rate limit por IP (5/h) es de dos fases**: primero se *consulta* si
     queda cupo (sin gastarlo) y recién después del captcha y de zod se *consume*
     el intento. La separación es deliberada: así un captcha vencido —la ficha
-    de Turnstile dura 5 minutos y el paso 3 puede llevar más— y los errores de
+    de Turnstile dura 5 minutos y el paso 4 puede llevar más— y los errores de
     tipeo (son ~16 campos y el formulario reporta uno por vez) no le queman al
     vecino los 5 intentos de la hora. El intento se cobra justo antes de la
-    primera consulta al padrón, que es lo único que hay que racionar.
+    primera consulta al padrón, que es lo único que hay que racionar en este paso.
   - Validar la forma (zod) antes de consultar el padrón no debilita el
     anti-enumeración: la validez de FORMATO no depende del padrón (es zod sobre
     el POST, sin consulta), cada intento sigue costando un captcha resuelto —el
@@ -122,7 +150,9 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
 - La creación corre dentro de una transacción que revalida la invariante **"una
   sola solicitud viva por DNI"** (MySQL no tiene índices parciales).
 
-**Bloqueos por DNI del paso 3** (regla pura y testeada, en este orden):
+**Bloqueos por DNI del paso 4** (regla pura y testeada, en este orden — desde el
+paso "Tu DNI" es la SEGUNDA línea de defensa: el chequeo temprano ya mostró estos
+mismos veredictos, pero un POST armado a mano no pasa por él):
 
 | Condición | Qué ve el vecino |
 |---|---|
@@ -144,7 +174,7 @@ Libro 1. El motivo de baja `cesantia_mora` **dejó de bloquear por sí solo**: R
 dice que saldar la totalidad habilita el reingreso, así que el cesante que paga en
 la sede queda habilitado solo, sin que nadie tenga que bajar un flag.
 
-**Paso 4 — Documentación**
+**Paso 5 — Documentación**
 - Upload obligatorio: DNI frente y dorso (foto/imagen). Opcional/according: hasta 2
   anexos (factura de servicios a su nombre, certificado, boleta de inmueble…).
   Para Colaborador, al menos 1 anexo de vinculación es obligatorio.
@@ -152,7 +182,7 @@ la sede queda habilitado solo, sin que nadie tenga que bajar un flag.
   (no por extensión). Se guardan en `UPLOADS_DIR/applications/{id}/` con nombre
   UUID.
 
-**Paso 5 — Pago / envío**
+**Paso 6 — Pago / envío**
 - Ramas con débito (Activo, Colaborador, Adherente-con-débito):
   - Pantalla informativa ANTES de ir a MP: "El primer débito corresponde a la
     **cuota de ingreso** (equivale a un mes de cuota). **No es reembolsable**,
@@ -174,7 +204,7 @@ la sede queda habilitado solo, sin que nadie tenga que bajar un flag.
 
 **Cuándo sale cada correo** (desvío acordado respecto de la versión original de
 este documento): el **email de verificación del domicilio electrónico es
-inmediato**, al crear la solicitud en el paso 3 (REG-08). La **invitación a crear
+inmediato**, al crear la solicitud en el paso 4 (REG-08). La **invitación a crear
 la contraseña NO se manda al aceptar sino al asentar en acta**, porque una cuenta
 de acceso (`User`) no puede existir sin ficha de socio (`Member`): antes del
 asiento no hay a qué colgarla. Ver §3.

@@ -1,25 +1,26 @@
 "use client";
-// Wizard público ASOCIATE (docs/05 §2). Cinco pasos. Acá vive SÓLO el marco —
+// Wizard público ASOCIATE (docs/05 §2). Seis pasos. Acá vive SÓLO el marco —
 // el stepper, el borrador, el foco y el descarte de las respuestas del server—;
-// cada paso está en su propio archivo (`step-residence`, `step-category`,
-// `step-personal`, `step-documents`, `step-payment`), las primitivas visuales en
-// `wizard-ui`, el rechazo por elegibilidad en `blocked-panel` y las pantallas de
-// una solicitud ya enviada en `application-status`.
+// cada paso está en su propio archivo (`step-dni`, `step-residence`,
+// `step-category`, `step-personal`, `step-documents`, `step-payment`), las
+// primitivas visuales en `wizard-ui`, el rechazo por elegibilidad en
+// `blocked-panel` y las pantallas de una solicitud ya enviada en
+// `application-status`.
 //
-// De los pasos 1-3 a los 4-5 cambia de qué se habla: antes de crear la solicitud
+// De los pasos 1-4 a los 5-6 cambia de qué se habla: antes de crear la solicitud
 // todo vive en el borrador del navegador, y después TODO está en la base y se
-// opera con el token de retome. Por eso a partir del paso 4 no se vuelve atrás:
-// reenviar el paso 3 crearía un duplicado (que el server rechaza igual).
+// opera con el token de retome. Por eso a partir del paso 5 no se vuelve atrás:
+// reenviar el paso 4 crearía un duplicado (que el server rechaza igual).
 //
 // Regla del estado de las actions: vive acá el de las que CAMBIAN la pantalla
-// del wizard —la creación del paso 3 y el envío sin débito, que lleva a la
+// del wizard —la creación del paso 4 y el envío sin débito, que lleva a la
 // pantalla de recibida—, y se deriva en el render sin efectos. El de
-// `startPaymentAction`, que se va del sitio, vive en el paso 5.
+// `startPaymentAction`, que se va del sitio, vive en el paso 6.
 //
-// La subida del paso 4 NO: cada ranura corre su propia action con su propio
+// La subida del paso 5 NO: cada ranura corre su propia action con su propio
 // `useActionState` (ver el comentario de `step-documents.tsx` — compartir uno
 // entre tres ranuras es el bug que se tragaba los clics de "Subir"). De ahí
-// sólo sube QUÉ documento entró, para habilitar el paso 5.
+// sólo sube QUÉ documento entró, para habilitar el paso 6.
 //
 // Criterios de diseño de esta pantalla:
 //
@@ -36,7 +37,7 @@
 //     registrar sobre uno. Es además el único camino de vuelta, así que no hay
 //     "Volver" duplicado.
 //
-// El estado de los pasos 1-2 NO viaja como campos del formulario del paso 3
+// El estado de los pasos 1-3 NO viaja como campos del formulario del paso 4
 // hasta el submit: se guarda en `draft` y se emite como `<input type="hidden">`
 // dentro del form, con los nombres EXACTOS del schema de `createApplicationAction`.
 import { useEffect, useRef, useState } from "react";
@@ -44,10 +45,12 @@ import { useActionState } from "react";
 import type { ApplicationStatus, DocumentType, MemberCategory } from "@/generated/prisma/client";
 import { requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { cn } from "@/lib/utils";
-import { createApplicationAction, submitNoDebitAction } from "./actions";
+import { checkDniAction, createApplicationAction, submitNoDebitAction } from "./actions";
 import { ApplicationStatusScreen } from "./application-status";
 import { BlockedPanel } from "./blocked-panel";
+import { DniResultPanel } from "./dni-result-panel";
 import { StepCategory } from "./step-category";
+import { StepDni } from "./step-dni";
 import { StepDocuments } from "./step-documents";
 import { StepPayment } from "./step-payment";
 import { StepPersonal } from "./step-personal";
@@ -58,6 +61,7 @@ import {
   type ApplicationSnapshot,
   type AsociateDraft,
   type CreateState,
+  type DniCheckState,
   type FeeAmounts,
   type LegalTexts,
   type StreetOption,
@@ -68,13 +72,14 @@ import {
 // obligar a nadie a saber que viven en `wizard-shared`.
 export type { ApplicationSnapshot, AsociateDraft, FeeAmounts, LegalTexts, StreetOption };
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 const STEP_TITLES: Record<number, string> = {
-  1: "¿Dónde vivís?",
-  2: "Elegí tu categoría",
-  3: "Tus datos",
-  4: "Documentación",
-  5: "Pago y envío",
+  1: "Tu DNI",
+  2: "¿Dónde vivís?",
+  3: "Elegí tu categoría",
+  4: "Tus datos",
+  5: "Documentación",
+  6: "Pago y envío",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -122,7 +127,7 @@ export function AsociateWizard(props: {
   const { streets, legal, fees, siteKey, initial } = props;
 
   // El retome cae directo en el paso que corresponde: con la documentación ya
-  // completa, en el 5. La regla es la MISMA función pura que usa el server para
+  // completa, en el 6. La regla es la MISMA función pura que usa el server para
   // aceptar el envío, así que las dos puntas no se pueden desincronizar.
   const [navStep, setStep] = useState(() => {
     const app = initial?.application;
@@ -131,8 +136,8 @@ export function AsociateWizard(props: {
       app.uploadedTypes.map((type) => ({ type })),
       app.requestedCategory,
     ).ok
-      ? 5
-      : 4;
+      ? 6
+      : 5;
   });
   const [draft, setDraft] = useState<AsociateDraft>({ ...EMPTY_DRAFT, ...initial?.draft });
   const [localError, setLocalError] = useState<string | null>(null);
@@ -149,7 +154,7 @@ export function AsociateWizard(props: {
   // `useActionState` no se puede limpiar: su valor vive hasta la próxima
   // respuesta del server. Sin esto el rechazo era permanente en las dos puntas
   // —el `blocked` reemplazaba la pantalla para siempre, y el `error` seguía
-  // pintado al volver al paso 2 y avanzar, describiendo algo que ya no pasa—.
+  // pintado al volver al paso 3 y avanzar, describiendo algo que ya no pasa—.
   //
   // Se guarda la RESPUESTA descartada, no un booleano: cada respuesta de
   // `useActionState` es un objeto nuevo, así que la comparación por identidad
@@ -158,6 +163,23 @@ export function AsociateWizard(props: {
   const [dismissed, setDismissed] = useState<CreateState | null>(null);
   const live = createState === dismissed ? null : createState;
 
+  // El chequeo temprano por DNI del paso 1: mismo patrón de descarte por
+  // identidad que `createState` (arriba), y el avance al paso 2 se decide en
+  // el RENDER reconociendo la respuesta nueva, sin efectos (el patrón del
+  // wizard de REEMPADRONATE).
+  const [dniState, dniAction, checkingDni] = useActionState<DniCheckState, FormData>(
+    checkDniAction,
+    { kind: "idle" },
+  );
+  const [dniDismissed, setDniDismissed] = useState<DniCheckState | null>(null);
+  const dniLive = dniState === dniDismissed ? null : dniState;
+
+  const [seenDniState, setSeenDniState] = useState(dniState);
+  if (dniState !== seenDniState) {
+    setSeenDniState(dniState);
+    if (dniState.kind === "ok") setStep(2);
+  }
+
   // Todo lo que depende de la respuesta de la action se DERIVA en el render, sin
   // efectos que llamen a setState (la regla del compilador de React lo prohíbe,
   // y con razón: eran dos renders en cascada por respuesta).
@@ -165,12 +187,12 @@ export function AsociateWizard(props: {
   // `created` se lee del estado crudo y no de `live`: el descarte es para los
   // rechazos, y una solicitud creada no se descarta.
   const resumeToken = createState.created?.resumeToken ?? initial?.resumeToken ?? "";
-  // Con la solicitud ya creada no se vuelve a los pasos 1-3: los datos están en
-  // la base y reenviar el paso 3 crearía un duplicado (que el server rechaza).
-  const step = resumeToken && navStep < 4 ? 4 : navStep;
+  // Con la solicitud ya creada no se vuelve a los pasos 1-4: los datos están en
+  // la base y reenviar el paso 4 crearía un duplicado (que el server rechaza).
+  const step = resumeToken && navStep < 5 ? 5 : navStep;
 
   // La solicitud llega de uno de dos lados: la trajo el retome desde la base, o
-  // la acaba de crear el paso 3 y entonces todo lo que sabemos de ella está en
+  // la acaba de crear el paso 4 y entonces todo lo que sabemos de ella está en
   // el borrador que la creó.
   const application: ApplicationSnapshot | null =
     initial?.application ??
@@ -190,11 +212,11 @@ export function AsociateWizard(props: {
       : null);
 
   // Documentos ya subidos. Se arranca de lo que trajo el retome y se le suma lo
-  // que va aceptando el server, que le avisa cada ranura del paso 4 cuando SU
+  // que va aceptando el server, que le avisa cada ranura del paso 5 cuando SU
   // subida entra (ver el comentario de `step-documents.tsx`: el estado de envío
   // es de cada ranura, acá sólo llega el tipo que entró).
   //
-  // La lista vive ACÁ y no en el paso porque el paso se desmonta al ir al 5:
+  // La lista vive ACÁ y no en el paso porque el paso se desmonta al ir al 6:
   // guardarla adentro haría que volver a la documentación mostrara "Falta" sobre
   // documentos que ya están en la base.
   const [uploaded, setUploaded] = useState<DocumentType[]>(
@@ -233,12 +255,12 @@ export function AsociateWizard(props: {
   //
   // Es `history.replaceState` y no `router.replace` a propósito:
   //   - `replaceState` y no `pushState` porque el "atrás" no puede volver al
-  //     paso 3 con el formulario cargado: reenviarlo sólo puede terminar en un
+  //     paso 4 con el formulario cargado: reenviarlo sólo puede terminar en un
   //     duplicado (que el server rechaza igual).
   //   - la API del historial y no el router porque acá NO hay a dónde navegar:
   //     el trámite ya está en pantalla. Una navegación de verdad desmontaría el
   //     wizard vivo, perdiendo el foco que se acaba de llevar al encabezado del
-  //     paso 4. Lo único que falta es la dirección, y eso es exactamente lo que
+  //     paso 5. Lo único que falta es la dirección, y eso es exactamente lo que
   //     hace. Next soporta `history.pushState/replaceState` nativos en el App
   //     Router: los parchea para despachar `ACTION_RESTORE`, que se queda con
   //     el árbol de router que YA está en memoria (el de `/asociate`) y sólo
@@ -293,13 +315,36 @@ export function AsociateWizard(props: {
 
   // Salir del bloqueo también mueve el foco, y necesita su propio disparo: el
   // panel lo tenía puesto en SU encabezado, que al descartar se desmonta, y
-  // como el paso nunca cambió (siempre fue 3) el efecto de arriba corta en el
+  // como el paso nunca cambió (siempre fue 4) el efecto de arriba corta en el
   // guardia y el foco se cae al body. Es el mismo agujero que arregla el
   // efecto de navegación, en el camino de vuelta.
   function dismissBlocked() {
-    goTo(3);
-    // Tras el re-render que desmonta el panel: el encabezado del paso 3 ya existe.
+    goTo(4);
+    // Tras el re-render que desmonta el panel: el encabezado del paso 4 ya existe.
     queueMicrotask(() => headingRef.current?.focus());
+  }
+
+  // Volver al paso 1 desde un veredicto del chequeo de DNI, con el campo
+  // limpio: el caso más común es el tipeo, y dejar el número anterior invita a
+  // reenviar el mismo error. Mismo mecanismo de foco que dismissBlocked.
+  function retryDni() {
+    setDniDismissed(dniState);
+    patch({ dni: "" });
+    setStep(1);
+    queueMicrotask(() => headingRef.current?.focus());
+  }
+
+  // El veredicto del paso 1 no es un paso del wizard: reemplaza la pantalla
+  // entera, stepper incluido, igual que el bloqueo de la creación de abajo.
+  if (dniLive?.kind === "blocked") {
+    return (
+      <DniResultPanel
+        blocked={dniLive}
+        dni={draft.dni}
+        siteKey={siteKey}
+        onRetry={retryDni}
+      />
+    );
   }
 
   // El bloqueo no es un paso del wizard: reemplaza la pantalla entera, stepper
@@ -353,31 +398,42 @@ export function AsociateWizard(props: {
         Paso {step} de {TOTAL_STEPS}: {STEP_TITLES[step]}
       </p>
 
-      {(step === 2 || step === 3) && <AnsweredTrail draft={draft} step={step} onEdit={goTo} />}
+      {step >= 2 && step <= 4 && <AnsweredTrail draft={draft} step={step} onEdit={goTo} />}
 
       <div className="mt-6">
         {step === 1 && (
+          <StepDni
+            draft={draft}
+            patch={patch}
+            siteKey={siteKey}
+            actionState={dniState}
+            formAction={dniAction}
+            pending={checkingDni}
+            error={dniLive?.kind === "error" ? dniLive.error : undefined}
+          />
+        )}
+        {step === 2 && (
           <StepResidence
             streets={streets}
             draft={draft}
             patch={patch}
             error={localError}
             onError={setLocalError}
-            onNext={() => goTo(2)}
+            onNext={() => goTo(3)}
           />
         )}
-        {step === 2 && (
+        {step === 3 && (
           <StepCategory
             draft={draft}
             fees={fees}
             patch={patch}
             error={localError}
             onError={setLocalError}
-            onBack={() => goTo(1)}
-            onNext={() => goTo(3)}
+            onBack={() => goTo(2)}
+            onNext={() => goTo(4)}
           />
         )}
-        {step === 3 && (
+        {step === 4 && (
           <StepPersonal
             draft={draft}
             patch={patch}
@@ -387,19 +443,19 @@ export function AsociateWizard(props: {
             formAction={createAction}
             pending={creating}
             error={live?.error}
-            onBack={() => goTo(2)}
+            onBack={() => goTo(3)}
           />
         )}
-        {step === 4 && application && (
+        {step === 5 && application && (
           <StepDocuments
             resumeToken={resumeToken}
             category={application.requestedCategory}
             uploaded={uploaded}
             onUploaded={addUploaded}
-            onNext={() => goTo(5)}
+            onNext={() => goTo(6)}
           />
         )}
-        {step === 5 && application && (
+        {step === 6 && application && (
           <StepPayment
             resumeToken={resumeToken}
             category={application.requestedCategory}
@@ -408,7 +464,7 @@ export function AsociateWizard(props: {
             submitState={submitState}
             submitAction={submitAction}
             submitting={submitting}
-            onBack={() => goTo(4)}
+            onBack={() => goTo(5)}
           />
         )}
       </div>
@@ -431,13 +487,19 @@ function AnsweredTrail({
 }) {
   const rows: Array<{ step: number; label: string; value: string }> = [];
 
-  const address =
-    draft.livesInBarrio === "si"
-      ? `${draft.streetName} ${draft.streetNumber}, Barrio Ciudadela`
-      : `${draft.streetText} ${draft.streetNumber}, ${draft.neighborhood}`;
-  rows.push({ step: 1, label: "Vivís en", value: address });
+  // El DNI verificado del paso 1: cambiarlo es volver ahí y re-verificar
+  // (captcha incluido) — por eso el campo del paso 4 ya no existe.
+  rows.push({ step: 1, label: "DNI", value: draft.dni });
 
-  if (step > 2 && draft.requestedCategory) {
+  if (step > 2) {
+    const address =
+      draft.livesInBarrio === "si"
+        ? `${draft.streetName} ${draft.streetNumber}, Barrio Ciudadela`
+        : `${draft.streetText} ${draft.streetNumber}, ${draft.neighborhood}`;
+    rows.push({ step: 2, label: "Vivís en", value: address });
+  }
+
+  if (step > 3 && draft.requestedCategory) {
     const debit =
       draft.requestedCategory === "adherent"
         ? draft.wantsDebit === "si"
@@ -445,7 +507,7 @@ function AnsweredTrail({
           : " · sin débito automático"
         : "";
     rows.push({
-      step: 2,
+      step: 3,
       label: "Categoría",
       value: `${CATEGORY_LABELS[draft.requestedCategory]}${debit}`,
     });

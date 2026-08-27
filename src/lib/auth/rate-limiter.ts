@@ -218,9 +218,10 @@ export const RESUME_RESEND_LIMIT = 3
 /** Creación de solicitudes ASOCIATE, por IP. Detrás de Turnstile, pero el
  *  captcha no raciona el volumen de un humano persistente: cinco solicitudes
  *  por hora desde un mismo origen alcanzan para cualquier hogar (CGNAT
- *  incluido) y frenan el llenado masivo del padrón de solicitudes. Es además
- *  la única puerta del chequeo de elegibilidad por DNI (anti-enumeración,
- *  spec M3 §4). */
+ *  incluido) y frenan el llenado masivo del padrón de solicitudes. Junto con
+ *  `asociateDniCheckLimiter` (el cupo del chequeo temprano del paso 1) es una
+ *  de las DOS puertas del chequeo de elegibilidad por DNI (anti-enumeración,
+ *  spec M3 §4): ésta raciona el del envío del paso de datos. */
 export const applicationCreateLimiter = createRateLimiter({
   limit: APPLICATION_CREATE_LIMIT,
   windowMs: APPLICATION_WINDOW_MS,
@@ -306,4 +307,24 @@ export const reregistrationLookupLimiter = createRateLimiter({
 export const reregistrationResendLimiter = createRateLimiter({
   limit: REREGISTRATION_RESEND_LIMIT,
   windowMs: REREGISTRATION_RESEND_WINDOW_MS,
+})
+
+export const ASOCIATE_DNI_CHECK_WINDOW_MS = 15 * 60_000
+export const ASOCIATE_DNI_CHECK_LIMIT = 5
+
+/** Chequeo temprano por DNI del paso 1 de ASOCIATE, por IP.
+ *
+ *  Mismo riesgo y mismo presupuesto que `reregistrationLookupLimiter`: un
+ *  formulario que contesta contra el padrón con un DNI suelto, sin nada
+ *  cargado. Detrás de Turnstile, pero el captcha encarece el intento
+ *  automatizado y no raciona al humano persistente. Ventana de 15 minutos por
+ *  el mismo motivo que allá: el vecino legítimo reintenta el mismo día (tipeo,
+ *  captcha vencido) y detrás del CGNAT móvil puede haber varios a la vez.
+ *
+ *  Es un presupuesto SEPARADO de `applicationCreateLimiter`: gastar chequeos
+ *  del paso 1 no puede dejar sin envío a quien ya llegó al paso de datos, ni
+ *  al revés. */
+export const asociateDniCheckLimiter = createRateLimiter({
+  limit: ASOCIATE_DNI_CHECK_LIMIT,
+  windowMs: ASOCIATE_DNI_CHECK_WINDOW_MS,
 })

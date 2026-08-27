@@ -1,5 +1,5 @@
 "use client";
-// Paso 4 del wizard ASOCIATE: documentación (docs/05 §2, REG-03).
+// Paso 5 del wizard ASOCIATE: documentación (docs/05 §2, REG-03).
 //
 // Criterio de la pantalla: es una lista de RANURAS, no tres campos de archivo.
 // Cada ranura es una cosa física que el vecino tiene en la mano —el frente del
@@ -33,7 +33,7 @@
 //
 // Lo único que sube de una ranura al paso es QUÉ documento entró (`onUploaded`),
 // porque de eso depende habilitar "Continuar" — y esa lista vive todavía más
-// arriba, en el wizard, para que ir al paso 5 y volver no la borre.
+// arriba, en el wizard, para que ir al paso 6 y volver no la borre.
 import { CheckIcon } from "lucide-react";
 import { useActionState, useId, useState } from "react";
 import type { DocumentType, MemberCategory } from "@/generated/prisma/client";

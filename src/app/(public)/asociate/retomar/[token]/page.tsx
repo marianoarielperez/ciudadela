@@ -56,7 +56,7 @@ export default async function RetomarPage({ params }: { params: Promise<{ token:
 
   return (
     <main className="mx-auto w-full max-w-xl px-4 py-8 sm:py-12">
-      {/* `streets` vacío a propósito: con la solicitud creada, los pasos 1-3 no
+      {/* `streets` vacío a propósito: con la solicitud creada, los pasos 1-4 no
           son alcanzables (ver `asociate-wizard`), así que el catálogo catastral
           —40 filas— no tiene por qué viajar al navegador en esta pantalla. */}
       <AsociateWizard

@@ -1,4 +1,4 @@
-// Bloqueos del paso 3 del wizard (spec M3 §4). Regla PURA: la action junta los
+// Bloqueos del paso 4 del wizard (spec M3 §4). Regla PURA: la action junta los
 // insumos (ficha por DNI, solicitud viva, último rechazo) y esta función decide.
 // Los mensajes son user-facing es-AR y NO revelan más de lo necesario: el
 // suspendido ve lo mismo que el vigente, el expulsado ve lo mismo que

@@ -1,6 +1,6 @@
 "use client";
 // Primitivas visuales compartidas por los pasos del wizard ASOCIATE. Viven
-// aparte para que los pasos 4 y 5 (Task 13) las hereden sin importar el wizard
+// aparte para que los pasos 5 y 6 (Task 13) las hereden sin importar el wizard
 // entero: la tarjeta de opción, el envoltorio de campo, la botonera de
 // navegación, el monto de la cuota y el desplegable de los textos legales.
 import Link from "next/link";
@@ -107,7 +107,7 @@ type NavButtonsProps = {
   nextLabel?: string;
   nextDisabled?: boolean;
   pending?: boolean;
-  /** El paso 5 no "envía": va a Mercado Pago. El rótulo de espera tiene que
+  /** El paso 6 no "envía": va a Mercado Pago. El rótulo de espera tiene que
    *  decir lo que está pasando, si no el vecino cree que ya mandó la solicitud. */
   pendingLabel?: string;
 } & NavNextProps;

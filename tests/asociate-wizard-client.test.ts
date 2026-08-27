@@ -45,7 +45,7 @@ const wizard = code(src("app", "(public)", "asociate", "asociate-wizard.tsx"));
 // `{}` inicial), apagaba `hasFile`, y el navegador encontraba el botón
 // `disabled` y NO disparaba el submit. Fallaba el primer clic de toda ranura y
 // todo clic que movía el puntero.
-describe("paso 4: cada ranura de documento es independiente", () => {
+describe("paso 5: cada ranura de documento es independiente", () => {
   it("NO existe un puntero de ranura activa en ninguna de las dos puntas", () => {
     // `activeSlot` es el nombre exacto del puntero que causaba el bug, pero lo
     // que se prohíbe es la clase: cualquier estado del paso que diga CUÁL de
@@ -172,5 +172,35 @@ describe("el token de retome queda en la dirección apenas la solicitud existe",
     // el path entero —token incluido— en el `Referer`.
     const config = code(read("next.config.ts"));
     expect(config).toContain('{ key: "Referrer-Policy", value: "strict-origin-when-cross-origin" }');
+  });
+});
+
+// ── Paso 1 "Tu DNI" (spec 2026-08-27): la aritmética que protege el retome ──
+//
+// La renumeración 5→6 no tiene cobertura de comportamiento (no hay jsdom), así
+// que se fijan los DOS literales que, mal corridos, romperían el retome o
+// permitirían reenviar el paso de datos sobre una solicitud con preapproval.
+describe("el wizard de 6 pasos", () => {
+  it("declara 6 pasos y el DNI es el paso 1", () => {
+    expect(wizard).toContain("const TOTAL_STEPS = 6;");
+    expect(wizard).toContain('1: "Tu DNI",');
+  });
+
+  it("con la solicitud creada no se navega por debajo del paso 5", () => {
+    expect(wizard).toContain("const step = resumeToken && navStep < 5 ? 5 : navStep;");
+  });
+
+  it("el retome entra en el paso 6 con la documentación completa, o en el 5", () => {
+    // El tercer número load-bearing de la renumeración: un desliz acá degrada
+    // en silencio (la guarda de navStep lo absorbe y el retome cae un paso antes).
+    expect(wizard).toContain("? 6");
+    expect(wizard).toContain(": 5;");
+  });
+
+  it("el paso de datos manda el DNI verificado como campo oculto", () => {
+    // El campo visible se quitó en la renumeración: si este hidden muere, el
+    // alta entera falla recién en el submit con "DNI inválido".
+    const stepPersonal = code(src("app", "(public)", "asociate", "step-personal.tsx"));
+    expect(stepPersonal).toContain('<input type="hidden" name="dni" value={draft.dni} />');
   });
 });

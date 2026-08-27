@@ -89,7 +89,7 @@ Identidad única de la persona a través de todos los libros.
   `decidedAt`, `remindedAt`, `ip`, `userAgent`, `acceptedTermsAt`
 - `resumeTokenHash` (Char(64) UNIQUE): sha256 del **token de retome**. El token crudo
   (32 bytes base64url) vive solo en el cliente del wizard y en el email de
-  recordatorio; nunca se persiste. Es lo que autentica los pasos 4 y 5 y la ruta
+  recordatorio; nunca se persiste. Es lo que autentica los pasos 5 y 6 y la ruta
   `/asociate/retomar/[token]`. No tiene TTL propio: lo acota la expiración de la
   solicitud.
 - `memberId` (nullable): seteado cuando el DNI matcheó una ficha existente sin

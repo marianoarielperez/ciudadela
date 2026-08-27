@@ -12,8 +12,15 @@ de Datos Personales** (Argentina).
   derechos de acceso, rectificación y supresión vía contacto). Texto en
   Configuracion, aprobado por la CD. Timestamp del consentimiento en la Solicitud.
 - **Minimización de exposición**: ninguna consulta pública revela datos del padrón.
-  La identificación del re-empadronamiento responde con nombre enmascarado y
-  mensajes genéricos ante no-coincidencia.
+  La identificación del re-empadronamiento responde con **nombre enmascarado** y
+  mensajes genéricos ante no-coincidencia. El chequeo temprano por DNI de
+  ASOCIATE (spec 2026-08-27) sigue la misma regla con una ampliación decidida
+  por el operador (27/08/2026): detrás de Turnstile y de un cupo de 5/15 min
+  por IP, responde el nombre **enmascarado**, veredictos distinguibles entre sí
+  (vigente / trámite / deuda / sede / rechazo) y, en el caso deuda, la
+  **cantidad** de cuotas pendientes — nunca montos, nunca el nombre completo,
+  nunca el motivo real de una baja de sede, y el reingreso habilitado es
+  indistinguible de un DNI desconocido.
 - **Conservación**: las imágenes de DNI y anexos se conservan de forma **permanente**
   (decisión institucional: son el respaldo de la validación de identidad), bajo las
   medidas de este documento.

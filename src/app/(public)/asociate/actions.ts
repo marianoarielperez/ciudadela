@@ -9,11 +9,13 @@ import { z } from "zod";
 import type { Application } from "@/generated/prisma/client";
 import { audit } from "@/lib/audit";
 import {
-  applicationCreateLimiter, applicationStatusLimiter, publicTokenLimiter,
-  resumeResendLimiter, resumeResendTargetLimiter,
+  applicationCreateLimiter, applicationStatusLimiter, asociateDniCheckLimiter,
+  publicTokenLimiter, resumeResendLimiter, resumeResendTargetLimiter,
 } from "@/lib/auth/rate-limiter";
+import { dniCheckVerdict } from "@/lib/applications/dni-check";
 import { MAX_ANNEXES, requiredDocsComplete } from "@/lib/applications/documents-rules";
 import { checkEligibility } from "@/lib/applications/eligibility";
+import { loadEligibilityInputs } from "@/lib/applications/eligibility-inputs";
 import { applicationService, DuplicateLiveApplicationError } from "@/lib/applications/service";
 import { categoryAllowedForResidence, civilTodayAr, isAdult, WEB_CATEGORIES } from "@/lib/applications/wizard";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
@@ -56,6 +58,20 @@ type SubmitState = { error?: string; done?: boolean };
 // de abajo, donde reintentar crearía una SEGUNDA suscripción en MP. Los demás errores
 // de `startPaymentAction` NO lo llevan, porque ahí sí se puede reintentar.
 type PayState = { error?: string; redirectUrl?: string; blocked?: true };
+// El estado del chequeo temprano por DNI (paso 1, spec 2026-08-27). `blocked`
+// lleva CÓDIGOS y el nombre enmascarado; la prosa la escribe la pantalla
+// (`dni-result-panel.tsx`). El espejo cliente vive en `wizard-shared.ts`.
+type DniCheckState =
+  | { kind: "idle" }
+  | { kind: "ok" }
+  | {
+      kind: "blocked";
+      code: "already_member" | "in_progress" | "visit_office" | "debt" | "rejected_wait";
+      maskedName: string | null;
+      pendingCount?: number;
+      retryAtIso?: string;
+    }
+  | { kind: "error"; error: string };
 
 const TOO_MANY = "Demasiados intentos desde esta conexión. Probá de nuevo en un rato.";
 const ASOCIATE_CLOSED =
@@ -142,7 +158,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // ponerla antes o después no le gasta cupo a nadie. Se lee mejor con la
   // pregunta más barata de responder arriba de todo.
   //
-  // NO frena lo ya empezado: los pasos 4 y 5 operan con el token de retome
+  // NO frena lo ya empezado: los pasos 5 y 6 operan con el token de retome
   // sobre solicitudes que YA existen y no chequean el interruptor, a propósito
   // (ver docs/05 §2). Apagar ASOCIATE cierra las altas nuevas; la cola viva se
   // vacía sola al vencer, hasta 7 días después.
@@ -176,7 +192,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   //
   // Son claves de `configuration` que nacen en el seed y que el superadmin
   // edita desde /admin/configuracion, o sea que pueden faltar (base recién
-  // migrada, clave borrada). Cuando faltan, el paso 3 del wizard muestra "El
+  // migrada, clave borrada). Cuando faltan, el paso 4 del wizard muestra "El
   // texto todavía no está publicado" justo encima de un checkbox obligatorio
   // que igual se puede tildar, y el POST se grababa con `acceptedTermsAt`
   // apuntando a unos términos inexistentes: una aceptación sin objeto, que es
@@ -204,7 +220,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // Se consulta el cupo primero (no se gasta un intento contra alguien que ya
   // está bloqueado) y se REGISTRA recién después del captcha y de las
   // validaciones puras. Que el registro vaya después del captcha evita que uno
-  // vencido —la ficha dura 5 minutos y el paso 3 del wizard puede tardar más—
+  // vencido —la ficha dura 5 minutos y el paso 4 del wizard puede tardar más—
   // le queme un intento al vecino. Que vaya después del formato evita lo mismo
   // con los tipeos: son ~16 campos y el formulario reporta un error por vez, así
   // que corregir la fecha, el email repetido y la altura podía comerse los cinco
@@ -232,10 +248,10 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   if (!livesInBarrio && (!data.streetText || !data.neighborhood)) {
     return { error: "Ingresá tu calle y tu barrio." };
   }
-  // Revalidación de REG-01 en el server: el paso 2 del wizard ya filtra las
+  // Revalidación de REG-01 en el server: el paso 3 del wizard ya filtra las
   // opciones, pero un POST armado a mano no pasa por ese filtro.
   if (!categoryAllowedForResidence(data.requestedCategory, livesInBarrio)) {
-    return { error: "La categoría elegida no corresponde a tu lugar de residencia. Volvé al paso 2." };
+    return { error: "La categoría elegida no corresponde a tu lugar de residencia. Volvé al paso 3." };
   }
 
   // El día civil argentino, no el UTC del server (ver `civilTodayAr`).
@@ -258,24 +274,12 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
 
   // Elegibilidad por DNI (spec §4): corre DESPUÉS de Turnstile + rate limit,
   // que son lo único que impide usar este formulario para barrer el padrón.
+  // Los insumos salen de `loadEligibilityInputs`, la MISMA carga que usa el
+  // chequeo temprano del paso "Tu DNI": los dos puntos de verdad no pueden
+  // divergir en qué miran.
   const now = new Date();
-  const memberRow = await prisma.member.findUnique({
-    where: { dni: data.dni },
-    select: {
-      id: true, status: true, withdrawalReason: true,
-      reentryBlocked: true, rejectedUntil: true,
-      // La deuda que bloquea es la VIVA de la cuenta corriente (M4), no el flag
-      // `debtAtWithdrawal` que quedó congelado en la baja: el que saldó en la
-      // sede tiene que poder reingresar sin que nadie le toque la ficha.
-      _count: { select: { fees: { where: { status: "pending" } } } },
-    },
-  });
-  const member = memberRow ? { ...memberRow, pendingFees: memberRow._count.fees } : null;
-  const [liveApplication, lastRejectionAt] = await Promise.all([
-    applicationService.findLiveByDni(data.dni),
-    applicationService.lastRejectionAt(data.dni),
-  ]);
-  const eligibility = checkEligibility({ member, liveApplication, lastRejectionAt, now });
+  const inputs = await loadEligibilityInputs(prisma, applicationService, data.dni);
+  const eligibility = checkEligibility({ ...inputs, now });
   if (!eligibility.ok) {
     return {
       blocked: {
@@ -341,6 +345,60 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   return { created: { resumeToken: created.resumeToken } };
 }
 
+// El chequeo temprano por DNI del paso 1 "Tu DNI" (spec 2026-08-27). Es una
+// CORTESÍA de UX, no una guarda: `createApplicationAction` sigue corriendo
+// `checkEligibility` entero en el envío del paso de datos, pase lo que pase
+// acá, sobre los MISMOS insumos (`loadEligibilityInputs`).
+//
+// NO SE AUDITA (misma doctrina que el lookup de REEMPADRONATE): un asiento por
+// intento dejaría registrado qué DNI consultó cada IP — un dato personal que
+// hoy no existe (docs/08, Ley 25.326).
+//
+// Y NO REVALIDA (`revalidatePath`/`revalidateTag`): es una action del wizard,
+// y la invariante del `replaceState` del retome depende de que ninguna lo haga
+// (ver el comentario largo de `asociate-wizard.tsx`).
+export async function checkDniAction(_prev: DniCheckState, formData: FormData): Promise<DniCheckState> {
+  const { ip } = await requestMeta();
+
+  // Las mismas dos causales de la guarda 0 de la creación (documentadas arriba
+  // en largo), con lectura DIRECTA porque son guardas de autorización. La de
+  // los textos legales NO va acá: este paso no acepta nada, y esa guarda
+  // protege el registro de la aceptación.
+  if (!(await configReader.getBool(CONFIG_KEYS.asociateActivo))) {
+    return { kind: "error", error: ASOCIATE_CLOSED };
+  }
+  const openProcess = await openWizardProcess(prisma);
+  if (openProcess !== null) {
+    return { kind: "error", error: reregistrationClosed(currentDeadline(openProcess)) };
+  }
+
+  // El orden es `allows` → captcha → formato → `record` → padrón, el de
+  // siempre (createApplicationAction lo documenta en largo). El cupo es
+  // PROPIO (`asociateDniCheckLimiter`, 5/15 min por IP): gastar chequeos no
+  // puede dejar sin envío a quien ya llegó al paso de datos.
+  if (!asociateDniCheckLimiter.allows(ip)) return { kind: "error", error: TOO_MANY };
+  const captcha = await verifyTurnstile(String(formData.get("cf-turnstile-response") ?? ""), ip);
+  if (!captcha) return { kind: "error", error: NO_CAPTCHA };
+
+  const parsed = parseForm(z.object({ dni: dniSchema }), formData);
+  if (!parsed.ok) return { kind: "error", error: parsed.error };
+  const dni = parsed.data.dni; // ya normalizado: parseForm recorta y el regex deja sólo dígitos
+
+  // Desde acá se toca el padrón, así que el intento se cobra.
+  asociateDniCheckLimiter.record(ip);
+
+  const inputs = await loadEligibilityInputs(prisma, applicationService, dni);
+  const verdict = dniCheckVerdict({ ...inputs, now: new Date() });
+  if (verdict.ok) return { kind: "ok" };
+  return {
+    kind: "blocked",
+    code: verdict.code,
+    maskedName: verdict.maskedName,
+    ...(verdict.code === "debt" ? { pendingCount: verdict.pendingCount } : {}),
+    ...(verdict.code === "rejected_wait" ? { retryAtIso: verdict.retryAt.toISOString() } : {}),
+  };
+}
+
 // Reenvío del enlace de retome. Formulario público y anónimo con un DNI adentro:
 // vale la misma regla que el recupero de contraseña —la respuesta NO puede decir
 // si ese DNI tiene una solicitud en trámite—, y se sostiene en los mismos tres
@@ -362,7 +420,7 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
 // de una solicitud que YA existe no es asociarse. El interruptor suspende el
 // alta de solicitudes nuevas; los trámites en curso —incluidos los que ya tienen
 // una suscripción viva en Mercado Pago— tienen que poder terminarse, igual que
-// los pasos 4 y 5, que tampoco lo chequean. Sumarla acá dejaría al vecino sin
+// los pasos 5 y 6, que tampoco lo chequean. Sumarla acá dejaría al vecino sin
 // forma de retomar un trámite que la vecinal ya le aceptó.
 export async function resendResumeLinkAction(_prev: ResendState, formData: FormData): Promise<ResendState> {
   const { ip } = await requestMeta();
@@ -459,7 +517,7 @@ type Lookup = { ok: true; app: Application } | { ok: false; error: string };
 /** Resuelve la solicitud desde el token del formulario. Distingue los tres
  *  motivos de fallo en vez de devolver `null`: decirle "no encontramos tu
  *  solicitud" a quien se pasó de cupo lo manda a empezar de cero un trámite que
- *  está entero, y esa es la peor respuesta posible del paso 4. */
+ *  está entero, y esa es la peor respuesta posible del paso 5. */
 async function appFromToken(resumeToken: string): Promise<Lookup> {
   if (!resumeToken) return { ok: false, error: LINK_DEAD };
   const { ip } = await requestMeta();

@@ -424,6 +424,23 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   TEXTOS salen del dominio (`GRANT_GUARD_MESSAGES`) para que el operador lea lo
   mismo se corte donde se corte.
 
+## Patrones que estrenó el paso "Tu DNI" de ASOCIATE
+
+- **La carga de insumos de elegibilidad es UNA función para los dos
+  call-sites.** `loadEligibilityInputs` (`src/lib/applications/eligibility-inputs.ts`)
+  alimenta el chequeo temprano del paso 1 Y la guarda del envío del paso de
+  datos; `checkEligibility` sigue siendo el único juez y no se tocó. Misma
+  lección que `coverageFloor`: compartir la función, no copiarla — con una
+  copia por camino, alcanza con que alguien toque una para que el paso 1 y el
+  envío diverjan en silencio.
+- **Un lookup público por DNI responde enmascarado y con presupuesto propio.**
+  `maskedName` se mudó a `src/lib/members/masked-name.ts` (re-export desde
+  `reregistration/rules.ts`) y ahora la comparten los dos wizards;
+  `asociateDniCheckLimiter` (5/15 min por IP) es un cupo SEPARADO del de
+  creación. El paso 1 es cortesía de UX, no una guarda: el POST del paso de
+  datos revalida la elegibilidad entera, y el veredicto `ok` no distingue el
+  reingreso habilitado del DNI desconocido (decisión del operador, 27/08/2026).
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.

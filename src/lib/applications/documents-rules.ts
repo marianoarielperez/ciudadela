@@ -1,5 +1,5 @@
-// Completitud documental del paso 4 (REG-03). PURA a propósito: la consumen la
-// pantalla del paso 4 (para habilitar "Continuar" y para decir qué falta) y las
+// Completitud documental del paso 5 (REG-03). PURA a propósito: la consumen la
+// pantalla del paso 5 (para habilitar "Continuar" y para decir qué falta) y las
 // dos actions de envío (que no pueden confiar en el cliente). Que sea la misma
 // función en las dos puntas es lo que garantiza que el botón no habilite algo
 // que el server va a rechazar, ni al revés.
@@ -9,7 +9,7 @@
 import type { DocumentType, MemberCategory } from "@/generated/prisma/client";
 
 /** Tope de anexos por solicitud (docs/05 §2). Lo APLICA `uploadDocumentAction`
- *  contando las filas ya guardadas; acá vive el número para que el paso 4 y la
+ *  contando las filas ya guardadas; acá vive el número para que el paso 5 y la
  *  action citen el mismo. */
 export const MAX_ANNEXES = 2;
 
