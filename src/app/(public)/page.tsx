@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 // Static import (no se copia a public/): así next/image genera las variantes
 // responsive y el blur placeholder del hero en tiempo de build.
-import heroImg from "../../../assets/hero.jpg";
+import heroImg from "../../../assets/hero-nuevo.jpg";
 import { getActiveReregistration, getAsociateActive } from "@/lib/config";
 import { getLatestNews } from "@/lib/news/query";
 import { NewsCard } from "@/components/public/news-card";

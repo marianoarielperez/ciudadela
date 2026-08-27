@@ -5,7 +5,7 @@
 import Image from "next/image";
 import { Vote } from "lucide-react";
 
-import heroImg from "../../../assets/hero.jpg";
+import heroImg from "../../../assets/hero-nuevo.jpg";
 import { Badge } from "@/components/ui/badge";
 import type { MemberCategory } from "@/generated/prisma/client";
 import { formatDateAR } from "@/lib/format";
