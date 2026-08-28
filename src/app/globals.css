@@ -174,8 +174,15 @@
    moderno. La regla del proyecto es ≥44px para cualquier target, y en el
    celular —donde el arrastre está apagado a propósito— estos botones son una
    de las dos únicas formas de hacer zoom. Leaflet se usa en esta única
-   página, así que la regla queda acotada a sus clases. */
-.leaflet-touch .leaflet-bar a {
+   página, así que la regla queda acotada a sus clases.
+   OJO con el selector: `leaflet.css` trae EXACTAMENTE `.leaflet-touch
+   .leaflet-bar a` con los 30px, y su hoja se inyecta DESPUÉS de esta (la
+   importa el componente cliente). A igual especificidad gana la última, así
+   que acá se nombra además la clase del propio botón para subir un punto y
+   no depender del orden de carga. Medido en el navegador: sin ese punto
+   extra, los botones se quedan en 30px sin ningún error visible. */
+.leaflet-touch .leaflet-bar a.leaflet-control-zoom-in,
+.leaflet-touch .leaflet-bar a.leaflet-control-zoom-out {
   width: 44px;
   height: 44px;
   line-height: 44px;
