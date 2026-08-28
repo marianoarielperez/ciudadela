@@ -23,6 +23,7 @@ import { audit } from "@/lib/audit";
 import type { AdminActor } from "@/lib/auth/require-admin";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
+import ExcelJS from "exceljs";
 
 type MockedFn = ReturnType<typeof vi.fn>;
 
@@ -41,12 +42,20 @@ function requestWithQuery(query: Record<string, string> = {}) {
   >[0];
 }
 
-function memberRow(over: { id?: number; fullName?: string; category?: string } = {}) {
+async function loadWorkbook(res: Response) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await res.arrayBuffer());
+  return wb;
+}
+
+function memberRow(
+  over: { id?: number; fullName?: string; category?: string; joinedAt?: Date } = {},
+) {
   return {
     id: over.id ?? 1,
     fullName: over.fullName ?? "Coñuecar, Marta",
     category: over.category ?? "active",
-    joinedAt: new Date("2019-09-01T12:00:00Z"),
+    joinedAt: over.joinedAt ?? new Date("2019-09-01T12:00:00Z"),
     memberships: [{ memberNumber: 42, book: { status: "open" } }],
   };
 }
@@ -115,36 +124,64 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
     (requireSuperadmin as MockedFn).mockResolvedValue(ok);
   });
 
-  it("returns the CSV with the attachment headers and the date in the filename", async () => {
+  it("returns the workbook with the attachment headers and the date in the filename", async () => {
     (prisma.member.findMany as MockedFn).mockResolvedValue([memberRow()]);
 
     const res = await GET(requestWithQuery({ fecha: "2026-11-15" }));
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
-    expect(res.headers.get("Content-Disposition")).toBe(
-      'attachment; filename="padron-electoral-2026-11-15.csv"',
+    expect(res.headers.get("Content-Type")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
+    expect(res.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="padron-electoral-2026-11-15.xlsx"',
+    );
+    // Magic bytes de un .xlsx (es un ZIP): "PK".
+    const buffer = Buffer.from(await res.clone().arrayBuffer());
+    expect(buffer.subarray(0, 2).toString()).toBe("PK");
   });
 
-  it("starts the body with the BOM so Excel on Windows does not eat the accents", async () => {
+  it("arma las tres hojas en el orden de la pantalla, la vacía incluida", async () => {
     (prisma.member.findMany as MockedFn).mockResolvedValue([memberRow()]);
 
-    // Por BYTES y no por `text()`: la decodificación UTF-8 del estándar se come
-    // el BOM, así que un cuerpo sin BOM pasaría igual leído como texto.
-    const bytes = Buffer.from(
-      await (await GET(requestWithQuery({ fecha: "2026-11-15" }))).arrayBuffer(),
-    );
+    const wb = await loadWorkbook(await GET(requestWithQuery({ fecha: "2026-11-15" })));
 
-    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
-    const body = bytes.toString("utf8").slice(1);
-    expect(body.split("\r\n")[0]).toBe(
-      "bloque,numero_socio,apellido_nombre,categoria,cuotas_adeudadas,monto_a_purgar",
-    );
-    expect(body).toContain("Coñuecar, Marta");
-    // RFC 4180: filas separadas por CRLF y salto final. Los importadores viejos
-    // de Excel se comen la última fila de un archivo que no termina en salto.
-    expect(body.endsWith("\r\n")).toBe(true);
+    expect(wb.worksheets.map((ws) => ws.name)).toEqual([
+      "Habilitados",
+      "Con deuda a purgar",
+      "No habilitados por antigüedad",
+    ]);
+    // La hoja vacía se crea igual, con sólo el encabezado: informa que la lista
+    // está vacía; una hoja faltante parecería un error de exportación.
+    expect(wb.getWorksheet("Con deuda a purgar")!.rowCount).toBe(1);
+  });
+
+  it("el que no llega a los 90 días sale en su hoja, con desde cuándo puede votar", async () => {
+    (prisma.member.findMany as MockedFn).mockResolvedValue([
+      memberRow(),
+      memberRow({ id: 2, fullName: "Nuevo, Vecino", joinedAt: new Date("2026-10-01T12:00:00Z") }),
+    ]);
+
+    const wb = await loadWorkbook(await GET(requestWithQuery({ fecha: "2026-11-15" })));
+    const ws = wb.getWorksheet("No habilitados por antigüedad")!;
+
+    expect(ws.rowCount).toBe(2);
+    expect(ws.getRow(2).getCell(2).value).toBe("Nuevo, Vecino");
+    // habilitado_desde = 01/10/2026 + 90 días.
+    expect(ws.getRow(2).getCell(5).value).toEqual(new Date("2026-12-30T12:00:00Z"));
+  });
+
+  it("ninguna hoja lleva DNI, email ni domicilio en sus encabezados", async () => {
+    (prisma.member.findMany as MockedFn).mockResolvedValue([memberRow()]);
+
+    const wb = await loadWorkbook(await GET(requestWithQuery({ fecha: "2026-11-15" })));
+
+    for (const ws of wb.worksheets) {
+      const headerRow = (ws.getRow(1).values as unknown[]).join(",").toLowerCase();
+      expect(headerRow, ws.name).not.toContain("dni");
+      expect(headerRow, ws.name).not.toContain("email");
+      expect(headerRow, ws.name).not.toContain("domicilio");
+    }
   });
 
   it("attaches no-store, private cache headers so no intermediary can cache the roll", async () => {
@@ -158,6 +195,7 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
     (prisma.member.findMany as MockedFn).mockResolvedValue([
       memberRow({ id: 1, fullName: "Pérez, Ana" }),
       memberRow({ id: 2, fullName: "Gómez, Luis" }),
+      memberRow({ id: 3, fullName: "Nuevo, Vecino", joinedAt: new Date("2026-10-01T12:00:00Z") }),
     ]);
     (prisma.fee.groupBy as MockedFn).mockResolvedValue([{ memberId: 2, _count: { _all: 3 } }]);
 
@@ -168,11 +206,37 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
     expect(entry).toMatchObject({
       userId: 7,
       action: "electoral_roll_export",
-      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3 },
+      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3, withoutSeniority: 1 },
       ip: "10.0.0.7",
     });
     const serialized = JSON.stringify(entry.detail);
     expect(serialized).not.toContain("Pérez");
     expect(serialized).not.toContain("Gómez");
+    expect(serialized).not.toContain("Nuevo");
+  });
+
+  it("la hoja de purga lleva la fila de total y los formatos de fecha y moneda", async () => {
+    (prisma.member.findMany as MockedFn).mockResolvedValue([
+      memberRow(),
+      memberRow({ id: 2, fullName: "Gómez, Luis" }),
+    ]);
+    (prisma.fee.groupBy as MockedFn).mockResolvedValue([{ memberId: 2, _count: { _all: 3 } }]);
+
+    const wb = await loadWorkbook(await GET(requestWithQuery({ fecha: "2026-11-15" })));
+    const purge = wb.getWorksheet("Con deuda a purgar")!;
+
+    // Encabezado + 1 moroso + la fila de total: el número que la Junta se lleva
+    // a la mesa de cobro. Borrar el addRow(totals) de la route tiene que poner
+    // este test en rojo.
+    expect(purge.rowCount).toBe(3);
+    const total = purge.getRow(3);
+    expect(total.getCell(2).value).toBe("Total a purgar");
+    expect(total.getCell(5).value).toBe(3);
+    expect(total.getCell(6).value).toBe(18000);
+    // Los formatos que la Junta ve al abrir el archivo: fecha argentina y moneda.
+    expect(purge.getColumn(4).numFmt).toBe("dd/mm/yyyy");
+    expect(purge.getColumn(6).numFmt).toBe('"$" #,##0.00');
+    const tooNew = wb.getWorksheet("No habilitados por antigüedad")!;
+    expect(tooNew.getColumn(5).numFmt).toBe("dd/mm/yyyy");
   });
 });

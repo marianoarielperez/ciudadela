@@ -66,7 +66,7 @@ const roll = (over: Partial<ElectoralRoll> = {}): ElectoralRoll => ({
   at: AT,
   period: "2026-11",
   considered: 0,
-  withoutSeniority: 0,
+  withoutSeniority: [],
   enabled: [],
   toPurge: [],
   purgeFees: 0,
@@ -153,10 +153,13 @@ describe("ElectoralRollSheet — qué sale impreso", () => {
   it("dice en el PAPEL que honorarios y vitalicios votan sin el piso de antigüedad", () => {
     // Si la nota afirmara que todos reúnen 90 días, la hoja mentiría sobre el
     // honorario recién distinguido (REG-30 sobre REG-31, decisión del 24/08/2026).
+    // Sin códigos internos a la vista: el papel cita "el estatuto", que es lo
+    // que la Junta puede verificar (pedido del operador, 27/08/2026).
     const html = sheet(roll({ enabled: [row({ category: "honorary" })] }));
 
-    expect(html).toContain("REG-30");
+    expect(html).toContain("el estatuto exime de ese piso");
     expect(html).toMatch(/honorarios y vitalicios/i);
+    expect(html).not.toMatch(/REG-\d+/);
   });
 
   it("con una fecha PASADA avisa —en el papel— que mezcla dos relojes", () => {
@@ -211,6 +214,83 @@ describe("ElectoralRollSheet — qué sale impreso", () => {
     expect(html).not.toContain("<thead");
     expect(html).toContain("Ningún socio queda habilitado a esta fecha.");
     expect(html).toContain("no hay nada que purgar");
+    expect(html).toContain("alcanzan los 90 días de antigüedad");
+  });
+
+  it("lista al que no llega a los 90 días, con desde cuándo puede votar", () => {
+    const html = sheet(
+      roll({
+        withoutSeniority: [
+          row({ memberId: 9, fullName: "Nuevo, Vecino", joinedAt: new Date("2026-10-01T12:00:00Z") }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("No habilitados por antigüedad");
+    expect(html).toContain("Nuevo, Vecino");
+    // enabledFrom: 01/10/2026 + 90 días.
+    expect(html).toContain("30/12/2026");
+    // La nota niega el trámite: si la Junta lo lee como "otra lista que puede
+    // regularizar", el error es peor que no imprimirlo.
+    expect(html).toContain("no hay trámite que lo modifique");
+    // Y este bloque no publica deuda de nadie.
+    expect(html).not.toContain("A purgar</th>");
+  });
+
+  it("con todos los considerados en edad, el bloque nuevo dice la buena noticia", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain("alcanzan los 90 días de antigüedad");
+  });
+
+  it("la cabecera de papel cuenta los TRES bloques", () => {
+    const html = sheet(
+      roll({
+        enabled: [row()],
+        withoutSeniority: [row({ memberId: 9, fullName: "Nuevo, Vecino" })],
+      }),
+    );
+
+    expect(html).toContain("1 habilitados");
+    expect(html).toContain("1 no habilitados por antigüedad");
+  });
+
+  it("los tres bloques salen en el orden de la pantalla", () => {
+    const html = sheet(
+      roll({
+        enabled: [row()],
+        toPurge: [row({ memberId: 2, arrears: 1, debt: 6000 })],
+        withoutSeniority: [row({ memberId: 9, fullName: "Nuevo, Vecino" })],
+      }),
+    );
+
+    expect(html.indexOf("Habilitados")).toBeLessThan(html.indexOf("Con deuda a purgar"));
+    expect(html.indexOf("Con deuda a purgar")).toBeLessThan(
+      html.indexOf("No habilitados por antigüedad"),
+    );
+  });
+
+  it("la nota del socio sin número también dispara desde el bloque nuevo", () => {
+    const html = sheet(roll({ withoutSeniority: [row({ memberNumber: null })] }));
+
+    expect(html).toContain("figura primero");
+  });
+
+  it("cada bloque tiene su ancla para las stat cards", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain('id="habilitados"');
+    expect(html).toContain('id="a-purgar"');
+    expect(html).toContain('id="no-habilitados"');
+  });
+
+  it("el papel imprime la tabla y esconde las tarjetas; el móvil al revés", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    // La tabla vive en el wrapper que el papel muestra…
+    expect(html).toContain("hidden md:block print:block");
+    // …y las tarjetas apiladas en el que el papel esconde.
+    expect(html).toContain("md:hidden print:hidden");
   });
 });
 
@@ -227,7 +307,7 @@ describe("PadronElectoralPage", () => {
     expect(html).toContain("Solo el superadmin");
     expect(buildElectoralRoll).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
-    expect(html).not.toContain("Exportar CSV");
+    expect(html).not.toContain("Exportar Excel");
   });
 
   it("usa la fecha de la URL, no el reloj", async () => {
@@ -243,7 +323,7 @@ describe("PadronElectoralPage", () => {
     expect(buildElectoralRoll).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
     // Sin padrón no hay nada que exportar ni que imprimir.
-    expect(html).not.toContain("Exportar CSV");
+    expect(html).not.toContain("Exportar Excel");
   });
 
   it("deja asiento al generar, con la fecha usada y los tamaños — nunca un nombre", async () => {
@@ -263,7 +343,7 @@ describe("PadronElectoralPage", () => {
     expect(entry).toMatchObject({
       userId: 7,
       action: "electoral_roll_generated",
-      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3 },
+      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3, withoutSeniority: 0 },
       ip: "10.0.0.7",
     });
     const serialized = JSON.stringify(entry.detail);
@@ -284,7 +364,7 @@ describe("PadronElectoralPage", () => {
     mocks.buildRoll.mockResolvedValue(
       roll({
         considered: 4,
-        withoutSeniority: 1,
+        withoutSeniority: [row({ memberId: 9, fullName: "Nuevo, Vecino", joinedAt: new Date("2026-10-01T12:00:00Z") })],
         enabled: [row(), row({ memberId: 3 })],
         toPurge: [row({ memberId: 2, arrears: 3, debt: 18000 })],
         purgeFees: 3,
@@ -294,9 +374,15 @@ describe("PadronElectoralPage", () => {
 
     const html = await page("2026-11-15");
 
-    expect(html).toContain("socios vigentes considerados");
-    expect(html).toContain("sin antigüedad");
+    expect(html).toContain("considerados");
+    expect(html).toContain("no habilitados por antigüedad");
     expect(html).toContain("A purgar en la mesa");
+    // La frase sr-only: distingue la tira de la cuenta de la cabecera de papel.
+    expect(html).toContain("socios vigentes considerados");
+    // Las stat cards de bloque son anclas a su sección.
+    expect(html).toContain('href="#habilitados"');
+    expect(html).toContain('href="#a-purgar"');
+    expect(html).toContain('href="#no-habilitados"');
   });
 
   it("le avisa a la hoja cuando la fecha pedida ya pasó, y sólo entonces", async () => {
@@ -319,5 +405,15 @@ describe("PadronElectoralPage", () => {
     expect(vi.mocked(configReader.getBool)).toHaveBeenCalledWith("elecciones_en_curso");
     expect(html).toContain("Hay elecciones en curso");
     expect(html).toContain("bloquea los cambios de categoría");
+  });
+
+  it("agrupa fecha, export e imprimir en la Card generadora", async () => {
+    const html = await page("2026-11-15");
+
+    expect(html).toContain("Generar padrón");
+    expect(html).toContain("Exportar Excel");
+    expect(html).toContain("Imprimir");
+    // El flag estatutario sigue en la pantalla, ahora en su propia Card.
+    expect(html).toContain("Elecciones en curso");
   });
 });

@@ -10,9 +10,9 @@ import {
   ELECTORAL_CATEGORIES,
   ELECTORAL_MIN_DAYS,
   meetsSeniority,
+  mustPurgeToVote,
   seniorityDays,
 } from "@/lib/members/electoral";
-import { ACCRUING_CATEGORIES } from "@/lib/treasury/rules";
 
 export type ElectoralStatus =
   | { eligible: true }
@@ -41,8 +41,8 @@ export function electoralStatusFor(input: {
       daysMissing: ELECTORAL_MIN_DAYS - seniorityDays(input.joinedAt, input.at),
     };
   }
-  // "Sin mora" es requisito sólo de activos y colaboradores (REG-31).
-  if (input.arrears > 0 && (ACCRUING_CATEGORIES as readonly MemberCategory[]).includes(input.category)) {
+  // La MISMA condición que parte enabled/toPurge en buildElectoralRoll.
+  if (mustPurgeToVote(input.category, input.arrears)) {
     return { eligible: false, reason: "arrears", arrears: input.arrears };
   }
   return { eligible: true };

@@ -1,10 +1,11 @@
-// Padrón electoral (REG-31, docs/02:155-158) con la enmienda del operador del
+// Padrón electoral (REG-31, docs/02:162-166) con la enmienda del operador del
 // 23/08/2026.
 //
 // La enmienda: el Código Civil y Comercial deja al moroso purgar su deuda hasta
 // una hora antes del acto, así que el padrón NO lo excluye — lo LISTA aparte,
 // con cuántas cuotas y cuánto tiene que pagar en la mesa para votar. Por eso son
-// dos bloques y no una lista filtrada.
+// TRES bloques y no una lista filtrada: habilitados, con deuda a purgar y (desde
+// el 27/08/2026) los que no alcanzan la antigüedad mínima, también con nombre.
 //
 // Cuatro cosas del estatuto que no son obvias:
 //   - Los ADHERENTES votan (con ≥90 días). "Sin mora" es requisito sólo de
@@ -19,7 +20,7 @@
 //     mide sobre períodos ANTERIORES al mes de la elección (§3 de la spec). Con
 //     la otra definición, el padrón se vaciaría de activos todos los meses.
 //
-// Prisma inyectado; la fecha es un PARÁMETRO (docs/02:157), nunca el reloj.
+// Prisma inyectado; la fecha es un PARÁMETRO (docs/02:164), nunca el reloj.
 import type { MemberCategory, PrismaClient } from "@/generated/prisma/client";
 import { periodOf, type Period } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, debtAmount, type FeeValueAmounts } from "@/lib/treasury/rules";
@@ -36,7 +37,7 @@ export const ELECTORAL_CATEGORIES: readonly MemberCategory[] = [
   "adherent",
 ];
 
-/** REG-30 (docs/02:153-154) exime del piso de 90 días a honorarios y vitalicios.
+/** REG-30 (docs/02:160-161) exime del piso de 90 días a honorarios y vitalicios.
  *  Son las dos categorías que la asamblea OTORGA por trayectoria o servicios: un
  *  plazo de espera encima de una distinción no tendría a quién proteger. */
 export const SENIORITY_EXEMPT: readonly MemberCategory[] = ["honorary", "lifetime"];
@@ -52,6 +53,22 @@ export function isEligibleBySeniority(joinedAt: Date, at: Date): boolean {
 /** ¿Este socio pasa el filtro de antigüedad? Los exentos pasan siempre. */
 export function meetsSeniority(category: MemberCategory, joinedAt: Date, at: Date): boolean {
   return SENIORITY_EXEMPT.includes(category) || isEligibleBySeniority(joinedAt, at);
+}
+
+/** El primer día en que el socio alcanza el piso: ingreso + ELECTORAL_MIN_DAYS.
+ *  Ambos extremos viven a mediodía UTC (`civilDateUtc`), así que la suma cae
+ *  exacta en el día civil argentino y es la contracara de
+ *  `isEligibleBySeniority` (>= 90: ese mismo día ya vota). */
+export function enabledFrom(joinedAt: Date): Date {
+  return new Date(joinedAt.getTime() + ELECTORAL_MIN_DAYS * 86_400_000);
+}
+
+/** "Sin mora" es requisito sólo de activos y colaboradores (REG-31): el aporte
+ *  del adherente es voluntario y su deuda no le quita el voto; honorarios y
+ *  vitalicios no devengan. Compartida por el padrón y la credencial de /mi para
+ *  que las dos superficies no puedan divergir (lección `coverageFloor`). */
+export function mustPurgeToVote(category: MemberCategory, arrears: number): boolean {
+  return arrears > 0 && ACCRUING_CATEGORIES.includes(category);
 }
 
 export type ElectoralRow = {
@@ -74,11 +91,16 @@ export type ElectoralRoll = {
   period: Period;
   /** Socios vigentes de categoría votante, ANTES del filtro de antigüedad. Con
    *  `withoutSeniority` cierra la cuenta que la pantalla imprime:
-   *  `considered = withoutSeniority + enabled + toPurge`. Sin esos dos números,
-   *  "157 habilitados" no se puede verificar y un socio que falta por un problema
-   *  de datos desaparece sin que nadie lo note. */
+   *  `considered = withoutSeniority.length + enabled.length + toPurge.length`.
+   *  Sin esos dos números, "157 habilitados" no se puede verificar y un socio
+   *  que falta por un problema de datos desaparece sin que nadie lo note. */
   considered: number;
-  withoutSeniority: number;
+  /** Los que no llegan al piso de REG-30 (decisión del 27/08/2026: dejan de ser
+   *  un contador y se listan con nombre — el contador decía que eran tres, no
+   *  quiénes, ni si eran "demasiado nuevos" o un problema de datos). Llevan
+   *  `arrears: 0, debt: null`: su mora NO se consulta — pagar no habilita, y la
+   *  deuda de quien no vota es un dato sin finalidad (Ley 25.326). */
+  withoutSeniority: ElectoralRow[];
   enabled: ElectoralRow[];
   toPurge: ElectoralRow[];
   purgeFees: number;
@@ -161,7 +183,9 @@ export async function buildElectoralRoll(
     }))
     .sort(compareForRoll);
 
-  const eligible = rows.filter((r) => meetsSeniority(r.category, r.joinedAt, at));
+  const eligible: typeof rows = [];
+  const tooNew: typeof rows = [];
+  for (const r of rows) (meetsSeniority(r.category, r.joinedAt, at) ? eligible : tooNew).push(r);
   const period = periodOf(at);
   const ids = eligible.map((r) => r.id);
 
@@ -191,73 +215,25 @@ export async function buildElectoralRoll(
       arrears,
       debt: feeValue ? debtAmount(arrears, r.category, feeValue) : null,
     };
-    // La exigencia de estar sin mora es SÓLO para activos y colaboradores: el
-    // aporte del adherente es voluntario y su deuda no le quita el voto.
-    const owes = arrears > 0 && ACCRUING_CATEGORIES.includes(r.category);
-    (owes ? toPurge : enabled).push(row);
+    (mustPurgeToVote(r.category, arrears) ? toPurge : enabled).push(row);
   }
 
   return {
     at,
     period,
     considered: rows.length,
-    withoutSeniority: rows.length - eligible.length,
+    withoutSeniority: tooNew.map((r) => ({
+      memberId: r.id,
+      memberNumber: r.memberNumber,
+      fullName: r.fullName,
+      category: r.category,
+      joinedAt: r.joinedAt,
+      arrears: 0,
+      debt: null,
+    })),
     enabled,
     toPurge,
     purgeFees: toPurge.reduce((a, r) => a + r.arrears, 0),
     purgeAmount: toPurge.reduce((a, r) => a + (r.debt ?? 0), 0),
   };
-}
-
-const CSV_HEADER = "bloque,numero_socio,apellido_nombre,categoria,cuotas_adeudadas,monto_a_purgar";
-
-/** Excel trata como FÓRMULA a toda celda que arranque con uno de estos cuatro,
- *  aunque venga entrecomillada. Un nombre cargado como "=Pérez" se convierte en
- *  un `#NAME?` en la hoja de la Junta Electoral, y con la función equivocada en
- *  algo peor. El apóstrofo inicial es la neutralización estándar: Excel lo come
- *  al mostrar y la celda queda como texto. */
-const FORMULA_LEAD = /^[=+\-@]/;
-
-/** Comillas dobles siempre: los apellidos con coma ("Pizarro, Francisco" es el
- *  formato del catálogo de calles y aparece igual en nombres cargados a mano)
- *  parten la fila en dos. La comilla interna se duplica, como manda el RFC. */
-function cell(value: string | number | null): string {
-  const s = value === null ? "" : String(value);
-  const safe = FORMULA_LEAD.test(s) ? `'${s}` : s;
-  return `"${safe.replace(/"/g, '""')}"`;
-}
-
-/** Las columnas de REG-31 (docs/02:158) y nada más: nombre, número de socio y
- *  categoría. **Sin DNI**, que es el dato más sensible del padrón y no hace
- *  falta para tomar lista en una mesa donde los vecinos se conocen.
- *
- *  Las dos columnas de plata salen en blanco para el bloque de habilitados, y no
- *  es cosmético: para un activo o un colaborador habilitado valen cero por
- *  definición, y para un adherente moroso —que vota igual— son un dato
- *  financiero personal que la Junta Electoral no necesita para nada y que en
- *  papel ya no vuelve (Ley 25.326, principio de pertinencia).
- *
- *  El orden es el mismo de la hoja —alfabético por apellido, con el socio sin
- *  número adelante—: el CSV no es otro documento, es el mismo en otro formato, y
- *  quien lo abre al lado de la impresión tiene que ver las mismas filas en el
- *  mismo lugar. */
-export function electoralCsv(roll: ElectoralRoll): string {
-  const line = (block: string, r: ElectoralRow, withDebt: boolean) =>
-    [
-      cell(block),
-      cell(r.memberNumber),
-      cell(r.fullName),
-      cell(r.category),
-      cell(withDebt ? r.arrears : ""),
-      cell(withDebt ? r.debt : ""),
-    ].join(",");
-  // CRLF y salto final, como pide el RFC 4180. No es formalismo: los importadores
-  // viejos de Excel se comen la última fila de un archivo que no termina en salto.
-  return (
-    [
-      CSV_HEADER,
-      ...roll.enabled.map((r) => line("habilitado", r, false)),
-      ...roll.toPurge.map((r) => line("a_purgar", r, true)),
-    ].join("\r\n") + "\r\n"
-  );
 }
