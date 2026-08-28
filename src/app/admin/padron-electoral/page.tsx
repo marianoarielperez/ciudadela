@@ -87,8 +87,8 @@ export default async function PadronElectoralPage(props: {
       <PageHeader title="Padrón electoral">
         <p className="max-w-prose text-sm text-muted-foreground">
           Socios con derecho a voto a la fecha indicada: activos, colaboradores y adherentes con{" "}
-          {ELECTORAL_MIN_DAYS} días o más de antigüedad (REG-31), más honorarios y vitalicios, que
-          votan sin ese piso (REG-30). Quien no llega a los {ELECTORAL_MIN_DAYS} días figura aparte,
+          {ELECTORAL_MIN_DAYS} días o más de antigüedad, más honorarios y vitalicios, a quienes el
+          estatuto exime de ese piso. Quien no llega a los {ELECTORAL_MIN_DAYS} días figura aparte,
           con la fecha desde la que va a poder votar. El sistema entrega el padrón; no gestiona la
           elección.
         </p>

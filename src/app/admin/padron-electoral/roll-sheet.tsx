@@ -262,7 +262,7 @@ export function ElectoralRollSheet({ roll, valued, pastDate, generatedAt }: {
       <RollBlock
         id="habilitados"
         title="Habilitados"
-        note={`Votan sin trámite previo: no registran mora exigible y reúnen ${ELECTORAL_MIN_DAYS} días de antigüedad — salvo honorarios y vitalicios, a quienes el estatuto exime de ese piso (REG-30).`}
+        note={`Votan sin trámite previo: no registran mora exigible y reúnen ${ELECTORAL_MIN_DAYS} días de antigüedad — salvo honorarios y vitalicios, a quienes el estatuto exime de ese piso.`}
         rows={roll.enabled}
         empty="Ningún socio queda habilitado a esta fecha."
       />
@@ -280,7 +280,7 @@ export function ElectoralRollSheet({ roll, valued, pastDate, generatedAt }: {
       <RollBlock
         id="no-habilitados"
         title="No habilitados por antigüedad"
-        note={`No alcanzan los ${ELECTORAL_MIN_DAYS} días de antigüedad a la fecha de la elección (REG-30). No votan en este acto, y no hay trámite que lo modifique: la antigüedad se cumple con el tiempo.`}
+        note={`No alcanzan los ${ELECTORAL_MIN_DAYS} días de antigüedad que fija el estatuto, contados a la fecha de la elección. No votan en este acto, y no hay trámite que lo modifique: la antigüedad se cumple con el tiempo.`}
         rows={roll.withoutSeniority}
         showEnabledFrom
         empty={`Todos los socios considerados alcanzan los ${ELECTORAL_MIN_DAYS} días de antigüedad.`}

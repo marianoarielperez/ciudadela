@@ -153,10 +153,13 @@ describe("ElectoralRollSheet — qué sale impreso", () => {
   it("dice en el PAPEL que honorarios y vitalicios votan sin el piso de antigüedad", () => {
     // Si la nota afirmara que todos reúnen 90 días, la hoja mentiría sobre el
     // honorario recién distinguido (REG-30 sobre REG-31, decisión del 24/08/2026).
+    // Sin códigos internos a la vista: el papel cita "el estatuto", que es lo
+    // que la Junta puede verificar (pedido del operador, 27/08/2026).
     const html = sheet(roll({ enabled: [row({ category: "honorary" })] }));
 
-    expect(html).toContain("REG-30");
+    expect(html).toContain("el estatuto exime de ese piso");
     expect(html).toMatch(/honorarios y vitalicios/i);
+    expect(html).not.toMatch(/REG-\d+/);
   });
 
   it("con una fecha PASADA avisa —en el papel— que mezcla dos relojes", () => {
