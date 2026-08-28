@@ -11,9 +11,10 @@
 // Es un componente cliente que arrastra la server action y con ella el cliente de
 // Prisma; inyectarlo mantiene los paneles puros y deja que el test verifique la
 // POLÍTICA (a qué fila se le ofrece reenviar y a cuál no) sin levantar nada.
-import { CircleCheck, Info, TriangleAlert } from "lucide-react";
+import { Banknote, CircleCheck, Clock, Info, Mail, Receipt, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { EmptyState } from "@/components/admin/empty-state";
+import { PanelHeader } from "@/components/admin/panel-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -50,17 +51,19 @@ const NUM = "font-mono tabular-nums";
 // confíe. Es la MISMA función importada, no una copia: no hay dos expresiones
 // que puedan derivar.
 
-/** Encabezado común de las secciones de la pantalla. El `id` es el ancla a la
- *  que apunta el veredicto. */
-function Section({ id, title, hint, children }: {
-  id: string; title: string; hint?: React.ReactNode; children: React.ReactNode;
+/** Encabezado común de las secciones ancladas. El `id` es el ancla a la que
+ *  apunta el veredicto (via `?tab=X#id`); el `<h2>` lo emite PanelHeader y el
+ *  `aria-labelledby` lo referencia por `titleId`. */
+function Section({ id, icon, title, hint, children }: {
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-4 space-y-3">
-      <h2 id={`${id}-title`} className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">
-        {title}
-      </h2>
-      {hint && <p className="max-w-3xl text-sm text-muted-foreground">{hint}</p>}
+      <PanelHeader icon={icon} title={title} description={hint} titleId={`${id}-title`} />
       {children}
     </section>
   );
@@ -218,6 +221,7 @@ export function CronsPanel({ crons, now }: { crons: CronHealth[]; now: Date }) {
   return (
     <Section
       id="tareas"
+      icon={Clock}
       title="Tareas automáticas"
       hint={
         <>
@@ -410,7 +414,7 @@ function MoneyLine({ count, href, label, zero, todo, always }: {
 export function MoneyPanel({ money }: { money: MoneyHealth }) {
   const { inboxOpen, inboxTotal, debits } = money;
   return (
-    <Section id="dinero" title="Dinero sin resolver">
+    <Section id="dinero" icon={Banknote} title="Dinero sin resolver">
       <ul className="space-y-2 text-sm">
         <MoneyLine
           count={inboxOpen}
@@ -510,7 +514,7 @@ export function FailedNoticesPanel({ failed, failedEver, renderResend }: {
   renderResend: ResendRenderer;
 }) {
   return (
-    <Section id="avisos" title="Avisos por email que no salieron">
+    <Section id="avisos" icon={Mail} title="Avisos por email que no salieron">
       {failed.length === 0 ? (
         <EmptyState description="Todos los avisos salieron. Un envío bloqueado por la lista de prueba del entorno no cuenta como fallido y no aparece acá." />
       ) : (
@@ -604,6 +608,7 @@ export function PendingReceiptsPanel({ receipts, renderResend }: {
   return (
     <Section
       id="recibos"
+      icon={Receipt}
       title="Recibos sin enviar por email"
       hint={
         <>
