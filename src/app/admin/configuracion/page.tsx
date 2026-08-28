@@ -14,6 +14,7 @@ import { listDivergent } from "@/lib/mp/fee-value-batch";
 import { ConfigForm } from "./config-form";
 import { FeeValueForm } from "./fee-value-form";
 import { HolidayForm, HolidayRow } from "./holidays-form";
+import { StatusStrip } from "./status-strip";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Configuración — SIGeV" };
@@ -123,6 +124,13 @@ export default async function ConfigPage(props: {
   const divergentCount =
     sp.cuota === "1" && current ? (await listDivergent(prisma, current)).length : 0;
 
+  // Insumos de la tira de estado — datos ya consultados, cero queries nuevas.
+  const digestCount = (digestRecipients ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean).length;
+  const coverageEntries = [...coverage.entries()].sort((a, b) => a[0] - b[0]);
+
   return (
     <div className="space-y-4">
       <PageHeader title="Configuración" />
@@ -131,6 +139,32 @@ export default async function ConfigPage(props: {
           Configuración guardada.
         </FormMessage>
       )}
+      {sp.cuota === "1" && (
+        <FormMessage kind="success" box as="div">
+          {divergentCount === 0 ? (
+            <p>Valor de cuota registrado, y ninguna suscripción de Mercado Pago para actualizar.</p>
+          ) : (
+            <p>
+              {`Valor de cuota registrado. Hay ${divergentCount} ${divergentCount === 1 ? "suscripción" : "suscripciones"} de Mercado Pago para actualizar: `}
+              <Link
+                className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                href="/admin/tesoreria/valores"
+              >
+                Ir a Valores de cuota
+              </Link>
+              .
+            </p>
+          )}
+        </FormMessage>
+      )}
+      {sp.feriado === "1" && <FormMessage kind="success" box>Feriado cargado.</FormMessage>}
+      {sp.feriado === "2" && <FormMessage kind="success" box>Feriado borrado.</FormMessage>}
+      <StatusStrip
+        current={current}
+        asociateActivo={asociateActivo}
+        coverage={coverageEntries}
+        digestCount={digestCount}
+      />
       <ConfigForm
         initial={{
           asociateActivo,
@@ -148,24 +182,6 @@ export default async function ConfigPage(props: {
         <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           Tesorería — valor de cuota
         </h2>
-        {sp.cuota === "1" && (
-          <FormMessage kind="success" box as="div">
-            {divergentCount === 0 ? (
-              <p>Valor de cuota registrado, y ninguna suscripción de Mercado Pago para actualizar.</p>
-            ) : (
-              <p>
-                {`Valor de cuota registrado. Hay ${divergentCount} ${divergentCount === 1 ? "suscripción" : "suscripciones"} de Mercado Pago para actualizar: `}
-                <Link
-                  className="font-medium underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                  href="/admin/tesoreria/valores"
-                >
-                  Ir a Valores de cuota
-                </Link>
-                .
-              </p>
-            )}
-          </FormMessage>
-        )}
         <p className="text-sm text-muted-foreground">
           {current ? (
             <>
@@ -196,8 +212,6 @@ export default async function ConfigPage(props: {
         <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           Cartelera — feriados
         </h2>
-        {sp.feriado === "1" && <FormMessage kind="success" box>Feriado cargado.</FormMessage>}
-        {sp.feriado === "2" && <FormMessage kind="success" box>Feriado borrado.</FormMessage>}
         <p className="text-sm text-muted-foreground">
           Los veinte días hábiles de la notificación por cartelera (Art. 5° ter) se cuentan sobre
           esta tabla: lunes a viernes menos los feriados nacionales. Un feriado que falte se cuenta
