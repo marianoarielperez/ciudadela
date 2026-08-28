@@ -6,11 +6,21 @@
 // con la Junta Electoral.
 //
 // El sistema NO gestiona la elección: entrega el padrón y nada más (REG-31).
+//
+// La firma visual de la pantalla (rediseño del 27/08/2026) es LA CUENTA: la
+// igualdad `considerados = habilitados + a purgar + no habilitados` como tira
+// de stat cards con los signos a la vista. "148 habilitados" sólo se puede
+// creer; la igualdad se puede verificar, y es lo que distingue "tres son
+// demasiado nuevos" de "tres faltan por un problema de datos".
+import { CalendarClock, FileSpreadsheet, Users, Vote, Wallet } from "lucide-react";
 import { headers } from "next/headers";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { PrintButton } from "@/components/admin/print-button";
 import { Button } from "@/components/ui/button";
+import {
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { audit } from "@/lib/audit";
@@ -74,61 +84,90 @@ export default async function PadronElectoralPage(props: {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Padrón electoral"
-        actions={
-          parsed.ok ? (
-            <div className="flex flex-wrap gap-2 print:hidden">
-              <Button asChild variant="outline">
-                {/* `<a>` y no `<Link>`: es una descarga, no una navegación. */}
-                <a href={`/api/admin/padron-electoral?fecha=${raw}`}>Exportar CSV</a>
-              </Button>
-              <PrintButton />
-            </div>
-          ) : undefined
-        }
-      >
+      <PageHeader title="Padrón electoral">
         <p className="max-w-prose text-sm text-muted-foreground">
           Socios con derecho a voto a la fecha indicada: activos, colaboradores y adherentes con{" "}
           {ELECTORAL_MIN_DAYS} días o más de antigüedad (REG-31), más honorarios y vitalicios, que
-          votan sin ese piso (REG-30). El sistema entrega el padrón; no gestiona la elección.
+          votan sin ese piso (REG-30). Quien no llega a los {ELECTORAL_MIN_DAYS} días figura aparte,
+          con la fecha desde la que va a poder votar. El sistema entrega el padrón; no gestiona la
+          elección.
         </p>
       </PageHeader>
 
-      <section className="max-w-2xl rounded-lg border p-4 print:hidden">
-        <ElectionsFlagForm ongoing={ongoing} />
-      </section>
-
-      {/* GET y no server action: la fecha tiene que quedar en la URL para poder
-          compartir el padrón y para que el botón atrás vuelva al anterior. */}
-      <form method="get" className="flex flex-wrap items-end gap-3 print:hidden">
-        <div className="space-y-1.5">
-          <Label htmlFor="fecha">Fecha de la elección</Label>
-          <Input id="fecha" type="date" name="fecha" defaultValue={raw} className="h-11 w-auto" />
-        </div>
-        <Button type="submit" variant="secondary" className="h-11">Generar</Button>
-      </form>
+      {/* La fecha y sus salidas JUNTAS: lo que se exporta o imprime es el
+          padrón A ESA FECHA, y la dependencia queda a la vista en vez de
+          repartida entre el encabezado y un formulario suelto. */}
+      <Card className="print:hidden">
+        <CardHeader>
+          <CardTitle>Generar padrón</CardTitle>
+          <CardDescription>
+            La fecha viaja en la URL: el link se comparte con la Junta Electoral y el padrón se
+            regenera en cualquier momento, incluida la mañana del acto.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* GET y no server action: la fecha tiene que quedar en la URL para
+              poder compartir el padrón y para que el botón atrás vuelva al
+              anterior. */}
+          <form method="get" className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="fecha">Fecha de la elección</Label>
+              <Input id="fecha" type="date" name="fecha" defaultValue={raw} className="h-11 w-auto" />
+            </div>
+            <Button type="submit" variant="secondary" className="h-11">Generar</Button>
+          </form>
+          {generated && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+              <Button asChild variant="outline">
+                {/* `<a>` y no `<Link>`: es una descarga, no una navegación. */}
+                <a href={`/api/admin/padron-electoral?fecha=${raw}`}>
+                  <FileSpreadsheet aria-hidden className="size-4" />
+                  Exportar Excel
+                </a>
+              </Button>
+              <PrintButton />
+              <p className="text-sm text-muted-foreground">
+                Padrón al{" "}
+                <strong className="font-mono tabular-nums">
+                  {formatDateAR(generated.roll.at)}
+                </strong>
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {!parsed.ok && <FormMessage kind="error" box>{parsed.error}</FormMessage>}
 
       {generated && (
         <div className="space-y-6">
-          {/* La cuenta, no el resultado. "157 habilitados" sólo se puede creer;
-              la igualdad se puede verificar, y es lo que distingue "tres son
-              demasiado nuevos" de "tres faltan por un problema de datos". */}
+          {/* LA CUENTA, no el resultado: la igualdad con los signos a la vista.
+              En papel no va (la cabecera de la hoja ya trae los conteos). */}
           <div className="space-y-1.5 print:hidden">
-            <p className="text-sm">
-              Padrón al <strong>{formatDateAR(generated.roll.at)}</strong>
-            </p>
-            <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
-              <Count n={generated.roll.considered} label="socios vigentes considerados" />
-              <span>=</span>
-              <Count n={generated.roll.withoutSeniority.length} label="sin antigüedad" />
-              <span>+</span>
-              <Count n={generated.roll.enabled.length} label="habilitados" />
-              <span>+</span>
-              <Count n={generated.roll.toPurge.length} label="con deuda a purgar" />
-            </p>
+            <div className="flex flex-wrap items-stretch gap-2">
+              <StatCard icon={Users} n={generated.roll.considered} label="considerados" />
+              <Operator glyph="=" />
+              <StatCard
+                icon={Vote}
+                n={generated.roll.enabled.length}
+                label="habilitados"
+                href="#habilitados"
+              />
+              <Operator glyph="+" />
+              <StatCard
+                icon={Wallet}
+                n={generated.roll.toPurge.length}
+                label="con deuda a purgar"
+                href="#a-purgar"
+              />
+              <Operator glyph="+" />
+              <StatCard
+                icon={CalendarClock}
+                n={generated.roll.withoutSeniority.length}
+                label="no habilitados por antigüedad"
+                href="#no-habilitados"
+              />
+            </div>
             {generated.roll.toPurge.length > 0 && (
               <p className="text-sm text-muted-foreground">
                 A purgar en la mesa:{" "}
@@ -156,16 +195,68 @@ export default async function PadronElectoralPage(props: {
           />
         </div>
       )}
+
+      {/* El interruptor del Art. 5° ter, al final: no es parte del padrón (lo
+          que hace es bloquear los cambios de categoría en todo el panel). */}
+      <Card className="max-w-2xl print:hidden">
+        <CardHeader>
+          <CardTitle>Elecciones en curso</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ElectionsFlagForm ongoing={ongoing} />
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-/** Un sumando de la reconciliación: el número en tabular-nums y su etiqueta. */
-function Count({ n, label }: { n: number; label: string }) {
+/** Un signo de la igualdad. Decorativo (`aria-hidden`): un lector de pantalla
+ *  ya recorre los cuatro números con sus etiquetas. Oculto en móvil, donde las
+ *  tarjetas apilan y la ecuación no se lee en línea. */
+function Operator({ glyph }: { glyph: string }) {
   return (
-    <span>
-      <span className="font-mono tabular-nums text-foreground">{n}</span> {label}
+    <span aria-hidden className="hidden items-center font-mono text-2xl text-muted-foreground sm:flex">
+      {glyph}
     </span>
+  );
+}
+
+/** Un sumando de la reconciliación como stat card. Las de bloque son ANCLAS a
+ *  su sección (patrón full-card link del tablero: el pseudo-elemento cubre la
+ *  tarjeta y el anillo de foco va inset porque Card recorta con overflow).
+ *  En cero, el chip se apaga (regla anti-ruido de la 4C). */
+function StatCard({ icon: Icon, n, label, href }: {
+  icon: typeof Users;
+  n: number;
+  label: string;
+  href?: string;
+}) {
+  const off = n === 0;
+  return (
+    <Card size="sm" className="relative min-w-40 flex-1">
+      <CardContent className="flex items-center gap-3">
+        <span
+          className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${
+            off ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"
+          }`}
+        >
+          <Icon aria-hidden className="size-5" />
+        </span>
+        <span className="min-w-0">
+          <span className="block font-mono text-3xl leading-none tabular-nums">{n}</span>
+          {href ? (
+            <a
+              href={href}
+              className="text-sm text-muted-foreground outline-hidden after:absolute after:inset-0 after:rounded-xl after:ring-ring after:ring-inset hover:text-foreground hover:underline focus-visible:after:ring-2"
+            >
+              {label}
+            </a>
+          ) : (
+            <span className="block text-sm text-muted-foreground">{label}</span>
+          )}
+        </span>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -173,13 +264,14 @@ async function generateRoll(at: Date, actorId: number) {
   const feeValue = await feeValueReader.current();
   const roll = await buildElectoralRoll(prisma, at, feeValue);
 
-  // El asiento se escribe al GENERAR y no al exportar (spec §9: "generar el
-  // padrón deja asiento"). Es deliberado que no dependa del CSV: esta pantalla
-  // se imprime, y el navegador no le avisa al servidor cuando alguien aprieta
-  // Imprimir — mismo criterio que la hoja de gestión manual. La exportación deja
-  // el suyo aparte, porque es un archivo que además se puede reenviar.
+  // El asiento se escribe al GENERAR y no al exportar (spec 4C §9). Es
+  // deliberado que no dependa del export: esta pantalla se imprime, y el
+  // navegador no le avisa al servidor cuando alguien aprieta Imprimir. La
+  // exportación deja el suyo aparte, porque es un archivo que además se puede
+  // reenviar.
   //
-  // Metadatos únicamente: la fecha usada y los tamaños. NUNCA una fila.
+  // Metadatos únicamente: la fecha usada y los tamaños de los TRES bloques.
+  // NUNCA una fila.
   await audit({
     userId: actorId,
     action: "electoral_roll_generated",
@@ -190,6 +282,7 @@ async function generateRoll(at: Date, actorId: number) {
       enabled: roll.enabled.length,
       toPurge: roll.toPurge.length,
       purgeFees: roll.purgeFees,
+      withoutSeniority: roll.withoutSeniority.length,
     },
     ip: (await headers()).get("x-real-ip") ?? "unknown",
   });

@@ -304,7 +304,7 @@ describe("PadronElectoralPage", () => {
     expect(html).toContain("Solo el superadmin");
     expect(buildElectoralRoll).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
-    expect(html).not.toContain("Exportar CSV");
+    expect(html).not.toContain("Exportar Excel");
   });
 
   it("usa la fecha de la URL, no el reloj", async () => {
@@ -320,7 +320,7 @@ describe("PadronElectoralPage", () => {
     expect(buildElectoralRoll).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
     // Sin padrón no hay nada que exportar ni que imprimir.
-    expect(html).not.toContain("Exportar CSV");
+    expect(html).not.toContain("Exportar Excel");
   });
 
   it("deja asiento al generar, con la fecha usada y los tamaños — nunca un nombre", async () => {
@@ -340,7 +340,7 @@ describe("PadronElectoralPage", () => {
     expect(entry).toMatchObject({
       userId: 7,
       action: "electoral_roll_generated",
-      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3 },
+      detail: { at: "2026-11-15", enabled: 1, toPurge: 1, purgeFees: 3, withoutSeniority: 0 },
       ip: "10.0.0.7",
     });
     const serialized = JSON.stringify(entry.detail);
@@ -371,9 +371,13 @@ describe("PadronElectoralPage", () => {
 
     const html = await page("2026-11-15");
 
-    expect(html).toContain("socios vigentes considerados");
-    expect(html).toContain("sin antigüedad");
+    expect(html).toContain("considerados");
+    expect(html).toContain("no habilitados por antigüedad");
     expect(html).toContain("A purgar en la mesa");
+    // Las stat cards de bloque son anclas a su sección.
+    expect(html).toContain('href="#habilitados"');
+    expect(html).toContain('href="#a-purgar"');
+    expect(html).toContain('href="#no-habilitados"');
   });
 
   it("le avisa a la hoja cuando la fecha pedida ya pasó, y sólo entonces", async () => {
@@ -396,5 +400,15 @@ describe("PadronElectoralPage", () => {
     expect(vi.mocked(configReader.getBool)).toHaveBeenCalledWith("elecciones_en_curso");
     expect(html).toContain("Hay elecciones en curso");
     expect(html).toContain("bloquea los cambios de categoría");
+  });
+
+  it("agrupa fecha, export e imprimir en la Card generadora", async () => {
+    const html = await page("2026-11-15");
+
+    expect(html).toContain("Generar padrón");
+    expect(html).toContain("Exportar Excel");
+    expect(html).toContain("Imprimir");
+    // El flag estatutario sigue en la pantalla, ahora en su propia Card.
+    expect(html).toContain("Elecciones en curso");
   });
 });
