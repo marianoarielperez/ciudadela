@@ -33,7 +33,14 @@ export function FeriadosPanel({ coverageLabel, futureHolidays, suggestedDate }: 
       </p>
       <Card>
         <CardContent>
-          <HolidayForm suggestedDate={suggestedDate} />
+          <HolidayForm
+            // La key remonta el form cuando la LISTA cambia: un alta o un borrado
+            // exitoso reinicia los campos (y relee suggestedDate); un envío
+            // rechazado no toca la lista, así que lo tipeado se conserva para
+            // corregirlo. Es el reset selectivo que useActionState no ofrece.
+            key={futureHolidays.map((h) => h.id).join("-")}
+            suggestedDate={suggestedDate}
+          />
         </CardContent>
       </Card>
       {futureHolidays.length === 0 ? (

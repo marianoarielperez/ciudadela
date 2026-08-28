@@ -1119,6 +1119,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ### Task 7: Feriados a synced-fields y confirmación con diálogo
 
+(Corregido en review, Task 7 fix: remount por key para el reset selectivo del alta, error del borrado replicado en la fila, y form oculto fuera del flex.)
+
 **Files:**
 - Modify: `src/app/admin/configuracion/holidays-form.tsx` (reescritura de presentación; actions y `name` idénticos)
 - Modify: `src/app/admin/configuracion/feriados-panel.tsx` (la lista gana `rounded-xl border`)
@@ -1199,41 +1201,47 @@ export function DeleteHolidayButton({ id, label, dateLabel }: {
   // si la action rechaza, no hay navegación y el error se lee en el diálogo.
   const formId = `holiday-delete-${id}`;
   return (
-    <Dialog>
-      <form id={formId} action={formAction}>
-        <input type="hidden" name="id" value={id} />
-      </form>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="min-h-11 px-3"
-          // Sin esto, una lista de treinta feriados le dicta al lector de
-          // pantalla treinta botones "Borrar" idénticos.
-          aria-label={`Borrar el feriado ${label} del ${dateLabel}`}
-        >
-          Borrar
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{`¿Borrar "${label}"?`}</DialogTitle>
-          <DialogDescription>
-            El {dateLabel} pasa a contarse como día hábil en los plazos de cartelera que se
-            asienten desde ahora.
-          </DialogDescription>
-        </DialogHeader>
-        {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">Cancelar</Button>
-          </DialogClose>
-          <Button type="submit" form={formId} variant="destructive" disabled={pending}>
-            {pending ? "Borrando…" : "Borrar feriado"}
+    <>
+      <Dialog>
+        <form id={formId} action={formAction} className="hidden">
+          <input type="hidden" name="id" value={id} />
+        </form>
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-h-11 px-3"
+            // Sin esto, una lista de treinta feriados le dicta al lector de
+            // pantalla treinta botones "Borrar" idénticos.
+            aria-label={`Borrar el feriado ${label} del ${dateLabel}`}
+          >
+            Borrar
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{`¿Borrar "${label}"?`}</DialogTitle>
+            <DialogDescription>
+              El {dateLabel} pasa a contarse como día hábil en los plazos de cartelera que se
+              asienten desde ahora.
+            </DialogDescription>
+          </DialogHeader>
+          {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button type="submit" form={formId} variant="destructive" disabled={pending}>
+              {pending ? "Borrando…" : "Borrar feriado"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* El mismo error, también en la fila: si el diálogo se cerró con el
+          borrado en vuelo, el portal ya no existe y esto es lo único que el
+          operador ve. */}
+      {state.error && <FormMessage kind="error" as="span">{state.error}</FormMessage>}
+    </>
   );
 }
 
@@ -1255,12 +1263,25 @@ export function HolidayRow({ id, label, dateLabel }: {
 }
 ```
 
-- [ ] **Step 2: Borde de la lista en `feriados-panel.tsx`**
+- [ ] **Step 2: Borde de la lista y remonte del alta en `feriados-panel.tsx`**
 
 Reemplazar `<ul className="list-none divide-y p-0 text-sm">` por:
 
 ```tsx
         <ul className="list-none divide-y rounded-xl border p-0 text-sm">
+```
+
+Y la llamada `<HolidayForm suggestedDate={suggestedDate} />` por:
+
+```tsx
+        <HolidayForm
+          // La key remonta el form cuando la LISTA cambia: un alta o un borrado
+          // exitoso reinicia los campos (y relee suggestedDate); un envío
+          // rechazado no toca la lista, así que lo tipeado se conserva para
+          // corregirlo. Es el reset selectivo que useActionState no ofrece.
+          key={futureHolidays.map((h) => h.id).join("-")}
+          suggestedDate={suggestedDate}
+        />
 ```
 
 - [ ] **Step 3: Verificar**

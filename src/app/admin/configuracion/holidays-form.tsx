@@ -67,41 +67,47 @@ export function DeleteHolidayButton({ id, label, dateLabel }: {
   // si la action rechaza, no hay navegación y el error se lee en el diálogo.
   const formId = `holiday-delete-${id}`;
   return (
-    <Dialog>
-      <form id={formId} action={formAction}>
-        <input type="hidden" name="id" value={id} />
-      </form>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="min-h-11 px-3"
-          // Sin esto, una lista de treinta feriados le dicta al lector de
-          // pantalla treinta botones "Borrar" idénticos.
-          aria-label={`Borrar el feriado ${label} del ${dateLabel}`}
-        >
-          Borrar
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{`¿Borrar "${label}"?`}</DialogTitle>
-          <DialogDescription>
-            El {dateLabel} pasa a contarse como día hábil en los plazos de cartelera que se
-            asienten desde ahora.
-          </DialogDescription>
-        </DialogHeader>
-        {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">Cancelar</Button>
-          </DialogClose>
-          <Button type="submit" form={formId} variant="destructive" disabled={pending}>
-            {pending ? "Borrando…" : "Borrar feriado"}
+    <>
+      <Dialog>
+        <form id={formId} action={formAction} className="hidden">
+          <input type="hidden" name="id" value={id} />
+        </form>
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-h-11 px-3"
+            // Sin esto, una lista de treinta feriados le dicta al lector de
+            // pantalla treinta botones "Borrar" idénticos.
+            aria-label={`Borrar el feriado ${label} del ${dateLabel}`}
+          >
+            Borrar
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{`¿Borrar "${label}"?`}</DialogTitle>
+            <DialogDescription>
+              El {dateLabel} pasa a contarse como día hábil en los plazos de cartelera que se
+              asienten desde ahora.
+            </DialogDescription>
+          </DialogHeader>
+          {state.error && <FormMessage kind="error" box>{state.error}</FormMessage>}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button type="submit" form={formId} variant="destructive" disabled={pending}>
+              {pending ? "Borrando…" : "Borrar feriado"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* El mismo error, también en la fila: si el diálogo se cerró con el
+          borrado en vuelo, el portal ya no existe y esto es lo único que el
+          operador ve. */}
+      {state.error && <FormMessage kind="error" as="span">{state.error}</FormMessage>}
+    </>
   );
 }
 
