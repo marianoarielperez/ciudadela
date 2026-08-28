@@ -290,18 +290,21 @@ Nota: los `href` son query-only (`?tab=…`): resuelven contra la ruta actual y 
 
 Tres ediciones (los sections de Tesorería y Feriados quedan como están):
 
-a. Imports: agregar `import { StatusStrip } from "./status-strip";`.
+a. Imports: agregar `import { StatusStrip } from "./status-strip";` y sumar `parseRecipients` al import existente de `@/lib/config`.
 
 b. Después del cálculo de `divergentCount` (línea ~124), agregar:
 
 ```tsx
   // Insumos de la tira de estado — datos ya consultados, cero queries nuevas.
-  const digestCount = (digestRecipients ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean).length;
+  // El conteo sale del MISMO parser que decide quién recibe el resumen diario
+  // (`parseRecipients`, que normaliza, deduplica y descarta lo que ni parece una
+  // dirección): contarlo a mano acá haría que la tira prometa un número de
+  // destinatarios que el envío no cumple.
+  const digestCount = parseRecipients(digestRecipients).length;
   const coverageEntries = [...coverage.entries()].sort((a, b) => a[0] - b[0]);
 ```
+
+> Corregido en review (Task 2 fix): el plan traía un parser propio (`split(",").map(trim).filter(Boolean)`) que contaba distinto de `parseRecipients` (`src/lib/config.ts`), la única autoridad sobre ese CSV y la que usa `src/lib/admin/digest.ts` para decidir a quién le sale el resumen.
 
 c. En el JSX: mover los CUATRO mensajes de éxito arriba (los bloques `sp.cuota === "1"` de la sección Tesorería y `sp.feriado === "1"|"2"` de Feriados se CORTAN de sus secciones y se PEGAN, textuales, después del bloque `sp.guardado === "1"`), y agregar la tira. El comienzo del `return` queda:
 

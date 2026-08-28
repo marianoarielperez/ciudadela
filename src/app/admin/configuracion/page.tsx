@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { requireSuperadmin } from "@/lib/auth/require-admin";
-import { CONFIG_KEYS, configReader } from "@/lib/config";
+import { CONFIG_KEYS, configReader, parseRecipients } from "@/lib/config";
 import { PageHeader } from "@/components/admin/page-header";
 import { FormMessage } from "@/components/admin/form-message";
 import { EmptyState } from "@/components/admin/empty-state";
@@ -125,10 +125,11 @@ export default async function ConfigPage(props: {
     sp.cuota === "1" && current ? (await listDivergent(prisma, current)).length : 0;
 
   // Insumos de la tira de estado — datos ya consultados, cero queries nuevas.
-  const digestCount = (digestRecipients ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean).length;
+  // El conteo sale del MISMO parser que decide quién recibe el resumen diario
+  // (`parseRecipients`, que normaliza, deduplica y descarta lo que ni parece una
+  // dirección): contarlo a mano acá haría que la tira prometa un número de
+  // destinatarios que el envío no cumple.
+  const digestCount = parseRecipients(digestRecipients).length;
   const coverageEntries = [...coverage.entries()].sort((a, b) => a[0] - b[0]);
 
   return (
