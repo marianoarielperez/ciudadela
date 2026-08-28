@@ -22,7 +22,7 @@ const ICONS: Record<SaludTab["icon"], ComponentType<{ className?: string }>> = {
   mail: Mail,
 };
 
-const INITIAL: SaludTabId = "tareas";
+const INITIAL: SaludTabId = SALUD_TABS[0].value;
 
 export function SaludTabs({ actCounts, tareas, infraestructura, dinero, correo }: {
   actCounts: Partial<Record<SaludTabId, number>>;

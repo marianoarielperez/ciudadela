@@ -272,6 +272,8 @@ describe("HealthVerdict", () => {
     // El veredicto traduce el ancla pelada a `?tab=X#ancla` (alertHrefFor):
     // activa la pestaña del panel y scrollea hasta él.
     expect(html).toContain('href="?tab=tareas#tareas"');
+    // Las rutas absolutas NO se traducen: navegan solas.
+    expect(html).toContain('href="/admin/tesoreria/sin-conciliar"');
     // Lo que hay para revisar sigue estando, pero abajo y sin gritar.
     expect(html).toContain("Para revisar");
   });

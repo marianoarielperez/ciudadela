@@ -4,6 +4,7 @@ import type { ComponentType, ReactNode } from "react";
 // tintado (el mismo gesto que las tarjetas del tablero /admin) + título +
 // descripción. `titleId` existe para las secciones que se nombran por
 // `aria-labelledby` (los paneles anclados de /admin/salud).
+// Sin "use client": lo importan paneles server y componentes cliente, y en cada grafo compila como corresponde — agregarle la directiva des-optimizaría a los dos.
 export function PanelHeader({ icon: Icon, title, description, titleId }: {
   icon: ComponentType<{ className?: string }>;
   title: string;

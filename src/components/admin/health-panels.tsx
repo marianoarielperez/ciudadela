@@ -86,9 +86,9 @@ function Section({ id, icon, title, hint, children }: {
  *  traducen a `?tab=X#ancla` vía alertHrefFor: activan la pestaña del panel y
  *  scrollean hasta él. health-alerts.ts sigue emitiendo anclas peladas. */
 const VERDICT_STYLE = {
-  error: { icon: TriangleAlert, border: "border-l-destructive", tone: "text-destructive" },
-  neutral: { icon: Info, border: "border-l-border", tone: "text-foreground" },
-  success: { icon: CircleCheck, border: "border-l-success", tone: "text-success" },
+  error: { icon: TriangleAlert, border: "border-l-destructive", tone: "text-destructive", bg: "bg-destructive/5" },
+  neutral: { icon: Info, border: "border-l-border", tone: "text-foreground", bg: "bg-muted/40" },
+  success: { icon: CircleCheck, border: "border-l-success", tone: "text-success", bg: "bg-success/5" },
 } as const;
 
 export function HealthVerdict({ alerts, now }: { alerts: HealthAlerts; now: Date }) {
@@ -105,7 +105,7 @@ export function HealthVerdict({ alerts, now }: { alerts: HealthAlerts; now: Date
     // `role="none"`: es el estado de la pantalla al abrirla, no la respuesta a
     // una acción. Un `alert` acá interrumpiría al lector de pantalla en cada
     // recarga (misma regla que la ayuda estática de los formularios).
-    <div role="none" className={cn("rounded-xl border border-l-4 bg-card p-4", style.border)}>
+    <div role="none" className={cn("rounded-xl border border-l-4 p-4", style.border, style.bg)}>
       <div className="flex items-start gap-3">
         <Icon aria-hidden className={cn("mt-0.5 size-6 shrink-0", style.tone)} />
         <div className="min-w-0 flex-1 text-sm">

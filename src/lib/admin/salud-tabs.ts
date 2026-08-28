@@ -25,7 +25,7 @@ export const SALUD_TABS: SaludTab[] = [
 
 // Las seis anclas que los paneles publican como `id`. `#dinero` existe aunque
 // hoy ninguna alerta lo emita (las de dinero van directo a Tesorería).
-const ANCHOR_TAB: Record<string, SaludTabId> = {
+const ANCHOR_TAB: Record<string, SaludTabId | undefined> = {
   tareas: "tareas",
   backup: "infraestructura",
   "mercado-pago": "infraestructura",
