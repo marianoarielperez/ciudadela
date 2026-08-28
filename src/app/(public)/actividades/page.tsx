@@ -267,7 +267,11 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
           </div>
 
           <div className={`mt-6 lg:hidden ${ENTER}`}>
-            <DayTabs agenda={visibleDays} initialDay={initialDay} />
+            <DayTabs
+              days={visibleDays}
+              initialDay={initialDay}
+              todayDay={todayVisible ? todayAR : null}
+            />
           </div>
         </>
       )}
