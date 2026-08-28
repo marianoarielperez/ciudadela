@@ -33,6 +33,19 @@ export type ConfigFormInitial = {
   digestRecipients: string;
 };
 
+// Qué claves viven en qué pestaña, para que la barra diga DÓNDE quedaron los
+// cambios sin guardar. Mismo orden que las pestañas.
+const GROUPS: Array<{ label: string; keys: Array<keyof ConfigFormInitial & string> }> = [
+  { label: "Sitio público", keys: ["asociateActivo", "contactPhone", "contactEmail"] },
+  { label: "ASOCIATE", keys: ["termsText", "privacyConsentText", "mpPlanActiveId", "mpPlanSharedId"] },
+  { label: "Avisos", keys: ["digestRecipients"] },
+];
+
+function listNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+}
+
 function AsociateSwitch({ checked, onChange }: {
   checked: boolean;
   onChange: (on: boolean) => void;
@@ -77,9 +90,12 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
     digestRecipients: initial.digestRecipients,
   };
   const { values, setValue, formRef, field } = useSyncedForm(initialValues);
+  const dirtyGroups = GROUPS.filter((g) => g.keys.some((k) => values[k] !== initialValues[k]))
+    .map((g) => g.label);
+  const dirty = dirtyGroups.length > 0;
 
   return (
-    <form ref={formRef} action={formAction} className="max-w-2xl space-y-6">
+    <form ref={formRef} action={formAction} className="max-w-2xl">
       <TabsContent value="sitio" forceMount className="space-y-4 pt-2 data-[state=inactive]:hidden">
         <PanelHeader
           icon={Globe}
@@ -173,10 +189,36 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
           </CardContent>
         </Card>
       </TabsContent>
-      {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
-      <Button type="submit" disabled={pending}>
-        {pending ? "Guardando…" : "Guardar"}
-      </Button>
+      {/* La barra vive DENTRO del form (el submit no necesita form=) y es
+          `fixed`: sigue visible aunque el operador esté mirando Tesorería o
+          Feriados con cambios pendientes en las pestañas del form. Tras el
+          redirect exitoso la página re-renderiza con valores frescos y la
+          barra desaparece sola. z-40: debajo de los diálogos (z-50). */}
+      {(dirty || state.error) && (
+        <>
+          <div aria-hidden className="h-24" />
+          <div className="fixed inset-x-4 bottom-4 z-40 sm:left-1/2 sm:right-auto sm:w-full sm:max-w-xl sm:-translate-x-1/2">
+            <div className="space-y-2 rounded-xl bg-card p-3 shadow-lg ring-1 ring-foreground/10">
+              {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  {dirty ? (
+                    <>
+                      Tenés cambios sin guardar en{" "}
+                      <span className="font-medium text-foreground">{listNames(dirtyGroups)}</span>.
+                    </>
+                  ) : (
+                    "Revisá el error y volvé a guardar."
+                  )}
+                </p>
+                <Button type="submit" disabled={pending}>
+                  {pending ? "Guardando…" : "Guardar"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </form>
   );
 }

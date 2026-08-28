@@ -949,7 +949,8 @@ y el de Avisos internos a:
       <TabsContent value="avisos" forceMount className="space-y-4 pt-2 data-[state=inactive]:hidden">
 ```
 
-(cerrando cada uno con `</TabsContent>`). El `<form>` conserva `className="max-w-2xl space-y-6"` y todo lo demás igual. Nota: `PanelHeader` dentro de cada `TabsContent` sigue siendo el título del panel; los `<h2>` quedan uno por panel visible.
+(cerrando cada uno con `</TabsContent>`). El `<form>` conserva `className="max-w-2xl space-y-6"` y todo lo demás igual.
+(Corregido en review, Task 6: sin `space-y-6` — corría los paneles ocultos 24px.) Nota: `PanelHeader` dentro de cada `TabsContent` sigue siendo el título del panel; los `<h2>` quedan uno por panel visible.
 
 - [ ] **Step 3: Ensamblado final de `page.tsx`**
 
