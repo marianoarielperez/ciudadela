@@ -9,7 +9,7 @@
 // que sume review o historia enseña a ignorar el tablero — la lección de las 51
 // firmas. El veredicto, siempre visible arriba, es quien lista el detalle.
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, type ComponentType, type ReactNode } from "react";
 import { Banknote, Clock, Mail, Server } from "lucide-react";
 
 import { SALUD_TABS, type SaludTab, type SaludTabId } from "@/lib/admin/salud-tabs";
@@ -38,6 +38,16 @@ export function SaludTabs({ actCounts, tareas, infraestructura, dinero, correo }
   const requested = params.get("tab");
   const current = requested && SALUD_TABS.some((t) => t.value === requested) ? requested : INITIAL;
   const panels: Record<SaludTabId, ReactNode> = { tareas, infraestructura, dinero, correo };
+  // Un link del veredicto (`?tab=X#ancla`) apunta a un panel que recién se
+  // monta cuando la pestaña se activa: el scroll nativo al fragmento corre
+  // ANTES y no encuentra el nodo (medido en la verificación en vivo). Este
+  // efecto repone el scroll después del montaje. Un clic manual de solapa no
+  // re-scrollea: su `replace` arma la URL sin hash, así que acá no hay ancla.
+  useEffect(() => {
+    const anchor = window.location.hash.slice(1);
+    if (!anchor) return;
+    document.getElementById(anchor)?.scrollIntoView();
+  }, [current, params]);
   return (
     <Tabs
       value={current}

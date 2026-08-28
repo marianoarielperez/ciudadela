@@ -85,6 +85,20 @@ function Section({ id, icon, title, hint, children }: {
  *  mismo role="none" (no es la respuesta a una acción) — y los `#ancla` se
  *  traducen a `?tab=X#ancla` vía alertHrefFor: activan la pestaña del panel y
  *  scrollean hasta él. health-alerts.ts sigue emitiendo anclas peladas. */
+/** El link de una alerta. Un ancla se traduce a `?tab=X#ancla` y navega con un
+ *  `<a>` NATIVO —navegación de documento—: el SSR ya renderiza la pestaña
+ *  correcta (SaludTabs lee `?tab=` también en el server) y el navegador
+ *  scrollea solo al fragmento. Con `Link` de Next el manejo de scroll de la
+ *  transición cliente corre ANTES de que Radix monte el panel y el fragmento
+ *  se pierde — medido en la verificación en vivo, no supuesto. Las rutas
+ *  absolutas sí navegan con `Link`, como siempre. */
+function VerdictLink({ rawHref, children }: { rawHref: string; children: React.ReactNode }) {
+  if (!rawHref.startsWith("#")) {
+    return <Link className={INLINE_LINK} href={rawHref}>{children}</Link>;
+  }
+  return <a className={INLINE_LINK} href={alertHrefFor(rawHref)}>{children}</a>;
+}
+
 const VERDICT_STYLE = {
   error: { icon: TriangleAlert, border: "border-l-destructive", tone: "text-destructive", bg: "bg-destructive/5" },
   neutral: { icon: Info, border: "border-l-border", tone: "text-foreground", bg: "bg-muted/40" },
@@ -114,7 +128,7 @@ export function HealthVerdict({ alerts, now }: { alerts: HealthAlerts; now: Date
             <ul className="mt-2 space-y-1">
               {act.map((a) => (
                 <li key={a.key}>
-                  <Link className={INLINE_LINK} href={alertHrefFor(a.href)}>{a.label}</Link>
+                  <VerdictLink rawHref={a.href}>{a.label}</VerdictLink>
                 </li>
               ))}
             </ul>
@@ -125,7 +139,7 @@ export function HealthVerdict({ alerts, now }: { alerts: HealthAlerts; now: Date
               <ul className="mt-1 space-y-1">
                 {review.map((a) => (
                   <li key={a.key}>
-                    <Link className={INLINE_LINK} href={alertHrefFor(a.href)}>{a.label}</Link>
+                    <VerdictLink rawHref={a.href}>{a.label}</VerdictLink>
                   </li>
                 ))}
               </ul>
