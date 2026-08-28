@@ -1,10 +1,11 @@
-// Padrón electoral (REG-31, docs/02:155-158) con la enmienda del operador del
+// Padrón electoral (REG-31, docs/02:162-166) con la enmienda del operador del
 // 23/08/2026.
 //
 // La enmienda: el Código Civil y Comercial deja al moroso purgar su deuda hasta
 // una hora antes del acto, así que el padrón NO lo excluye — lo LISTA aparte,
 // con cuántas cuotas y cuánto tiene que pagar en la mesa para votar. Por eso son
-// dos bloques y no una lista filtrada.
+// TRES bloques y no una lista filtrada: habilitados, con deuda a purgar y (desde
+// el 27/08/2026) los que no alcanzan la antigüedad mínima, también con nombre.
 //
 // Cuatro cosas del estatuto que no son obvias:
 //   - Los ADHERENTES votan (con ≥90 días). "Sin mora" es requisito sólo de
@@ -19,7 +20,7 @@
 //     mide sobre períodos ANTERIORES al mes de la elección (§3 de la spec). Con
 //     la otra definición, el padrón se vaciaría de activos todos los meses.
 //
-// Prisma inyectado; la fecha es un PARÁMETRO (docs/02:157), nunca el reloj.
+// Prisma inyectado; la fecha es un PARÁMETRO (docs/02:164), nunca el reloj.
 import type { MemberCategory, PrismaClient } from "@/generated/prisma/client";
 import { periodOf, type Period } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, debtAmount, type FeeValueAmounts } from "@/lib/treasury/rules";
@@ -36,7 +37,7 @@ export const ELECTORAL_CATEGORIES: readonly MemberCategory[] = [
   "adherent",
 ];
 
-/** REG-30 (docs/02:153-154) exime del piso de 90 días a honorarios y vitalicios.
+/** REG-30 (docs/02:160-161) exime del piso de 90 días a honorarios y vitalicios.
  *  Son las dos categorías que la asamblea OTORGA por trayectoria o servicios: un
  *  plazo de espera encima de una distinción no tendría a quién proteger. */
 export const SENIORITY_EXEMPT: readonly MemberCategory[] = ["honorary", "lifetime"];

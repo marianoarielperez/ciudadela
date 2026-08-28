@@ -79,7 +79,7 @@ describe("antigüedad (REG-30/31)", () => {
   });
 
   it("el piso NO corre para honorarios ni vitalicios, y sí para los otros tres", () => {
-    // REG-30 (docs/02:153-154) los exime expresamente; REG-31 no los distingue.
+    // REG-30 (docs/02:160-161) los exime expresamente; REG-31 no los distingue.
     // Prevalece REG-30 por decisión del operador del 24/08/2026 (spec §13,
     // decisión 10): la distinción de esas categorías existe para honrarlas.
     expect([...SENIORITY_EXEMPT].sort()).toEqual(["honorary", "lifetime"]);
