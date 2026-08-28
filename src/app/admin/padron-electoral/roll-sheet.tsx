@@ -68,7 +68,9 @@ function RowCard({ r, showDebt, showEnabledFrom }: {
         <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span>{CATEGORY_LABELS[r.category]}</span>
           <span>Ingreso {formatDateAR(r.joinedAt)}</span>
-          {showEnabledFrom && <span>Vota desde el {formatDateAR(enabledFrom(r.joinedAt))}</span>}
+          {showEnabledFrom && (
+            <span>Habilitado desde el {formatDateAR(enabledFrom(r.joinedAt))}</span>
+          )}
           {showDebt && (
             <span className="font-mono tabular-nums text-foreground">
               {r.arrears} {r.arrears === 1 ? "cuota" : "cuotas"}
@@ -110,7 +112,7 @@ function RollBlock({ id, title, note, rows, showDebt, showEnabledFrom, empty, to
         <>
           {/* La tabla: desktop y PAPEL. La Card se desviste al imprimir. */}
           <div className="hidden md:block print:block">
-            <Card className="print:rounded-none print:bg-transparent print:py-0 print:ring-0">
+            <Card className="print:block print:overflow-visible print:rounded-none print:bg-transparent print:py-0 print:ring-0">
               <CardContent className="print:px-0 print:[&_[data-slot=table-container]]:overflow-visible">
                 <Table className="table-fixed print:text-[9pt] print:[&_td]:px-1 print:[&_th]:px-1">
                   <TableHeader>

@@ -144,6 +144,14 @@ export default async function PadronElectoralPage(props: {
           {/* LA CUENTA, no el resultado: la igualdad con los signos a la vista.
               En papel no va (la cabecera de la hoja ya trae los conteos). */}
           <div className="space-y-1.5 print:hidden">
+            {/* La igualdad completa, en palabras, para lectores de pantalla: los signos
+                de la tira son decorativos y en móvil ni se muestran. */}
+            <p className="sr-only">
+              De los {generated.roll.considered} socios vigentes considerados,{" "}
+              {generated.roll.enabled.length} están habilitados, {generated.roll.toPurge.length} figuran
+              con deuda a purgar y {generated.roll.withoutSeniority.length} no alcanzan la antigüedad
+              mínima.
+            </p>
             <div className="flex flex-wrap items-stretch gap-2">
               <StatCard icon={Users} n={generated.roll.considered} label="considerados" />
               <Operator glyph="=" />

@@ -377,6 +377,8 @@ describe("PadronElectoralPage", () => {
     expect(html).toContain("considerados");
     expect(html).toContain("no habilitados por antigüedad");
     expect(html).toContain("A purgar en la mesa");
+    // La frase sr-only: distingue la tira de la cuenta de la cabecera de papel.
+    expect(html).toContain("socios vigentes considerados");
     // Las stat cards de bloque son anclas a su sección.
     expect(html).toContain('href="#habilitados"');
     expect(html).toContain('href="#a-purgar"');

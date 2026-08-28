@@ -214,4 +214,29 @@ describe("GET /api/admin/padron-electoral — descarga", () => {
     expect(serialized).not.toContain("Gómez");
     expect(serialized).not.toContain("Nuevo");
   });
+
+  it("la hoja de purga lleva la fila de total y los formatos de fecha y moneda", async () => {
+    (prisma.member.findMany as MockedFn).mockResolvedValue([
+      memberRow(),
+      memberRow({ id: 2, fullName: "Gómez, Luis" }),
+    ]);
+    (prisma.fee.groupBy as MockedFn).mockResolvedValue([{ memberId: 2, _count: { _all: 3 } }]);
+
+    const wb = await loadWorkbook(await GET(requestWithQuery({ fecha: "2026-11-15" })));
+    const purge = wb.getWorksheet("Con deuda a purgar")!;
+
+    // Encabezado + 1 moroso + la fila de total: el número que la Junta se lleva
+    // a la mesa de cobro. Borrar el addRow(totals) de la route tiene que poner
+    // este test en rojo.
+    expect(purge.rowCount).toBe(3);
+    const total = purge.getRow(3);
+    expect(total.getCell(2).value).toBe("Total a purgar");
+    expect(total.getCell(5).value).toBe(3);
+    expect(total.getCell(6).value).toBe(18000);
+    // Los formatos que la Junta ve al abrir el archivo: fecha argentina y moneda.
+    expect(purge.getColumn(4).numFmt).toBe("dd/mm/yyyy");
+    expect(purge.getColumn(6).numFmt).toBe('"$" #,##0.00');
+    const tooNew = wb.getWorksheet("No habilitados por antigüedad")!;
+    expect(tooNew.getColumn(5).numFmt).toBe("dd/mm/yyyy");
+  });
 });
