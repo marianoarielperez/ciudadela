@@ -113,8 +113,10 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  // El sitio no usa cámara, micrófono ni geolocalización: se apagan para todos
-  // (incluidos los iframes de terceros, como el mapa).
+  // El sitio no usa cámara, micrófono ni geolocalización: se apagan para todo
+  // el sitio y para cualquier iframe de terceros que se embeba (el mapa de
+  // /ubicacion NO es uno de ellos: desde el rediseño de 08/2026 es Leaflet,
+  // que corre en el propio DOM de la página, no en un iframe).
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 

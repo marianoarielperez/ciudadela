@@ -168,3 +168,15 @@
    achica el min-content del bloque, que es lo que arrastra al contenedor. */
 .prose-news p, .prose-news li, .prose-news h2, .prose-news h3 { overflow-wrap: anywhere; }
 .prose-news a { overflow-wrap: anywhere; word-break: break-word; }
+
+/* Mapa de /ubicacion (Leaflet, sede-map.tsx): Leaflet trae los botones de
+   zoom en 30×30px y `leaflet-touch` se aplica en prácticamente todo navegador
+   moderno. La regla del proyecto es ≥44px para cualquier target, y en el
+   celular —donde el arrastre está apagado a propósito— estos botones son una
+   de las dos únicas formas de hacer zoom. Leaflet se usa en esta única
+   página, así que la regla queda acotada a sus clases. */
+.leaflet-touch .leaflet-bar a {
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
+}

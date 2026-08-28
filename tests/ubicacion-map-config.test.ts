@@ -3,9 +3,11 @@ import { SITE } from "@/lib/site";
 import {
   formatDMS,
   googleMapsDirectionsUrl,
+  IGN_ATTRIBUTION,
   IGN_TILE_OPTIONS,
   IGN_TILE_URL,
   INITIAL_ZOOM,
+  OSM_ATTRIBUTION,
   OSM_TILE_URL,
   TILE_ERROR_THRESHOLD,
 } from "@/app/(public)/ubicacion/map-config";
@@ -30,6 +32,12 @@ describe("map-config", () => {
   it("OSM fallback URL is the standard XYZ endpoint", () => {
     expect(OSM_TILE_URL).toBe("https://tile.openstreetmap.org/{z}/{x}/{y}.png");
     expect(TILE_ERROR_THRESHOLD).toBe(3);
+  });
+
+  it("credits both the IGN and OSM, as ODbL requires", () => {
+    expect(IGN_ATTRIBUTION).toContain("Instituto Geográfico Nacional");
+    expect(IGN_ATTRIBUTION).toContain("osm.org/copyright");
+    expect(OSM_ATTRIBUTION).toContain("OpenStreetMap");
   });
 
   it("builds the Google Maps directions URL from the SITE coordinates", () => {

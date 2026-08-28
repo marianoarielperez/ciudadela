@@ -87,7 +87,13 @@ export default function SedeMap() {
 
     // Fallback: con el IGN caído los tiles fallan en ráfaga; superado el
     // umbral se cambia la capa a OSM (el proveedor anterior de esta página) y
-    // Leaflet actualiza solo la atribución. El flag evita re-entrar.
+    // Leaflet actualiza solo la atribución. El flag evita re-entrar. El
+    // contador se resetea en `load` (Leaflet lo emite cuando terminan de
+    // cargar los tiles visibles de una vista): sin el reset, tres fallos
+    // sueltos a lo largo de una sesión —el mapa de escritorio es arrastrable
+    // y sin límites, así que un usuario paneando lejos de Comodoro puede
+    // acumularlos sin que sea una ráfaga real— bastaban para cambiar de capa
+    // y perder la cartografía del IGN en silencio.
     let tileErrors = 0;
     let fellBack = false;
     ignLayer.on("tileerror", () => {
@@ -96,6 +102,9 @@ export default function SedeMap() {
       fellBack = true;
       map.removeLayer(ignLayer);
       L.tileLayer(OSM_TILE_URL, { maxZoom: 19, attribution: OSM_ATTRIBUTION }).addTo(map);
+    });
+    ignLayer.on("load", () => {
+      tileErrors = 0;
     });
 
     return () => {
@@ -109,6 +118,14 @@ export default function SedeMap() {
       <div
         ref={containerRef}
         className="h-full w-full"
+        // Leaflet le pone tabIndex=0 al contenedor (navegación por teclado), así
+        // que queda un elemento enfocable con role implícito "generic" — ARIA
+        // prohíbe nombre accesible ahí y el navegador puede descartar el
+        // aria-label. role="group" sí admite nombre. NO "img": los controles de
+        // zoom viven ADENTRO de este div y "img" vuelve presentacionales a los
+        // descendientes, escondiendo "Acercar"/"Alejar" del lector de pantalla.
+        // Tampoco "region": sumaría un landmark más a la página pública.
+        role="group"
         aria-label={`Mapa con la sede vecinal marcada en ${SITE.address}, ${SITE.city}`}
       />
       {/* z-[1000]: los panes de Leaflet llegan hasta z 700 y sus controles a
@@ -119,7 +136,7 @@ export default function SedeMap() {
         onClick={() => mapRef.current?.setView(CENTER, INITIAL_ZOOM)}
         className="absolute bottom-3 left-3 z-[1000] inline-flex min-h-11 items-center gap-2 rounded-md bg-card px-3 text-sm font-medium text-foreground shadow-md ring-1 ring-foreground/10 outline-hidden transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <MapPin aria-hidden className="size-4 text-primary" />
+        <MapPin aria-hidden className="size-4 shrink-0 text-primary" />
         Volver a la sede
       </button>
     </div>

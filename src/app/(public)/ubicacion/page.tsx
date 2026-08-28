@@ -4,14 +4,16 @@ import { Landmark, Mail, Navigation, Phone, ScrollText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ROOM_META } from "@/lib/activities/room-meta";
 import { getContactInfo } from "@/lib/config";
-import { SITE } from "@/lib/site";
+import { SITE, siteBaseUrl } from "@/lib/site";
 import { formatDMS, googleMapsDirectionsUrl } from "./map-config";
 import SedeMap from "./sede-map-loader";
 
 export const metadata: Metadata = {
   title: "La sede — Vecinal Ciudadela",
   description: `Dónde queda la sede de la ${SITE.name}, cómo llegar y cómo contactarnos.`,
-  alternates: { canonical: "/ubicacion" },
+  // Absoluto a mano, como /actividades y /noticias/[slug]: aunque el layout
+  // raíz ya define `metadataBase`, así queda a la vista de quien lee el <head>.
+  alternates: { canonical: new URL("/ubicacion", siteBaseUrl()).toString() },
 };
 
 // JSON-LD de la sede con GeoCoordinates — previsto en el diseño del Módulo 2 y
@@ -90,8 +92,14 @@ export default async function UbicacionPage() {
       />
 
       {/* Eyebrow de coordenadas: la firma de la página. Derivadas de
-          SITE.lat/lng por formatDMS, nunca hardcodeadas. */}
-      <p className="font-mono text-xs font-semibold tracking-[0.14em] text-primary uppercase">
+          SITE.lat/lng por formatDMS, nunca hardcodeadas. aria-hidden: es
+          decorativo, la dirección real está en la tarjeta de abajo — sin
+          esto un lector de pantalla lee "45°47′S · 67°29′O" ANTES que el
+          <h1>. */}
+      <p
+        aria-hidden
+        className="font-mono text-xs font-semibold tracking-[0.14em] text-primary uppercase"
+      >
         {formatDMS(SITE.lat, SITE.lng)}
       </p>
       <h1 className="mt-1 text-2xl font-semibold">La sede</h1>
