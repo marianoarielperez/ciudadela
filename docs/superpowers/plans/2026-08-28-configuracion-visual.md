@@ -621,6 +621,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Reescribir `config-form.tsx`**
 
+(Corregido en review, Task 4 fix: foco outset con contraste AA y paridad tipográfica del label.)
+
 ```tsx
 "use client";
 // Formulario de Configuración.
@@ -662,7 +664,7 @@ function AsociateSwitch({ checked, onChange }: {
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor="asociateActivo" className="flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+      <label htmlFor="asociateActivo" className="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium select-none">
         <input
           id="asociateActivo"
           type="checkbox"
@@ -675,7 +677,7 @@ function AsociateSwitch({ checked, onChange }: {
         />
         <span
           aria-hidden
-          className="relative inline-flex h-6 w-10 shrink-0 rounded-full bg-muted ring-1 ring-inset ring-border transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-background after:shadow-sm after:transition-transform peer-checked:bg-primary peer-checked:after:translate-x-4 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+          className="relative inline-flex h-6 w-10 shrink-0 rounded-full bg-muted ring-1 ring-inset ring-border transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-background after:shadow-sm after:transition-transform peer-checked:bg-primary peer-checked:after:translate-x-4 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary"
         />
         Botón ASOCIATE habilitado en el sitio público
       </label>
