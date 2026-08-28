@@ -123,7 +123,7 @@ export default async function PadronElectoralPage(props: {
             <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
               <Count n={generated.roll.considered} label="socios vigentes considerados" />
               <span>=</span>
-              <Count n={generated.roll.withoutSeniority} label="sin antigüedad" />
+              <Count n={generated.roll.withoutSeniority.length} label="sin antigüedad" />
               <span>+</span>
               <Count n={generated.roll.enabled.length} label="habilitados" />
               <span>+</span>

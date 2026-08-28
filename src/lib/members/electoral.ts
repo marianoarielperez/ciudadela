@@ -90,11 +90,16 @@ export type ElectoralRoll = {
   period: Period;
   /** Socios vigentes de categoría votante, ANTES del filtro de antigüedad. Con
    *  `withoutSeniority` cierra la cuenta que la pantalla imprime:
-   *  `considered = withoutSeniority + enabled + toPurge`. Sin esos dos números,
-   *  "157 habilitados" no se puede verificar y un socio que falta por un problema
-   *  de datos desaparece sin que nadie lo note. */
+   *  `considered = withoutSeniority.length + enabled.length + toPurge.length`.
+   *  Sin esos dos números, "157 habilitados" no se puede verificar y un socio
+   *  que falta por un problema de datos desaparece sin que nadie lo note. */
   considered: number;
-  withoutSeniority: number;
+  /** Los que no llegan al piso de REG-30 (decisión del 27/08/2026: dejan de ser
+   *  un contador y se listan con nombre — el contador decía que eran tres, no
+   *  quiénes, ni si eran "demasiado nuevos" o un problema de datos). Llevan
+   *  `arrears: 0, debt: null`: su mora NO se consulta — pagar no habilita, y la
+   *  deuda de quien no vota es un dato sin finalidad (Ley 25.326). */
+  withoutSeniority: ElectoralRow[];
   enabled: ElectoralRow[];
   toPurge: ElectoralRow[];
   purgeFees: number;
@@ -177,7 +182,9 @@ export async function buildElectoralRoll(
     }))
     .sort(compareForRoll);
 
-  const eligible = rows.filter((r) => meetsSeniority(r.category, r.joinedAt, at));
+  const eligible: typeof rows = [];
+  const tooNew: typeof rows = [];
+  for (const r of rows) (meetsSeniority(r.category, r.joinedAt, at) ? eligible : tooNew).push(r);
   const period = periodOf(at);
   const ids = eligible.map((r) => r.id);
 
@@ -214,7 +221,15 @@ export async function buildElectoralRoll(
     at,
     period,
     considered: rows.length,
-    withoutSeniority: rows.length - eligible.length,
+    withoutSeniority: tooNew.map((r) => ({
+      memberId: r.id,
+      memberNumber: r.memberNumber,
+      fullName: r.fullName,
+      category: r.category,
+      joinedAt: r.joinedAt,
+      arrears: 0,
+      debt: null,
+    })),
     enabled,
     toPurge,
     purgeFees: toPurge.reduce((a, r) => a + r.arrears, 0),

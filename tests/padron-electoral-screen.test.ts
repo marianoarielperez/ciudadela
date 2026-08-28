@@ -66,7 +66,7 @@ const roll = (over: Partial<ElectoralRoll> = {}): ElectoralRoll => ({
   at: AT,
   period: "2026-11",
   considered: 0,
-  withoutSeniority: 0,
+  withoutSeniority: [],
   enabled: [],
   toPurge: [],
   purgeFees: 0,
@@ -284,7 +284,7 @@ describe("PadronElectoralPage", () => {
     mocks.buildRoll.mockResolvedValue(
       roll({
         considered: 4,
-        withoutSeniority: 1,
+        withoutSeniority: [row({ memberId: 9, fullName: "Nuevo, Vecino", joinedAt: new Date("2026-10-01T12:00:00Z") })],
         enabled: [row(), row({ memberId: 3 })],
         toPurge: [row({ memberId: 2, arrears: 3, debt: 18000 })],
         purgeFees: 3,

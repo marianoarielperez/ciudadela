@@ -165,7 +165,7 @@ describe("buildElectoralRoll", () => {
     ]);
     const roll = await buildElectoralRoll(db as never, AT, VALUE);
     expect(roll.enabled.map((r) => r.memberId)).toEqual([6, 7]);
-    expect(roll.withoutSeniority).toBe(0);
+    expect(roll.withoutSeniority).toEqual([]);
   });
 
   it("el honorario y el vitalicio con cuotas impagas siguen en Habilitados", async () => {
@@ -294,9 +294,9 @@ describe("buildElectoralRoll", () => {
     );
     const roll = await buildElectoralRoll(db as never, AT, VALUE);
     expect(roll.considered).toBe(4);
-    expect(roll.withoutSeniority).toBe(1);
+    expect(roll.withoutSeniority.map((r) => r.memberId)).toEqual([3]);
     expect(roll.considered).toBe(
-      roll.withoutSeniority + roll.enabled.length + roll.toPurge.length,
+      roll.withoutSeniority.length + roll.enabled.length + roll.toPurge.length,
     );
   });
 
@@ -306,7 +306,10 @@ describe("buildElectoralRoll", () => {
     expect(roll.enabled).toEqual([]);
     expect(roll.toPurge).toEqual([]);
     expect(roll.considered).toBe(1);
-    expect(roll.withoutSeniority).toBe(1);
+    expect(roll.withoutSeniority.map((r) => r.memberId)).toEqual([3]);
+    // La mora no se consulta para este bloque: pagar no habilita, y la deuda de
+    // quien no vota es un dato sin finalidad acá.
+    expect(roll.withoutSeniority[0]).toMatchObject({ arrears: 0, debt: null });
   });
 
   it("con el padrón entero fuera de antigüedad no le pregunta la deuda a nadie", async () => {
@@ -397,5 +400,33 @@ describe("buildElectoralRoll", () => {
     const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
     expect(csv).toContain('"Ana Gómez"');
     expect(csv).not.toContain("'");
+  });
+
+  it("el bloque sin antigüedad conserva el orden del padrón y no dispara consultas de deuda extra", async () => {
+    const db = fakeDb(
+      [
+        mn(1, "Zurita, Carlos", 306),
+        m({
+          id: 2,
+          fullName: "Ñandú, Rosa",
+          joinedAt: daysBefore(10),
+          memberships: [{ memberNumber: 41, book: { status: "open" } }],
+        }),
+        m({
+          id: 3,
+          fullName: "Ávila, Bruno",
+          joinedAt: daysBefore(30),
+          memberships: [{ memberNumber: 14, book: { status: "open" } }],
+        }),
+      ],
+      [{ memberId: 1, _count: { _all: 2 } }],
+    );
+    const roll = await buildElectoralRoll(db as never, AT, VALUE);
+    // Alfabético es-AR, igual que los otros dos bloques.
+    expect(roll.withoutSeniority.map((r) => r.fullName)).toEqual(["Ávila, Bruno", "Ñandú, Rosa"]);
+    // La consulta de mora sigue siendo SÓLO de los elegibles.
+    expect(db.fee.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ memberId: { in: [1] } }) }),
+    );
   });
 });
