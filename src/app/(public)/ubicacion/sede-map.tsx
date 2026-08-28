@@ -42,15 +42,23 @@ export default function SedeMap() {
       // La rueda del mouse scrollea la PÁGINA, no el mapa (scroll-trap).
       scrollWheelZoom: false,
       // En touch, un dedo scrollea la página; el mapa se explora con el pinch
-      // de dos dedos (touchZoom) y los botones de zoom.
-      dragging: !L.Browser.mobile,
+      // de dos dedos (touchZoom) y los botones de zoom. Ojo: `L.Browser.mobile`
+      // es un sniff de user-agent/orientación, NO de capacidad táctil — Safari
+      // de iPadOS (y muchas tablets Android) manda un UA de escritorio, así que
+      // ese chequeo da `false` ahí y Leaflet deja el drag prendido, matando el
+      // scroll nativo de un dedo. Se usa `L.Browser.touch` (capacidad táctil
+      // real) para que TODO dispositivo táctil se comporte igual. No
+      // "simplificar" esto de vuelta al sniff de UA.
+      dragging: !L.Browser.touch,
       touchZoom: true,
       zoomControl: false,
     });
     mapRef.current = map;
 
     // topright: la tarjeta de dirección de la página vive en topleft.
-    L.control.zoom({ position: "topright" }).addTo(map);
+    L.control
+      .zoom({ position: "topright", zoomInTitle: "Acercar", zoomOutTitle: "Alejar" })
+      .addTo(map);
 
     const icon = L.divIcon({
       html: PIN_SVG,
