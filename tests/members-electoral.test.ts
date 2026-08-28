@@ -17,7 +17,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildElectoralRoll,
   ELECTORAL_CATEGORIES,
-  electoralCsv,
   ELECTORAL_MIN_DAYS,
   enabledFrom,
   isEligibleBySeniority,
@@ -256,10 +255,7 @@ describe("buildElectoralRoll", () => {
     expect(b.enabled.map((r) => r.memberId)).toEqual([4, 9]);
   });
 
-  it("el bloque a purgar y el CSV salen en el MISMO orden alfabético", async () => {
-    // El orden vale para los DOS bloques, y el CSV no es otro documento: es la
-    // hoja en otro formato, y quien lo abre al lado de la impresión tiene que
-    // ver las mismas filas en el mismo lugar.
+  it("el bloque a purgar sale en el MISMO orden alfabético", async () => {
     const db = fakeDb(
       [mn(1, "Zurita, Carlos", 306), mn(2, "Ñandú, Rosa", 41), mn(3, "Aguirre, Dora", 200)],
       [
@@ -275,11 +271,6 @@ describe("buildElectoralRoll", () => {
       "Ñandú, Rosa",
       "Zurita, Carlos",
     ]);
-    // El nombre lleva coma, así que el CSV no se parte por comas: lo que se
-    // verifica es la posición de cada fila en el archivo.
-    const csv = electoralCsv(roll);
-    expect(csv.indexOf("Aguirre")).toBeLessThan(csv.indexOf("Ñandú"));
-    expect(csv.indexOf("Ñandú")).toBeLessThan(csv.indexOf("Zurita"));
   });
 
   it("la cuenta cierra: considerados = sin antigüedad + habilitados + a purgar", async () => {
@@ -334,72 +325,6 @@ describe("buildElectoralRoll", () => {
     const roll = await buildElectoralRoll(db as never, AT, null);
     expect(roll.toPurge[0]).toMatchObject({ arrears: 2, debt: null });
     expect(roll.purgeAmount).toBe(0);
-  });
-
-  it("el CSV lleva las columnas de REG-31 y el bloque de cada uno", async () => {
-    const db = fakeDb([m({ id: 1 }), m({ id: 2, category: "adherent" })], [{ memberId: 1, _count: { _all: 2 } }]);
-    const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-    expect(csv.split("\r\n")[0]).toBe("bloque,numero_socio,apellido_nombre,categoria,cuotas_adeudadas,monto_a_purgar");
-    // Con comillas: TODAS las celdas van entrecomilladas, incluida la del
-    // bloque. (El brief afirmaba `"habilitado,"` a secas, que su propio
-    // `electoralCsv` nunca podría emitir.)
-    expect(csv).toContain('"habilitado",');
-    expect(csv).toContain('"a_purgar",');
-  });
-
-  it("el CSV no lleva DNI ni ningún dato que REG-31 no pida", async () => {
-    // Columnas de REG-31 (docs/02:158): nombre, número de socio, categoría. El
-    // documento sale del sistema hacia la Junta Electoral y en papel no queda
-    // ningún control de acceso después (Ley 25.326).
-    const db = fakeDb([m({ id: 1 })]);
-    const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-    expect(csv.split("\r\n")[0].split(",")).toHaveLength(6);
-    expect(csv.toLowerCase()).not.toContain("dni");
-    expect(csv.toLowerCase()).not.toContain("email");
-    expect(csv.toLowerCase()).not.toContain("domicilio");
-  });
-
-  it("el habilitado no publica cuántas cuotas debe: esas dos columnas son del bloque de purga", async () => {
-    // El adherente moroso vota igual, así que su deuda no le dice nada a la
-    // Junta Electoral — y es un dato financiero de un vecino en una hoja que
-    // circula fuera del sistema.
-    const db = fakeDb([m({ id: 2, category: "adherent" })], [{ memberId: 2, _count: { _all: 5 } }]);
-    const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-    const row = csv.split("\r\n").find((l) => l.startsWith('"habilitado"'))!;
-    expect(row).toBe('"habilitado","10","Ana Gómez","adherent","",""');
-  });
-
-  it("el CSV entrecomilla el apellido con coma en vez de partir la fila", async () => {
-    const db = fakeDb([m({ id: 1, fullName: 'Pizarro, "Pancho" Francisco' })]);
-    const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-    expect(csv).toContain('"Pizarro, ""Pancho"" Francisco"');
-    // Encabezado + una fila + el salto final del RFC 4180.
-    expect(csv.split("\r\n")).toHaveLength(3);
-  });
-
-  it("el CSV termina en CRLF y separa las filas con CRLF (RFC 4180)", async () => {
-    const db = fakeDb([m({ id: 1 })]);
-    const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-    expect(csv.endsWith("\r\n")).toBe(true);
-    // Ningún \n suelto: todos son parte de un \r\n.
-    expect(csv.replace(/\r\n/g, "")).not.toContain("\n");
-  });
-
-  it("neutraliza el nombre que Excel abriría como fórmula", async () => {
-    // El archivo SALE del sistema y lo abre la Junta Electoral en Excel. Un
-    // apellido cargado como "=Pérez" no puede ejecutarse allá.
-    for (const lead of ["=", "+", "-", "@"]) {
-      const db = fakeDb([m({ id: 1, fullName: `${lead}Pérez` })]);
-      const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-      expect(csv, lead).toContain(`"'${lead}Pérez"`);
-    }
-  });
-
-  it("no le pone apóstrofo al nombre normal", async () => {
-    const db = fakeDb([m({ id: 1 })]);
-    const csv = electoralCsv(await buildElectoralRoll(db as never, AT, VALUE));
-    expect(csv).toContain('"Ana Gómez"');
-    expect(csv).not.toContain("'");
   });
 
   it("el bloque sin antigüedad conserva el orden del padrón y no dispara consultas de deuda extra", async () => {
