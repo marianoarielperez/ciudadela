@@ -14,7 +14,9 @@ export function visibleAgendaDays(agenda: AgendaDay[]): AgendaDay[] {
 // jueves, domingo = 7 → lunes). Reemplaza a initialAgendaDay de rules.ts SOLO
 // en la página pública; aquella queda donde está, con sus tests.
 // Precondición: `visible` no está vacío — la página corta antes con el estado
-// vacío global.
+// vacío global; y `visible` viene ordenado ASCENDENTE por día, que es lo que
+// hace que el `find` del próximo día y el `visible[0]` del ciclo sean
+// correctos (lo garantiza WEEKDAYS vía buildDailyAgenda).
 export function initialVisibleDay(visible: AgendaDay[], todayAR: number): number {
   if (visible.some((d) => d.day === todayAR)) return todayAR;
   const next = visible.find((d) => d.day > todayAR);
@@ -31,20 +33,21 @@ export function weekSpanLabel(visible: AgendaDay[]): string {
 }
 
 // Conteos para la bajada. Una actividad que se dicta N días aparece N veces en
-// la agenda: acá vale UNA (se cuenta por id).
+// la agenda: acá vale UNA (se cuenta por id). El conteo de espacios se DELEGA
+// en visibleRooms (declarada abajo, hoisting mediante) en vez de rehacer el
+// Set: es exactamente la misma pregunta, y con dos lógicas la bajada podía
+// decir un número y la leyenda mostrar otro (la lección de coverageFloor).
 export function agendaSummary(visible: AgendaDay[]): {
   activityCount: number;
   roomCount: number;
 } {
   const ids = new Set<number>();
-  const rooms = new Set<RoomKey>();
   for (const d of visible) {
     for (const e of d.entries) {
       ids.add(e.id);
-      rooms.add(e.room);
     }
   }
-  return { activityCount: ids.size, roomCount: rooms.size };
+  return { activityCount: ids.size, roomCount: visibleRooms(visible).length };
 }
 
 // Espacios presentes en el calendario visible, en orden ROOM_KEYS (el

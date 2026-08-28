@@ -84,6 +84,9 @@ describe("agendaSummary", () => {
   it("vacío → ceros", () => {
     expect(agendaSummary([])).toEqual({ activityCount: 0, roomCount: 0 });
   });
+  it("roomCount es por definición el largo de visibleRooms (no dos lógicas)", () => {
+    expect(agendaSummary(VISIBLE).roomCount).toBe(visibleRooms(VISIBLE).length);
+  });
 });
 
 describe("visibleRooms", () => {

@@ -14,7 +14,16 @@ export function ActivityCard({ entry }: { entry: AgendaEntry }) {
   return (
     <li className={`rounded-xl border p-3 ${meta.cardBorder} ${meta.cardBg}`}>
       <p className={`font-mono text-xs font-semibold tabular-nums ${meta.timeText}`}>
-        {entry.startTime} — {entry.endTime}
+        {entry.startTime}
+        {/* La raya de rango es MUDA en la mayoría de los lectores de pantalla:
+            se escuchaban dos horarios sin relación entre sí. El em dash va
+            aria-hidden y el "a" sr-only devuelve el rango hablado ("18:00 a
+            19:00"), sin mover un píxel. Nada de aria-label en el <p>: el rol
+            paragraph prohíbe que el autor lo nombre (la misma trampa que
+            documenta day-tabs.tsx para el rol generic). */}
+        <span className="sr-only"> a </span>
+        <span aria-hidden> — </span>
+        {entry.endTime}
       </p>
       <p className="mt-1 text-sm font-semibold [overflow-wrap:anywhere]">{entry.name}</p>
       <p className={`mt-1.5 flex items-center gap-1 text-xs ${meta.roomText}`}>

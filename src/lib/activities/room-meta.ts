@@ -15,11 +15,14 @@
 // --success/--warning quedan para FormMessage.
 //
 // Contraste: los textos son de 12px y piden 4.5:1 sobre el fondo REAL
-// compuesto (tinte al 60% sobre --card, todo sobre blanco). MEDIDO en el
-// navegador el 28/08/2026 pintando los colores computados en un canvas de
-// 1px y leyendo el píxel — Chrome computa estos colores como lab()/oklab(),
-// así que un parser de "rgb(...)" a mano lee basura sin avisar; ojo si se
-// re-mide:
+// compuesto (tinte al 60% sobre --card, todo sobre blanco). Los chips de la
+// leyenda de /actividades usan el mismo tinte pero apoyan sobre --background,
+// no sobre --card: hoy los dos tokens valen lo mismo (oklch(1 0 0)), así que
+// esta medición cubre las tarjetas Y la leyenda. Si alguna vez divergen, hay
+// que re-medir la leyenda aparte. MEDIDO en el navegador el 28/08/2026
+// pintando los colores computados en un canvas de 1px y leyendo el píxel —
+// Chrome computa estos colores como lab()/oklab(), así que un parser de
+// "rgb(...)" a mano lee basura sin avisar; ojo si se re-mide:
 //
 //   espacio           timeText  roomText
 //   Salón Histórico   8.88:1    6.95:1

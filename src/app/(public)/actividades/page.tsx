@@ -51,7 +51,10 @@ export async function generateMetadata({
 
 // Tailwind no compila clases interpoladas: el número de columnas sale de un
 // mapa estático. Con 1–2 días visibles el ancho se acota para que las
-// columnas no queden de borde a borde en escritorio.
+// columnas no queden de borde a borde en escritorio. El mapa es exhaustivo
+// para `WEEKDAYS.length === 6` (rules.ts): si la semana cambia de forma hay
+// que extenderlo, porque un índice fuera de rango interpolaría "undefined"
+// dentro del className y la grilla se rompería sin error.
 const GRID_COLS: Record<number, string> = {
   1: "lg:mx-auto lg:max-w-md lg:grid-cols-1",
   2: "lg:mx-auto lg:max-w-2xl lg:grid-cols-2",
@@ -126,7 +129,10 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
           {hasDays && (
             // La firma de la página (el eyebrow mono que estrenó /ubicacion):
             // el rango REAL de la semana según los datos. Decorativo y
-            // aria-hidden: la bajada dice lo mismo con palabras.
+            // aria-hidden: no aporta nada que no se pueda recorrer abajo — los
+            // días salen nombrados uno por uno en los encabezados de las
+            // columnas (y en las pills del selector del celular), así que el
+            // rango es recuperable. La bajada, en cambio, dice conteos, no días.
             <p
               aria-hidden
               className="font-mono text-xs font-semibold tracking-[0.14em] text-primary uppercase"
@@ -195,7 +201,7 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
           {/* Leyenda estática: solo los espacios presentes en el calendario,
               con el mismo juego de colores de sus tarjetas. No son controles:
               sin hover y sin min-h-11. */}
-          <ul className="mt-6 flex flex-wrap gap-2">
+          <ul aria-label="Espacios" className="mt-6 flex flex-wrap gap-2">
             {rooms.map((room) => {
               const meta = ROOM_META[room];
               const Icon = meta.icon;
@@ -229,6 +235,10 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
                     isToday ? "ring-2 ring-primary" : ""
                   }`}
                 >
+                  {/* `items-center` y no el `items-baseline` que pedía la spec:
+                      el span izquierdo lleva adentro el chip "Hoy", y con
+                      baseline la línea de base del chip arrastra la fila y
+                      desalinea el contador de la derecha. Desvío deliberado. */}
                   <h2 className="flex items-center justify-between gap-2 text-sm font-semibold">
                     <span className="flex items-center gap-1.5">
                       {label}
@@ -238,9 +248,9 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
                         // activo: es el único que el sistema garantiza en los dos
                         // temas. `bg-primary/10 text-primary` componía sobre blanco
                         // a ~4.18:1 —debajo de AA— y encima a 10px, justo en la
-                        // única marca que orienta al vecino en la grilla de seis
-                        // columnas. Sigue subordinado al encabezado por tamaño
-                        // (11px contra 14px semibold), no por contraste.
+                        // única marca que orienta al vecino en la grilla. Sigue
+                        // subordinado al encabezado por tamaño (11px contra
+                        // 14px semibold), no por contraste.
                         // `shrink-0` para que el chip no se aplaste en la columna
                         // angosta: que se acomode el nombre del día, que sí puede
                         // cortarse sin perder nada.
