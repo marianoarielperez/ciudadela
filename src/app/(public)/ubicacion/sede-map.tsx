@@ -42,14 +42,24 @@ export default function SedeMap() {
       // La rueda del mouse scrollea la PÁGINA, no el mapa (scroll-trap).
       scrollWheelZoom: false,
       // En touch, un dedo scrollea la página; el mapa se explora con el pinch
-      // de dos dedos (touchZoom) y los botones de zoom. Ojo: `L.Browser.mobile`
-      // es un sniff de user-agent/orientación, NO de capacidad táctil — Safari
-      // de iPadOS (y muchas tablets Android) manda un UA de escritorio, así que
-      // ese chequeo da `false` ahí y Leaflet deja el drag prendido, matando el
-      // scroll nativo de un dedo. Se usa `L.Browser.touch` (capacidad táctil
-      // real) para que TODO dispositivo táctil se comporte igual. No
-      // "simplificar" esto de vuelta al sniff de UA.
-      dragging: !L.Browser.touch,
+      // de dos dedos (touchZoom) y los botones de zoom. Se decide con
+      // `(pointer: coarse)`: pregunta si el puntero PRIMARIO del dispositivo
+      // es un dedo, que es justo la distinción que separa "pancea" de
+      // "scrollea la página". Ninguno de los atajos obvios sirve acá:
+      // `L.Browser.mobile` es un sniff de user-agent/orientación y Safari de
+      // iPadOS (y muchas tablets Android) manda un UA de escritorio, así que
+      // da `false` en un iPad y deja el drag prendido, matando el scroll
+      // nativo de un dedo. `L.Browser.touch` tampoco: da `true` apenas existe
+      // `window.PointerEvent`, que es una capacidad del motor presente en
+      // TODO desktop moderno (Chrome, Firefox, Edge, Safari reciente) aunque
+      // no haya ni un dedo cerca, así que apaga el drag en escritorios
+      // comunes con mouse. Si el entorno no tiene `matchMedia`, se asume
+      // desktop (drag prendido): un mapa de escritorio roto es peor que una
+      // tablet que panea.
+      dragging: (() => {
+        if (typeof window === "undefined" || !window.matchMedia) return true;
+        return !window.matchMedia("(pointer: coarse)").matches;
+      })(),
       touchZoom: true,
       zoomControl: false,
     });
