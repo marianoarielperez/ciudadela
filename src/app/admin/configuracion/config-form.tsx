@@ -90,9 +90,17 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
     digestRecipients: initial.digestRecipients,
   };
   const { values, setValue, formRef, field } = useSyncedForm(initialValues);
-  const dirtyGroups = GROUPS.filter((g) => g.keys.some((k) => values[k] !== initialValues[k]))
-    .map((g) => g.label);
-  const dirty = dirtyGroups.length > 0;
+  // El sucio se deriva de TODAS las claves y no de GROUPS: GROUPS sólo le pone
+  // nombre a las pestañas, así que una novena clave que alguien olvide agregar
+  // ahí igual levanta la barra — si no, quedaría sin botón para guardarse.
+  // Y compara TRIMEADO de los dos lados porque `parseForm` trima antes de
+  // validar: el servidor guarda `value.trim()`, así que un pegado con espacios
+  // al final dejaría la barra prendida para siempre (ni re-guardando se apaga).
+  const configKeys = Object.keys(initialValues) as Array<keyof ConfigFormInitial & string>;
+  const isDirtyKey = (k: keyof ConfigFormInitial & string) =>
+    values[k].trim() !== initialValues[k].trim();
+  const dirty = configKeys.some(isDirtyKey);
+  const dirtyGroups = GROUPS.filter((g) => g.keys.some(isDirtyKey)).map((g) => g.label);
 
   return (
     <form ref={formRef} action={formAction} className="max-w-2xl">
@@ -193,8 +201,12 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
           `fixed`: sigue visible aunque el operador esté mirando Tesorería o
           Feriados con cambios pendientes en las pestañas del form. Tras el
           redirect exitoso la página re-renderiza con valores frescos y la
-          barra desaparece sola. z-40: debajo de los diálogos (z-50). */}
-      {(dirty || state.error) && (
+          barra desaparece sola. z-40: debajo de los diálogos (z-50).
+          Se muestra por `dirty` SOLO: el estado de `useActionState` sobrevive al
+          redirect exitoso, así que colgarla también del error dejaba reaparecer
+          el error viejo —abajo del cartel de guardado— tras fallar, corregir y
+          guardar bien. El error se sigue leyendo DENTRO de la barra. */}
+      {dirty && (
         <>
           <div aria-hidden className="h-24" />
           <div className="fixed inset-x-4 bottom-4 z-40 sm:left-1/2 sm:right-auto sm:w-full sm:max-w-xl sm:-translate-x-1/2">
@@ -202,13 +214,13 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
               {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">
-                  {dirty ? (
+                  {dirtyGroups.length > 0 ? (
                     <>
                       Tenés cambios sin guardar en{" "}
                       <span className="font-medium text-foreground">{listNames(dirtyGroups)}</span>.
                     </>
                   ) : (
-                    "Revisá el error y volvé a guardar."
+                    "Tenés cambios sin guardar."
                   )}
                 </p>
                 <Button type="submit" disabled={pending}>

@@ -180,7 +180,8 @@ los `h2` uppercase duplicados a mano (hoy en `page.tsx:148`, `page.tsx:196` y el
 ## 8. Archivos
 
 **Se modifican** (solo presentación): `src/app/admin/configuracion/page.tsx`,
-`config-form.tsx`, `fee-value-form.tsx`, `holidays-form.tsx`.
+`config-form.tsx`, `holidays-form.tsx` (`fee-value-form.tsx` quedó intacto: el
+panel lo envuelve sin tocarlo).
 
 **Nuevos**: `src/lib/admin/config-tabs.ts` (config pura de pestañas, testeable),
 `src/app/admin/configuracion/config-tabs.tsx` (Radix + URL, íconos, forceMount),

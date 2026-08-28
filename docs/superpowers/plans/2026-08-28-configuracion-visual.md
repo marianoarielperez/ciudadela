@@ -196,11 +196,16 @@ import type { CurrentFeeValue } from "@/lib/treasury/fee-values";
 // ninguna query. El patrón de card es el del tablero /admin: chip tintado,
 // link semántico estirado con pseudo-elemento y anillo de foco inset (la Card
 // recorta con overflow-hidden).
+// `titleText` es el mismo valor en texto plano: el div del valor trunca, y el
+// de la cuota y el de los feriados son los dos que se cortan de verdad (dos
+// montos con su fecha, y un año por cada uno cargado). Sin esto, lo recortado
+// no se puede leer de ninguna manera.
 type Item = {
   href: string;
   icon: ComponentType<{ className?: string }>;
   label: string;
   value: ReactNode;
+  titleText?: string;
   warning: boolean;
 };
 
@@ -210,6 +215,7 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
   coverage: Array<[number, number]>;
   digestCount: number;
 }) {
+  const coverageText = coverage.map(([year, count]) => `${year} (${count})`).join(" · ");
   const items: Item[] = [
     {
       href: "?tab=tesoreria",
@@ -225,6 +231,9 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
       ) : (
         "Sin valor vigente"
       ),
+      titleText: current
+        ? `${formatARS(current.activeAmount)} / ${formatARS(current.sharedAmount)} · desde ${formatDateAR(current.validFrom)}`
+        : undefined,
       warning: !current,
     },
     {
@@ -238,9 +247,8 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
       href: "?tab=feriados",
       icon: CalendarOff,
       label: "Feriados cargados",
-      value: coverage.length > 0
-        ? coverage.map(([year, count]) => `${year} (${count})`).join(" · ")
-        : "Ninguno cargado",
+      value: coverage.length > 0 ? coverageText : "Ninguno cargado",
+      titleText: coverage.length > 0 ? coverageText : undefined,
       warning: coverage.length === 0,
     },
     {
@@ -271,7 +279,10 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
                     {item.label}
                   </Link>
                 </div>
-                <div className={cn("truncate text-sm font-medium", item.warning && "text-warning")}>
+                <div
+                  title={item.titleText}
+                  className={cn("truncate text-sm font-medium", item.warning && "text-warning")}
+                >
                   {item.value}
                 </div>
               </div>
@@ -841,8 +852,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```tsx
 "use client";
 // Pestañas de Configuración: Radix Tabs con `?tab=` (calco de MemberTabs) — los
-// cinco paneles ya vinieron en el HTML y cambiar es puro cliente. Client-side y
-// NO subrutas: los cuatro redirects de actions.ts apuntan a la raíz y no se
+// cinco paneles ya vinieron en el HTML y mostrar otro no espera al servidor. El
+// `router.replace` de abajo sí vuelve a pedir el payload RSC de la página entera
+// (la ruta es `force-dynamic`), pero eso pasa DESPUÉS y en segundo plano: lo que
+// hace instantáneo el cambio de panel es Radix, no un ahorro de red. Client-side
+// y NO subrutas: los cuatro redirects de actions.ts apuntan a la raíz y no se
 // tocan; una sola URL = una sola guarda de superadmin.
 //
 // El form de 8 claves envuelve sus TRES paneles con `forceMount`
@@ -1024,6 +1038,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ### Task 6: Barra flotante de cambios sin guardar
 
+(Corregido en la revisión final de branch: dirty con trim y sobre todas las claves, barra solo con dirty, title en la tira, comentario RSC, error del borrado a línea propia.)
+
 **Files:**
 - Modify: `src/app/admin/configuracion/config-form.tsx`
 
@@ -1052,9 +1068,17 @@ function listNames(names: string[]): string {
 Dentro de `ConfigForm`, después de `useSyncedForm`, agregar:
 
 ```tsx
-  const dirtyGroups = GROUPS.filter((g) => g.keys.some((k) => values[k] !== initialValues[k]))
-    .map((g) => g.label);
-  const dirty = dirtyGroups.length > 0;
+  // El sucio se deriva de TODAS las claves y no de GROUPS: GROUPS sólo le pone
+  // nombre a las pestañas, así que una novena clave que alguien olvide agregar
+  // ahí igual levanta la barra — si no, quedaría sin botón para guardarse.
+  // Y compara TRIMEADO de los dos lados porque `parseForm` trima antes de
+  // validar: el servidor guarda `value.trim()`, así que un pegado con espacios
+  // al final dejaría la barra prendida para siempre (ni re-guardando se apaga).
+  const configKeys = Object.keys(initialValues) as Array<keyof ConfigFormInitial & string>;
+  const isDirtyKey = (k: keyof ConfigFormInitial & string) =>
+    values[k].trim() !== initialValues[k].trim();
+  const dirty = configKeys.some(isDirtyKey);
+  const dirtyGroups = GROUPS.filter((g) => g.keys.some(isDirtyKey)).map((g) => g.label);
 ```
 
 Y reemplazar el cierre del form — el bloque
@@ -1073,8 +1097,12 @@ por:
           `fixed`: sigue visible aunque el operador esté mirando Tesorería o
           Feriados con cambios pendientes en las pestañas del form. Tras el
           redirect exitoso la página re-renderiza con valores frescos y la
-          barra desaparece sola. z-40: debajo de los diálogos (z-50). */}
-      {(dirty || state.error) && (
+          barra desaparece sola. z-40: debajo de los diálogos (z-50).
+          Se muestra por `dirty` SOLO: el estado de `useActionState` sobrevive al
+          redirect exitoso, así que colgarla también del error dejaba reaparecer
+          el error viejo —abajo del cartel de guardado— tras fallar, corregir y
+          guardar bien. El error se sigue leyendo DENTRO de la barra. */}
+      {dirty && (
         <>
           <div aria-hidden className="h-24" />
           <div className="fixed inset-x-4 bottom-4 z-40 sm:left-1/2 sm:right-auto sm:w-full sm:max-w-xl sm:-translate-x-1/2">
@@ -1082,13 +1110,13 @@ por:
               {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">
-                  {dirty ? (
+                  {dirtyGroups.length > 0 ? (
                     <>
                       Tenés cambios sin guardar en{" "}
                       <span className="font-medium text-foreground">{listNames(dirtyGroups)}</span>.
                     </>
                   ) : (
-                    "Revisá el error y volvé a guardar."
+                    "Tenés cambios sin guardar."
                   )}
                 </p>
                 <Button type="submit" disabled={pending}>
@@ -1239,8 +1267,12 @@ export function DeleteHolidayButton({ id, label, dateLabel }: {
       </Dialog>
       {/* El mismo error, también en la fila: si el diálogo se cerró con el
           borrado en vuelo, el portal ya no existe y esto es lo único que el
-          operador ve. */}
-      {state.error && <FormMessage kind="error" as="span">{state.error}</FormMessage>}
+          operador ve. `w-full` para que ocupe su propia línea: es un tercer hijo
+          del flex `justify-between` de la fila, y un error corto le corría
+          "Borrar" al medio. */}
+      {state.error && (
+        <FormMessage kind="error" as="span" className="w-full">{state.error}</FormMessage>
+      )}
     </>
   );
 }

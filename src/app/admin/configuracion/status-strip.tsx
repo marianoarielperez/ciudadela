@@ -12,11 +12,16 @@ import type { CurrentFeeValue } from "@/lib/treasury/fee-values";
 // ninguna query. El patrón de card es el del tablero /admin: chip tintado,
 // link semántico estirado con pseudo-elemento y anillo de foco inset (la Card
 // recorta con overflow-hidden).
+// `titleText` es el mismo valor en texto plano: el div del valor trunca, y el
+// de la cuota y el de los feriados son los dos que se cortan de verdad (dos
+// montos con su fecha, y un año por cada uno cargado). Sin esto, lo recortado
+// no se puede leer de ninguna manera.
 type Item = {
   href: string;
   icon: ComponentType<{ className?: string }>;
   label: string;
   value: ReactNode;
+  titleText?: string;
   warning: boolean;
 };
 
@@ -26,6 +31,7 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
   coverage: Array<[number, number]>;
   digestCount: number;
 }) {
+  const coverageText = coverage.map(([year, count]) => `${year} (${count})`).join(" · ");
   const items: Item[] = [
     {
       href: "?tab=tesoreria",
@@ -41,6 +47,9 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
       ) : (
         "Sin valor vigente"
       ),
+      titleText: current
+        ? `${formatARS(current.activeAmount)} / ${formatARS(current.sharedAmount)} · desde ${formatDateAR(current.validFrom)}`
+        : undefined,
       warning: !current,
     },
     {
@@ -54,9 +63,8 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
       href: "?tab=feriados",
       icon: CalendarOff,
       label: "Feriados cargados",
-      value: coverage.length > 0
-        ? coverage.map(([year, count]) => `${year} (${count})`).join(" · ")
-        : "Ninguno cargado",
+      value: coverage.length > 0 ? coverageText : "Ninguno cargado",
+      titleText: coverage.length > 0 ? coverageText : undefined,
       warning: coverage.length === 0,
     },
     {
@@ -87,7 +95,10 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
                     {item.label}
                   </Link>
                 </div>
-                <div className={cn("truncate text-sm font-medium", item.warning && "text-warning")}>
+                <div
+                  title={item.titleText}
+                  className={cn("truncate text-sm font-medium", item.warning && "text-warning")}
+                >
                   {item.value}
                 </div>
               </div>

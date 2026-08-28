@@ -1,7 +1,10 @@
 "use client";
 // Pestañas de Configuración: Radix Tabs con `?tab=` (calco de MemberTabs) — los
-// cinco paneles ya vinieron en el HTML y cambiar es puro cliente. Client-side y
-// NO subrutas: los cuatro redirects de actions.ts apuntan a la raíz y no se
+// cinco paneles ya vinieron en el HTML y mostrar otro no espera al servidor. El
+// `router.replace` de abajo sí vuelve a pedir el payload RSC de la página entera
+// (la ruta es `force-dynamic`), pero eso pasa DESPUÉS y en segundo plano: lo que
+// hace instantáneo el cambio de panel es Radix, no un ahorro de red. Client-side
+// y NO subrutas: los cuatro redirects de actions.ts apuntan a la raíz y no se
 // tocan; una sola URL = una sola guarda de superadmin.
 //
 // El form de 8 claves envuelve sus TRES paneles con `forceMount`

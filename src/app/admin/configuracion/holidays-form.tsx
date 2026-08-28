@@ -105,8 +105,12 @@ export function DeleteHolidayButton({ id, label, dateLabel }: {
       </Dialog>
       {/* El mismo error, también en la fila: si el diálogo se cerró con el
           borrado en vuelo, el portal ya no existe y esto es lo único que el
-          operador ve. */}
-      {state.error && <FormMessage kind="error" as="span">{state.error}</FormMessage>}
+          operador ve. `w-full` para que ocupe su propia línea: es un tercer hijo
+          del flex `justify-between` de la fila, y un error corto le corría
+          "Borrar" al medio. */}
+      {state.error && (
+        <FormMessage kind="error" as="span" className="w-full">{state.error}</FormMessage>
+      )}
     </>
   );
 }
