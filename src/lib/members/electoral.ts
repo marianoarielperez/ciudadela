@@ -54,6 +54,22 @@ export function meetsSeniority(category: MemberCategory, joinedAt: Date, at: Dat
   return SENIORITY_EXEMPT.includes(category) || isEligibleBySeniority(joinedAt, at);
 }
 
+/** El primer día en que el socio alcanza el piso: ingreso + ELECTORAL_MIN_DAYS.
+ *  Ambos extremos viven a mediodía UTC (`civilDateUtc`), así que la suma cae
+ *  exacta en el día civil argentino y es la contracara de
+ *  `isEligibleBySeniority` (>= 90: ese mismo día ya vota). */
+export function enabledFrom(joinedAt: Date): Date {
+  return new Date(joinedAt.getTime() + ELECTORAL_MIN_DAYS * 86_400_000);
+}
+
+/** "Sin mora" es requisito sólo de activos y colaboradores (REG-31): el aporte
+ *  del adherente es voluntario y su deuda no le quita el voto; honorarios y
+ *  vitalicios no devengan. Compartida por el padrón y la credencial de /mi para
+ *  que las dos superficies no puedan divergir (lección `coverageFloor`). */
+export function mustPurgeToVote(category: MemberCategory, arrears: number): boolean {
+  return arrears > 0 && ACCRUING_CATEGORIES.includes(category);
+}
+
 export type ElectoralRow = {
   memberId: number;
   /** `null` cuando el socio no tiene membresía en el libro ABIERTO. No es un caso
@@ -191,10 +207,7 @@ export async function buildElectoralRoll(
       arrears,
       debt: feeValue ? debtAmount(arrears, r.category, feeValue) : null,
     };
-    // La exigencia de estar sin mora es SÓLO para activos y colaboradores: el
-    // aporte del adherente es voluntario y su deuda no le quita el voto.
-    const owes = arrears > 0 && ACCRUING_CATEGORIES.includes(r.category);
-    (owes ? toPurge : enabled).push(row);
+    (mustPurgeToVote(r.category, arrears) ? toPurge : enabled).push(row);
   }
 
   return {

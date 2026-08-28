@@ -19,7 +19,9 @@ import {
   ELECTORAL_CATEGORIES,
   electoralCsv,
   ELECTORAL_MIN_DAYS,
+  enabledFrom,
   isEligibleBySeniority,
+  mustPurgeToVote,
   SENIORITY_EXEMPT,
   seniorityDays,
 } from "@/lib/members/electoral";
@@ -93,6 +95,33 @@ describe("antigüedad (REG-30/31)", () => {
     expect([...ELECTORAL_CATEGORIES].sort()).toEqual(
       ["active", "adherent", "collaborator", "honorary", "lifetime"].sort(),
     );
+  });
+});
+
+describe("mustPurgeToVote — la condición de mora, compartida por padrón y /mi", () => {
+  it("bloquea sólo al activo y al colaborador con mora", () => {
+    expect(mustPurgeToVote("active", 1)).toBe(true);
+    expect(mustPurgeToVote("collaborator", 3)).toBe(true);
+    expect(mustPurgeToVote("adherent", 5)).toBe(false);
+    expect(mustPurgeToVote("honorary", 4)).toBe(false);
+    expect(mustPurgeToVote("lifetime", 9)).toBe(false);
+  });
+
+  it("sin mora nadie purga", () => {
+    for (const c of ELECTORAL_CATEGORIES) expect(mustPurgeToVote(c, 0)).toBe(false);
+  });
+});
+
+describe("enabledFrom — desde cuándo puede votar", () => {
+  it("es ingreso + 90 días, y ese mismo día ya alcanza", () => {
+    const joined = daysBefore(90);
+    expect(enabledFrom(joined)).toEqual(AT);
+    expect(isEligibleBySeniority(joined, enabledFrom(joined))).toBe(true);
+  });
+
+  it("al que ingresó ayer le faltan 89 días desde AT", () => {
+    const joined = daysBefore(1);
+    expect(enabledFrom(joined).getTime()).toBe(AT.getTime() + 89 * 86_400_000);
   });
 });
 

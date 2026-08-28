@@ -13,7 +13,7 @@ import { openWizardProcess } from "@/lib/reregistration/current";
 import { currentDeadline } from "@/lib/reregistration/rules";
 import { activeExemption } from "@/lib/treasury/exemptions";
 import { feeValueReader } from "@/lib/treasury/fee-values";
-import { currentPeriod } from "@/lib/treasury/periods";
+import { civilDayOf, currentPeriod } from "@/lib/treasury/periods";
 import { ACCRUING_CATEGORIES, categoryPaysFee, debtAmount } from "@/lib/treasury/rules";
 
 export const dynamic = "force-dynamic";
@@ -115,7 +115,11 @@ export default async function MiHomePage() {
     status: member.status,
     joinedAt: member.joinedAt,
     arrears,
-    at: new Date(),
+    // Día civil argentino, no el instante: con `new Date()`, entre las 00:00 y
+    // las 08:59 AR del día 90 la credencial decía "te falta 1 día" a quien ya
+    // cumple (joinedAt vive a mediodía UTC). Misma clase de bug que ya
+    // corrigieron feeValueReader.current() y parseMinuteDate.
+    at: civilDayOf(),
   });
   const paysFee = categoryPaysFee(member.category);
   const accrues = (ACCRUING_CATEGORIES as readonly string[]).includes(member.category);
