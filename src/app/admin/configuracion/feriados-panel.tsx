@@ -3,7 +3,7 @@ import { CalendarOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/admin/empty-state";
 import { HolidayForm, HolidayRow } from "./holidays-form";
-import { PanelHeader } from "./panel-header";
+import { PanelHeader } from "@/components/admin/panel-header";
 
 // El panel de feriados de la cartelera. Los textos legales (Art. 5° ter y la
 // advertencia de los "puentes") se conservan textuales de la pantalla vieja.
