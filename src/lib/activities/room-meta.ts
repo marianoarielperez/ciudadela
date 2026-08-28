@@ -15,11 +15,24 @@
 // --success/--warning quedan para FormMessage.
 //
 // Contraste: los textos son de 12px y piden 4.5:1 sobre el fondo REAL
-// compuesto (tinte al 60% sobre --card / --background). La tabla de valores
-// MEDIDOS en el navegador se asienta acá en la verificación visual de esta
-// misma rama (plan 2026-08-28-actividades-visual, Task 5); si algún par no
-// llega a 4.5:1, se oscurece el texto (p. ej. text-primary → text-sky-800)
-// antes de cerrar.
+// compuesto (tinte al 60% sobre --card, todo sobre blanco). MEDIDO en el
+// navegador el 28/08/2026 pintando los colores computados en un canvas de
+// 1px y leyendo el píxel — Chrome computa estos colores como lab()/oklab(),
+// así que un parser de "rgb(...)" a mano lee basura sin avisar; ojo si se
+// re-mide:
+//
+//   espacio           timeText  roomText
+//   Salón Histórico   8.88:1    6.95:1
+//   Salón Vidriado    9.10:1    4.52:1
+//   Cocina            9.10:1    7.50:1
+//   Aulas             9.35:1    7.39:1
+//
+// El nombre de la actividad (text-foreground) compone a ~19:1 en las cuatro.
+// El 4.52:1 del Vidriado es el celeste institucional --primary sobre el
+// tinte sky-50/60: pasa AA con el mismo margen fino que el 4.55 que el
+// diseño anterior aceptó documentado. Si el fondo de la tarjeta deja de ser
+// blanco puro (o el tinte sube del 60%), re-medir ESTE par primero; el
+// fallback pre-acordado es text-sky-800.
 import { Building2, GraduationCap, Landmark, Utensils, type LucideIcon } from "lucide-react";
 import type { RoomKey } from "@/lib/activities/rules";
 
