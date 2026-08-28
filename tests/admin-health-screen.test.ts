@@ -268,7 +268,9 @@ describe("HealthVerdict", () => {
     }));
     expect(html).toContain("Hay 2 cosas para atender");
     expect(html).toContain("text-destructive");
-    expect(html).toContain('href="#tareas"');
+    // El veredicto traduce el ancla pelada a `?tab=X#ancla` (alertHrefFor):
+    // activa la pestaña del panel y scrollea hasta él.
+    expect(html).toContain('href="?tab=tareas#tareas"');
     // Lo que hay para revisar sigue estando, pero abajo y sin gritar.
     expect(html).toContain("Para revisar");
   });
