@@ -22,10 +22,11 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 //   hay pedidos a Google Fonts.
 // - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen;
 //   más la API de Mercado Pago para el SDK del navegador (MP_CONNECT).
-// - frame-src: el embed de OpenStreetMap de /ubicacion, el widget de Turnstile
-//   y los iframes de Checkout Pro / Bricks (MP_FRAME). Ojo: un iframe bloqueado
-//   por CSP no rompe nada visible, deja un recuadro vacío en silencio — si se
-//   cambia el proveedor de mapa o el de captcha hay que tocar acá.
+// - frame-src: el widget de Turnstile y los iframes de Checkout Pro / Bricks
+//   (MP_FRAME). Ojo: un iframe bloqueado por CSP no rompe nada visible, deja
+//   un recuadro vacío en silencio — si se cambia el proveedor de captcha hay
+//   que tocar acá. El mapa de /ubicacion ya no es un iframe: desde el rediseño
+//   de 08/2026 es Leaflet, y sus tiles entran por img-src (MAP_TILES).
 //   'self' se agregó en la tarea 7 de la fase 5B: el visor de documentos del
 //   detalle de solicitud (`document-viewer.tsx`) embebe un PDF en un <iframe>
 //   que apunta a `/api/admin/solicitudes/[id]/documentos/[docId]`, del MISMO
@@ -71,6 +72,12 @@ const MP_FRAME: string[] = ["https://www.mercadopago.com.ar"];
 // iframe del desafío: sin los dos, el widget queda en blanco y todo envío falla
 // con "No pudimos verificar que sos una persona".
 const TURNSTILE: string[] = ["https://challenges.cloudflare.com"];
+// Tiles del mapa de /ubicacion (rediseño "La sede", 28/08/2026). Leaflet los
+// carga como <img>: sin estos orígenes en img-src el mapa queda gris EN
+// SILENCIO — misma trampa que el iframe viejo, ahora en otra directiva. El
+// primero es ArgenMap (IGN); el segundo, el fallback automático si el IGN no
+// responde (spec 2026-08-28-ubicacion-redesign-design.md §4.2).
+const MAP_TILES: string[] = ["https://wms.ign.gob.ar", "https://tile.openstreetmap.org"];
 
 // React en desarrollo necesita eval() para reconstruir callstacks; sin esto
 // cada página de `next dev` loguea un error fijo de CSP que tapa errores
@@ -87,10 +94,10 @@ const csp = [
   "default-src 'self'",
   `script-src ${scriptSrc.join(" ")}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  `img-src ${["'self'", "data:", "blob:", ...MAP_TILES].join(" ")}`,
   "font-src 'self'",
   `connect-src ${["'self'", ...MP_CONNECT].join(" ")}`,
-  `frame-src ${["'self'", "https://www.openstreetmap.org", ...MP_FRAME, ...TURNSTILE].join(" ")}`,
+  `frame-src ${["'self'", ...MP_FRAME, ...TURNSTILE].join(" ")}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -106,8 +113,10 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  // El sitio no usa cámara, micrófono ni geolocalización: se apagan para todos
-  // (incluidos los iframes de terceros, como el mapa).
+  // El sitio no usa cámara, micrófono ni geolocalización: se apagan para todo
+  // el sitio y para cualquier iframe de terceros que se embeba (el mapa de
+  // /ubicacion NO es uno de ellos: desde el rediseño de 08/2026 es Leaflet,
+  // que corre en el propio DOM de la página, no en un iframe).
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
