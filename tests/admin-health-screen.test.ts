@@ -8,6 +8,7 @@ import {
 import { CRON_EXPECTATION, type CronHealth, type CronState, type HealthSnapshot, type PendingReceiptState } from "@/lib/admin/health";
 import { healthAlerts } from "@/lib/admin/health-alerts";
 import type { BackupHealth } from "@/lib/admin/health-backup";
+import { alertHrefFor, tabForAlertHref } from "@/lib/admin/salud-tabs";
 import { CRON_JOB_LIST } from "@/lib/cron/auth";
 
 // La pantalla de salud no se puede abrir en un navegador desde acá (no hay
@@ -268,7 +269,11 @@ describe("HealthVerdict", () => {
     }));
     expect(html).toContain("Hay 2 cosas para atender");
     expect(html).toContain("text-destructive");
-    expect(html).toContain('href="#tareas"');
+    // El veredicto traduce el ancla pelada a `?tab=X#ancla` (alertHrefFor):
+    // activa la pestaña del panel y scrollea hasta él.
+    expect(html).toContain('href="?tab=tareas#tareas"');
+    // Las rutas absolutas NO se traducen: navegan solas.
+    expect(html).toContain('href="/admin/tesoreria/sin-conciliar"');
     // Lo que hay para revisar sigue estando, pero abajo y sin gritar.
     expect(html).toContain("Para revisar");
   });
@@ -311,6 +316,18 @@ describe("las anclas del veredicto existen en los paneles", () => {
       .filter((h) => h.startsWith("#"))
       .map((h) => h.slice(1));
     expect(anchors.length).toBeGreaterThan(0);
+
+    // Con las pestañas, "seguir el link" es activar la solapa + scrollear al
+    // ancla. Cada href que el veredicto puede emitir tiene que mapear a una
+    // pestaña (las anclas) o ser una ruta absoluta que navega sola.
+    for (const alert of [...alerts.act, ...alerts.review]) {
+      if (alert.href.startsWith("#")) {
+        expect(tabForAlertHref(alert.href), alert.href).not.toBeNull();
+        expect(alertHrefFor(alert.href), alert.href).toMatch(/^\?tab=[a-z]+#[a-z-]+$/);
+      } else {
+        expect(alert.href, alert.href).toMatch(/^\/admin\//);
+      }
+    }
 
     const screen = [
       render(createElement(CronsPanel, { crons: broken.crons, now: NOW })),

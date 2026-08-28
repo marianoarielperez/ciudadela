@@ -20,7 +20,7 @@ import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { TabsContent } from "@/components/ui/tabs";
-import { PanelHeader } from "./panel-header";
+import { PanelHeader } from "@/components/admin/panel-header";
 
 export type ConfigFormInitial = {
   asociateActivo: boolean;

@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/admin/empty-state";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { FeeValueForm } from "./fee-value-form";
-import { PanelHeader } from "./panel-header";
+import { PanelHeader } from "@/components/admin/panel-header";
 
 // El panel del valor de cuota. Presentación pura: la página le da todo ya
 // formateado. El acta del historial se nombra por TIPO y NÚMERO (minuteName),

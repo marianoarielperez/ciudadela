@@ -11,9 +11,10 @@
 // Es un componente cliente que arrastra la server action y con ella el cliente de
 // Prisma; inyectarlo mantiene los paneles puros y deja que el test verifique la
 // POLÍTICA (a qué fila se le ofrece reenviar y a cuál no) sin levantar nada.
+import { Banknote, CircleCheck, Clock, Info, Mail, Receipt, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { EmptyState } from "@/components/admin/empty-state";
-import { FormMessage } from "@/components/admin/form-message";
+import { PanelHeader } from "@/components/admin/panel-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -22,9 +23,11 @@ import { maskLongIds, SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS } from 
 import type { HealthAlerts } from "@/lib/admin/health-alerts";
 import { BACKUP_FRESH_HOURS, type BackupHealth, type BackupState } from "@/lib/admin/health-backup";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
+import { alertHrefFor } from "@/lib/admin/salud-tabs";
 import { backupStateBadgeVariant, cronStateBadgeVariant, pendingReceiptBadgeVariant } from "@/lib/admin/status-badges";
 import { formatARS, formatDateTimeAR, formatRelativeAgo } from "@/lib/format";
 import { NOTIFICATION_TYPE_LABELS } from "@/lib/members/labels";
+import { cn } from "@/lib/utils";
 
 /** Cómo la pantalla pide el botón de reenvío de una fila. La política de a quién
  *  se le ofrece vive en los paneles; qué hace el botón, en la página. */
@@ -48,17 +51,19 @@ const NUM = "font-mono tabular-nums";
 // confíe. Es la MISMA función importada, no una copia: no hay dos expresiones
 // que puedan derivar.
 
-/** Encabezado común de las secciones de la pantalla. El `id` es el ancla a la
- *  que apunta el veredicto. */
-function Section({ id, title, hint, children }: {
-  id: string; title: string; hint?: React.ReactNode; children: React.ReactNode;
+/** Encabezado común de las secciones ancladas. El `id` es el ancla a la que
+ *  apunta el veredicto (via `?tab=X#id`); el `<h2>` lo emite PanelHeader y el
+ *  `aria-labelledby` lo referencia por `titleId`. */
+function Section({ id, icon, title, hint, children }: {
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-4 space-y-3">
-      <h2 id={`${id}-title`} className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">
-        {title}
-      </h2>
-      {hint && <p className="max-w-3xl text-sm text-muted-foreground">{hint}</p>}
+      <PanelHeader icon={icon} title={title} description={hint} titleId={`${id}-title`} />
       {children}
     </section>
   );
@@ -73,7 +78,33 @@ function Section({ id, title, hint, children }: {
  *  Un tablero que obliga a recorrer seis paneles para descubrir que no pasa nada
  *  se deja de mirar a la semana. Acá arriba está la respuesta: si no hay nada
  *  para atender, lo dice en una línea verde y el resto de la pantalla queda como
- *  consulta. */
+ *  consulta.
+ *
+ *  Es un BANNER, no un FormMessage: el estado del sistema es el héroe de esta
+ *  pantalla. La semántica no cambió — mismos titulares, mismos umbrales de kind,
+ *  mismo role="none" (no es la respuesta a una acción) — y los `#ancla` se
+ *  traducen a `?tab=X#ancla` vía alertHrefFor: activan la pestaña del panel y
+ *  scrollean hasta él. health-alerts.ts sigue emitiendo anclas peladas. */
+/** El link de una alerta. Un ancla se traduce a `?tab=X#ancla` y navega con un
+ *  `<a>` NATIVO —navegación de documento—: el SSR ya renderiza la pestaña
+ *  correcta (SaludTabs lee `?tab=` también en el server) y el navegador
+ *  scrollea solo al fragmento. Con `Link` de Next el manejo de scroll de la
+ *  transición cliente corre ANTES de que Radix monte el panel y el fragmento
+ *  se pierde — medido en la verificación en vivo, no supuesto. Las rutas
+ *  absolutas sí navegan con `Link`, como siempre. */
+function VerdictLink({ rawHref, children }: { rawHref: string; children: React.ReactNode }) {
+  if (!rawHref.startsWith("#")) {
+    return <Link className={INLINE_LINK} href={rawHref}>{children}</Link>;
+  }
+  return <a className={INLINE_LINK} href={alertHrefFor(rawHref)}>{children}</a>;
+}
+
+const VERDICT_STYLE = {
+  error: { icon: TriangleAlert, border: "border-l-destructive", tone: "text-destructive", bg: "bg-destructive/5" },
+  neutral: { icon: Info, border: "border-l-border", tone: "text-foreground", bg: "bg-muted/40" },
+  success: { icon: CircleCheck, border: "border-l-success", tone: "text-success", bg: "bg-success/5" },
+} as const;
+
 export function HealthVerdict({ alerts, now }: { alerts: HealthAlerts; now: Date }) {
   const { act, review } = alerts;
   const kind = act.length > 0 ? "error" : review.length > 0 ? "neutral" : "success";
@@ -82,41 +113,48 @@ export function HealthVerdict({ alerts, now }: { alerts: HealthAlerts; now: Date
     : review.length > 0
       ? "No hay nada roto"
       : "Todo en orden";
+  const style = VERDICT_STYLE[kind];
+  const Icon = style.icon;
   return (
     // `role="none"`: es el estado de la pantalla al abrirla, no la respuesta a
     // una acción. Un `alert` acá interrumpiría al lector de pantalla en cada
     // recarga (misma regla que la ayuda estática de los formularios).
-    <FormMessage kind={kind} box as="div" role="none">
-      <p className="font-semibold">{headline}</p>
-      {act.length > 0 && (
-        <ul className="mt-2 space-y-1">
-          {act.map((a) => (
-            <li key={a.key}>
-              <Link className={INLINE_LINK} href={a.href}>{a.label}</Link>
-            </li>
-          ))}
-        </ul>
-      )}
-      {review.length > 0 && (
-        <div className="mt-2 text-muted-foreground">
-          <p className="text-xs font-semibold tracking-widest uppercase">Para revisar</p>
-          <ul className="mt-1 space-y-1">
-            {review.map((a) => (
-              <li key={a.key}>
-                <Link className={INLINE_LINK} href={a.href}>{a.label}</Link>
-              </li>
-            ))}
-          </ul>
+    <div role="none" className={cn("rounded-xl border border-l-4 p-4", style.border, style.bg)}>
+      <div className="flex items-start gap-3">
+        <Icon aria-hidden className={cn("mt-0.5 size-6 shrink-0", style.tone)} />
+        <div className="min-w-0 flex-1 text-sm">
+          <p className={cn("text-base font-semibold", style.tone)}>{headline}</p>
+          {act.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {act.map((a) => (
+                <li key={a.key}>
+                  <VerdictLink rawHref={a.href}>{a.label}</VerdictLink>
+                </li>
+              ))}
+            </ul>
+          )}
+          {review.length > 0 && (
+            <div className="mt-2 text-muted-foreground">
+              <p className="text-xs font-semibold tracking-widest uppercase">Para revisar</p>
+              <ul className="mt-1 space-y-1">
+                {review.map((a) => (
+                  <li key={a.key}>
+                    <VerdictLink rawHref={a.href}>{a.label}</VerdictLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {act.length === 0 && review.length === 0 && (
+            <p className="mt-1 text-muted-foreground">
+              Las tareas automáticas corrieron cuando tenían que correr, el backup está al día, Mercado Pago
+              sigue avisando y no quedó ningún email sin salir.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">Estado al {formatDateTimeAR(now)}.</p>
         </div>
-      )}
-      {act.length === 0 && review.length === 0 && (
-        <p className="mt-1 text-muted-foreground">
-          Las tareas automáticas corrieron cuando tenían que correr, el backup está al día, Mercado Pago
-          sigue avisando y no quedó ningún email sin salir.
-        </p>
-      )}
-      <p className="mt-2 text-xs text-muted-foreground">Estado al {formatDateTimeAR(now)}.</p>
-    </FormMessage>
+      </div>
+    </div>
   );
 }
 
@@ -197,6 +235,7 @@ export function CronsPanel({ crons, now }: { crons: CronHealth[]; now: Date }) {
   return (
     <Section
       id="tareas"
+      icon={Clock}
       title="Tareas automáticas"
       hint={
         <>
@@ -389,7 +428,7 @@ function MoneyLine({ count, href, label, zero, todo, always }: {
 export function MoneyPanel({ money }: { money: MoneyHealth }) {
   const { inboxOpen, inboxTotal, debits } = money;
   return (
-    <Section id="dinero" title="Dinero sin resolver">
+    <Section id="dinero" icon={Banknote} title="Dinero sin resolver">
       <ul className="space-y-2 text-sm">
         <MoneyLine
           count={inboxOpen}
@@ -489,7 +528,7 @@ export function FailedNoticesPanel({ failed, failedEver, renderResend }: {
   renderResend: ResendRenderer;
 }) {
   return (
-    <Section id="avisos" title="Avisos por email que no salieron">
+    <Section id="avisos" icon={Mail} title="Avisos por email que no salieron">
       {failed.length === 0 ? (
         <EmptyState description="Todos los avisos salieron. Un envío bloqueado por la lista de prueba del entorno no cuenta como fallido y no aparece acá." />
       ) : (
@@ -583,6 +622,7 @@ export function PendingReceiptsPanel({ receipts, renderResend }: {
   return (
     <Section
       id="recibos"
+      icon={Receipt}
       title="Recibos sin enviar por email"
       hint={
         <>
