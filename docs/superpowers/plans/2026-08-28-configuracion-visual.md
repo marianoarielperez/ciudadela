@@ -950,7 +950,7 @@ y el de Avisos internos a:
 ```
 
 (cerrando cada uno con `</TabsContent>`). El `<form>` conserva `className="max-w-2xl space-y-6"` y todo lo demás igual.
-(Corregido en review, Task 6: sin `space-y-6` — corría los paneles ocultos 24px.) Nota: `PanelHeader` dentro de cada `TabsContent` sigue siendo el título del panel; los `<h2>` quedan uno por panel visible.
+(Corregido en review, Task 6: el form pasa a `max-w-2xl` a secas — en Tailwind v4 `space-y` es `margin-block-end` sobre `:not(:last-child)`, así que el `space-y-6` dejaba un hueco de 24px DEBAJO del panel visible cuando no era el último hijo; con la barra flotante ya nadie lo necesita.) Nota: `PanelHeader` dentro de cada `TabsContent` sigue siendo el título del panel; los `<h2>` quedan uno por panel visible.
 
 - [ ] **Step 3: Ensamblado final de `page.tsx`**
 
