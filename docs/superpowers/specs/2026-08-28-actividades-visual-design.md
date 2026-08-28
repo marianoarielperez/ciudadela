@@ -197,10 +197,10 @@ focus-visible:ring-ring`, `transition-colors`.
 - **Año sin actividades** (criterio actual `busyDays.length === 0`, se
   conserva): bloque `mt-8 rounded-xl border border-dashed px-4 py-12
   text-center` con ícono `CalendarDays` `size-6 text-muted-foreground
-  aria-hidden` centrado, el texto actual ("Todavía no hay actividades cargadas
-  para {year}. Consultá en la sede vecinal.") y debajo el link a `/ubicacion`
-  con el patrón de link del encabezado. Ni la leyenda ni el aviso "hoy" se
-  muestran en este estado.
+  aria-hidden` centrado y el texto actual ("Todavía no hay actividades
+  cargadas para {year}. Consultá en la sede vecinal."). El link a `/ubicacion`
+  no se duplica acá: ya vive siempre en el encabezado. Ni la leyenda ni el
+  aviso "hoy" se muestran en este estado.
 - Días vacíos: ya no se renderizan (ni columna ni pill).
 
 ### 4.8 Color y contraste (`room-meta.ts`)
@@ -252,8 +252,9 @@ src/lib/activities/
 ├── presentation.ts       NUEVO, puro, sin "use client" ni Prisma:
 │                         visibleAgendaDays(agenda), initialVisibleDay(visible,
 │                         todayAR), weekSpanLabel(visible),
-│                         agendaSummary(visible) → {activityCount, roomCount}.
-│                         Es lo que se testea.
+│                         agendaSummary(visible) → {activityCount, roomCount},
+│                         visibleRooms(visible) → RoomKey[] en orden ROOM_KEYS
+│                         (para la leyenda). Es lo que se testea.
 └── room-meta.ts          Íconos intactos; campos de color nuevos + tabla de
                           contrastes re-medida (§4.8).
 ```
