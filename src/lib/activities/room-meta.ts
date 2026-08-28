@@ -1,54 +1,58 @@
-// Identidad visual de cada espacio en el sitio público: ícono + acento.
-// El Salón Vidriado lleva el celeste institucional (token --primary en claro,
-// sky-400 en oscuro); los demás usan paleta explícita de Tailwind con su
-// variante dark. Contraste MEDIDO en el navegador sobre el fondo REAL de la
-// tarjeta —`bg-muted/40` compuesto sobre `--background`, que da #FBFBFB en
-// claro y #151515 en oscuro, no el fondo pelado— con el texto de 12px de
-// `ActivityCard`, que pide 4.5:1:
+// Identidad visual de cada espacio en el sitio público: ícono + juego de
+// colores de la tarjeta (reborde completo + fondo tintado + textos).
 //
-//   espacio           claro              oscuro
-//   Salón Histórico   #973C00  6.85:1    #FFD230  12.62:1
-//   Salón Vidriado    #0079BC  4.55:1    #00BCFF   8.38:1
-//   Cocina            #A50036  7.65:1    #FFA1AD   9.52:1
-//   Aulas             #006045  7.36:1    #5EE9B5  12.00:1
+// Los ÍCONOS los comparte /ubicacion (ubicacion/page.tsx importa ROOM_META
+// para "La sede por dentro"): cambiarlos impacta ahí. Los COLORES solo los
+// consumen ActivityCard y la leyenda de /actividades: son libres.
 //
-// --primary NO alcanza en oscuro: es el mismo #0079BC en :root y en .dark, y
-// contra #151515 computa 3.87:1. Por eso el Salón Vidriado necesita su `dark:`
-// explícito como los otros tres.
-// Es decoración de tarjetas, no mensajes de estado: los tokens
+// Light-only: el sitio público solo renderiza en claro (el ThemeProvider vive
+// en el panel; decisión escrita en turnstile-widget.tsx), así que estos
+// campos no llevan variantes dark:.
+//
+// El Salón Vidriado lleva el celeste institucional (--primary); los demás,
+// paleta explícita de Tailwind v4 (oklch: los hex de v3 no aplican). Es
+// decoración de tarjetas, no mensajes de estado: los tokens
 // --success/--warning quedan para FormMessage.
+//
+// Contraste: los textos son de 12px y piden 4.5:1 sobre el fondo REAL
+// compuesto (tinte al 60% sobre --card / --background). La tabla de valores
+// MEDIDOS en el navegador se asienta acá en la verificación visual de esta
+// misma rama (plan 2026-08-28-actividades-visual, Task 5); si algún par no
+// llega a 4.5:1, se oscurece el texto (p. ej. text-primary → text-sky-800)
+// antes de cerrar.
 import { Building2, GraduationCap, Landmark, Utensils, type LucideIcon } from "lucide-react";
 import type { RoomKey } from "@/lib/activities/rules";
 
 export const ROOM_META: Record<
   RoomKey,
-  { icon: LucideIcon; accentBorder: string; accentText: string }
+  { icon: LucideIcon; cardBorder: string; cardBg: string; timeText: string; roomText: string }
 > = {
   historic: {
     icon: Landmark,
-    accentBorder: "border-amber-600 dark:border-amber-400",
-    accentText: "text-amber-800 dark:text-amber-300",
+    cardBorder: "border-amber-600/40",
+    cardBg: "bg-amber-50/60",
+    timeText: "text-amber-900",
+    roomText: "text-amber-800",
   },
   glass: {
     icon: Building2,
-    // sky-400 y no sky-300: de la escala de Tailwind es el que queda más cerca
-    // del celeste de marca #2E9BDF, y sobre la tarjeta en oscuro sobra para AA.
-    // Ojo si se busca el hex: en Tailwind v4 la paleta es oklch, así que
-    // `sky-400` NO es el #38BDF8 de la v3 — el navegador lo resuelve a #00BCFF,
-    // que es el valor con el que están medidos los 8.38:1 de arriba.
-    // El borde acompaña al texto: si sólo cambiara el texto, la misma tarjeta
-    // tendría el acento en dos celestes distintos.
-    accentBorder: "border-primary dark:border-sky-400",
-    accentText: "text-primary dark:text-sky-400",
+    cardBorder: "border-primary/40",
+    cardBg: "bg-sky-50/60",
+    timeText: "text-sky-900",
+    roomText: "text-primary",
   },
   kitchen: {
     icon: Utensils,
-    accentBorder: "border-rose-600 dark:border-rose-400",
-    accentText: "text-rose-800 dark:text-rose-300",
+    cardBorder: "border-rose-600/40",
+    cardBg: "bg-rose-50/60",
+    timeText: "text-rose-900",
+    roomText: "text-rose-800",
   },
   classroom: {
     icon: GraduationCap,
-    accentBorder: "border-emerald-600 dark:border-emerald-400",
-    accentText: "text-emerald-800 dark:text-emerald-300",
+    cardBorder: "border-emerald-600/40",
+    cardBg: "bg-emerald-50/60",
+    timeText: "text-emerald-900",
+    roomText: "text-emerald-800",
   },
 };
