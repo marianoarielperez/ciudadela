@@ -13,6 +13,7 @@
 // pasa nada se deja de mirar, y entonces tampoco sirve el día que sí pasa.
 //
 // Sin gráficos.
+import { Suspense } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import {
   BackupPanel, CronsPanel, FailedNoticesPanel, HealthVerdict, MoneyPanel, MpPanel, PendingReceiptsPanel,
@@ -22,9 +23,11 @@ import { PageHeader } from "@/components/admin/page-header";
 import { fetchHealth } from "@/lib/admin/health";
 import { healthAlerts } from "@/lib/admin/health-alerts";
 import { readBackupHealth } from "@/lib/admin/health-backup";
+import { actCountByTab } from "@/lib/admin/salud-tabs";
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
 import { ResendForm } from "./resend-form";
+import { SaludTabs } from "./salud-tabs";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Salud — SIGeV" };
@@ -55,6 +58,7 @@ export default async function SaludPage() {
   // cada forma de no poder leer, en vez de tirar—.
   const [health, backup] = await Promise.all([fetchHealth(prisma, now), readBackupHealth(now)]);
   const alerts = healthAlerts(health, backup);
+  const actCounts = actCountByTab(alerts.act);
 
   return (
     <div className="space-y-6">
@@ -65,26 +69,36 @@ export default async function SaludPage() {
         </p>
       </PageHeader>
 
+      {/* El veredicto vive FUERA de las pestañas, siempre visible: es el
+          contrato de la pantalla ("el martes que todo anda, una línea"). Las
+          pestañas guardan el detalle, nunca la existencia de un problema. */}
       <HealthVerdict alerts={alerts} now={now} />
 
-      <CronsPanel crons={health.crons} now={now} />
-
-      {/* Los dos que se leen de un vistazo van uno al lado del otro: cada uno es
-          un estado y un puñado de números, no una lista. */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <BackupPanel backup={backup} now={now} />
-        <MpPanel mp={health.mp} now={now} />
-      </div>
-
-      <MoneyPanel money={health.money} />
-
-      <FailedNoticesPanel
-        failed={health.failed}
-        failedEver={health.failedEver}
-        renderResend={renderResend}
-      />
-
-      <PendingReceiptsPanel receipts={health.receipts} renderResend={renderResend} />
+      <Suspense fallback={null}>
+        <SaludTabs
+          actCounts={actCounts}
+          tareas={<CronsPanel crons={health.crons} now={now} />}
+          infraestructura={
+            /* Los dos que se leen de un vistazo van uno al lado del otro: cada
+               uno es un estado y un puñado de números, no una lista. */
+            <div className="grid gap-4 md:grid-cols-2">
+              <BackupPanel backup={backup} now={now} />
+              <MpPanel mp={health.mp} now={now} />
+            </div>
+          }
+          dinero={<MoneyPanel money={health.money} />}
+          correo={
+            <div className="space-y-6">
+              <FailedNoticesPanel
+                failed={health.failed}
+                failedEver={health.failedEver}
+                renderResend={renderResend}
+              />
+              <PendingReceiptsPanel receipts={health.receipts} renderResend={renderResend} />
+            </div>
+          }
+        />
+      </Suspense>
     </div>
   );
 }
