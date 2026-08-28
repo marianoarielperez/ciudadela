@@ -19,6 +19,7 @@ import { useSyncedForm, TextField, TextareaField } from "@/components/admin/sync
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { TabsContent } from "@/components/ui/tabs";
 import { PanelHeader } from "./panel-header";
 
 export type ConfigFormInitial = {
@@ -79,7 +80,7 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
 
   return (
     <form ref={formRef} action={formAction} className="max-w-2xl space-y-6">
-      <section className="space-y-4">
+      <TabsContent value="sitio" forceMount className="space-y-4 pt-2 data-[state=inactive]:hidden">
         <PanelHeader
           icon={Globe}
           title="Sitio público"
@@ -107,8 +108,8 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
             />
           </CardContent>
         </Card>
-      </section>
-      <section className="space-y-4">
+      </TabsContent>
+      <TabsContent value="asociate" forceMount className="space-y-4 pt-2 data-[state=inactive]:hidden">
         <PanelHeader
           icon={UserPlus}
           title="ASOCIATE"
@@ -149,12 +150,12 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
             />
           </CardContent>
         </Card>
-      </section>
+      </TabsContent>
       {/* Tercer bloque, y el primero que NO mira al sitio público: acá se
           configura a quién le habla el sistema puertas adentro. El título lo
           dice para que nadie busque estos destinatarios entre los datos de
           contacto que ve el vecino. */}
-      <section className="space-y-4">
+      <TabsContent value="avisos" forceMount className="space-y-4 pt-2 data-[state=inactive]:hidden">
         <PanelHeader
           icon={Mail}
           title="Avisos internos"
@@ -171,7 +172,7 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
             />
           </CardContent>
         </Card>
-      </section>
+      </TabsContent>
       {state.error && <FormMessage kind="error">{state.error}</FormMessage>}
       <Button type="submit" disabled={pending}>
         {pending ? "Guardando…" : "Guardar"}

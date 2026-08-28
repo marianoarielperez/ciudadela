@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader, parseRecipients } from "@/lib/config";
@@ -10,7 +11,8 @@ import { addMonths, civilDayOf, currentPeriod } from "@/lib/treasury/periods";
 import { formatARS, formatDateAR } from "@/lib/format";
 import { MINUTE_TYPE_LABELS, minuteName } from "@/lib/members/labels";
 import { listDivergent } from "@/lib/mp/fee-value-batch";
-import { ConfigForm } from "./config-form";
+import { initialConfigTab } from "@/lib/admin/config-tabs";
+import { ConfigTabs } from "./config-tabs";
 import { TesoreriaPanel } from "./tesoreria-panel";
 import { FeriadosPanel } from "./feriados-panel";
 import { StatusStrip } from "./status-strip";
@@ -203,30 +205,38 @@ export default async function ConfigPage(props: {
         coverage={coverageEntries}
         digestCount={digestCount}
       />
-      <ConfigForm
-        initial={{
-          asociateActivo,
-          contactPhone: contactPhone ?? "",
-          contactEmail: contactEmail ?? "",
-          termsText: termsText ?? "",
-          privacyConsentText: privacyConsentText ?? "",
-          mpPlanActiveId: mpPlanActiveId ?? "",
-          mpPlanSharedId: mpPlanSharedId ?? "",
-          digestRecipients: digestRecipients ?? "",
-        }}
-      />
-
-      <TesoreriaPanel
-        current={currentView}
-        history={historyView}
-        minutes={minutes}
-        suggestedValidFrom={suggestedValidFrom}
-      />
-      <FeriadosPanel
-        coverageLabel={coverageLabel}
-        futureHolidays={futureView}
-        suggestedDate={suggestedHoliday}
-      />
+      {/* Suspense: ConfigTabs usa useSearchParams; con force-dynamic el SSR ya
+          resuelve la pestaña real y el fallback no llega a verse. */}
+      <Suspense fallback={null}>
+        <ConfigTabs
+          initial={initialConfigTab({ cuota: sp.cuota, feriado: sp.feriado })}
+          configInitial={{
+            asociateActivo,
+            contactPhone: contactPhone ?? "",
+            contactEmail: contactEmail ?? "",
+            termsText: termsText ?? "",
+            privacyConsentText: privacyConsentText ?? "",
+            mpPlanActiveId: mpPlanActiveId ?? "",
+            mpPlanSharedId: mpPlanSharedId ?? "",
+            digestRecipients: digestRecipients ?? "",
+          }}
+          tesoreria={
+            <TesoreriaPanel
+              current={currentView}
+              history={historyView}
+              minutes={minutes}
+              suggestedValidFrom={suggestedValidFrom}
+            />
+          }
+          feriados={
+            <FeriadosPanel
+              coverageLabel={coverageLabel}
+              futureHolidays={futureView}
+              suggestedDate={suggestedHoliday}
+            />
+          }
+        />
+      </Suspense>
     </div>
   );
 }
