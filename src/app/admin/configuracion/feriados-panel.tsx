@@ -39,7 +39,7 @@ export function FeriadosPanel({ coverageLabel, futureHolidays, suggestedDate }: 
       {futureHolidays.length === 0 ? (
         <EmptyState size="card" description="No hay feriados cargados de hoy en adelante." />
       ) : (
-        <ul className="list-none divide-y p-0 text-sm">
+        <ul className="list-none divide-y rounded-xl border p-0 text-sm">
           {futureHolidays.map((h) => (
             <HolidayRow key={h.id} id={h.id} label={h.label} dateLabel={h.dateLabel} />
           ))}
