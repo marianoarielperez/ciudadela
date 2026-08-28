@@ -37,13 +37,13 @@ export function DayTabs({
             type="button"
             aria-pressed={d.day === selected}
             onClick={() => setSelected(d.day)}
-            className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm font-medium transition-colors outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
+            className={`relative inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm font-medium transition-colors outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
               d.day === selected
                 ? "border-primary bg-primary text-primary-foreground"
                 : "hover:bg-muted"
             }`}
           >
-            {d.label}
+            {d.label}{" "}
             {d.day === todayDay && (
               // El punto es la marca de "hoy"; como el color es la única señal
               // visual, el sr-only la duplica en texto. Sobre la pill elegida

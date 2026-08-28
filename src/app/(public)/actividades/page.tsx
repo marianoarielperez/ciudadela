@@ -267,7 +267,14 @@ export default async function ActividadesPage({ searchParams }: PageProps<"/acti
           </div>
 
           <div className={`mt-6 lg:hidden ${ENTER}`}>
+            {/* `key={year}`: cambiar de año con los chips es una soft navigation
+                de Next, que PRESERVA el useState del componente cliente. Con
+                "Martes" elegido, un año sin martes dejaba la selección huérfana
+                —se mostraba el primer día, pero ninguna pill quedaba con
+                `aria-pressed="true"`—. Remontar por año resetea al `initialDay`
+                que el server calculó PARA ESE año: año nuevo, selector nuevo. */}
             <DayTabs
+              key={year}
               days={visibleDays}
               initialDay={initialDay}
               todayDay={todayVisible ? todayAR : null}
