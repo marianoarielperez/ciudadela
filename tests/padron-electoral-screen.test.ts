@@ -211,6 +211,83 @@ describe("ElectoralRollSheet — qué sale impreso", () => {
     expect(html).not.toContain("<thead");
     expect(html).toContain("Ningún socio queda habilitado a esta fecha.");
     expect(html).toContain("no hay nada que purgar");
+    expect(html).toContain("alcanzan los 90 días de antigüedad");
+  });
+
+  it("lista al que no llega a los 90 días, con desde cuándo puede votar", () => {
+    const html = sheet(
+      roll({
+        withoutSeniority: [
+          row({ memberId: 9, fullName: "Nuevo, Vecino", joinedAt: new Date("2026-10-01T12:00:00Z") }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("No habilitados por antigüedad");
+    expect(html).toContain("Nuevo, Vecino");
+    // enabledFrom: 01/10/2026 + 90 días.
+    expect(html).toContain("30/12/2026");
+    // La nota niega el trámite: si la Junta lo lee como "otra lista que puede
+    // regularizar", el error es peor que no imprimirlo.
+    expect(html).toContain("no hay trámite que lo modifique");
+    // Y este bloque no publica deuda de nadie.
+    expect(html).not.toContain("A purgar</th>");
+  });
+
+  it("con todos los considerados en edad, el bloque nuevo dice la buena noticia", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain("alcanzan los 90 días de antigüedad");
+  });
+
+  it("la cabecera de papel cuenta los TRES bloques", () => {
+    const html = sheet(
+      roll({
+        enabled: [row()],
+        withoutSeniority: [row({ memberId: 9, fullName: "Nuevo, Vecino" })],
+      }),
+    );
+
+    expect(html).toContain("1 habilitados");
+    expect(html).toContain("1 no habilitados por antigüedad");
+  });
+
+  it("los tres bloques salen en el orden de la pantalla", () => {
+    const html = sheet(
+      roll({
+        enabled: [row()],
+        toPurge: [row({ memberId: 2, arrears: 1, debt: 6000 })],
+        withoutSeniority: [row({ memberId: 9, fullName: "Nuevo, Vecino" })],
+      }),
+    );
+
+    expect(html.indexOf("Habilitados")).toBeLessThan(html.indexOf("Con deuda a purgar"));
+    expect(html.indexOf("Con deuda a purgar")).toBeLessThan(
+      html.indexOf("No habilitados por antigüedad"),
+    );
+  });
+
+  it("la nota del socio sin número también dispara desde el bloque nuevo", () => {
+    const html = sheet(roll({ withoutSeniority: [row({ memberNumber: null })] }));
+
+    expect(html).toContain("figura primero");
+  });
+
+  it("cada bloque tiene su ancla para las stat cards", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    expect(html).toContain('id="habilitados"');
+    expect(html).toContain('id="a-purgar"');
+    expect(html).toContain('id="no-habilitados"');
+  });
+
+  it("el papel imprime la tabla y esconde las tarjetas; el móvil al revés", () => {
+    const html = sheet(roll({ enabled: [row()] }));
+
+    // La tabla vive en el wrapper que el papel muestra…
+    expect(html).toContain("hidden md:block print:block");
+    // …y las tarjetas apiladas en el que el papel esconde.
+    expect(html).toContain("md:hidden print:hidden");
   });
 });
 
