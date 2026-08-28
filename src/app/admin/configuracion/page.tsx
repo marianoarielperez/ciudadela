@@ -4,16 +4,15 @@ import { requireSuperadmin } from "@/lib/auth/require-admin";
 import { CONFIG_KEYS, configReader, parseRecipients } from "@/lib/config";
 import { PageHeader } from "@/components/admin/page-header";
 import { FormMessage } from "@/components/admin/form-message";
-import { EmptyState } from "@/components/admin/empty-state";
 import { prisma } from "@/lib/prisma";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { addMonths, civilDayOf, currentPeriod } from "@/lib/treasury/periods";
 import { formatARS, formatDateAR } from "@/lib/format";
-import { MINUTE_TYPE_LABELS } from "@/lib/members/labels";
+import { MINUTE_TYPE_LABELS, minuteName } from "@/lib/members/labels";
 import { listDivergent } from "@/lib/mp/fee-value-batch";
 import { ConfigForm } from "./config-form";
-import { FeeValueForm } from "./fee-value-form";
-import { HolidayForm, HolidayRow } from "./holidays-form";
+import { TesoreriaPanel } from "./tesoreria-panel";
+import { FeriadosPanel } from "./feriados-panel";
 import { StatusStrip } from "./status-strip";
 
 export const dynamic = "force-dynamic";
@@ -132,6 +131,44 @@ export default async function ConfigPage(props: {
   const digestCount = parseRecipients(digestRecipients).length;
   const coverageEntries = [...coverage.entries()].sort((a, b) => a[0] - b[0]);
 
+  // Nombres de acta del historial: minuteName (tipo + número), nunca el id de
+  // la fila. Consulta aparte porque el `take: 30` del combo no garantiza traer
+  // las actas viejas que el historial referencia.
+  const historyMinuteIds = [...new Set(
+    history.flatMap((h) => (h.minuteId === null ? [] : [h.minuteId])),
+  )];
+  const historyMinutes = historyMinuteIds.length
+    ? await prisma.minute.findMany({
+        where: { id: { in: historyMinuteIds } },
+        select: { id: true, type: true, number: true },
+      })
+    : [];
+  const minuteNameById = new Map(historyMinutes.map((m) => [m.id, minuteName(m)]));
+  const historyView = history.map((h) => ({
+    id: h.id,
+    dateLabel: formatDateAR(h.validFrom),
+    activeLabel: formatARS(h.activeAmount),
+    sharedLabel: formatARS(h.sharedAmount),
+    minute: h.minuteId === null
+      ? null
+      : { id: h.minuteId, name: minuteNameById.get(h.minuteId) ?? `Acta #${h.minuteId}` },
+  }));
+  const currentView = current
+    ? {
+        dateLabel: formatDateAR(current.validFrom),
+        activeLabel: formatARS(current.activeAmount),
+        sharedLabel: formatARS(current.sharedAmount),
+      }
+    : null;
+  const coverageLabel = coverageEntries.length === 0
+    ? null
+    : coverageEntries.map(([year, count]) => `${year} (${count})`).join(" · ");
+  const futureView = futureHolidays.map((h) => ({
+    id: h.id,
+    label: h.label,
+    dateLabel: formatDateAR(h.date),
+  }));
+
   return (
     <div className="space-y-4">
       <PageHeader title="Configuración" />
@@ -179,78 +216,17 @@ export default async function ConfigPage(props: {
         }}
       />
 
-      <section className="max-w-2xl space-y-4 border-t pt-6">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          Tesorería — valor de cuota
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {current ? (
-            <>
-              Vigente desde {formatDateAR(current.validFrom)}: activo{" "}
-              <span className="font-mono tabular-nums">{formatARS(current.activeAmount)}</span> · adherente/colaborador{" "}
-              <span className="font-mono tabular-nums">{formatARS(current.sharedAmount)}</span>.
-            </>
-          ) : (
-            "Todavía no rige ningún valor de cuota."
-          )}{" "}
-          Es la única fuente de montos del sistema: devengo, deuda, efectivo y alta web. Los planes de Mercado
-          Pago son solo referencia.
-        </p>
-        <FeeValueForm minutes={minutes} suggestedValidFrom={suggestedValidFrom} />
-        {history.length > 0 && (
-          <ul className="divide-y text-sm">
-            {history.map((h) => (
-              <li key={h.id} className="flex flex-wrap justify-between gap-2 py-2">
-                <span>Desde {formatDateAR(h.validFrom)}{h.minuteId ? ` · acta #${h.minuteId}` : " · sin acta"}</span>
-                <span className="font-mono tabular-nums">{formatARS(h.activeAmount)} / {formatARS(h.sharedAmount)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="max-w-2xl space-y-4 border-t pt-6">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          Cartelera — feriados
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Los veinte días hábiles de la notificación por cartelera (Art. 5° ter) se cuentan sobre
-          esta tabla: lunes a viernes menos los feriados nacionales. Un feriado que falte se cuenta
-          como día hábil y le acorta el plazo al vecino, así que el aviso de cartelera se niega a
-          computar un plazo que entre en un año sin cargar.{" "}
-          <strong>Los días no laborables con fines turísticos (los &ldquo;puentes&rdquo;) no van
-          acá</strong>: son días de opción, no feriados, y alargarían los plazos sin fundamento.
-        </p>
-        <p className="text-sm">
-          Años cargados:{" "}
-          {coverage.size === 0 ? (
-            <span className="text-warning">ninguno.</span>
-          ) : (
-            [...coverage.entries()]
-              .sort((a, b) => a[0] - b[0])
-              .map(([year, count]) => `${year} (${count})`)
-              .join(" · ")
-          )}
-        </p>
-        <HolidayForm suggestedDate={suggestedHoliday} />
-        {futureHolidays.length === 0 ? (
-          <EmptyState
-            size="card"
-            description="No hay feriados cargados de hoy en adelante."
-          />
-        ) : (
-          <ul className="list-none divide-y p-0 text-sm">
-            {futureHolidays.map((h) => (
-              <HolidayRow
-                key={h.id}
-                id={h.id}
-                label={h.label}
-                dateLabel={formatDateAR(h.date)}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+      <TesoreriaPanel
+        current={currentView}
+        history={historyView}
+        minutes={minutes}
+        suggestedValidFrom={suggestedValidFrom}
+      />
+      <FeriadosPanel
+        coverageLabel={coverageLabel}
+        futureHolidays={futureView}
+        suggestedDate={suggestedHoliday}
+      />
     </div>
   );
 }
