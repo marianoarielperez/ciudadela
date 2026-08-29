@@ -42,11 +42,19 @@ const CHIP_INACTIVE = "text-muted-foreground hover:text-foreground";
 const CHIPS: { key: UserChip; label: string; href: string }[] = [
   { key: "gestion", label: "Gestión", href: `${BASE}?vista=gestion` },
   { key: "socios", label: "Socios", href: `${BASE}?vista=socios` },
-  { key: "inactivas", label: "Inactivas", href: `${BASE}?vista=inactivas` },
+  // La etiqueta dice lo MISMO que el badge de las filas que el chip trae
+  // ("Desactivada", ACCOUNT_STATE_LABELS). La clave `inactivas` es el valor que
+  // viaja en la URL y lo consume `parseUserFilters`: esa no se toca.
+  { key: "inactivas", label: "Desactivadas", href: `${BASE}?vista=inactivas` },
   { key: "todas", label: "Todas", href: BASE },
 ];
 
-function activeChip(f: UserListFilters): UserChip {
+/** Qué chip está prendido. Devuelve `null` para toda combinación que ningún
+ *  chip representa: con una búsqueda activa la lista muestra las coincidencias
+ *  del texto, y "Todas 312" arriba de "1–2 de 2 cuentas" sería un número que no
+ *  describe nada de lo que hay debajo (mismo criterio que /admin/socios). */
+function activeChip(f: UserListFilters): UserChip | null {
+  if (f.q) return null;
   return f.vista ?? "todas";
 }
 
@@ -223,6 +231,16 @@ function UserCard({ row }: { row: UserRow }) {
       <CardContent className="space-y-1">
         <p className="text-sm break-all text-muted-foreground">{row.email}</p>
         <RoleBadges roles={row.roles} />
+        {/* La tarjeta es la MISMA fila en otra forma: el último ingreso es el
+            dato con el que se decide si una cuenta sigue viva, y en el teléfono
+            no se puede consultar en ningún otro lado. Mismo formato que la
+            columna (`formatDateAR`, mono tabular, "—" cuando nunca entró). */}
+        <p className="text-sm text-muted-foreground">
+          Último ingreso{" · "}
+          <span className="font-mono tabular-nums">
+            {row.lastLoginAt ? formatDateAR(row.lastLoginAt) : "—"}
+          </span>
+        </p>
       </CardContent>
     </Card>
   );

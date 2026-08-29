@@ -94,7 +94,10 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
       {
         // `title` idéntico al `label` de la nav: lo verifica dashboard-cards.test.ts.
         title: "Usuarios",
-        description: "Cuentas de acceso al panel: roles de gestión, altas e invitaciones.",
+        // El alcance es el mismo que anuncia el subtítulo de la pantalla: la
+        // lista incluye las cuentas de socio (chip "Socios"), no sólo las de
+        // gestión.
+        description: "Cuentas de acceso al panel y al portal de socios: roles, altas e invitaciones.",
         href: "/admin/usuarios",
         cta: "Gestionar",
         superadminOnly: true,
