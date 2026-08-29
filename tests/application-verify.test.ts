@@ -47,7 +47,7 @@ const h = vi.hoisted(() => {
     // los factories atados a ESE `tx`. La atomicidad de verdad la da la base.
     //
     // Las lecturas de FUERA de la transacción (las de `deadCopyFor`, que corre
-    // cuando el `consume` no lo ganó esta petición y el `tx` ya hizo rollback)
+    // cuando el `consume` no lo ganó esta petición y el `tx` ya cerró sin escribir)
     // se sirven del MISMO estado: ninguna aserción de este archivo cambió, sólo
     // se completó el doble para que el cliente de arriba exista.
     prisma: {

@@ -740,10 +740,11 @@ export function StuckAccessPanel({ rows }: { rows: StuckAccessRow[] }) {
             </TableBody>
           </Table>
           <p className="max-w-3xl text-xs text-muted-foreground">
-            Confirmaron su casilla y nunca crearon la contraseña: el correo con el enlace no les llegó o se
-            les perdió, y la invitación lleva más de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas
+            Confirmaron su casilla y nunca crearon la contraseña: el correo con el enlace no les llegó, se
+            les perdió, o la invitación lleva más de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas
             sin usarse. Con <code>EMAIL_ALLOWLIST</code> puesta —el estado de este sitio hasta el
-            lanzamiento— ese correo ni siquiera sale, así que esta lista se llena sola. La salida es el
+            lanzamiento— ese correo ni siquiera sale, así que esta lista se llena sola y el reenvío también
+            se bloquea: se vacía al sacar la variable. La salida es el
             botón de envío de su ficha (pestaña Acceso), que revoca el enlace anterior y manda uno nuevo por
             correo. Si esa casilla ya es la cuenta de acceso de otro socio, el reenvío no lo destraba: ahí
             la salida es cargarle otro email a la ficha. Quien tiene una invitación viva emitida hace menos

@@ -29,7 +29,7 @@ const h = vi.hoisted(() => {
     state, tokens, tx,
     applicationSvc: { verifyEmail: vi.fn(async () => {}) },
     // Las lecturas de `deadCopyFor` van por el cliente de arriba (fuera de la
-    // transacción, que ya hizo rollback): el doble las sirve del mismo estado.
+    // transacción, que ya terminó sin escribir nada): el doble las sirve del mismo estado.
     prisma: {
       $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
       application: { findUnique: vi.fn(async () => state.application) },
