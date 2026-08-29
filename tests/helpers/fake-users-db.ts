@@ -23,6 +23,12 @@ export type FakeState = {
   members: MemberRow[]; actionTokens: TokenRow[];
 };
 
+/** Campos escalares que `user.create` sabe escribir. Todo lo demás —incluido
+ *  cualquier write anidado— tira. */
+const USER_WRITABLE = [
+  "email", "passwordHash", "passwordChangedAt", "name", "active", "lastLoginAt",
+];
+
 export function makeFakeUsersDb(seed?: Partial<FakeState>) {
   let state: FakeState = {
     users: [], roles: [
@@ -41,6 +47,28 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
   // silencio sobre una tabla sin filas —y un test de guarda pasaría por el
   // motivo equivocado—, que es exactamente lo que este doble existe para evitar.
 
+  /** P2002 con la forma que produce `@prisma/adapter-mariadb` (la única que el
+   *  proyecto lee: `src/lib/treasury/unique-violation.ts`). */
+  const p2002 = (index: string) => ({
+    code: "P2002",
+    meta: { driverAdapterError: { cause: { constraint: { index } } } },
+  });
+
+  /** Compila la comparación de un campo ESCALAR. Un filtro-objeto
+   *  (`{ not: … }`, `{ in: […] }`, `{ equals: … }`, un `Date`) no está
+   *  implementado: comparado con `===` daría un predicado que nunca es
+   *  verdadero, así que un `count` devolvería 0 y una guarda rota —"nunca cero
+   *  superadmins activos" es la del caso— pasaría el test por el motivo
+   *  equivocado. Se valida al COMPILAR: tira aunque la tabla esté vacía. */
+  function scalarEquals(key: string, value: unknown): (actual: unknown) => boolean {
+    if (value !== null && typeof value === "object") {
+      throw new Error(
+        `fake: filtro no escalar sobre ${key} no soportado: ${JSON.stringify(value)}`,
+      );
+    }
+    return (actual) => actual === value;
+  }
+
   function compileNameFilter(filter: unknown): (name: string | undefined) => boolean {
     if (filter === undefined) return () => true;
     if (typeof filter === "string") return (name) => name === filter;
@@ -52,21 +80,46 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
   function compileUserRoleWhere(where: Record<string, unknown>): (ur: UserRoleRow) => boolean {
     const checks: ((ur: UserRoleRow) => boolean)[] = [];
     for (const [k, v] of Object.entries(where)) {
-      if (k === "userId") { checks.push((ur) => ur.userId === v); }
+      if (k === "userId") { const eq = scalarEquals(k, v); checks.push((ur) => eq(ur.userId)); }
       else if (k === "role") {
         const matchesName = compileNameFilter((v as { name?: unknown }).name);
         checks.push((ur) => matchesName(roleName(ur.roleId)));
       } else if (k === "user") {
-        const f = v as { active?: boolean };
+        const f = v as { active?: unknown };
         for (const uk of Object.keys(f)) {
           if (uk !== "active") throw new Error(`fake: userRole where user.${uk} no soportado`);
         }
         if (f.active !== undefined) {
-          checks.push((ur) => state.users.find((x) => x.id === ur.userId)?.active === f.active);
+          const eq = scalarEquals("user.active", f.active);
+          checks.push((ur) => eq(state.users.find((x) => x.id === ur.userId)?.active));
         }
       } else throw new Error(`fake: userRole where no soportado: ${k}`);
     }
     return (ur) => checks.every((c) => c(ur));
+  }
+
+  function compileUserWhere(where: Record<string, unknown>): (u: UserRow) => boolean {
+    const checks: ((u: UserRow) => boolean)[] = [];
+    for (const [k, v] of Object.entries(where)) {
+      if (k === "id" || k === "email" || k === "active") {
+        const field = k;
+        const eq = scalarEquals(k, v);
+        checks.push((u) => eq(u[field]));
+      } else throw new Error(`fake: user where no soportado: ${k}`);
+    }
+    return (u) => checks.every((c) => c(u));
+  }
+
+  function compileMemberWhere(where: Record<string, unknown>): (m: MemberRow) => boolean {
+    const checks: ((m: MemberRow) => boolean)[] = [];
+    for (const [k, v] of Object.entries(where)) {
+      if (k === "email" || k === "userId" || k === "id") {
+        const field = k;
+        const eq = scalarEquals(k, v);
+        checks.push((m) => eq(m[field]));
+      } else throw new Error(`fake: member where no soportado: ${k}`);
+    }
+    return (m) => checks.every((c) => c(m));
   }
 
   function compileTokenWhere(where: Record<string, unknown>): (t: TokenRow) => boolean {
@@ -74,7 +127,8 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
     for (const [k, v] of Object.entries(where)) {
       if (k === "tokenHash" || k === "id" || k === "userId" || k === "memberId" || k === "usedAt") {
         const field = k;
-        checks.push((t) => t[field] === v);
+        const eq = scalarEquals(k, v);
+        checks.push((t) => eq(t[field]));
       } else if (k === "purpose") {
         const f = v as { in?: string[] } | string;
         if (typeof f === "string") { checks.push((t) => t.purpose === f); }
@@ -112,23 +166,43 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
         where: { id?: number; email?: string }; include?: Record<string, unknown>;
         select?: Record<string, unknown>;
       }) {
-        const u = state.users.find((x) =>
-          args.where.id !== undefined ? x.id === args.where.id : x.email === args.where.email,
-        );
+        // `findUnique` sólo entiende las dos claves únicas de `users`. Un where
+        // vacío, uno por otro campo o un `email: { equals: … }` tiene que TIRAR:
+        // devolver `null` es indistinguible de "no existe".
+        const where = args.where as Record<string, unknown>;
+        const keys = Object.keys(where);
+        for (const k of keys) {
+          if (k !== "id" && k !== "email") {
+            throw new Error(`fake: user.findUnique where no soportado: ${k}`);
+          }
+        }
+        if (keys.length === 0) throw new Error("fake: user.findUnique sin id ni email");
+        const match = compileUserWhere(where);
+        const u = state.users.find(match);
         return u ? userView(u, args) : null;
       },
       async create(args: { data: Record<string, unknown> }) {
-        const email = args.data.email as string;
-        if (state.users.some((u) => u.email === email)) {
-          throw { code: "P2002", meta: { driverAdapterError: { cause: { constraint: { index: "users_email_key" } } } } };
+        // Lista blanca: un write anidado (`roles: { create: […] }`) compila
+        // contra el tipo real de Prisma y acá se perdería sin ruido, dejando
+        // `state.userRoles` intacto y el conteo que sostiene una guarda midiendo
+        // un estado que el servicio creía haber escrito.
+        for (const [k, v] of Object.entries(args.data)) {
+          if (!USER_WRITABLE.includes(k)) {
+            throw new Error(`fake: user.create data.${k} no soportado`);
+          }
+          if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+            throw new Error(`fake: user.create data.${k} anidado no soportado: ${JSON.stringify(v)}`);
+          }
         }
+        const email = args.data.email as string;
+        if (state.users.some((u) => u.email === email)) throw p2002("users_email_key");
         const u: UserRow = {
           id: nextId++, email,
           passwordHash: (args.data.passwordHash as string) ?? "x",
           passwordChangedAt: (args.data.passwordChangedAt as Date) ?? null,
           name: (args.data.name as string) ?? null,
           active: (args.data.active as boolean) ?? true,
-          lastLoginAt: null,
+          lastLoginAt: (args.data.lastLoginAt as Date) ?? null,
         };
         state.users.push(u);
         return { ...u };
@@ -136,22 +210,41 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
       async update(args: { where: { id: number }; data: Record<string, unknown> }) {
         const u = state.users.find((x) => x.id === args.where.id);
         if (!u) throw new Error("fake: user.update sobre id inexistente");
+        // Mismo motivo que en `create`: un `roles: { deleteMany: {} }` acá
+        // escribiría una propiedad basura sobre la fila y no tocaría los roles.
+        for (const [k, v] of Object.entries(args.data)) {
+          if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+            throw new Error(`fake: user.update data.${k} anidado no soportado: ${JSON.stringify(v)}`);
+          }
+        }
         if (args.data.email !== undefined && args.data.email !== u.email
           && state.users.some((x) => x.email === args.data.email)) {
-          throw { code: "P2002", meta: { driverAdapterError: { cause: { constraint: { index: "users_email_key" } } } } };
+          throw p2002("users_email_key");
         }
         Object.assign(u, args.data);
         return { ...u };
       },
-      async count() { return state.users.length; },
+      async count(args?: { where?: Record<string, unknown> }) {
+        if (!args?.where) return state.users.length;
+        return state.users.filter(compileUserWhere(args.where)).length;
+      },
     },
     role: {
       async findUnique(args: { where: { name: string } }) {
-        return state.roles.find((r) => r.name === args.where.name) ?? null;
+        const r = state.roles.find((x) => x.name === args.where.name);
+        return r ? { ...r } : null;
       },
     },
     userRole: {
       async create(args: { data: UserRoleRow }) {
+        // La base real tiene `@@id([userId, roleId])`: asignar dos veces el mismo
+        // rol tira P2002. Sin este chequeo quedarían dos filas y un `count`
+        // posterior —el que sostiene "queda al menos un superadmin"— daría 2.
+        // MariaDB llama PRIMARY al índice de la clave primaria, siempre.
+        if (state.userRoles.some((ur) =>
+          ur.userId === args.data.userId && ur.roleId === args.data.roleId)) {
+          throw p2002("PRIMARY");
+        }
         state.userRoles.push({ ...args.data });
         return { ...args.data };
       },
@@ -167,8 +260,11 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
       },
     },
     member: {
-      async findFirst(args: { where: { email?: string }; select?: Record<string, unknown> }) {
-        const m = state.members.find((x) => x.email === args.where.email);
+      async findFirst(args: { where: Record<string, unknown>; select?: Record<string, unknown> }) {
+        // `{ email, userId: null }` —socio con esa casilla y todavía SIN usuario—
+        // es la consulta del dominio: descartar el `userId` devolvía uno ya
+        // vinculado.
+        const m = state.members.find(compileMemberWhere(args.where));
         return m ? { ...m } : null;
       },
     },
