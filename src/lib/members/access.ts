@@ -30,9 +30,20 @@ export const ACCESS_ERRORS = {
    *  se usó pero el trámite de fondo SÍ avanzó (email verificado, cuenta sin
    *  crear). "Venció o ya fue usado" a secas es cierto sobre el token y falso
    *  sobre lo que le pasó a la persona. No promete que el correo salió —el
-   *  envío de la red es best-effort—: manda a buscarlo y nombra el reenvío. */
+   *  envío de la red es best-effort—: manda a buscarlo y nombra el reenvío.
+   *
+   *  Y está redactado para ser cierto TAMBIÉN para el socio de casilla
+   *  compartida (el matrimonio que comparte email): `verifyEmail` marca
+   *  `emailStatus: "verified"` ANTES de que exista la guarda de conflicto, que
+   *  vive en `createPassword`, así que esa persona llega a este estado
+   *  —verificada y sin cuenta— y su alta de contraseña va a rebotar con
+   *  `ACCESS_ERRORS.conflict`. Por eso el texto NO promete que crear la
+   *  contraseña vaya a funcionar: manda al correo cuyo enlace lleva a `/acceso`,
+   *  que es la pantalla que explica ese caso entero. «Creá tu contraseña» es el
+   *  asunto real de la invitación (`src/lib/email/templates.ts`): se lo nombra
+   *  para que la persona lo encuentre en su bandeja. */
   verifiedNoAccount:
-    "Tu email ya está confirmado: lo que falta es crear tu contraseña. Buscá en tu casilla el correo para crearla (mirá también el spam) y, si no lo encontrás, pedile a la vecinal que te reenvíe el enlace.",
+    "Tu email ya está confirmado. Buscá en tu casilla el correo «Creá tu contraseña» y entrá por ese enlace; si no lo encontrás, pedile a la vecinal que te lo reenvíe.",
   withdrawn: "Figurás con baja en el padrón: el enlace ya no es válido. Comunicate con la vecinal.",
   noEmail: "Tu ficha no tiene un email registrado. Comunicate con la vecinal.",
   // Caso típico: un matrimonio (u otro hogar) que comparte casilla. La cuenta es

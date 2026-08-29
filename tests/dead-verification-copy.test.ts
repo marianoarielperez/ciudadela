@@ -108,6 +108,15 @@ describe("deadVerificationCopy (§7.2)", () => {
     expect(text).not.toContain("@");
     // NO afirma que el correo salió (el envío es best-effort): manda a buscarlo.
     expect(text).not.toMatch(/te mandamos|te enviamos/i);
+    // Y tampoco AFIRMA un desenlace. El socio de casilla compartida llega a
+    // este mismo estado —`verifyEmail` marca `verified` antes de que exista la
+    // guarda de conflicto, que vive en `createPassword`— y su alta de
+    // contraseña rebota con ACCESS_ERRORS.conflict. El texto manda al correo
+    // cuyo enlace lleva a /acceso, que es donde espera el formulario O la
+    // explicación honesta; nombrarle el asunto real es lo que le permite
+    // encontrarlo.
+    expect(text).toContain("«Creá tu contraseña»");
+    expect(text).not.toMatch(/lo que falta|vas a poder|ya podés/i);
   });
 });
 
