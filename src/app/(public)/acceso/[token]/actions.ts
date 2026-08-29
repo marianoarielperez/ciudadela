@@ -8,7 +8,14 @@ import { audit } from "@/lib/audit";
 import { BCRYPT_COST, validatePassword } from "@/lib/auth/password";
 import { publicTokenLimiter } from "@/lib/auth/rate-limiter";
 import { ACCESS_ERRORS, memberAccess } from "@/lib/members/access";
+import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
+import { makeAdminAccess } from "@/lib/users/admin-access";
+
+// La rama admin se liga acá, donde ya vive `prisma` vía los módulos ligados:
+// `admin-access.ts` solo exporta la factory para no arrastrar el cliente a los
+// tests puros.
+const adminAccess = makeAdminAccess(prisma);
 
 export type AccessState = { error?: string };
 
@@ -36,13 +43,28 @@ export async function createPasswordAction(_prev: AccessState, formData: FormDat
   const ip = await clientIp();
   if (!publicTokenLimiter.check(ip)) return { error: TOO_MANY };
 
-  // `peek` barato ANTES del bcrypt: el hash de costo 12 son ~300 ms de CPU y
-  // sería el recurso a agotar martillando esta ruta con tokens inventados. No
-  // reemplaza al `consume` —eso lo hace `createPassword` adentro de la
-  // transacción, que es lo que decide quién gana entre dos POST simultáneos—.
-  if (!(await tokens.peek(raw, "password_invitation"))) return { error: ACCESS_ERRORS.dead };
+  // ¿De qué circuito es el enlace? El `peek` barato decide la RAMA antes del
+  // bcrypt (~300 ms de CPU); cada rama consume su token adentro de su propia
+  // transacción, que es lo que decide quién gana entre dos POST simultáneos.
+  const isMemberInvite = (await tokens.peek(raw, "password_invitation")) !== null;
+  const isAdminInvite = !isMemberInvite && (await tokens.peek(raw, "admin_invitation")) !== null;
+  if (!isMemberInvite && !isAdminInvite) return { error: ACCESS_ERRORS.dead };
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
+
+  if (isAdminInvite) {
+    const res = await adminAccess.redeemInvitation(raw, passwordHash);
+    if (!res.ok) return { error: res.error };
+    await audit({
+      userId: res.userId,
+      action: "admin_password_set",
+      entity: "user",
+      entityId: res.userId,
+      ip,
+    });
+    redirect("/ingresar?cuenta=lista");
+  }
+
   const res = await memberAccess.createPassword(raw, passwordHash);
   if (!res.ok) return { error: res.error };
 

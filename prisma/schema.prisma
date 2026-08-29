@@ -176,6 +176,9 @@ enum TokenPurpose {
   email_verification
   password_invitation
   password_reset
+  // Invitación de una cuenta de GESTIÓN (módulo de usuarios): cuelga de
+  // `userId`, no de `memberId`. Se canjea en /acceso/[token] por la rama admin.
+  admin_invitation
 }
 
 enum NotificationType {

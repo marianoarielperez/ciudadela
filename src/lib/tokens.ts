@@ -34,6 +34,7 @@ export const TOKEN_TTL: Record<TokenPurpose, number> = {
   email_verification: 7 * 24 * 60 * 60 * 1000,
   password_invitation: 7 * 24 * 60 * 60 * 1000,
   password_reset: 30 * 60 * 1000,
+  admin_invitation: 7 * 24 * 60 * 60 * 1000,
 };
 
 export function hashToken(raw: string): string {

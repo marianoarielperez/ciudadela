@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   activityBadgeVariant, applicationStatusBadgeVariant, arrearsBadgeVariant, backupStateBadgeVariant,
   cronStateBadgeVariant, feeStatusBadgeVariant, memberStatusBadgeVariant, newsStatusBadgeVariant,
-  pendingReceiptBadgeVariant, receiptBadgeVariant, unmatchedStatusBadgeVariant, type BadgeVariant,
+  pendingReceiptBadgeVariant, receiptBadgeVariant, unmatchedStatusBadgeVariant,
+  userAccountBadgeVariant, userRoleBadgeVariant, type BadgeVariant,
 } from "@/lib/admin/status-badges";
 import { UNMATCHED_STATUS_LABELS } from "@/lib/admin/unmatched-labels";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
@@ -151,5 +152,61 @@ describe("pendingReceiptBadgeVariant", () => {
     for (const s of ["not_attempted", "failed", "no_email", "sent"] as const) {
       expect(VARIANTS).toContain(pendingReceiptBadgeVariant(s));
     }
+  });
+});
+
+describe("userRoleBadgeVariant", () => {
+  // La escala es de PESO: el único que puede tocar todo lleva el relleno
+  // celeste, el admin va gris con relleno y el socio con borde fino. Si el
+  // superadmin dejara de ser el único "default", la columna Roles ya no
+  // distinguiría de un vistazo dónde está el poder.
+  it("'superadmin' es el único con relleno celeste", () => {
+    const roles = ["superadmin", "admin", "socio"] as const;
+    expect(roles.filter((r) => userRoleBadgeVariant(r) === "default")).toEqual(["superadmin"]);
+    expect(userRoleBadgeVariant("admin")).toBe("secondary");
+    expect(userRoleBadgeVariant("socio")).toBe("outline");
+    for (const r of roles) expect(VARIANTS).toContain(userRoleBadgeVariant(r));
+  });
+  it("un rol desconocido cae en 'outline', nunca en el celeste del superadmin", () => {
+    // El argumento es un string, no un enum: un rol nuevo en la base llega acá
+    // sin que nadie toque el mapa, y tiene que verse como el más liviano.
+    for (const r of ["tesorero", "", "SUPERADMIN"]) {
+      expect(userRoleBadgeVariant(r)).toBe("outline");
+    }
+  });
+});
+
+describe("userAccountBadgeVariant", () => {
+  // Mismo criterio que el tablero de salud: el verde es el desenlace bueno y el
+  // celeste es "acá hay trabajo". Lo accionable de esta columna son las DOS
+  // cuentas de gestión que no pueden entrar y que el superadmin resuelve
+  // reenviándoles la invitación: la vencida y la que se quedó sin ninguna
+  // (`no_access`). La invitación viva todavía no ocurrió y va con borde fino.
+  const ACCOUNT_STATES = ["active", "disabled", "invited", "invitation_expired", "no_access"] as const;
+
+  it("'active' es el único verde y los dos accionables son los celestes", () => {
+    expect(ACCOUNT_STATES.filter((s) => userAccountBadgeVariant(s) === "success")).toEqual(["active"]);
+    expect(ACCOUNT_STATES.filter((s) => userAccountBadgeVariant(s) === "default"))
+      .toEqual(["invitation_expired", "no_access"]);
+    expect(userAccountBadgeVariant("invited")).toBe("outline");
+    expect(userAccountBadgeVariant("disabled")).toBe("secondary");
+    for (const s of ACCOUNT_STATES) expect(VARIANTS).toContain(userAccountBadgeVariant(s));
+  });
+
+  // El hallazgo que estrenó `no_access`: la cuenta de gestión sin contraseña y
+  // sin ninguna invitación NO puede entrar, así que lo único que no puede ser es
+  // el verde de "Activa" — que es lo que mostraba antes.
+  it("'no_access' no comparte el verde con 'active'", () => {
+    expect(userAccountBadgeVariant("no_access")).not.toBe("success");
+    expect(userAccountBadgeVariant("no_access")).toBe("default");
+  });
+
+  it("ninguno de los cinco es 'ghost' ni 'destructive'", () => {
+    // `ghost` se lee como texto suelto (misma lección que la bandeja), y una
+    // cuenta desactivada o una invitación vencida no son un fallo del sistema:
+    // el rojo de esta pantalla no lo usa ningún estado.
+    const variants = ACCOUNT_STATES.map(userAccountBadgeVariant);
+    expect(variants).not.toContain("ghost");
+    expect(variants).not.toContain("destructive");
   });
 });

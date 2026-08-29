@@ -944,3 +944,29 @@ Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el r
 <p>Y si simplemente querés volver a ser socio, también podés hacerlo: pedí el reingreso en la sede. Tu antigüedad como asociado no se pierde.</p>`),
   };
 }
+
+/** Invitación de una cuenta de GESTIÓN (módulo de usuarios, /admin/usuarios).
+ *
+ *  No saluda por nombre y la plantilla ni siquiera lo recibe: la dirección la
+ *  tipea el superadmin al crear la cuenta — el mismo canal de dedazo que
+ *  `verificationEmail`, y acá el premio sería una cuenta de administración.
+ *  El enlace se canjea en /acceso (rama admin del mismo circuito). */
+export function adminInvitationEmail(opts: { url: string }): Rendered {
+  return {
+    subject: "Tu acceso al panel de administración — Vecinal Ciudadela",
+    text: `La ${ORG} creó una cuenta de administración de su sistema de gestión para esta dirección de correo.
+
+Para activarla, creá tu contraseña desde este enlace:
+
+${opts.url}
+
+El enlace vence en 7 días y se puede usar una sola vez.
+
+Si no esperabas este correo, ignoralo y avisale a la vecinal: nadie puede usar la cuenta sin crear la contraseña.${SIGNATURE}`,
+    html: layout("Tu acceso al panel de administración", `<p>La ${esc(ORG)} creó una <strong>cuenta de administración</strong> de su sistema de gestión para esta dirección de correo.</p>
+<p>Para activarla, creá tu contraseña:</p>
+${button(opts.url, "Crear mi contraseña")}
+<p>El enlace vence en 7 días y se puede usar una sola vez.</p>
+<p>Si no esperabas este correo, ignoralo y avisale a la vecinal: nadie puede usar la cuenta sin crear la contraseña.</p>`),
+  };
+}

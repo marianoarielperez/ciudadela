@@ -7,6 +7,7 @@ import type {
 import type { CronState, PendingReceiptState } from "@/lib/admin/health";
 import type { BackupState } from "@/lib/admin/health-backup";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
+import type { UserAccountState } from "@/lib/users/labels";
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "success" | "link";
 
@@ -130,4 +131,28 @@ export function presentationStatusBadgeVariant(status: PresentationStatus): Badg
   if (status === "observed") return "secondary";
   if (status === "rejected") return "destructive";
   return "outline"; // pending, withdrawn
+}
+
+// Los roles de una cuenta (módulo de usuarios). Por PESO: superadmin con
+// relleno celeste (acá hay poder), admin gris con relleno, socio borde fino.
+export function userRoleBadgeVariant(role: string): BadgeVariant {
+  if (role === "superadmin") return "default";
+  if (role === "admin") return "secondary";
+  return "outline";
+}
+
+// El estado derivado de la cuenta (accountState, @/lib/users/labels). Los dos
+// accionables de la columna llevan el celeste de "acá hay trabajo", y son
+// accionables por lo mismo: la cuenta no puede entrar y el superadmin lo
+// resuelve reenviándole la invitación (o revocándola).
+//   invitation_expired — el enlace se emitió y se venció.
+//   no_access          — no hay enlace: se revocó, o se borró al cambiarle el
+//                        email antes del canje. Misma acción, mismo peso.
+// El verde queda sólo para la cuenta que efectivamente puede entrar; el borde
+// fino, para la invitación viva, que todavía no ocurrió.
+export function userAccountBadgeVariant(state: UserAccountState): BadgeVariant {
+  if (state === "active") return "success";
+  if (state === "disabled") return "secondary";
+  if (state === "invitation_expired" || state === "no_access") return "default";
+  return "outline"; // invited: todavía no ocurrió
 }

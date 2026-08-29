@@ -3,9 +3,11 @@ import {
   classifyDebits, CRON_EXPECTATION, cronState, fetchHealth, safeSummary,
   SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS, type HealthDb,
 } from "@/lib/admin/health";
-import { readBackupHealth } from "@/lib/admin/health-backup";
+import { healthAlerts } from "@/lib/admin/health-alerts";
+import { type BackupHealth, readBackupHealth } from "@/lib/admin/health-backup";
 import { formatRelativeAgo } from "@/lib/format";
 import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
+import { ACTIVE_SUPERADMINS_WHERE, SIGN_IN_READY_SUPERADMINS_WHERE } from "@/lib/users/query";
 
 const NOW = new Date("2026-09-15T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -187,6 +189,9 @@ type Row = Record<string, unknown>;
 function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, cond]) => {
+    // `OR` es una lista de `where`, no un campo: sin esta rama el doble caía en
+    // la comparación por campo y "matcheaba" cualquier cosa.
+    if (key === "OR") return (cond as Row[]).some((c) => matches(row, c));
     const value = row[key];
     if (cond === null) return value === null || value === undefined;
     if (cond instanceof Date) return value instanceof Date && value.getTime() === cond.getTime();
@@ -214,6 +219,10 @@ type NotifRow = {
   id: bigint; sentAt: Date; type: string; status: string; error: string | null;
   payloadSummary: string | null; memberId: number | null; applicationId: number | null;
 };
+type UserRoleRow = {
+  role: { name: string };
+  user: { active: boolean; passwordChangedAt: Date | null; lastLoginAt: Date | null };
+};
 type ReceiptRow = {
   id: number; number: string; issuedAt: Date; emailedAt: Date | null; voidedAt: Date | null;
   payment: {
@@ -231,6 +240,7 @@ function fakeDb(over: Partial<{
   notifications: NotifRow[];
   members: Array<{ id: number; fullName: string }>;
   receipts: ReceiptRow[];
+  roles: UserRoleRow[];
 }> = {}) {
   const events = over.events ?? [];
   const db = {
@@ -262,6 +272,9 @@ function fakeDb(over: Partial<{
     receipt: {
       findMany: vi.fn(async (args: { where?: Row; take?: number }) => query(over.receipts ?? [], args)),
       count: vi.fn(async (args: { where?: Row }) => query(over.receipts ?? [], args).length),
+    },
+    userRole: {
+      count: vi.fn(async (args: { where?: Row }) => query(over.roles ?? [], args).length),
     },
   };
   return db as unknown as HealthDb;
@@ -532,5 +545,100 @@ describe("fetchHealth — recibos sin enviar", () => {
     const h = await fetchHealth(fakeDb({ receipts }), NOW);
     expect(h.receipts.rows).toHaveLength(50);
     expect(h.receipts.total).toBe(60);
+  });
+});
+
+describe("fetchHealth — superadmins que pueden entrar", () => {
+  const role = (
+    name: string, active: boolean, withPassword = true, everSignedIn = false,
+  ): UserRoleRow => ({
+    role: { name },
+    user: {
+      active,
+      passwordChangedAt: withPassword ? hoursAgo(100) : null,
+      lastLoginAt: everSignedIn ? hoursAgo(5) : null,
+    },
+  });
+
+  it("cuenta los superadmin cuya CUENTA está activa y tiene contraseña, y sólo ésos", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [
+        role("superadmin", true),
+        role("superadmin", true),
+        // Desactivada: no puede entrar, así que no repone a nadie.
+        role("superadmin", false),
+        // Otro rol: administrar no es lo mismo que poder tocar la configuración.
+        role("admin", true),
+      ],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(2);
+  });
+
+  // El caso que la verificación en vivo encontró: cuenta de gestión creada,
+  // invitación revocada, rol otorgado. Activa, sin contraseña, sin token y sin
+  // ninguna entrada anterior: hoy no entra. Contarla apagaba la alerta
+  // prometiendo una red inexistente. Es el par del test de arriba: la cuenta
+  // nueva y la cuenta vieja se parecen en `passwordChangedAt: null` y las
+  // separa `lastLoginAt`.
+  it("NO cuenta un superadmin activo que todavía no creó su contraseña ni entró nunca", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [role("superadmin", true), role("superadmin", true, false)],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(1);
+  });
+
+  // El caso de PRODUCCIÓN, medido contra la base antes de desplegar
+  // (29/08/2026): el único superadmin es la cuenta del operador, anterior a la
+  // migración `20260819133654_add_password_changed_at` —que agregó la columna y
+  // no la rellenó—, así que tiene `passwordChangedAt: null` y entra todos los
+  // días. Sin `lastLoginAt` en el criterio, la pantalla de Salud habría nacido
+  // en rojo afirmando que nadie puede administrar el sistema.
+  it("SÍ cuenta un superadmin sin `passwordChangedAt` que ya inició sesión alguna vez", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [role("superadmin", true, false, true)],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(1);
+  });
+
+  // La contracara, que es lo que el criterio tiene que seguir distinguiendo: la
+  // cuenta desactivada no entra ni habiendo entrado antes.
+  it("NO cuenta un superadmin DESACTIVADO por más que tenga entradas anteriores", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [role("superadmin", false, true, true)],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(0);
+  });
+
+  it("sin ninguna fila el conteo es 0 y no un null que la alerta tendría que adivinar", async () => {
+    expect((await fetchHealth(fakeDb(), NOW)).signInReadySuperadmins).toBe(0);
+  });
+
+  // De la fila de la base al renglón del tablero, que es donde el hallazgo
+  // dolía: la alerta se apaga con un segundo superadmin que ENTRA, y sigue
+  // encendida con uno que todavía no creó su contraseña. Con el criterio viejo
+  // —cuentas activas a secas— el segundo caso la apagaba y el tablero decía que
+  // el sistema estaba cubierto por una cuenta que no puede iniciar sesión.
+  it("de punta a punta: sólo un segundo superadmin con contraseña apaga la alerta", async () => {
+    const FRESH: BackupHealth = { state: "fresh", lastOkAt: hoursAgo(6) };
+    const alertsFor = async (roles: UserRoleRow[]) =>
+      healthAlerts(await fetchHealth(fakeDb({ roles }), NOW), FRESH);
+
+    const invited = await alertsFor([role("superadmin", true), role("superadmin", true, false)]);
+    expect(invited.act.map((a) => a.key)).toEqual(["superadmins"]);
+
+    const real = await alertsFor([role("superadmin", true), role("superadmin", true)]);
+    expect(real.act.map((a) => a.key)).toEqual([]);
+  });
+
+  it("consulta con el `where` de la alerta, importado y no copiado", async () => {
+    // Es la invariante del chequeo: con un `where` propio alcanzaría con que se
+    // olvidara una cláusula para que el panel dijera "hay dos" mientras el
+    // sistema está a una baja de socio del lockout. Y es a propósito OTRO
+    // `where` que el de las guardas del dominio (`ACTIVE_SUPERADMINS_WHERE`,
+    // que no mira `passwordChangedAt`): son dos preguntas distintas.
+    const db = fakeDb() as unknown as { userRole: { count: ReturnType<typeof vi.fn> } };
+    await fetchHealth(db as unknown as HealthDb, NOW);
+    expect(db.userRole.count).toHaveBeenCalledWith({ where: SIGN_IN_READY_SUPERADMINS_WHERE });
+    expect(SIGN_IN_READY_SUPERADMINS_WHERE).not.toEqual(ACTIVE_SUPERADMINS_WHERE);
   });
 });
