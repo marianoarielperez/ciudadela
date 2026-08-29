@@ -60,6 +60,9 @@ function snapshot(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
     // Dos superadmins que pueden entrar es el sistema sano: con uno solo,
     // perder esa cuenta obliga a entrar por SQL (ver el describe de más abajo).
     signInReadySuperadmins: 2,
+    // §7.3: nadie a mitad del canje del enlace de invitación. La pantalla lo
+    // consume en la tarea 5; acá el fixture sólo declara el sistema sano.
+    stuckAccess: [],
     ...over,
   };
 }

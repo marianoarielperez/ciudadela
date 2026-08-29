@@ -201,6 +201,7 @@ function matches(row: Row, where: Row | undefined): boolean {
       if ("in" in c) return (c.in as unknown[]).includes(value);
       if ("notIn" in c) return !(c.notIn as unknown[]).includes(value);
       if ("gte" in c) return value instanceof Date && value.getTime() >= (c.gte as Date).getTime();
+      if ("gt" in c) return value instanceof Date && value.getTime() > (c.gt as Date).getTime();
       return matches((value ?? {}) as Row, c);
     }
     return value === cond;
@@ -223,6 +224,16 @@ type UserRoleRow = {
   role: { name: string };
   user: { active: boolean; passwordChangedAt: Date | null; lastLoginAt: Date | null };
 };
+/** Fila del padrón para la consulta de §7.3 (verificados sin cuenta). Trae los
+ *  campos que el `where` REAL filtra, no sólo los que la función pura mira: si
+ *  el doble los sintetizara, borrar `userId: null` de la consulta no rompería
+ *  ningún test. */
+type StuckMemberRow = {
+  id: number; fullName: string; status: string; emailStatus: string;
+  userId: number | null; emailVerifiedAt: Date | null;
+  tokens: Array<{ purpose: string; usedAt: Date | null; expiresAt: Date }>;
+};
+
 type ReceiptRow = {
   id: number; number: string; issuedAt: Date; emailedAt: Date | null; voidedAt: Date | null;
   payment: {
@@ -239,6 +250,7 @@ function fakeDb(over: Partial<{
   audit: AuditRow[];
   notifications: NotifRow[];
   members: Array<{ id: number; fullName: string }>;
+  stuck: StuckMemberRow[];
   receipts: ReceiptRow[];
   roles: UserRoleRow[];
 }> = {}) {
@@ -267,7 +279,22 @@ function fakeDb(over: Partial<{
       count: vi.fn(async (args: { where?: Row }) => query(over.notifications ?? [], args).length),
     },
     member: {
-      findMany: vi.fn(async (args: { where?: Row }) => query(over.members ?? [], args)),
+      // Por acá pasan DOS consultas distintas y el doble DESPACHA por el `where`
+      // que recibe, no lo re-implementa: la de §7.3 es la única que filtra por
+      // `emailStatus`; la otra resuelve nombres por id. Un fake que sintetizara
+      // el filtro dejaría cláusulas del `where` real sin ejercitar (lección del
+      // Módulo 6).
+      findMany: vi.fn(async (args: { where?: Row; select?: Row }) => {
+        if (args.where?.emailStatus === undefined) return query(over.members ?? [], args);
+        // El `where` anidado de las invitaciones VIVAS también se aplica de
+        // verdad: la función pura sólo decide frescura, así que si el doble
+        // dejara pasar una usada o vencida, el corte no se estaría probando.
+        const tokenWhere = (args.select?.tokens as { where?: Row } | undefined)?.where;
+        return query(over.stuck ?? [], args).map((m) => ({
+          id: m.id, fullName: m.fullName, emailVerifiedAt: m.emailVerifiedAt,
+          tokens: m.tokens.filter((t) => matches(t as unknown as Row, tokenWhere)),
+        }));
+      }),
     },
     receipt: {
       findMany: vi.fn(async (args: { where?: Row; take?: number }) => query(over.receipts ?? [], args)),
@@ -640,5 +667,65 @@ describe("fetchHealth — superadmins que pueden entrar", () => {
     await fetchHealth(db as unknown as HealthDb, NOW);
     expect(db.userRole.count).toHaveBeenCalledWith({ where: SIGN_IN_READY_SUPERADMINS_WHERE });
     expect(SIGN_IN_READY_SUPERADMINS_WHERE).not.toEqual(ACTIVE_SUPERADMINS_WHERE);
+  });
+});
+
+describe("fetchHealth — verificados sin cuenta (§7.3)", () => {
+  const stuck = (over: Partial<StuckMemberRow> = {}): StuckMemberRow => ({
+    id: 106, fullName: "Vecina Uno", status: "active", emailStatus: "verified",
+    userId: null, emailVerifiedAt: hoursAgo(200), tokens: [], ...over,
+  });
+  const token = (over: Partial<StuckMemberRow["tokens"][number]> = {}) =>
+    ({ purpose: "password_invitation", usedAt: null, expiresAt: hoursAgo(-100), ...over });
+
+  it("sin nadie a mitad del canje la lista viene vacía, no en null", async () => {
+    expect((await fetchHealth(fakeDb(), NOW)).stuckAccess).toEqual([]);
+  });
+
+  it("un socio vigente verificado, sin cuenta y sin invitación viva se lista como 'none'", async () => {
+    // El caso del socio 106: verificó, el correo de la invitación nunca llegó y
+    // el enlace terminó venciendo. Hoy no hay ninguna pantalla que lo muestre.
+    const h = await fetchHealth(fakeDb({ stuck: [stuck()] }), NOW);
+    expect(h.stuckAccess).toEqual([{
+      memberId: 106, memberName: "Vecina Uno", verifiedAt: hoursAgo(200),
+      invite: "none", inviteExpiresAt: null,
+    }]);
+  });
+
+  it("el que tiene la invitación fresca NO se lista: es el transitorio normal", async () => {
+    const h = await fetchHealth(fakeDb({ stuck: [stuck({ tokens: [token()] })] }), NOW);
+    expect(h.stuckAccess).toEqual([]);
+  });
+
+  it("una invitación USADA o VENCIDA no cuenta como viva: el `where` anidado es parte del corte", async () => {
+    const usada = await fetchHealth(fakeDb({
+      stuck: [stuck({ tokens: [token({ usedAt: hoursAgo(3) })] })],
+    }), NOW);
+    expect(usada.stuckAccess[0]).toMatchObject({ invite: "none" });
+    const vencida = await fetchHealth(fakeDb({
+      stuck: [stuck({ tokens: [token({ expiresAt: hoursAgo(1) })] })],
+    }), NOW);
+    expect(vencida.stuckAccess[0]).toMatchObject({ invite: "none" });
+    // Y un token de OTRO propósito tampoco: el de recuperación no da acceso a
+    // quien todavía no tiene cuenta.
+    const otro = await fetchHealth(fakeDb({
+      stuck: [stuck({ tokens: [token({ purpose: "password_reset" })] })],
+    }), NOW);
+    expect(otro.stuckAccess[0]).toMatchObject({ invite: "none" });
+  });
+
+  it("la consulta filtra por vigencia, verificación y ausencia de cuenta", async () => {
+    // Las tres cláusulas del `where` real, ejercitadas de a una: el suspendido
+    // sigue siendo socio y entra; la baja, el no verificado y el que YA tiene
+    // cuenta no.
+    const h = await fetchHealth(fakeDb({
+      stuck: [
+        stuck({ id: 1, status: "suspended" }),
+        stuck({ id: 2, status: "withdrawn" }),
+        stuck({ id: 3, emailStatus: "pending" }),
+        stuck({ id: 4, userId: 77 }),
+      ],
+    }), NOW);
+    expect(h.stuckAccess.map((r) => r.memberId)).toEqual([1]);
   });
 });

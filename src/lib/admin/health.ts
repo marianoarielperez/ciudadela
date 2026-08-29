@@ -196,6 +196,57 @@ export type PendingReceipt = {
 
 export type ReceiptsHealth = { rows: PendingReceipt[]; total: number };
 
+/** §7.3 del diagnóstico de la invitación perdida: un socio VIGENTE con el email
+ *  verificado y sin cuenta quedó a mitad del canje. El estado es normal y
+ *  transitorio mientras su invitación está viva y fresca (acaba de verificar,
+ *  todavía no eligió contraseña); lo anómalo es que PERSISTA. */
+export type StuckAccessRow = {
+  memberId: number;
+  memberName: string;
+  /** Cuándo verificó, para que el operador dimensione la espera. */
+  verifiedAt: Date | null;
+  /** `none` = sin invitación viva (venció, o se revocó sin reemplazo);
+   *  `expiring` = viva pero le quedan menos de `INVITE_EXPIRING_HOURS`. */
+  invite: "none" | "expiring";
+  inviteExpiresAt: Date | null;
+};
+
+/** Frescura de la invitación viva: por debajo de esto, "está por vencer" y el
+ *  socio entra a la lista aunque el enlace todavía sirva. 48 de las 168 h del
+ *  TTL: si en cinco días no lo usó, esperar los dos que quedan es apostar a
+ *  que el correo aparezca solo. */
+export const INVITE_EXPIRING_HOURS = 48;
+
+/** Función PURA (patrón de `classifyDebits`): la consulta ya filtró vigencia
+ *  (socio vigente, email verificado, sin cuenta) e invitaciones VIVAS; acá sólo
+ *  se decide la frescura. Review, no act: no hay nada roto — hay gente
+ *  esperando, y la salida que lo apaga es el botón de envío de la ficha. */
+export function classifyStuckAccess(
+  rows: ReadonlyArray<{
+    id: number; fullName: string; emailVerifiedAt: Date | null;
+    tokens: ReadonlyArray<{ expiresAt: Date }>;
+  }>,
+  now: Date,
+): StuckAccessRow[] {
+  const soon = new Date(now.getTime() + INVITE_EXPIRING_HOURS * 3_600_000);
+  const out: StuckAccessRow[] = [];
+  for (const r of rows) {
+    // Más de una viva no puede haber (revocar-al-emitir), pero si hubiera,
+    // manda la que más lejos vence: es la que decide si hay que actuar.
+    const best = r.tokens.reduce<Date | null>(
+      (acc, t) => (acc === null || t.expiresAt > acc ? t.expiresAt : acc),
+      null,
+    );
+    if (best !== null && best > soon) continue; // fresca: transitorio normal
+    out.push({
+      memberId: r.id, memberName: r.fullName, verifiedAt: r.emailVerifiedAt,
+      invite: best === null ? "none" : "expiring",
+      inviteExpiresAt: best,
+    });
+  }
+  return out;
+}
+
 export type HealthSnapshot = {
   now: Date;
   crons: CronHealth[];
@@ -232,6 +283,9 @@ export type HealthSnapshot = {
    *  común declarando su baja deja el sistema sin ninguno, y la recuperación es
    *  SQL contra la base de producción. */
   signInReadySuperadmins: number;
+  /** Socios vigentes con el email verificado, sin cuenta, y sin una invitación
+   *  fresca que los cubra. Ver `classifyStuckAccess`. */
+  stuckAccess: StuckAccessRow[];
 };
 
 /** Ventana del contador de firmas rechazadas. */
@@ -376,7 +430,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
   const [
     runs, lastEvent, unprocessedWithError, signatureRejections, legacyIpns, inboxOpen, inboxTotal,
     subscriptionRows, mismatchRows, mismatchesEver, failedRows, failedEver, receiptRows, receiptsTotal,
-    signInReadySuperadmins,
+    signInReadySuperadmins, stuckRows,
   ] = await Promise.all([
     // Una consulta por job y no un groupBy: son cinco, el índice
     // `[job, startedAt]` está hecho para esto y el groupBy no puede traer la
@@ -442,6 +496,23 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
     // superadmins pueden entrar hoy?". La de la ficha y la guarda —"¿cuántos
     // tienen el rol?"— es `countActiveSuperadmins`, y son distintas a propósito.
     countSignInReadySuperadmins(db),
+    // §7.3: verificados sin cuenta. Acotado por el padrón (hoy son unidades),
+    // sin `take`. El filtro de vigencia va acá; el de frescura, en
+    // `classifyStuckAccess`, que es puro y se prueba por tabla.
+    db.member.findMany({
+      where: {
+        status: { in: ["active", "suspended"] },
+        emailStatus: "verified",
+        userId: null,
+      },
+      select: {
+        id: true, fullName: true, emailVerifiedAt: true,
+        tokens: {
+          where: { purpose: "password_invitation", usedAt: null, expiresAt: { gt: now } },
+          select: { expiresAt: true },
+        },
+      },
+    }),
   ]);
 
   // El `detail` de un asiento es JSON libre: se acepta el número y nada más.
@@ -518,6 +589,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
     })),
     failedEver,
     signInReadySuperadmins,
+    stuckAccess: classifyStuckAccess(stuckRows, now),
     receipts: {
       total: receiptsTotal,
       rows: receiptRows.map((r) => {
