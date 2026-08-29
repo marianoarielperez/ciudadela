@@ -76,7 +76,7 @@ function Section({ id, icon, title, hint, children }: {
 
 /** Lo primero y —el martes que todo anda— lo único que el operador necesita leer.
  *
- *  Un tablero que obliga a recorrer seis paneles para descubrir que no pasa nada
+ *  Un tablero que obliga a recorrer siete paneles para descubrir que no pasa nada
  *  se deja de mirar a la semana. Acá arriba está la respuesta: si no hay nada
  *  para atender, lo dice en una línea verde y el resto de la pantalla queda como
  *  consulta.
@@ -320,7 +320,7 @@ const BACKUP_EXPLANATION: Record<BackupState, string> = {
 export function BackupPanel({ backup, now }: { backup: BackupHealth; now: Date }) {
   return (
     // `section` + `h2` reales aunque el panel sea una tarjeta: son dos de los
-    // seis bloques de la pantalla y quien la recorre por encabezados tiene que
+    // siete bloques de la pantalla y quien la recorre por encabezados tiene que
     // encontrarlos. El `id` es además el ancla a la que apunta el veredicto.
     <section id="backup" aria-labelledby="backup-title" className="scroll-mt-4">
       <Card className="h-full">
@@ -740,12 +740,15 @@ export function StuckAccessPanel({ rows }: { rows: StuckAccessRow[] }) {
             </TableBody>
           </Table>
           <p className="max-w-3xl text-xs text-muted-foreground">
-            Confirmaron su casilla y nunca crearon la contraseña: el enlace de invitación se les perdió, o
-            lleva más de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas sin usarse. La salida es el
+            Confirmaron su casilla y nunca crearon la contraseña: el correo con el enlace no les llegó o se
+            les perdió, y la invitación lleva más de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas
+            sin usarse. Con <code>EMAIL_ALLOWLIST</code> puesta —el estado de este sitio hasta el
+            lanzamiento— ese correo ni siquiera sale, así que esta lista se llena sola. La salida es el
             botón de envío de su ficha (pestaña Acceso), que revoca el enlace anterior y manda uno nuevo por
-            correo. Quien tiene una invitación viva emitida hace menos de{" "}
-            <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas no aparece acá: todavía no hay nada que
-            destrabar.
+            correo. Si esa casilla ya es la cuenta de acceso de otro socio, el reenvío no lo destraba: ahí
+            la salida es cargarle otro email a la ficha. Quien tiene una invitación viva emitida hace menos
+            de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas no aparece acá: todavía no hay nada
+            que destrabar.
           </p>
         </>
       )}

@@ -13,7 +13,7 @@ import { CRON_JOB_LIST } from "@/lib/cron/auth";
 
 // La pantalla de salud no se puede abrir en un navegador desde acá (no hay
 // sesión), así que lo que se verifica es lo que decide si el operador la va a
-// mirar: el VEREDICTO —qué grita y qué no— y el marcado de los seis paneles.
+// mirar: el VEREDICTO —qué grita y qué no— y el marcado de los siete paneles.
 //
 // El modo de falla que estos tests existen para impedir es uno solo: que la
 // pantalla nazca en rojo por cosas que no requieren acción. Un cron que decidió
@@ -811,6 +811,16 @@ describe("StuckAccessPanel", () => {
     expect(html).toContain("pestaña Acceso");
     expect(html).toContain("revoca el enlace anterior");
     expect(html).toContain("todavía no hay nada que destrabar");
+    // La causa más frecuente hoy no es el descuido del socio: con la allowlist
+    // puesta el correo NI SIQUIERA SALE, igual que en Recibos sin enviar. Si el
+    // panel sólo dijera "se les perdió", acusaría al vecino por el entorno.
+    expect(html).toContain("no les llegó");
+    expect(html).toContain("EMAIL_ALLOWLIST");
+    // Y el reenvío no es la salida universal: la casilla compartida (el
+    // matrimonio de ACCESS_ERRORS.conflict) rebota igual, cuantas veces se
+    // reenvíe. Ahí lo que destraba es otro email en la ficha.
+    expect(html).toContain("el reenvío no lo destraba");
+    expect(html).toContain("cargarle otro email a la ficha");
     // La ventana de frescura se escribe desde la constante: la copia no puede
     // divergir de la regla que arma la lista.
     expect(html).toContain(String(INVITE_FRESH_HOURS));

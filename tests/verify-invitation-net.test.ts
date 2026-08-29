@@ -28,7 +28,13 @@ const h = vi.hoisted(() => {
   return {
     state, tokens, tx,
     applicationSvc: { verifyEmail: vi.fn(async () => {}) },
-    prisma: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
+    // Las lecturas de `deadCopyFor` van por el cliente de arriba (fuera de la
+    // transacción, que ya hizo rollback): el doble las sirve del mismo estado.
+    prisma: {
+      $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+      application: { findUnique: vi.fn(async () => state.application) },
+      member: { findUnique: vi.fn(async () => state.member) },
+    },
     verifyEmail: vi.fn(),
     sendAfterVerification: vi.fn(async () => {}),
   };
@@ -64,7 +70,9 @@ vi.mock("@/lib/members/access", async () => {
   const actual = await vi.importActual<typeof import("@/lib/members/access")>("@/lib/members/access");
   return {
     ACCESS_ERRORS: actual.ACCESS_ERRORS,
+    APPLICATION_DEAD_COPY: actual.APPLICATION_DEAD_COPY,
     canRedeem: actual.canRedeem,
+    deadVerificationCopy: actual.deadVerificationCopy,
     applyEmailVerification: actual.applyEmailVerification,
     memberAccess: { verifyEmail: h.verifyEmail },
   };
@@ -75,6 +83,7 @@ vi.mock("@/lib/members/invitation-email", () => ({
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
 import { confirmEmailAction } from "@/app/(public)/verificar/[token]/actions";
+import { APPLICATION_DEAD_COPY } from "@/lib/members/access";
 
 const APP_EMAIL = "vecina@example.com";
 
@@ -86,6 +95,11 @@ function formDataFor(token = "RAW") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` borra las llamadas pero NO las implementaciones: sin esto,
+  // el `mockResolvedValue` de un describe sobrevive al siguiente y el resultado
+  // depende del orden en que corren los bloques.
+  h.tokens.peek.mockResolvedValue(null);
+  h.tokens.consume.mockResolvedValue(null);
   h.state.application = null;
   h.state.member = null;
 });
@@ -121,6 +135,9 @@ describe("rama de SOLICITUD asentada: misma red, mismo orden", () => {
       "NEXT_REDIRECT:/acceso/INVITE-NUEVA",
     );
     expect(h.sendAfterVerification).toHaveBeenCalledExactlyOnceWith(3, "INVITE-NUEVA");
+    // UN solo token: el del redirect es el mismo que viaja por correo. Un
+    // segundo `issue` habría revocado al primero y roto el enlace del redirect.
+    expect(h.tokens.issue).toHaveBeenCalledTimes(1);
   });
 
   it("si la ficha ya tenía cuenta, no hay invitación ni correo", async () => {
@@ -129,6 +146,19 @@ describe("rama de SOLICITUD asentada: misma red, mismo orden", () => {
     h.state.application = { id: 5, status: "completed", email: APP_EMAIL, memberId: 3 };
     h.state.member = { id: 3, status: "active", email: APP_EMAIL, userId: 77 };
     await expect(confirmEmailAction({}, formDataFor())).rejects.toThrow("NEXT_REDIRECT:/ingresar");
+    expect(h.sendAfterVerification).not.toHaveBeenCalled();
+  });
+
+  // Doble POST simultáneo (dos pestañas, o el reintento del cliente de correo):
+  // el `peek` de los dos ve el token vivo y el UPDATE condicional del `consume`
+  // lo gana exactamente uno. El PERDEDOR llega acá con la verificación ya hecha,
+  // y el genérico le mandaría a pedir un reenvío que para una solicitud no
+  // existe.
+  it("el perdedor de un doble POST simultáneo no recibe el genérico imposible", async () => {
+    h.tokens.peek.mockResolvedValue({ applicationId: 5 });
+    h.tokens.consume.mockResolvedValue(null);
+    h.state.application = { id: 5, status: "submitted", email: APP_EMAIL, memberId: null };
+    expect(await confirmEmailAction({}, formDataFor())).toEqual({ error: APPLICATION_DEAD_COPY });
     expect(h.sendAfterVerification).not.toHaveBeenCalled();
   });
 });

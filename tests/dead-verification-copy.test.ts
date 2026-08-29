@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   verifyEmail: vi.fn(),
   ownerOf: vi.fn(async (): Promise<unknown> => null),
   memberFindUnique: vi.fn(async (): Promise<unknown> => null),
+  applicationFindUnique: vi.fn(async (): Promise<unknown> => null),
   sendAfterVerification: vi.fn(async () => {}),
 }));
 
@@ -16,7 +17,10 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: h.memberFindUnique } },
+  prisma: {
+    member: { findUnique: h.memberFindUnique },
+    application: { findUnique: h.applicationFindUnique },
+  },
 }));
 vi.mock("@/lib/auth/rate-limiter", () => ({
   publicTokenLimiter: { check: vi.fn(() => true) },
@@ -42,7 +46,7 @@ vi.mock("@/lib/members/invitation-email", () => ({
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
 import { confirmEmailAction } from "@/app/(public)/verificar/[token]/actions";
-import { ACCESS_ERRORS, deadVerificationCopy } from "@/lib/members/access";
+import { ACCESS_ERRORS, APPLICATION_DEAD_COPY, deadVerificationCopy } from "@/lib/members/access";
 
 function formDataFor(token = "RAW") {
   const fd = new FormData();
@@ -54,6 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.ownerOf.mockResolvedValue(null);
   h.memberFindUnique.mockResolvedValue(null);
+  h.applicationFindUnique.mockResolvedValue(null);
 });
 
 // La tabla entera de casos, sin base (patrón de eligibility.ts). La única
@@ -148,5 +153,37 @@ describe("el segundo POST del incidente (§7.2, cableado de la action)", () => {
     h.verifyEmail.mockResolvedValue({ ok: false, error: ACCESS_ERRORS.withdrawn });
     expect(await confirmEmailAction({}, formDataFor())).toEqual({ error: ACCESS_ERRORS.withdrawn });
     expect(h.ownerOf).not.toHaveBeenCalled();
+  });
+});
+
+// Un token de SOLICITUD que llega muerto a la rama de ficha (el `peek` no lo
+// resolvió: ya estaba usado o vencido). El genérico de `ACCESS_ERRORS.dead`
+// manda a "pedí a la vecinal que te lo reenvíe", y para una solicitud ese
+// reenvío NO EXISTE — ver el comentario de `ownerOf` en `@/lib/tokens`.
+describe("enlace muerto de una SOLICITUD (§7.2, la rama que faltaba)", () => {
+  beforeEach(() => {
+    h.verifyEmail.mockResolvedValue({ ok: false, error: ACCESS_ERRORS.dead });
+    h.ownerOf.mockResolvedValue({ memberId: null, applicationId: 5 });
+  });
+
+  it("la solicitud ya se asentó y su ficha quedó verificada sin cuenta → la verdad", async () => {
+    h.applicationFindUnique.mockResolvedValue({ memberId: 3 });
+    h.memberFindUnique.mockResolvedValue({ status: "active", emailStatus: "verified", userId: null });
+    expect(await confirmEmailAction({}, formDataFor())).toEqual({
+      error: ACCESS_ERRORS.verifiedNoAccount,
+    });
+  });
+
+  it("la ficha de la solicitud YA tiene cuenta → el texto de solicitud, nunca el genérico", async () => {
+    h.applicationFindUnique.mockResolvedValue({ memberId: 3 });
+    h.memberFindUnique.mockResolvedValue({ status: "active", emailStatus: "verified", userId: 9 });
+    // El genérico prometería un reenvío que para este circuito no existe.
+    expect(await confirmEmailAction({}, formDataFor())).toEqual({ error: APPLICATION_DEAD_COPY });
+  });
+
+  it("la solicitud todavía no tiene ficha (viva o cerrada) → el texto de solicitud", async () => {
+    h.applicationFindUnique.mockResolvedValue({ memberId: null });
+    expect(await confirmEmailAction({}, formDataFor())).toEqual({ error: APPLICATION_DEAD_COPY });
+    expect(h.memberFindUnique).not.toHaveBeenCalled();
   });
 });

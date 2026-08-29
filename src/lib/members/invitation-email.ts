@@ -20,8 +20,9 @@
 //    argumento del reenvío del panel (`templates.ts`): a esta rama sólo se
 //    llega con el email confirmado por la propia persona haciendo clic.
 import type { PrismaClient } from "@/generated/prisma/client";
-import { mailer } from "@/lib/email";
+import { failureCode, mailer } from "@/lib/email";
 import { portalInvite } from "@/lib/email/templates";
+import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import { prisma } from "@/lib/prisma";
 
 type Deps = {
@@ -38,9 +39,17 @@ export function makeInvitationEmailer(deps: Deps) {
         // consulta corre después del commit, donde ya no bloquea nada.
         const member = await deps.db.member.findUnique({
           where: { id: memberId },
-          select: { email: true, fullName: true },
+          select: { email: true, fullName: true, emailStatus: true },
         });
         if (!member?.email) return;
+        // `emailStatus` no es una guarda cosmética: `portalInvite` SALUDA POR
+        // NOMBRE, y eso sólo es legítimo hacia una casilla confirmada por su
+        // propio titular (`templates.ts`). Los dos llamadores acaban de escribir
+        // `verified` en la misma transacción, así que en el camino feliz esto no
+        // corta nada; lo que hace es volver ESTRUCTURAL una invariante que hoy
+        // depende de quién llame — un tercer call-site que mande la red desde
+        // otro lado no puede filtrarle el nombre de un socio a un buzón ajeno.
+        if (member.emailStatus !== "verified") return;
         const base = process.env.AUTH_URL ?? "http://localhost:3000";
         const { message, summary } = portalInvite({
           kind: "password_invitation", name: member.fullName, baseUrl: base, token: rawInvite,
@@ -49,9 +58,15 @@ export function makeInvitationEmailer(deps: Deps) {
           memberId, to: member.email, type: "password_invitation", message, summary,
         });
       } catch (e) {
-        // Sólo el código: el error de nodemailer trae el sobre SMTP con la
-        // dirección del socio en claro (Ley 25.326, docs/08).
-        const code = typeof e === "object" && e !== null && "code" in e ? String(e.code) : "unknown";
+        // Sólo el código, y el MISMO extractor que usa el mailer: el error de
+        // nodemailer trae el sobre SMTP con la dirección del socio en claro
+        // (Ley 25.326, docs/08).
+        const code = failureCode(e);
+        // Un bloqueo por EMAIL_ALLOWLIST no es un fallo: es el entorno de prueba
+        // andando, el transporte ya avisó con su propio `console.warn` y el
+        // mailer tampoco escribe una fila `failed`. Loguearlo como error acá
+        // sería la misma alarma que enseña a ignorar los logs.
+        if (code === ALLOWLIST_BLOCK_CODE) return;
         console.error("[verificar] no salió el correo de invitación del socio", memberId, "code:", code);
       }
     },

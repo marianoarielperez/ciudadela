@@ -39,7 +39,9 @@ export const ACCESS_ERRORS = {
    *  —verificada y sin cuenta— y su alta de contraseña va a rebotar con
    *  `ACCESS_ERRORS.conflict`. Por eso el texto NO promete que crear la
    *  contraseña vaya a funcionar: manda al correo cuyo enlace lleva a `/acceso`,
-   *  que es la pantalla que explica ese caso entero. «Creá tu contraseña» es el
+   *  la pantalla donde el trámite sigue. Ojo con lo que /acceso muestra: al
+   *  abrirla se ve el formulario, y la explicación del conflicto recién aparece
+   *  al enviarlo (la guarda vive en `createPassword`). «Creá tu contraseña» es el
    *  asunto real de la invitación (`src/lib/email/templates.ts`): se lo nombra
    *  para que la persona lo encuentre en su bandeja. */
   verifiedNoAccount:
@@ -59,6 +61,18 @@ export const ACCESS_ERRORS = {
   // Mostrarle al socio el texto de arriba sería directamente falso.
   unavailable: "No pudimos completar el alta por un problema técnico. Comunicate con la vecinal.",
 } as const;
+
+/** El enlace muerto de una SOLICITUD del wizard, que NO puede mandar a pedir un
+ *  reenvío que no existe: el token de verificación de una solicitud se emite UNA
+ *  sola vez, al crearla (el reenvío público del wizard rota el token de RETOME,
+ *  que es otro). Ver el comentario de `ownerOf` en `@/lib/tokens`.
+ *
+ *  Vive acá —y no en la página de /verificar, que es donde nació— porque lo usan
+ *  las dos puntas: el GET que renderiza la pantalla y el POST de la action. Es la
+ *  misma lección de `deadVerificationCopy` y de `coverageFloor`: compartir la
+ *  constante, no copiarla. */
+export const APPLICATION_DEAD_COPY =
+  "Este enlace de verificación ya fue usado o venció, y es de un solo uso. Si tu solicitud sigue en trámite, comunicate con la Asociación Vecinal.";
 
 // ── Lo que las páginas públicas de canje muestran ────────────────────────────
 //

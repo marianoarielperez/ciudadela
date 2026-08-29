@@ -15,7 +15,8 @@ import { LIVE_APPLICATION_STATUSES, makeApplicationService } from "@/lib/applica
 import { audit } from "@/lib/audit";
 import { publicTokenLimiter } from "@/lib/auth/rate-limiter";
 import {
-  ACCESS_ERRORS, applyEmailVerification, canRedeem, deadVerificationCopy, memberAccess,
+  ACCESS_ERRORS, APPLICATION_DEAD_COPY, applyEmailVerification, canRedeem, deadVerificationCopy,
+  memberAccess,
 } from "@/lib/members/access";
 import { invitationEmailer } from "@/lib/members/invitation-email";
 import { prisma } from "@/lib/prisma";
@@ -34,7 +35,47 @@ export type VerifyState = { error?: string; verified?: "pending" | "closed" };
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
 // función async (lo exportado es un endpoint), y una constante rompe el build.
 const TOO_MANY = "Demasiados intentos desde tu conexión. Probá de nuevo en un rato.";
-const DEAD_LINK = "El enlace ya fue usado o venció.";
+
+// §7.2: qué decir ante un enlace de verificación MUERTO, con el dueño ya
+// conocido. Es UNA función para los dos caminos de la action —el `consume` que
+// no ganó en la rama de solicitud y el `dead` de la rama de ficha— por la misma
+// razón de siempre (`coverageFloor`): con una copia por camino, alcanza con que
+// alguien toque una para que las dos puntas empiecen a decir cosas distintas
+// sobre el mismo hecho.
+//
+// Las dos verdades que traduce:
+//  - Si el trámite de fondo SÍ avanzó (email verificado, cuenta sin crear), lo
+//    dice: es el incidente del socio 106.
+//  - Y si el enlace era de una SOLICITUD, el genérico NO sirve ni siquiera como
+//    caída: "pedí a la vecinal que te lo reenvíe" manda a pedir algo que nadie
+//    puede dar —el token de verificación de una solicitud se emite una sola vez
+//    (ver `ownerOf` en `@/lib/tokens`)—. Por eso el fallback de esa rama es
+//    `APPLICATION_DEAD_COPY` y no `ACCESS_ERRORS.dead`.
+async function deadCopyFor(applicationId: number | null, memberId: number | null): Promise<string> {
+  // El select es el mínimo y sin nombre, igual que en la página: esta ruta es
+  // anónima y el enlace pudo haber ido a la casilla equivocada.
+  const readMember = (id: number) =>
+    prisma.member.findUnique({
+      where: { id },
+      select: { status: true, emailStatus: true, userId: true },
+    });
+
+  if (memberId) return deadVerificationCopy(await readMember(memberId));
+
+  if (applicationId) {
+    const application = await prisma.application.findUnique({
+      where: { id: applicationId },
+      select: { memberId: true },
+    });
+    // Solicitud viva, o cerrada sin ficha: no hay ningún trámite de fondo que
+    // contar, y el texto de solicitud es lo único cierto.
+    if (!application?.memberId) return APPLICATION_DEAD_COPY;
+    const copy = deadVerificationCopy(await readMember(application.memberId));
+    return copy === ACCESS_ERRORS.dead ? APPLICATION_DEAD_COPY : copy;
+  }
+
+  return ACCESS_ERRORS.dead;
+}
 
 async function clientIp(): Promise<string> {
   // Sólo X-Real-IP, como el login y el modo carga: el resto de las cabeceras de
@@ -114,7 +155,12 @@ export async function confirmEmailAction(_prev: VerifyState, formData: FormData)
       return { ...closed, member: await applyEmailVerification(tx, member, now) };
     });
 
-    if (!outcome) return { error: DEAD_LINK };
+    // El `consume` no lo ganó esta petición (o la solicitud desapareció). El
+    // caso normal es el doble POST simultáneo: el otro click verificó y pudo
+    // haber llegado hasta la ficha, así que el texto se decide con el estado de
+    // fondo y no con el del token. `peeked` es el peek PREVIO a la transacción,
+    // que es de donde sale el `applicationId`.
+    if (!outcome) return { error: await deadCopyFor(peeked.applicationId, null) };
     // Sin `userId` ni `detail`: la persona no tiene sesión y la solicitud ya
     // queda identificada por su id. Ni el email ni el token van al log
     // (docs/08, Ley 25.326).
@@ -148,17 +194,17 @@ export async function confirmEmailAction(_prev: VerifyState, formData: FormData)
     // §7.2: el "ya fue usado" genérico es cierto sobre el token y puede ser
     // falso sobre la persona — su verificación pudo haber funcionado un
     // segundo antes (segunda pestaña, botón atrás). `ownerOf` lee el dueño
-    // aunque el token esté usado; la ficha decide el texto. Sin envíos acá:
-    // el correo ya salió (o saldrá por el reenvío del panel).
+    // aunque el token esté usado; el estado de fondo decide el texto. Sin
+    // envíos acá: el correo ya salió (o saldrá por el reenvío del panel).
+    //
+    // Un token de SOLICITUD también cae en esta rama —`memberAccess.verifyEmail`
+    // no lo reconoce— y ahí el genérico es directamente imposible de cumplir:
+    // `deadCopyFor` lo traduce.
     if (res.error === ACCESS_ERRORS.dead) {
       const owner = await tokens.ownerOf(raw, "email_verification");
-      if (owner?.memberId) {
-        const member = await prisma.member.findUnique({
-          where: { id: owner.memberId },
-          select: { status: true, emailStatus: true, userId: true },
-        });
-        return { error: deadVerificationCopy(member) };
-      }
+      // Sin rastro del token no hay nada que leer y queda el genérico, que es
+      // el correcto para el circuito de fichas.
+      if (owner) return { error: await deadCopyFor(owner.applicationId, owner.memberId) };
     }
     return { error: res.error };
   }
