@@ -49,6 +49,10 @@ export type MinuteExportModel = {
   minuteLabel: string;
   description: string | null;
   sections: Array<{ heading: string; lines: string[] }>;
+  /** Cantidad de renglones. ÚNICA derivación: el `totalLine` y el `entries`
+   *  del asiento de auditoría salen los dos de acá — dos reduces separados
+   *  podrían divergir en silencio. */
+  totalEntries: number;
   totalLine: string;
   footer: string;
   /** "acta-cd-124" — derivado de tipo+número validados, NUNCA de texto libre. */
@@ -163,6 +167,7 @@ export function minuteExportModel(input: MinuteExportInput): MinuteExportModel {
     minuteLabel: `${minuteName(input)} — ${formatDateAR(input.date)}`,
     description: input.description,
     sections,
+    totalEntries: total,
     totalLine,
     footer:
       `Generada por SIGeV el ${formatDateAR(input.generatedAt)}. Documento de uso interno: ` +

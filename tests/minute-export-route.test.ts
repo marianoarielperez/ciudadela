@@ -90,6 +90,14 @@ describe("descarga", () => {
   });
 });
 
+describe("sin doble conteo", () => {
+  it("pide a la base SOLO las solicitudes rechazadas: las asentadas ya viajan como movimientos", async () => {
+    await GET(req("pdf"), params("16"));
+    const query = findUniqueMock.mock.calls[0][0];
+    expect(query.include.applications.where).toEqual({ status: "rejected" });
+  });
+});
+
 describe("auditoría", () => {
   it("asienta minute_export con metadatos y NUNCA nombres ni DNIs", async () => {
     await GET(req("pdf"), params("16"));

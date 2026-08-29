@@ -26,21 +26,30 @@ const BOTTOM = MARGIN + 28; // reserva para el pie de cada hoja
 // WinAnsi + transliteración tipográfica: mismas razones y misma tabla que el
 // aviso de cartelera (rayas y comillas tipográficas del proyecto se volvían
 // "?" en el papel).
+// Los rangos van con escapes \uXXXX a propósito: la copia literal del molde
+// perdió el byte NBSP en el camino (quedó "espacio→espacio", un no-op) y el
+// rango WinAnsi arrancaba en 0x20 dejando pasar U+007F–U+009F, que pdf-lib no
+// sabe codificar. Con escapes, lo que se lee es lo que se matchea.
 const TYPOGRAPHIC: Array<[RegExp, string]> = [
   [/[—–]/g, "-"],
   [/[“”]/g, '"'],
   [/[‘’]/g, "'"],
   [/…/g, "..."],
-  [/ /g, " "],
+  [/\u00A0/g, " "],
 ];
 
 function safe(s: string): string {
   let out = s;
   for (const [pattern, replacement] of TYPOGRAPHIC) out = out.replace(pattern, replacement);
-  return out.replace(/[^ -~ -ÿ]/g, "?");
+  return out.replace(/[^\u0020-\u007E\u00A0-\u00FF]/g, "?");
 }
 
-function wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+function wrap(rawText: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  // Sanear ANTES de medir: `widthOfTextAtSize` de una fuente estándar TIRA con
+  // cualquier carácter fuera de WinAnsi — un emoji en la descripción volteaba
+  // el export entero con un 500. El `safe()` del drawText queda (es
+  // idempotente) para las cadenas que no pasan por acá.
+  const text = safe(rawText);
   const lines: string[] = [];
   let current = "";
   for (const word of text.split(/\s+/).filter(Boolean)) {

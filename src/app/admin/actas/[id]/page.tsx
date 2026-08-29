@@ -3,9 +3,10 @@
 // botones de descarga de la constancia. Un acta que respalda una exención o un
 // valor de cuota ya no se ve "vacía".
 //
-// Las exenciones no tienen sección propia: conceder y anular escriben también
-// un Movement con la misma acta, así que ya aparecen en "Movimientos" (ver el
-// comentario de `references.ts`).
+// Ni las exenciones ni las solicitudes ASENTADAS tienen sección propia:
+// conceder, anular y asentar escriben también un Movement con la misma acta,
+// así que ya aparecen en "Movimientos". Acá sólo se listan las solicitudes
+// RECHAZADAS, que no dejan movimiento (ver el comentario de `references.ts`).
 import {
   BookMarked, ClipboardCheck, FileDown, FileText, Inbox, Users, Wallet,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { formatARS, formatDateAR } from "@/lib/format";
 import { MOVEMENT_LABELS, minuteName } from "@/lib/members/labels";
+import { REFERENCE_COUNT_SELECT, referenceCount } from "@/lib/minutes/references";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -63,7 +65,12 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
         orderBy: { id: "asc" },
         select: { id: true, type: true, memberId: true, member: { select: { fullName: true } } },
       },
-      applications: { select: { id: true, fullName: true, status: true } },
+      applications: {
+        where: { status: "rejected" },
+        orderBy: { id: "asc" },
+        select: { id: true, fullName: true },
+      },
+      _count: { select: REFERENCE_COUNT_SELECT },
       feeValues: {
         orderBy: { validFrom: "asc" },
         select: { id: true, activeAmount: true, sharedAmount: true, validFrom: true },
@@ -84,9 +91,10 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
     ...minute.processesCalled.map((p) => ({ key: `call-${p.id}`, text: `Convocatoria al re-empadronamiento del Libro N° ${p.book.number}` })),
     ...minute.processesClosed.map((p) => ({ key: `close-${p.id}`, text: `Cierre del proceso de re-empadronamiento del Libro N° ${p.book.number}` })),
   ];
-  const total =
-    minute.movements.length + minute.applications.length + minute.feeValues.length +
-    bookEntries.length + processEntries.length;
+  // El MISMO conteo que la tarjeta del listado (referenceCount sobre el
+  // _count): dos derivaciones separadas ya habrían divergido con el filtro de
+  // solicitudes rechazadas.
+  const total = referenceCount(minute._count);
 
   return (
     <div className="space-y-4">
@@ -162,15 +170,13 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
           )}
 
           {minute.applications.length > 0 && (
-            <ReferenceGroup icon={Inbox} title="Solicitudes de asociación" count={minute.applications.length}>
+            <ReferenceGroup icon={Inbox} title="Solicitudes rechazadas" count={minute.applications.length}>
               {minute.applications.map((a) => (
                 <li key={a.id}>
                   <Link className={INLINE_LINK} href={`/admin/solicitudes/${a.id}`}>
                     {a.fullName}
                   </Link>{" "}
-                  <span className="text-muted-foreground">
-                    — {a.status === "rejected" ? "rechazada" : "asentada"}
-                  </span>
+                  <span className="text-muted-foreground">— rechazo asentado en esta acta</span>
                 </li>
               ))}
             </ReferenceGroup>

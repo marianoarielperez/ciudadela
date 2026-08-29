@@ -13,6 +13,7 @@ const MODEL: MinuteExportModel = {
     { heading: "Movimientos de socios",
       lines: ["Se asentó el alta de Juana Molina (DNI 12.345.678, socio N° 45)."] },
   ],
+  totalEntries: 1,
   totalLine: "1 asiento registrado en el sistema bajo esta acta.",
   footer: "Generada por SIGeV el 29/08/2026. Documento de uso interno: refleja únicamente los asientos registrados en el sistema, para incorporar al acta del libro.",
   fileBase: "acta-cd-124",
@@ -25,6 +26,16 @@ describe("renderMinutePdf", () => {
     const doc = await PDFDocument.load(bytes);
     expect(doc.getPageCount()).toBe(1);
     expect(doc.getTitle()).toContain("Constancia de asientos");
+  });
+
+  it("no tira con caracteres fuera de WinAnsi (un emoji en la descripción)", async () => {
+    // `widthOfTextAtSize` de una fuente estándar lanza con lo no codificable:
+    // el saneado tiene que correr ANTES de medir, no sólo antes de dibujar.
+    const bytes = await renderMinutePdf({
+      ...MODEL,
+      description: "Festejo día del niño \u{1F389} — presupuesto aprobado  ok",
+    });
+    expect(bytes.length).toBeGreaterThan(500);
   });
 
   it("con doscientos renglones abre más hojas", async () => {

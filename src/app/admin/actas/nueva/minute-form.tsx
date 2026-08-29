@@ -12,10 +12,9 @@ import { PanelHeader } from "@/components/admin/panel-header";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-
-function digitsOnly(raw: string): string {
-  return raw.replace(/\D/g, "");
-}
+// El cleaner compartido, no una copia: su cabecera registra el incidente real
+// que las copias privadas dejan de heredar.
+import { digitsOnly } from "@/app/admin/tesoreria/efectivo/digits";
 
 export function MinuteForm() {
   const [state, formAction, pending] = useActionState(createMinuteAction, {});

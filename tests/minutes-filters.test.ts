@@ -37,6 +37,18 @@ describe("actasWhere", () => {
     expect(w.OR).toEqual([{ description: { contains: "exención" } }]);
   });
 
+  it("a long numeric query (a pasted DNI) never reaches the Int column", () => {
+    // Minute.number es INT4: "20345678901" en la rama numérica desbordaba la
+    // query entera con un 500 en vez de caer a "ninguna acta coincide".
+    const w = actasWhere({ tipo: null, anio: null, q: "20345678901" }) as { OR: unknown[] };
+    expect(w.OR).toEqual([{ description: { contains: "20345678901" } }]);
+    const boundary = actasWhere({ tipo: null, anio: null, q: "999999999" }) as { OR: unknown[] };
+    expect(boundary.OR).toEqual([
+      { number: 999999999 },
+      { description: { contains: "999999999" } },
+    ]);
+  });
+
   it("combines type with the rest", () => {
     expect(actasWhere({ tipo: "board", anio: null, q: null })).toEqual({ type: "board" });
   });

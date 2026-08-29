@@ -4,7 +4,7 @@
 // Regla dura del rediseño (mapa de riesgo): esta es la query de la PANTALLA.
 // Los diez MinutePicker del panel tienen su propia consulta
 // (`orderBy [{date:"desc"},{id:"desc"}], take: 30`) y NO comparten nada de acá.
-import type { MinuteType } from "@/generated/prisma/client";
+import type { MinuteType, Prisma } from "@/generated/prisma/client";
 
 export const ACTAS_BASE = "/admin/actas";
 export const ACTAS_PAGE_SIZE = 20;
@@ -31,11 +31,13 @@ export function parseActasFilters(
   return { tipo, anio, q };
 }
 
-/** El `where` de la pantalla. Las fechas de las actas se guardan al MEDIODÍA
- *  UTC del día civil argentino (`parseMinuteDate`), así que el año civil ES el
- *  año UTC y el filtro por año no necesita aritmética de zona horaria. */
-export function actasWhere(f: ActasFilters): Record<string, unknown> {
-  const where: Record<string, unknown> = {};
+/** El `where` de la pantalla, tipado contra Prisma (un typo en un campo no
+ *  compila) pero sin importar el cliente: el import de arriba es type-only.
+ *  Las fechas de las actas se guardan al MEDIODÍA UTC del día civil argentino
+ *  (`parseMinuteDate`), así que el año civil ES el año UTC y el filtro por año
+ *  no necesita aritmética de zona horaria. */
+export function actasWhere(f: ActasFilters): Prisma.MinuteWhereInput {
+  const where: Prisma.MinuteWhereInput = {};
   if (f.tipo) where.type = f.tipo;
   if (f.anio) {
     where.date = {
@@ -45,8 +47,11 @@ export function actasWhere(f: ActasFilters): Record<string, unknown> {
   }
   if (f.q) {
     // Un número busca el N° del acta y también el texto ("124" puede estar en
-    // una descripción); texto puro sólo busca la descripción.
-    where.OR = /^\d+$/.test(f.q)
+    // una descripción); texto puro sólo busca la descripción. El tope de 9
+    // dígitos no es cosmético: `Minute.number` es INT4, y un DNI pegado en el
+    // buscador ("20345678901") desbordaba la query entera con un 500 en vez de
+    // caer a "ninguna acta coincide".
+    where.OR = /^\d{1,9}$/.test(f.q)
       ? [{ number: Number(f.q) }, { description: { contains: f.q } }]
       : [{ description: { contains: f.q } }];
   }

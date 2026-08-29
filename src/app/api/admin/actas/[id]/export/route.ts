@@ -57,7 +57,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           },
         },
       },
-      applications: { select: { fullName: true, dni: true, status: true } },
+      // Sólo las RECHAZADAS: una solicitud asentada ya escribió su Movement de
+      // alta/reingreso con esta misma acta — listarla acá imprimiría dos
+      // renglones por el mismo hecho (ver `references.ts`).
+      applications: {
+        where: { status: "rejected" },
+        orderBy: { id: "asc" },
+        select: { fullName: true, dni: true, status: true },
+      },
       feeValues: {
         orderBy: { validFrom: "asc" },
         select: { activeAmount: true, sharedAmount: true, validFrom: true },
@@ -102,13 +109,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // La auditoría va DESPUÉS de tener los bytes: si la generación falla no queda
   // asiento de una descarga que no ocurrió. Metadatos únicamente.
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
-  const entries = model.sections.reduce((n, s) => n + s.lines.length, 0);
   await audit({
     userId: actor.actorId,
     action: "minute_export",
     entity: "minute",
     entityId: minute.id,
-    detail: { type: minute.type, number: minute.number, format: formato, entries },
+    detail: {
+      type: minute.type,
+      number: minute.number,
+      format: formato,
+      entries: model.totalEntries,
+    },
     ip,
   });
 

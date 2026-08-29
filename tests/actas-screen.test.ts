@@ -57,7 +57,7 @@ const DETAIL = {
   ],
   applications: [], feeValues: [], booksOpened: [], booksClosed: [],
   processesCalled: [], processesClosed: [],
-  _count: { movements: 2, booksOpened: 0, booksClosed: 0 },
+  _count: { ...COUNTS },
 };
 
 beforeEach(() => {
@@ -120,10 +120,14 @@ describe("listado rediseñado", () => {
     expect(html).toContain('href="/admin/actas"');
   });
 
-  it("el formulario de filtros expone q y anio", async () => {
+  it("el formulario de filtros expone q, anio y tipo (visible, nunca hidden)", async () => {
     const html = render(await ActasPage({ searchParams: Promise.resolve({}) }));
     expect(html).toContain('name="q"');
     expect(html).toContain('name="anio"');
+    // El tipo viaja en un <select> visible: un hidden dejaba a la lista
+    // filtrada por un tipo que no se veía en ninguna parte.
+    expect(html).toContain('name="tipo"');
+    expect(html).not.toContain('type="hidden" name="tipo"');
   });
 });
 
@@ -166,12 +170,12 @@ describe("detalle rediseñado", () => {
     expect(html).toContain("Cierre del Libro de Socios N° 1");
     expect(html).toContain('href="/admin/socios/libros/1"');
     expect(html).not.toContain("Movimientos de socios");
-    expect(html).not.toContain("Solicitudes de asociación");
+    expect(html).not.toContain("Solicitudes rechazadas");
   });
 
   it("sin ninguna referencia lo dice sin fingir tabla", async () => {
     prismaMock.minute.findUnique.mockResolvedValue({
-      ...DETAIL, movements: [],
+      ...DETAIL, movements: [], _count: { ...COUNTS, movements: 0 },
     });
     const html = render(await ActaPage(props));
     expect(html).toContain("todavía no respalda ningún asiento");

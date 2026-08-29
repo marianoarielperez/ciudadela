@@ -103,6 +103,7 @@ describe("el modelo del documento", () => {
     ] });
     expect(model.title).toBe("Constancia de asientos del sistema");
     expect(model.minuteLabel).toBe("Comisión Directiva N° 124 — 15/08/2026");
+    expect(model.totalEntries).toBe(1);
     expect(model.totalLine).toBe("1 asiento registrado en el sistema bajo esta acta.");
     expect(model.footer).toContain("Generada por SIGeV el 29/08/2026");
     expect(model.footer).toContain("para incorporar al acta del libro");
@@ -113,6 +114,7 @@ describe("el modelo del documento", () => {
     const model = minuteExportModel({ ...BASE, type: "assembly", number: 3 });
     expect(model.fileBase).toBe("acta-asamblea-3");
     expect(model.sections).toEqual([]);
+    expect(model.totalEntries).toBe(0);
     expect(model.totalLine).toBe("Sin asientos registrados en el sistema bajo esta acta.");
   });
 });

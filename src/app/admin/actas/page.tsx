@@ -76,11 +76,19 @@ export default async function ActasPage(props: { searchParams: Promise<Search> }
   const countByType: Record<string, number> = {};
   for (const row of typeCounts) countByType[row.type] = row._count._all;
   const chipCounts = {
-    todas: (countByType.board ?? 0) + (countByType.assembly ?? 0),
+    // "Todas" suma TODO lo que devolvió el groupBy, no una lista de tipos
+    // escrita a mano: si el enum crece, este número no puede quedarse corto.
+    todas: typeCounts.reduce((n, row) => n + row._count._all, 0),
     board: countByType.board ?? 0,
     assembly: countByType.assembly ?? 0,
   };
-  const years = [...new Set(yearRows.map((r) => yearOf(r.date)))];
+  // El año filtrado entra aunque no tenga actas: un link viejo con ?anio=2020
+  // tiene que mostrar "2020" elegido en el select, no un "Todos los años" que
+  // esconde por qué la lista está vacía.
+  const years = [...new Set([
+    ...(filters.anio ? [filters.anio] : []),
+    ...yearRows.map((r) => yearOf(r.date)),
+  ])].sort((a, b) => b - a);
   const chip = activeChip(filters);
   const hasFilters = filters.tipo !== null || filters.anio !== null || filters.q !== null;
   const groups = groupByYear(minutes);
@@ -132,7 +140,21 @@ export default async function ActasPage(props: { searchParams: Promise<Search> }
           <option value="">Todos los años</option>
           {years.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
-        {filters.tipo && <input type="hidden" name="tipo" value={filters.tipo} />}
+        {/* El tipo viaja VISIBLE: con búsqueda o año activos los chips se
+            apagan (su conteo global ya no coincide), y un hidden dejaba a la
+            lista filtrada por un tipo que no se veía en ninguna parte — el
+            operador buscaba una CD desde la vista Asambleas, no la encontraba
+            y la volvía a cargar. */}
+        <select
+          name="tipo"
+          defaultValue={filters.tipo ?? ""}
+          className={cn(SELECT_CLASS, "max-w-full")}
+          aria-label="Tipo de acta"
+        >
+          <option value="">Todos los tipos</option>
+          <option value="board">Comisión Directiva</option>
+          <option value="assembly">Asambleas</option>
+        </select>
         <Button type="submit" variant="secondary" className="min-h-11">Filtrar</Button>
         {hasFilters && (
           <Button asChild variant="outline" className="min-h-11">
