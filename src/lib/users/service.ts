@@ -3,10 +3,17 @@
 //
 // Tres reglas de la spec (2026-08-29 §4.2):
 //  - TODA escritura pasa por un mutex en memoria de UNA clave ("user-roles"),
-//    premisa de un solo proceso (docs/03). El mutex es cinturón;
-//  - ...y las guardas se REVALIDAN dentro de la $transaction, que es el
-//    tirante (lección del cerrojo optimista de la exención): "nunca cero
-//    superadmins activos" se cuenta DESPUÉS de la escritura, adentro.
+//    premisa de un solo proceso (docs/03). Ese mutex NO es cinturón: dentro
+//    del proceso es el ÚNICO tirante contra el write skew. `activeSuperadmins`
+//    es un SELECT sin locks, así que bajo REPEATABLE READ dos transacciones
+//    que borran filas DISTINTAS ven cada una al otro superadmin todavía
+//    presente, cuentan 1 y commitean las dos → cero superadmins. Eso lo cierra
+//    el mutex, no la transacción (misma lección que applications/service.ts).
+//  - Las guardas se REVALIDAN igual dentro de la $transaction —"nunca cero
+//    superadmins activos" se cuenta DESPUÉS de la escritura, adentro—, y no
+//    por redundancia: entre cualquier lectura previa y el commit puede caerse
+//    el otro superadmin, y sólo el rollback deshace la escritura ya hecha
+//    (lección del cerrojo optimista de la exención).
 //  - El rol "socio" no es un valor posible acá: `ManagedRole` lo excluye por
 //    construcción, no por validación.
 //
@@ -61,12 +68,23 @@ type Tx = Parameters<Parameters<UsersWriteDb["$transaction"]>[0]>[0];
 
 export type ServiceResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
+// El mutex es de MÓDULO, no de la factory, y se pinnea a `globalThis` con el
+// mismo criterio que `applications/service.ts` (y que el cliente de Prisma):
+// una instancia por bind —las actions crean el suyo— o una instancia nueva por
+// re-evaluación del módulo (el HMR de `next dev` lo hace en cada guardado)
+// serían dos colas distintas, y dos colas reabren la carrera que este mutex
+// existe para cerrar (ver el encabezado: acá el mutex es el único tirante
+// contra el write skew del conteo de superadmins).
+const globalForMutex = globalThis as unknown as { userAdminMutex?: ReturnType<typeof createKeyedMutex> };
+const userAdminMutex = globalForMutex.userAdminMutex ?? createKeyedMutex();
+globalForMutex.userAdminMutex = userAdminMutex;
+
+const LOCK = "user-roles";
+
 export function makeUserAdminService(db: UsersWriteDb) {
-  const mutex = createKeyedMutex();
-  const LOCK = "user-roles";
 
   function run<T>(fn: (tx: Tx) => Promise<{ ok: true } & T>): Promise<ServiceResult<T>> {
-    return mutex.run(LOCK, async () => {
+    return userAdminMutex.run(LOCK, async () => {
       try {
         return await db.$transaction(fn);
       } catch (e) {
@@ -144,12 +162,27 @@ export function makeUserAdminService(db: UsersWriteDb) {
       return run(async (tx) => {
         const target = await tx.user.findUnique({
           where: { id: input.targetId },
-          include: { member: { select: { id: true } } },
+          include: { member: { select: { id: true } }, roles: { include: { role: true } } },
         });
         if (!target) throw new UserGuardAbort(USER_GUARD_MESSAGES.notFound);
+        // Sólo cuentas de gestión, igual que `setUserActive` y
+        // `resendInvitation`: el nombre de un socio puro sale de su ficha
+        // (`fullName`) y editarlo desde acá lo desincroniza en silencio.
+        const managed = target.roles.some((r) => (MANAGED_ROLES as readonly string[]).includes(r.role.name));
+        if (!managed) throw new UserGuardAbort(USER_GUARD_MESSAGES.notManaged);
         const email = input.email?.toLowerCase().trim();
         const emailChanged = email !== undefined && email !== "" && email !== target.email;
         if (emailChanged && target.member) throw new UserGuardAbort(USER_GUARD_MESSAGES.memberEmail);
+        // Mismo chequeo que `createManagedUser`: darle a una cuenta de gestión
+        // el email de la ficha de un socio le rompe el canje de su invitación
+        // para siempre (members/access.ts aborta con `conflict` al ver una
+        // cuenta con rol de administración en esa casilla). No hace falta
+        // excluir la ficha propia: si `target.member` existe, el cambio ya
+        // quedó cortado arriba por `memberEmail`.
+        if (emailChanged) {
+          const card = await tx.member.findFirst({ where: { email }, select: { id: true } });
+          if (card) throw new UserGuardAbort(USER_GUARD_MESSAGES.memberCardEmail);
+        }
         try {
           await tx.user.update({
             where: { id: target.id },
@@ -216,6 +249,13 @@ export function makeUserAdminService(db: UsersWriteDb) {
         return { ok: false, error: USER_GUARD_MESSAGES.selfSuperadmin };
       }
       return run(async (tx) => {
+        // La cuenta tiene que existir: sin esto, un `targetId` inexistente
+        // borraba cero filas y respondía "no tiene ese rol", que apunta al
+        // problema equivocado. `managedTarget` es el mismo camino que usan
+        // `grantRole`, `setUserActive` y `resendInvitation` para distinguirlo
+        // (acá NO se exige `managed`: revocar es justamente lo que puede
+        // dejar a la cuenta sin rol de gestión).
+        await managedTarget(tx, input.targetId);
         const deleted = await tx.userRole.deleteMany({
           where: { userId: input.targetId, role: { name: input.role } },
         });

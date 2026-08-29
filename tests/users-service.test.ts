@@ -76,8 +76,39 @@ describe("updateManagedUser", () => {
 
   it("no toca el email de una cuenta con socio vinculado", async () => {
     const { service } = seeded();
+    // El 3 es socio puro: para llegar a `memberEmail` la cuenta tiene que ser
+    // de gestión (roles acumulables), si no corta antes la guarda de abajo.
+    await service.grantRole({ actorId: 1, targetId: 3, role: "admin" });
     const res = await service.updateManagedUser({ targetId: 3, name: "Socio", email: "otro@x.com" });
     expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.memberEmail });
+  });
+
+  it("no toca la cuenta de un socio puro ni para cambiarle el nombre", async () => {
+    const { db, service } = seeded();
+    const res = await service.updateManagedUser({ targetId: 3, name: "Otro nombre" });
+    expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.notManaged });
+    // el nombre lo gobierna el `fullName` de la ficha: no se desincroniza
+    expect(db.state.users.find((u) => u.id === 3)!.name).toBe("Socio");
+  });
+
+  it("rechaza mudar la cuenta al email de la ficha de un socio", async () => {
+    const { db, service } = seeded();
+    const created = await service.createManagedUser({ email: "temp@x.com", name: "Temp", passwordHash: HASH });
+    if (!created.ok) throw new Error("seed");
+    // Misma puerta que cierra `createManagedUser`: con esta dirección puesta en
+    // una cuenta de gestión, el socio de la ficha 51 no puede canjear NUNCA su
+    // invitación de acceso (members/access.ts aborta con `conflict`).
+    const res = await service.updateManagedUser({
+      targetId: created.userId, name: "Temp", email: "sin-cuenta@x.com",
+    });
+    expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.memberCardEmail });
+    expect(db.state.users.find((u) => u.id === created.userId)!.email).toBe("temp@x.com");
+  });
+
+  it("rechaza una cuenta inexistente", async () => {
+    const { service } = seeded();
+    const res = await service.updateManagedUser({ targetId: 9999, name: "Nadie" });
+    expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.notFound });
   });
 
   it("traduce la colisión de unique a su mensaje", async () => {
@@ -104,6 +135,23 @@ describe("invitaciones", () => {
     const { service } = seeded();
     const res = await service.resendInvitation({ targetId: 2 });
     expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.alreadyRedeemed });
+  });
+
+  it("resend rechaza una cuenta DESACTIVADA (interacción entre dos operaciones)", async () => {
+    const { db, service } = seeded();
+    const created = await service.createManagedUser({ email: "temp@x.com", name: "Temp", passwordHash: HASH });
+    if (!created.ok) throw new Error("seed");
+    expect((await service.setUserActive({ actorId: 1, targetId: created.userId, active: false })).ok).toBe(true);
+    const res = await service.resendInvitation({ targetId: created.userId });
+    expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.inactiveInvitation });
+    // y la invitación del alta sigue viva: el rechazo no revocó nada
+    expect(db.state.actionTokens.filter((t) => t.userId === created.userId && t.usedAt === null)).toHaveLength(1);
+  });
+
+  it("resend rechaza una cuenta inexistente", async () => {
+    const { service } = seeded();
+    const res = await service.resendInvitation({ targetId: 9999 });
+    expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.notFound });
   });
 
   it("revoke borra la invitación viva y rechaza si no hay ninguna", async () => {
@@ -144,6 +192,15 @@ describe("revokeRole", () => {
     expect(db.state.userRoles.some((ur) => ur.userId === 3 && ur.roleId === 3)).toBe(true);
   });
 
+  it("distingue la cuenta inexistente del rol que falta", async () => {
+    const { service } = seeded();
+    const noAccount = await service.revokeRole({ actorId: 1, targetId: 9999, role: "admin" });
+    expect(noAccount).toEqual({ ok: false, error: USER_GUARD_MESSAGES.notFound });
+    // el 2 existe y es admin, pero no superadmin: ahí sí es el rol el que falta
+    const noRole = await service.revokeRole({ actorId: 1, targetId: 2, role: "superadmin" });
+    expect(noRole).toEqual({ ok: false, error: USER_GUARD_MESSAGES.missingRole });
+  });
+
   it("el superadmin no puede quitarse su propio superadmin", async () => {
     const { service } = seeded();
     const res = await service.revokeRole({ actorId: 1, targetId: 1, role: "superadmin" });
@@ -180,6 +237,40 @@ describe("revokeRole", () => {
     // el 2 quedó superadmin pero inactivo: el 1 vuelve a ser el último ACTIVO
     const res = await service.revokeRole({ actorId: 2, targetId: 1, role: "superadmin" });
     expect(res).toEqual({ ok: false, error: USER_GUARD_MESSAGES.lastSuperadmin });
+  });
+});
+
+describe("mutex", () => {
+  it("serializa: la segunda escritura no toca la base hasta que terminó la primera", async () => {
+    // El doble no sirve para probar paralelismo REAL (dos `$transaction`
+    // solapadas comparten estado y no hay snapshots por transacción), pero sí
+    // alcanza para aseverar ORDEN, que es lo único que el mutex promete. Sin
+    // `mutex.run` las dos operaciones entran juntas y el orden se intercala:
+    // es el write skew del conteo de superadmins, que la transacción NO cierra.
+    const { db, service } = seeded();
+    const order: string[] = [];
+    const label = (id: unknown) => (id === 1 ? "A" : "B");
+    const realFind = db.user.findUnique;
+    const realUpdate = db.user.update;
+    db.user.findUnique = async (args: Parameters<typeof realFind>[0]) => {
+      order.push(`${label(args.where.id)}:read`);
+      // Cede el turno: si la exclusión no existiera, acá entra la segunda.
+      await new Promise((r) => setTimeout(r, 0));
+      return realFind(args);
+    };
+    db.user.update = async (args: Parameters<typeof realUpdate>[0]) => {
+      order.push(`${label(args.where.id)}:write`);
+      return realUpdate(args);
+    };
+
+    // SIN await: las dos salen a la vez.
+    const a = service.updateManagedUser({ targetId: 1, name: "Root 2" });
+    const b = service.updateManagedUser({ targetId: 2, name: "Ana 2" });
+    expect((await a).ok).toBe(true);
+    expect((await b).ok).toBe(true);
+    expect(order).toEqual(["A:read", "A:write", "B:read", "B:write"]);
+    expect(db.state.users.find((u) => u.id === 1)!.name).toBe("Root 2");
+    expect(db.state.users.find((u) => u.id === 2)!.name).toBe("Ana 2");
   });
 });
 
