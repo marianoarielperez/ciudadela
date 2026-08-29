@@ -45,7 +45,16 @@ const h = vi.hoisted(() => {
     // Un passthrough alcanza para lo que se assertea acá: que el canje entero
     // corra DENTRO de un `$transaction` y que las dos escrituras se hagan con
     // los factories atados a ESE `tx`. La atomicidad de verdad la da la base.
-    prisma: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
+    //
+    // Las lecturas de FUERA de la transacción (las de `deadCopyFor`, que corre
+    // cuando el `consume` no lo ganó esta petición y el `tx` ya cerró sin escribir)
+    // se sirven del MISMO estado: ninguna aserción de este archivo cambió, sólo
+    // se completó el doble para que el cliente de arriba exista.
+    prisma: {
+      $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+      application: { findUnique: vi.fn(async () => state.application) },
+      member: { findUnique: vi.fn(async () => state.member) },
+    },
   };
 });
 
@@ -93,6 +102,10 @@ vi.mock("@/lib/members/access", async () => {
   const actual = await vi.importActual<typeof import("@/lib/members/access")>("@/lib/members/access");
   return {
     ACCESS_ERRORS: actual.ACCESS_ERRORS,
+    // Los textos del enlace muerto también son los de verdad: la action los
+    // elige con `deadCopyFor` y un doble los volvería indistinguibles.
+    APPLICATION_DEAD_COPY: actual.APPLICATION_DEAD_COPY,
+    deadVerificationCopy: actual.deadVerificationCopy,
     canRedeem: actual.canRedeem,
     applyEmailVerification: actual.applyEmailVerification,
     memberAccess: { verifyEmail: vi.fn() },

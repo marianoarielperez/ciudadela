@@ -8,9 +8,9 @@
 //
 // La pantalla arranca por el VEREDICTO (`healthAlerts`) y recién debajo abre
 // cuatro pestañas —Tareas, Infraestructura, Dinero, Correo— que reparten los
-// seis paneles. El orden no es estético: el martes que todo anda —que es la
+// siete paneles. El orden no es estético: el martes que todo anda —que es la
 // mayoría de los martes— el operador tiene que poder cerrarla después de leer
-// una línea. Un tablero que obliga a auditar seis bloques para descubrir que no
+// una línea. Un tablero que obliga a auditar siete bloques para descubrir que no
 // pasa nada se deja de mirar, y entonces tampoco sirve el día que sí pasa.
 //
 // Sin gráficos.
@@ -18,7 +18,7 @@ import { Suspense } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import {
   BackupPanel, CronsPanel, FailedNoticesPanel, HealthVerdict, MoneyPanel, MpPanel, PendingReceiptsPanel,
-  type ResendRenderer,
+  StuckAccessPanel, type ResendRenderer,
 } from "@/components/admin/health-panels";
 import { PageHeader } from "@/components/admin/page-header";
 import { fetchHealth } from "@/lib/admin/health";
@@ -96,6 +96,7 @@ export default async function SaludPage() {
                 renderResend={renderResend}
               />
               <PendingReceiptsPanel receipts={health.receipts} renderResend={renderResend} />
+              <StuckAccessPanel rows={health.stuckAccess} />
             </div>
           }
         />

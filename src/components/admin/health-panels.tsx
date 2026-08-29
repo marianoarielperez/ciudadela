@@ -1,4 +1,5 @@
-// Los seis paneles de /admin/salud (spec 4C §8) + el veredicto que los encabeza.
+// Los siete paneles de /admin/salud (spec 4C §8, más el de §7.3 de la
+// invitación perdida) + el veredicto que los encabeza.
 //
 // Viven fuera de `page.tsx` por una razón práctica: la página abre sesión, lee
 // Prisma y toca `node:fs`, así que no se puede renderizar en un test. Acá no hay
@@ -11,21 +12,21 @@
 // Es un componente cliente que arrastra la server action y con ella el cliente de
 // Prisma; inyectarlo mantiene los paneles puros y deja que el test verifique la
 // POLÍTICA (a qué fila se le ofrece reenviar y a cuál no) sin levantar nada.
-import { Banknote, CircleCheck, Clock, Info, Mail, Receipt, TriangleAlert } from "lucide-react";
+import { Banknote, CircleCheck, Clock, Info, KeyRound, Mail, Receipt, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { EmptyState } from "@/components/admin/empty-state";
 import { PanelHeader } from "@/components/admin/panel-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { CronHealth, CronState, FailedNotification, MoneyHealth, MpHealth, PendingReceiptState, ReceiptsHealth } from "@/lib/admin/health";
-import { maskLongIds, SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS } from "@/lib/admin/health";
+import type { CronHealth, CronState, FailedNotification, MoneyHealth, MpHealth, PendingReceiptState, ReceiptsHealth, StuckAccessRow } from "@/lib/admin/health";
+import { INVITE_FRESH_HOURS, maskLongIds, SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS } from "@/lib/admin/health";
 import type { HealthAlerts } from "@/lib/admin/health-alerts";
 import { BACKUP_FRESH_HOURS, type BackupHealth, type BackupState } from "@/lib/admin/health-backup";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { alertHrefFor } from "@/lib/admin/salud-tabs";
 import { backupStateBadgeVariant, cronStateBadgeVariant, pendingReceiptBadgeVariant } from "@/lib/admin/status-badges";
-import { formatARS, formatDateTimeAR, formatRelativeAgo } from "@/lib/format";
+import { formatARS, formatDateAR, formatDateTimeAR, formatRelativeAgo } from "@/lib/format";
 import { NOTIFICATION_TYPE_LABELS } from "@/lib/members/labels";
 import { cn } from "@/lib/utils";
 
@@ -75,7 +76,7 @@ function Section({ id, icon, title, hint, children }: {
 
 /** Lo primero y —el martes que todo anda— lo único que el operador necesita leer.
  *
- *  Un tablero que obliga a recorrer seis paneles para descubrir que no pasa nada
+ *  Un tablero que obliga a recorrer siete paneles para descubrir que no pasa nada
  *  se deja de mirar a la semana. Acá arriba está la respuesta: si no hay nada
  *  para atender, lo dice en una línea verde y el resto de la pantalla queda como
  *  consulta.
@@ -319,7 +320,7 @@ const BACKUP_EXPLANATION: Record<BackupState, string> = {
 export function BackupPanel({ backup, now }: { backup: BackupHealth; now: Date }) {
   return (
     // `section` + `h2` reales aunque el panel sea una tarjeta: son dos de los
-    // seis bloques de la pantalla y quien la recorre por encabezados tiene que
+    // siete bloques de la pantalla y quien la recorre por encabezados tiene que
     // encontrarlos. El `id` es además el ancla a la que apunta el veredicto.
     <section id="backup" aria-labelledby="backup-title" className="scroll-mt-4">
       <Card className="h-full">
@@ -690,6 +691,66 @@ export function PendingReceiptsPanel({ receipts, renderResend }: {
               <span className={NUM}>{receipts.total}</span> sin enviar.
             </p>
           )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. Verificaron su email y siguen sin cuenta (§7.3 de la invitación perdida)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function StuckAccessPanel({ rows }: { rows: StuckAccessRow[] }) {
+  return (
+    <Section id="accesos" icon={KeyRound} title="Verificaron su email y siguen sin cuenta">
+      {rows.length === 0 ? (
+        <EmptyState description="Nadie quedó a mitad de camino: quien verificó su email creó su cuenta o tiene la invitación fresca en su casilla." />
+      ) : (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Socio</TableHead>
+                <TableHead>Verificó su email</TableHead>
+                <TableHead>Invitación</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.memberId}>
+                  <TableCell>
+                    <Link className={INLINE_LINK} href={`/admin/socios/${r.memberId}?tab=acceso`}>
+                      {r.memberName}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{r.verifiedAt ? formatDateTimeAR(r.verifiedAt) : "—"}</TableCell>
+                  <TableCell>
+                    {/* La invitación `stale` está VIVA: el badge dice cuándo vence
+                        y no finge urgencia, porque todavía le quedan días. Lo que
+                        la trajo a esta lista es que nadie la usó. */}
+                    {r.invite === "none" || r.inviteExpiresAt === null ? (
+                      <Badge variant="secondary">Sin enlace vivo</Badge>
+                    ) : (
+                      <Badge variant="secondary">{`Vence el ${formatDateAR(r.inviteExpiresAt)}`}</Badge>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <p className="max-w-3xl text-xs text-muted-foreground">
+            Confirmaron su casilla y nunca crearon la contraseña: el correo con el enlace no les llegó, se
+            les perdió, o la invitación lleva más de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas
+            sin usarse. Con <code>EMAIL_ALLOWLIST</code> puesta —el estado de este sitio hasta el
+            lanzamiento— ese correo ni siquiera sale, así que esta lista se llena sola y el reenvío también
+            se bloquea: se vacía al sacar la variable. La salida es el
+            botón de envío de su ficha (pestaña Acceso), que revoca el enlace anterior y manda uno nuevo por
+            correo. Si esa casilla ya es la cuenta de acceso de otro socio, el reenvío no lo destraba: ahí
+            la salida es cargarle otro email a la ficha. Quien tiene una invitación viva emitida hace menos
+            de <span className={NUM}>{INVITE_FRESH_HOURS}</span> horas no aparece acá: todavía no hay nada
+            que destrabar.
+          </p>
         </>
       )}
     </Section>

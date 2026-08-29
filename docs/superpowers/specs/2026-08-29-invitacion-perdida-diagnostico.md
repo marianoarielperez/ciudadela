@@ -1,6 +1,6 @@
 # La invitación que nadie ve: diagnóstico de un caso real de producción
 
-**Fecha:** 29/08/2026 · **Estado:** diagnóstico CERRADO con evidencia medida en producción; el arreglo está pendiente y es el objeto de este documento.
+**Fecha:** 29/08/2026 · **Estado:** diagnóstico CERRADO; **arreglo §7.1+§7.2+§7.3 IMPLEMENTADO y verificado en vivo** (29/08/2026) en la rama `invitation-email-net` (plan: `docs/superpowers/plans/2026-08-29-invitacion-por-correo.md`). Tres decisiones del operador durante la ejecución: el texto del §7.2 no promete que crear la contraseña vaya a funcionar (cubre también la casilla compartida, que rebota en `conflict`); el chequeo del §7.3 lista por EDAD de la invitación (48 h desde la emisión, no "por vencer"); y la ventana se eligió sabiendo que con `EMAIL_ALLOWLIST` puesta en producción el correo-red no sale para el padrón general hasta el lanzamiento.
 
 Este documento existe para que una sesión nueva pueda retomar el arreglo sin
 volver a diagnosticar. El incidente ocurrió en producción

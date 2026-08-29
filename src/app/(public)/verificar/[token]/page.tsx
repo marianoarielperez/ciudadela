@@ -1,7 +1,8 @@
 import { ConfirmForm } from "./confirm-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  ACCESS_ERRORS, canRedeem, REDEEM_CARD_SELECT, REDEEM_PAGE_COPY,
+  ACCESS_ERRORS, APPLICATION_DEAD_COPY, canRedeem, deadVerificationCopy, REDEEM_CARD_SELECT,
+  REDEEM_PAGE_COPY,
 } from "@/lib/members/access";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
@@ -10,8 +11,10 @@ import { tokens } from "@/lib/tokens";
 export const dynamic = "force-dynamic";
 
 // Los dos textos que NO se pueden reusar del circuito de fichas, porque para una
-// solicitud son falsos. Viven acá y no en `REDEEM_PAGE_COPY` por lo mismo que el
-// mensaje de éxito vive en `confirm-form`: son de esta rama y de ninguna otra.
+// solicitud son falsos. `notYou` vive acá y no en `REDEEM_PAGE_COPY` por lo mismo
+// que el mensaje de éxito vive en `confirm-form`: es de esta rama y de ninguna
+// otra. El del enlace muerto se mudó a `@/lib/members/access` cuando la action
+// pasó a necesitarlo también: dos puntas, una sola constante.
 const APPLICATION_COPY = {
   // El pie de la ficha dice "sin tu confirmación no queda registrada ninguna
   // dirección", y para una ficha es cierto. Para una SOLICITUD no: la dirección
@@ -19,11 +22,7 @@ const APPLICATION_COPY = {
   // Lo que la confirmación habilita no es el registro sino el uso.
   notYou:
     "Si no esperabas este correo, cerrá esta página: sin tu confirmación no vamos a usar esta casilla para notificarte.",
-  // Y el enlace muerto no puede mandar a pedir un reenvío que no existe: el
-  // token de verificación de una solicitud se emite UNA sola vez, al crearla
-  // (el reenvío público del wizard rota el token de RETOME, que es otro).
-  dead:
-    "Este enlace de verificación ya fue usado o venció, y es de un solo uso. Si tu solicitud sigue en trámite, comunicate con la Asociación Vecinal.",
+  dead: APPLICATION_DEAD_COPY,
 } as const;
 
 export const metadata = {
@@ -60,7 +59,17 @@ export default async function VerificarPage(props: { params: Promise<{ token: st
   // elegir cuál de los dos textos corresponde. Si el token no está ni siquiera
   // como rastro, queda el genérico, que es correcto para el circuito de fichas.
   const deadOwner = t ? null : await tokens.ownerOf(token, "email_verification");
-  const deadCopy = deadOwner?.applicationId ? APPLICATION_COPY.dead : ACCESS_ERRORS.dead;
+  // §7.2: si el dueño es una FICHA verificada y sin cuenta, el enlace murió pero
+  // el trámite avanzó — el texto lo dice (deadVerificationCopy, compartida con
+  // la action). El select es mínimo y sin nombre, mismo criterio que
+  // REDEEM_CARD_SELECT: esta página sigue siendo anónima.
+  const deadMember = deadOwner?.memberId
+    ? await prisma.member.findUnique({
+        where: { id: deadOwner.memberId },
+        select: { status: true, emailStatus: true, userId: true },
+      })
+    : null;
+  const deadCopy = deadOwner?.applicationId ? APPLICATION_COPY.dead : deadVerificationCopy(deadMember);
 
   // La misma revalidación en vivo que hace el canje: si el socio quedó dado de
   // baja después del envío, la página no le ofrece el botón. Lo que cierra el

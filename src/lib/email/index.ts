@@ -13,10 +13,16 @@ import { ALLOWLIST_BLOCK_CODE, getTransport, type MailMessage, type MailTranspor
 
 type MailerDeps = { transport: MailTransport; db: Pick<PrismaClient, "notification"> };
 
-// Solo el CÓDIGO del fallo: el error de nodemailer trae `envelope`, `rejected`
-// y el `response` del SMTP —o sea la dirección del vecino en claro— y la
-// columna `error` es la que va a mostrar /admin/salud (docs/08, Ley 25.326).
-function failureCode(e: unknown): string {
+/** Solo el CÓDIGO del fallo: el error de nodemailer trae `envelope`, `rejected`
+ *  y el `response` del SMTP —o sea la dirección del vecino en claro— y la
+ *  columna `error` es la que va a mostrar /admin/salud (docs/08, Ley 25.326).
+ *
+ *  Exportada porque hay call-sites que atrapan un fallo de envío y NO pasan por
+ *  `send` (la red de la invitación, `@/lib/members/invitation-email`): con una
+ *  copia local, la que loguea puede volcar el error entero el día que alguien la
+ *  toque. Es la regla de siempre —compartir la función, no copiarla— aplicada a
+ *  una función cuyo trabajo es justamente no filtrar una dirección. */
+export function failureCode(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
   if (typeof code === "string" && code !== "") return code.slice(0, 200);
   const name = (e as { name?: unknown } | null)?.name;
