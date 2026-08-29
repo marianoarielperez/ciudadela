@@ -168,3 +168,16 @@ export async function requireSuperadmin(): Promise<AdminActor> {
   const [{ auth }, lookup] = await Promise.all([import("@/auth"), liveAccount()]);
   return makeRequireSuperadmin(auth, lookup)();
 }
+
+/** El mensaje de la pantalla de Usuarios: la de Configuración habla de
+ *  "configuración" y acá mentiría. Misma factory, mismo orden de guardas. */
+export const USERS_SUPERADMIN_MESSAGE = "Solo el superadmin puede gestionar las cuentas y los roles.";
+
+export function makeRequireSuperadminUsers(getSession: GetSession, findAccount: AdminAccountLookup) {
+  return makeRequireRole(getSession, findAccount, isSuperadmin, USERS_SUPERADMIN_MESSAGE);
+}
+
+export async function requireSuperadminUsers(): Promise<AdminActor> {
+  const [{ auth }, lookup] = await Promise.all([import("@/auth"), liveAccount()]);
+  return makeRequireSuperadminUsers(auth, lookup)();
+}
