@@ -23,7 +23,7 @@ export const SALUD_TABS: SaludTab[] = [
   { value: "correo", label: "Correo", icon: "mail" },
 ];
 
-// Las seis anclas que los paneles publican como `id`. `#dinero` existe aunque
+// Las siete anclas que los paneles publican como `id`. `#dinero` existe aunque
 // hoy ninguna alerta lo emita (las de dinero van directo a Tesorería).
 const ANCHOR_TAB: Record<string, SaludTabId | undefined> = {
   tareas: "tareas",
@@ -32,6 +32,10 @@ const ANCHOR_TAB: Record<string, SaludTabId | undefined> = {
   dinero: "dinero",
   avisos: "correo",
   recibos: "correo",
+  // §7.3: quien verificó su email y sigue sin cuenta. Es un asunto de correo
+  // —el enlace de invitación que no llegó o que nadie usó—, así que vive con
+  // los avisos y los recibos, no con las tareas.
+  accesos: "correo",
 };
 
 /** A qué pestaña pertenece el destino de una alerta. Las rutas de Tesorería

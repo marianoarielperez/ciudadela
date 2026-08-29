@@ -192,6 +192,19 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
     });
   }
 
+  // §7.3 del diagnóstico de la invitación perdida. Review y no act: nada está
+  // roto —hay gente esperando— y la salida que lo apaga es el botón de envío de
+  // la ficha. No es un contador acumulativo de los que enseñan a ignorar el
+  // tablero: la lista sólo trae a quien TODAVÍA se puede destrabar, y se vacía
+  // sola cuando crean su cuenta.
+  if (health.stuckAccess.length > 0) {
+    review.push({
+      key: "stuck-access",
+      label: `${plural(health.stuckAccess.length, "socio verificó su email y sigue sin cuenta", "socios verificaron su email y siguen sin cuenta")} de acceso.`,
+      href: "#accesos",
+    });
+  }
+
   const receiptsFailed = health.receipts.rows.filter((r) => r.state === "failed").length;
   const receiptsNotAttempted = health.receipts.rows.filter((r) => r.state === "not_attempted").length;
   if (receiptsFailed > 0) {

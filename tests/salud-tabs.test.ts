@@ -23,6 +23,12 @@ describe("tabForAlertHref", () => {
     expect(tabForAlertHref("#avisos")).toBe("correo");
     expect(tabForAlertHref("#recibos")).toBe("correo");
   });
+  it("la alerta de accesos cae en la pestaña Correo", () => {
+    // El enlace de invitación que no llegó (o que nadie usó) es un asunto de
+    // correo: el panel vive con los avisos y los recibos.
+    expect(tabForAlertHref("#accesos")).toBe("correo");
+    expect(alertHrefFor("#accesos")).toBe("?tab=correo#accesos");
+  });
   it("las rutas de Tesorería cuentan como Dinero", () => {
     expect(tabForAlertHref("/admin/tesoreria/suscripciones")).toBe("dinero");
     expect(tabForAlertHref("/admin/tesoreria/sin-conciliar")).toBe("dinero");

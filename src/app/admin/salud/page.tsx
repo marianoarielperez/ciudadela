@@ -18,7 +18,7 @@ import { Suspense } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import {
   BackupPanel, CronsPanel, FailedNoticesPanel, HealthVerdict, MoneyPanel, MpPanel, PendingReceiptsPanel,
-  type ResendRenderer,
+  StuckAccessPanel, type ResendRenderer,
 } from "@/components/admin/health-panels";
 import { PageHeader } from "@/components/admin/page-header";
 import { fetchHealth } from "@/lib/admin/health";
@@ -96,6 +96,7 @@ export default async function SaludPage() {
                 renderResend={renderResend}
               />
               <PendingReceiptsPanel receipts={health.receipts} renderResend={renderResend} />
+              <StuckAccessPanel rows={health.stuckAccess} />
             </div>
           }
         />

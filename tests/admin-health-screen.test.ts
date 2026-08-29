@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   BackupPanel, CronsPanel, FailedNoticesPanel, HealthVerdict, MoneyPanel, MpPanel, PendingReceiptsPanel,
-  type ResendRenderer,
+  StuckAccessPanel, type ResendRenderer,
 } from "@/components/admin/health-panels";
-import { CRON_EXPECTATION, type CronHealth, type CronState, type HealthSnapshot, type PendingReceiptState } from "@/lib/admin/health";
+import { CRON_EXPECTATION, INVITE_FRESH_HOURS, type CronHealth, type CronState, type HealthSnapshot, type PendingReceiptState } from "@/lib/admin/health";
 import { healthAlerts } from "@/lib/admin/health-alerts";
 import type { BackupHealth } from "@/lib/admin/health-backup";
 import { alertHrefFor, tabForAlertHref } from "@/lib/admin/salud-tabs";
@@ -60,8 +60,8 @@ function snapshot(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
     // Dos superadmins que pueden entrar es el sistema sano: con uno solo,
     // perder esa cuenta obliga a entrar por SQL (ver el describe de más abajo).
     signInReadySuperadmins: 2,
-    // §7.3: nadie a mitad del canje del enlace de invitación. La pantalla lo
-    // consume en la tarea 5; acá el fixture sólo declara el sistema sano.
+    // §7.3: nadie a mitad del canje del enlace de invitación. El fixture base
+    // declara el sistema sano; los casos con gente trabada están más abajo.
     stuckAccess: [],
     ...over,
   };
@@ -277,6 +277,42 @@ describe("healthAlerts: quedarse con un solo superadmin que pueda entrar", () =>
   });
 });
 
+// §7.3 del diagnóstico de la invitación perdida: el socio que verificó su email
+// y nunca creó su cuenta. Es `review` y no `act` por la frontera de siempre: no
+// hay nada roto —hay gente esperando— y la salida que lo apaga es el botón de
+// envío de su ficha. Y no es un contador acumulativo de los que enseñan a
+// ignorar el tablero: la lista trae sólo a quien TODAVÍA se puede destrabar y se
+// vacía sola en cuanto crean su cuenta.
+describe("healthAlerts: verificaron su email y siguen sin cuenta", () => {
+  const stuck = (over: Partial<HealthSnapshot["stuckAccess"][number]> = {}): HealthSnapshot["stuckAccess"][number] => ({
+    memberId: 106, memberName: "Vecina Ejemplo", verifiedAt: new Date("2026-08-20T17:42:28Z"),
+    invite: "none", inviteExpiresAt: null, ...over,
+  });
+
+  it("los verificados sin cuenta alertan como review, nunca como act", () => {
+    const alerts = healthAlerts(snapshot({ stuckAccess: [stuck()] }), FRESH);
+    expect(alerts.act.find((a) => a.key === "stuck-access")).toBeUndefined();
+    const alert = alerts.review.find((a) => a.key === "stuck-access");
+    expect(alert).toBeDefined();
+    expect(alert?.href).toBe("#accesos");
+    expect(alert?.label).toContain("1 socio");
+  });
+
+  it("con varios se dice en plural, y sigue sin ser una avería", () => {
+    const alerts = healthAlerts(snapshot({
+      stuckAccess: [stuck(), stuck({ memberId: 107, memberName: "Vecino Ejemplo", invite: "stale", inviteExpiresAt: new Date("2026-08-30T12:00:00Z") })],
+    }), FRESH);
+    expect(alerts.act).toEqual([]);
+    expect(alerts.review.map((a) => a.key)).toEqual(["stuck-access"]);
+    expect(alerts.review[0].label).toContain("2 socios");
+  });
+
+  it("sin nadie trabado no dice nada", () => {
+    const alerts = healthAlerts(snapshot({ stuckAccess: [] }), FRESH);
+    expect(alerts.review.find((a) => a.key === "stuck-access")).toBeUndefined();
+  });
+});
+
 describe("healthAlerts: avisos y recibos", () => {
   it("un aviso que no salió es para atender", () => {
     const alerts = healthAlerts(snapshot({
@@ -380,6 +416,10 @@ describe("las anclas del veredicto existen en los paneles", () => {
       // También el destino de la alerta nueva entra en el barrido de abajo: es
       // una ruta absoluta y tiene que seguir siéndolo.
       signInReadySuperadmins: 1,
+      stuckAccess: [{
+        memberId: 106, memberName: "Vecina Ejemplo", verifiedAt: new Date("2026-08-20T17:42:28Z"),
+        invite: "none", inviteExpiresAt: null,
+      }],
     });
     const alerts = healthAlerts(broken, { state: "missing", lastOkAt: null });
     const anchors = [...alerts.act, ...alerts.review]
@@ -407,15 +447,16 @@ describe("las anclas del veredicto existen en los paneles", () => {
       render(createElement(MoneyPanel, { money: broken.money })),
       render(createElement(FailedNoticesPanel, { failed: broken.failed, failedEver: 1, renderResend: stubResend })),
       render(createElement(PendingReceiptsPanel, { receipts: broken.receipts, renderResend: stubResend })),
+      render(createElement(StuckAccessPanel, { rows: broken.stuckAccess })),
     ].join("");
     for (const anchor of new Set(anchors)) {
       expect(screen, anchor).toContain(`id="${anchor}"`);
     }
   });
 
-  it("los seis paneles se titulan con un h2 real", () => {
+  it("los siete paneles se titulan con un h2 real", () => {
     // La pantalla es larga: quien la recorre por encabezados tiene que encontrar
-    // los seis bloques, incluidos los dos que son tarjetas.
+    // los siete bloques, incluidos los dos que son tarjetas.
     const screen = [
       render(createElement(CronsPanel, { crons: healthyCrons(), now: NOW })),
       render(createElement(BackupPanel, { backup: FRESH, now: NOW })),
@@ -423,8 +464,9 @@ describe("las anclas del veredicto existen en los paneles", () => {
       render(createElement(MoneyPanel, { money: snapshot().money })),
       render(createElement(FailedNoticesPanel, { failed: [], failedEver: 0, renderResend: stubResend })),
       render(createElement(PendingReceiptsPanel, { receipts: { rows: [], total: 0 }, renderResend: stubResend })),
+      render(createElement(StuckAccessPanel, { rows: [] })),
     ].join("");
-    expect(screen.match(/<h2\b/g) ?? []).toHaveLength(6);
+    expect(screen.match(/<h2\b/g) ?? []).toHaveLength(7);
   });
 });
 
@@ -722,5 +764,60 @@ describe("PendingReceiptsPanel", () => {
     }));
     expect(html).toContain("EMAIL_ALLOWLIST");
     expect(html).toContain("se vacía al sacar la variable");
+  });
+});
+
+describe("StuckAccessPanel", () => {
+  const stuck = (over: Partial<HealthSnapshot["stuckAccess"][number]> = {}): HealthSnapshot["stuckAccess"][number] => ({
+    memberId: 106, memberName: "Vecina Ejemplo", verifiedAt: new Date("2026-08-20T17:42:28Z"),
+    invite: "none", inviteExpiresAt: null, ...over,
+  });
+
+  it("sin nadie trabado no hay tabla, y el vacío dice por qué", () => {
+    const html = render(createElement(StuckAccessPanel, { rows: [] }));
+    expect(html).not.toContain("<thead");
+    expect(html).toContain("Nadie quedó a mitad de camino");
+  });
+
+  it("cada fila enlaza a la pestaña Acceso de su ficha, que es donde está el botón", () => {
+    // La salida que apaga esta lista es un botón concreto: si el link no cae en
+    // esa pestaña, el panel señala un problema y no su solución.
+    const html = render(createElement(StuckAccessPanel, { rows: [stuck()] }));
+    expect(html).toContain('href="/admin/socios/106?tab=acceso"');
+    expect(html).toContain("Vecina Ejemplo");
+  });
+
+  it("distingue el que no tiene enlace vivo del que lo tiene sin usar", () => {
+    // El `stale` tiene la invitación VIVA: el badge dice cuándo vence y no
+    // finge urgencia. Lo que lo trajo acá es que nadie la usó, no que se caiga.
+    const html = render(createElement(StuckAccessPanel, {
+      rows: [
+        stuck(),
+        stuck({ memberId: 107, memberName: "Vecino Ejemplo", invite: "stale", inviteExpiresAt: new Date("2026-08-30T12:00:00Z") }),
+      ],
+    }));
+    expect(html).toContain("Sin enlace vivo");
+    expect(html).toContain("Vence el 30/08/2026");
+    expect(html).not.toContain("por vencer");
+  });
+
+  it("una verificación sin fecha no inventa una", () => {
+    const html = render(createElement(StuckAccessPanel, { rows: [stuck({ verifiedAt: null })] }));
+    expect(html).toContain("—");
+  });
+
+  it("explica la salida y por qué el recién verificado no aparece", () => {
+    const html = render(createElement(StuckAccessPanel, { rows: [stuck()] }));
+    expect(html).toContain("pestaña Acceso");
+    expect(html).toContain("revoca el enlace anterior");
+    expect(html).toContain("todavía no hay nada que destrabar");
+    // La ventana de frescura se escribe desde la constante: la copia no puede
+    // divergir de la regla que arma la lista.
+    expect(html).toContain(String(INVITE_FRESH_HOURS));
+  });
+
+  it("no publica la casilla de nadie", () => {
+    const html = render(createElement(StuckAccessPanel, { rows: [stuck()] }));
+    expect(html).not.toContain("@");
   });
 });
