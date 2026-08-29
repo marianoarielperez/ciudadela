@@ -211,7 +211,9 @@ export type HealthSnapshot = {
   failedEver: number;
   receipts: ReceiptsHealth;
   /** Cuántas cuentas con rol `superadmin` están activas Y pueden entrar hoy
-   *  (`SIGN_IN_READY_SUPERADMINS_WHERE`: activa y con contraseña creada).
+   *  (`SIGN_IN_READY_SUPERADMINS_WHERE`: activa y con contraseña creada O con
+   *  alguna entrada anterior — `passwordChangedAt` es null para toda cuenta
+   *  anterior al 19/08/2026, incluida la del único superadmin de producción).
    *
    *  NO es el `where` de la guarda del dominio, y la diferencia es deliberada:
    *  la guarda impide quedarse en cero con el rol —y ahí una cuenta activa sin

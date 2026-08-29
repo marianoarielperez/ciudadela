@@ -38,19 +38,36 @@ export function countActiveSuperadmins(db: Pick<PrismaClient, "userRole">): Prom
   return db.userRole.count({ where: ACTIVE_SUPERADMINS_WHERE });
 }
 
-/** "Superadmin que YA PUEDE ENTRAR": activo y con contraseña creada. Es el
- *  criterio de la ALERTA de /admin/salud, que promete una red de seguridad —si
- *  se pierde una cuenta queda otra— y por eso sólo puede contar a quien entra
- *  hoy. Un segundo superadmin sin contraseña ni invitación viva sólo entraría
- *  por «olvidé mi contraseña», y sólo si controla esa casilla: si el email
- *  tiene un dedazo, no entra nadie y el tablero estaría diciendo que el sistema
- *  está cubierto.
+/** "Superadmin que YA PUEDE ENTRAR": activo Y con evidencia de que puede
+ *  iniciar sesión —contraseña creada O una entrada anterior—. Es el criterio de
+ *  la ALERTA de /admin/salud, que promete una red de seguridad —si se pierde
+ *  una cuenta queda otra— y por eso sólo puede contar a quien entra hoy. Un
+ *  segundo superadmin sin contraseña ni invitación viva sólo entraría por
+ *  «olvidé mi contraseña», y sólo si controla esa casilla: si el email tiene un
+ *  dedazo, no entra nadie y el tablero estaría diciendo que el sistema está
+ *  cubierto.
+ *
+ *  El `lastLoginAt` no es un adorno: `passwordChangedAt` tiene un NULL
+ *  HISTÓRICO. La migración `20260819133654_add_password_changed_at` agregó la
+ *  columna y NO la rellenó, así que toda cuenta anterior al 19/08/2026 que no
+ *  cambió su contraseña desde entonces la tiene en null y entra perfectamente.
+ *  Medido contra la base de PRODUCCIÓN antes de desplegar (29/08/2026): el
+ *  ÚNICO superadmin es la cuenta del operador, con `active: 1` y
+ *  `password_changed_at: NULL`, y entra todos los días — con el criterio
+ *  anterior la pantalla habría nacido en rojo diciendo «ningún superadmin puede
+ *  entrar». `lastLoginAt` distingue los dos casos porque se sella en CADA login
+ *  (evento `signIn` de `src/auth.ts`): una cuenta que entró alguna vez,
+ *  evidentemente puede entrar; una cuenta de gestión recién creada que nunca
+ *  canjeó su invitación tiene las dos columnas en null y sigue sin contar.
  *
  *  Deliberadamente NO es el `where` de las guardas: éstas impiden quedarse en
  *  cero con el rol, y ahí una cuenta recuperable sí cuenta. */
 export const SIGN_IN_READY_SUPERADMINS_WHERE: Prisma.UserRoleWhereInput = {
   role: { name: "superadmin" },
-  user: { active: true, passwordChangedAt: { not: null } },
+  user: {
+    active: true,
+    OR: [{ passwordChangedAt: { not: null } }, { lastLoginAt: { not: null } }],
+  },
 };
 
 /** El conteo de la pregunta «¿queda alguien que pueda entrar hoy?», para el

@@ -308,9 +308,10 @@ la base de producción: exactamente lo que este módulo existe para eliminar.
 
 **Tratamiento acordado (29/08/2026): que lo vea `/admin/salud`.** El tablero
 suma una alerta `act` cuando queda **uno o menos** superadmins que **puedan
-entrar hoy**: activos y con contraseña creada
+entrar hoy**: activos y con contraseña creada o con alguna entrada anterior
 (`SIGN_IN_READY_SUPERADMINS_WHERE`, en `users/query.ts`, importado y no
-copiado). Va como `act` y no como `review`
+copiado; el segundo término se agregó por el null histórico, más abajo). Va como
+`act` y no como `review`
 porque cumple los dos términos de esa frontera: el estado es una rotura real
 —perder esa cuenta obliga a entrar por SQL— y hay una salida concreta que lo
 apaga, que el texto de la alerta nombra: otorgarle el rol a una segunda cuenta
@@ -337,14 +338,37 @@ distintas —«¿queda alguien con el rol?» versus «¿queda alguien que pueda 
 hoy?»— y el sistema las responde por separado, a propósito, con un nombre y un
 comentario por consulta en `users/query.ts`.
 
-**Ojo con el null histórico.** La migración `20260819133654_add_password_changed_at`
-**no rellenó** la columna: una cuenta anterior al 19/08/2026 que no cambió su
-contraseña desde entonces tiene `passwordChangedAt: null` y sí puede entrar. Con
-el criterio nuevo, un superadmin así no se cuenta y la alerta se enciende de
-más. Es el mismo criterio que `accountState` ya aplica a las cuentas de gestión
-(las muestra "Sin invitación"), así que el desvío es visible en pantalla y se
-apaga solo en cuanto esa persona cambia la contraseña una vez. Fallar por
-exceso de aviso es el lado correcto para una alerta de lockout.
+**El null histórico era un falso positivo REAL, y se corrigió con `lastLoginAt`
+(29/08/2026).** La migración `20260819133654_add_password_changed_at` **no
+rellenó** la columna: una cuenta anterior al 19/08/2026 que no cambió su
+contraseña desde entonces tiene `passwordChangedAt: null` y sí puede entrar. La
+spec lo había anotado como un desvío tolerable ("fallar por exceso de aviso es
+el lado correcto para una alerta de lockout"), pero la **verificación contra la
+base de producción, antes de desplegar, mostró que el desvío era el caso
+normal**: el ÚNICO superadmin de producción es la cuenta del operador, con
+`active: 1` y `password_changed_at: NULL`, y entra todos los días. Con el
+criterio anterior la pantalla de Salud habría salido a producción en rojo
+diciendo *"Ningún superadmin puede entrar"* — es decir, naciendo en rojo por un
+hecho falso, exactamente lo que la fase 4C prohíbe.
+
+El dato que separa los dos casos ya estaba en la tabla: **`lastLoginAt`**, que
+`src/auth.ts` sella en el evento `signIn` en **cada** inicio de sesión (es su
+único punto de escritura, verificado). Una cuenta que entró alguna vez,
+evidentemente puede entrar; una cuenta de gestión recién creada que nunca canjeó
+su invitación tiene las **dos** columnas en null y sigue sin contar. El criterio
+quedó `active: true` **Y** (`passwordChangedAt` no nulo **O** `lastLoginAt` no
+nulo), un `OR` dentro del mismo `where`. **No cambia la decisión del operador**
+—contar sólo a quien puede entrar hoy—: la implementa con precisión. El texto de
+la alerta se ajustó en consecuencia: el paréntesis nombra las dos condiciones
+("una que nunca inició sesión ni creó su contraseña no cuenta"), porque decir
+sólo "que no creó su contraseña" sería falso para las cuentas viejas. El caso 0
+no cambió: sigue siendo verdadero que sin nadie que pueda entrar la salida es el
+correo o la base.
+
+`ACTIVE_SUPERADMINS_WHERE` **no se tocó**: responde la otra pregunta y sigue
+alineada con las guardas de `service.ts`. Las dos condiciones del criterio nuevo
+están verificadas **por mutación** (sacar `lastLoginAt` deja en rojo el test del
+caso de producción; sacar `active` deja en rojo el de la cuenta desactivada).
 
 **Regla operativa:** conviene que al menos un superadmin activo **no sea socio**,
 para que ningún ciclo de baja o readmisión pueda tocarle la cuenta.

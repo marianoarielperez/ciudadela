@@ -244,11 +244,14 @@ describe("healthAlerts: quedarse con un solo superadmin que pueda entrar", () =>
   // alerta sigue encendida (el camino entero, de la fila de la base a este
   // renglón, está en admin-health.test.ts). Lo que se verifica acá es que el
   // TEXTO no mienta: dice "que pueda entrar" y no "activo", y explica por qué
-  // esa segunda cuenta no lo apagó.
-  it("el texto dice que una cuenta sin contraseña no cuenta", () => {
+  // esa segunda cuenta no lo apagó. El paréntesis nombra las DOS condiciones
+  // del criterio (nunca entró Y nunca creó contraseña) porque quedarse con la
+  // contraseña sola sería falso para las cuentas anteriores al 19/08/2026, que
+  // tienen `passwordChangedAt: null` y entran igual.
+  it("el texto dice que una cuenta que nunca entró ni creó contraseña no cuenta", () => {
     const alerts = healthAlerts(snapshot({ signInReadySuperadmins: 1 }), FRESH);
     expect(alerts.act[0].label).toContain("Queda un solo superadmin que pueda entrar");
-    expect(alerts.act[0].label).toContain("una que todavía no creó su contraseña no cuenta");
+    expect(alerts.act[0].label).toContain("una que nunca inició sesión ni creó su contraseña no cuenta");
     expect(alerts.act[0].label).not.toContain("superadmin activo");
   });
 

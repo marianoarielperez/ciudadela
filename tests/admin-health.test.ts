@@ -189,6 +189,9 @@ type Row = Record<string, unknown>;
 function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, cond]) => {
+    // `OR` es una lista de `where`, no un campo: sin esta rama el doble caía en
+    // la comparación por campo y "matcheaba" cualquier cosa.
+    if (key === "OR") return (cond as Row[]).some((c) => matches(row, c));
     const value = row[key];
     if (cond === null) return value === null || value === undefined;
     if (cond instanceof Date) return value instanceof Date && value.getTime() === cond.getTime();
@@ -216,7 +219,10 @@ type NotifRow = {
   id: bigint; sentAt: Date; type: string; status: string; error: string | null;
   payloadSummary: string | null; memberId: number | null; applicationId: number | null;
 };
-type UserRoleRow = { role: { name: string }; user: { active: boolean; passwordChangedAt: Date | null } };
+type UserRoleRow = {
+  role: { name: string };
+  user: { active: boolean; passwordChangedAt: Date | null; lastLoginAt: Date | null };
+};
 type ReceiptRow = {
   id: number; number: string; issuedAt: Date; emailedAt: Date | null; voidedAt: Date | null;
   payment: {
@@ -543,8 +549,16 @@ describe("fetchHealth — recibos sin enviar", () => {
 });
 
 describe("fetchHealth — superadmins que pueden entrar", () => {
-  const role = (name: string, active: boolean, withPassword = true): UserRoleRow =>
-    ({ role: { name }, user: { active, passwordChangedAt: withPassword ? hoursAgo(100) : null } });
+  const role = (
+    name: string, active: boolean, withPassword = true, everSignedIn = false,
+  ): UserRoleRow => ({
+    role: { name },
+    user: {
+      active,
+      passwordChangedAt: withPassword ? hoursAgo(100) : null,
+      lastLoginAt: everSignedIn ? hoursAgo(5) : null,
+    },
+  });
 
   it("cuenta los superadmin cuya CUENTA está activa y tiene contraseña, y sólo ésos", async () => {
     const h = await fetchHealth(fakeDb({
@@ -561,13 +575,38 @@ describe("fetchHealth — superadmins que pueden entrar", () => {
   });
 
   // El caso que la verificación en vivo encontró: cuenta de gestión creada,
-  // invitación revocada, rol otorgado. Activa, sin contraseña y sin token: hoy
-  // no entra. Contarla apagaba la alerta prometiendo una red inexistente.
-  it("NO cuenta un superadmin activo que todavía no creó su contraseña", async () => {
+  // invitación revocada, rol otorgado. Activa, sin contraseña, sin token y sin
+  // ninguna entrada anterior: hoy no entra. Contarla apagaba la alerta
+  // prometiendo una red inexistente. Es el par del test de arriba: la cuenta
+  // nueva y la cuenta vieja se parecen en `passwordChangedAt: null` y las
+  // separa `lastLoginAt`.
+  it("NO cuenta un superadmin activo que todavía no creó su contraseña ni entró nunca", async () => {
     const h = await fetchHealth(fakeDb({
       roles: [role("superadmin", true), role("superadmin", true, false)],
     }), NOW);
     expect(h.signInReadySuperadmins).toBe(1);
+  });
+
+  // El caso de PRODUCCIÓN, medido contra la base antes de desplegar
+  // (29/08/2026): el único superadmin es la cuenta del operador, anterior a la
+  // migración `20260819133654_add_password_changed_at` —que agregó la columna y
+  // no la rellenó—, así que tiene `passwordChangedAt: null` y entra todos los
+  // días. Sin `lastLoginAt` en el criterio, la pantalla de Salud habría nacido
+  // en rojo afirmando que nadie puede administrar el sistema.
+  it("SÍ cuenta un superadmin sin `passwordChangedAt` que ya inició sesión alguna vez", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [role("superadmin", true, false, true)],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(1);
+  });
+
+  // La contracara, que es lo que el criterio tiene que seguir distinguiendo: la
+  // cuenta desactivada no entra ni habiendo entrado antes.
+  it("NO cuenta un superadmin DESACTIVADO por más que tenga entradas anteriores", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [role("superadmin", false, true, true)],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(0);
   });
 
   it("sin ninguna fila el conteo es 0 y no un null que la alerta tendría que adivinar", async () => {

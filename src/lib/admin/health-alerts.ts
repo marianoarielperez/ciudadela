@@ -101,6 +101,13 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
   // contando activos: son otra pregunta ("¿queda alguien con el rol?"), y ahí
   // una cuenta recuperable sí cuenta.
   //
+  // El criterio cuenta a quien tiene contraseña creada O entró alguna vez, y el
+  // segundo término tampoco es teórico: `passwordChangedAt` quedó en null para
+  // todas las cuentas anteriores al 19/08/2026 (la migración no rellenó la
+  // columna), y medido contra producción el ÚNICO superadmin es una de ésas y
+  // entra todos los días. Sin `lastLoginAt` este renglón habría salido a
+  // producción en rojo diciendo lo contrario de lo que pasa.
+  //
   // No es de la familia de `inboxTotal`, `failedEver` o los mismatches, que
   // están en `review` o no alertan: aquéllos son contadores acumulativos que
   // ninguna acción baja. Éste es el estado de HOY y se apaga solo al
@@ -122,8 +129,11 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
         // la base.
         ? "Ningún superadmin puede entrar: sólo se recupera restableciendo la contraseña por correo o desde la base."
         // "que pueda entrar" y no "activo": el paréntesis dice por qué una
-        // segunda cuenta recién creada no apagó este renglón.
-        : "Queda un solo superadmin que pueda entrar: si se pierde esa cuenta, nadie puede administrar el sistema. Otorgale el rol de superadmin a una segunda cuenta desde Usuarios (una que todavía no creó su contraseña no cuenta).",
+        // segunda cuenta recién creada no apagó este renglón. Nombra las DOS
+        // condiciones porque el criterio son las dos: decir sólo "que no creó
+        // su contraseña" sería falso para una cuenta vieja, que la tiene en
+        // null y sin embargo entra.
+        : "Queda un solo superadmin que pueda entrar: si se pierde esa cuenta, nadie puede administrar el sistema. Otorgale el rol de superadmin a una segunda cuenta desde Usuarios (una que nunca inició sesión ni creó su contraseña no cuenta).",
       href: "/admin/usuarios",
     });
   }
