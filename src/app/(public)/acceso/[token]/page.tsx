@@ -5,7 +5,7 @@ import {
 } from "@/lib/members/access";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
-import { ADMIN_REDEEM_PAGE_COPY } from "@/lib/users/admin-access";
+import { ADMIN_REDEEM_ERRORS, ADMIN_REDEEM_PAGE_COPY, ADMIN_REDEEM_USER_SELECT } from "@/lib/users/admin-access";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ export default async function AccesoPage(props: { params: Promise<{ token: strin
     ? await prisma.member.findUnique({ where: { id: t.memberId }, select: REDEEM_CARD_SELECT })
     : null;
   const adminUser = adminT?.userId
-    ? await prisma.user.findUnique({ where: { id: adminT.userId }, select: { email: true, active: true } })
+    ? await prisma.user.findUnique({ where: { id: adminT.userId }, select: ADMIN_REDEEM_USER_SELECT })
     : null;
 
   const blocked = member ? canRedeem(member) : { ok: false as const, error: ACCESS_ERRORS.dead };
@@ -71,10 +71,16 @@ export default async function AccesoPage(props: { params: Promise<{ token: strin
             </>
           ) : (
             // El texto de la rama socio queda como estaba, caso por caso. La rama
-            // admin cae toda en `dead` a propósito: sin sesión no se le cuenta a
-            // un anónimo si la cuenta existe pero está deshabilitada.
+            // admin distingue cuenta deshabilitada (rollback conserva el enlace,
+            // así que no hay que pedir un reenvío) de token muerto: si `peek` no
+            // devolvió nada, la página no tiene forma de saber de qué circuito
+            // venía y `ACCESS_ERRORS.dead` sigue siendo lo correcto.
             <p className="text-sm text-red-600" role="alert">
-              {member ? (blocked.ok ? ACCESS_ERRORS.noEmail : blocked.error) : ACCESS_ERRORS.dead}
+              {member
+                ? (blocked.ok ? ACCESS_ERRORS.noEmail : blocked.error)
+                : adminT && adminUser && !adminUser.active
+                  ? ADMIN_REDEEM_ERRORS.disabled
+                  : ACCESS_ERRORS.dead}
             </p>
           )}
         </CardContent>

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { REDEEM_CARD_SELECT, REDEEM_PAGE_COPY } from "@/lib/members/access";
+import { ADMIN_REDEEM_PAGE_COPY, ADMIN_REDEEM_USER_SELECT } from "@/lib/users/admin-access";
 
 // N10. /verificar y /acceso son URLs anónimas cuya única credencial es un token
 // que viajó por correo, y la dirección de ese correo la tipea un operador desde
@@ -51,6 +52,28 @@ describe("las páginas públicas de canje no identifican al socio", () => {
     expect(REDEEM_PAGE_COPY.createLead).toContain("Elegí");
     for (const [key, text] of Object.entries(REDEEM_PAGE_COPY)) {
       expect(text, key).not.toContain("@");
+    }
+  });
+});
+
+// La Task 7 agregó, a la MISMA página, la rama de cuentas de gestión
+// (/acceso/[token] cuando el token es "admin_invitation"). Mismo riesgo,
+// mismo candado: sin esto, agregar `name: true` al select del `User` de esa
+// rama pasa toda la suite igual y termina mostrando el nombre de una persona
+// en una página anónima a la que se llega con un token que pudo ir a la
+// casilla equivocada (Ley 25.326).
+describe("la rama admin de /acceso tampoco identifica al titular", () => {
+  it("never reads the user's name from the database", () => {
+    expect(ADMIN_REDEEM_USER_SELECT).not.toHaveProperty("name");
+    // Y no es que falte por olvido: es exactamente lo que la página necesita
+    // para decidir si el enlace sirve y qué dirección mostrar.
+    expect(Object.keys(ADMIN_REDEEM_USER_SELECT).sort()).toEqual(["active", "email"]);
+  });
+
+  it("has no interpolation hole in the copy", () => {
+    for (const [key, text] of Object.entries(ADMIN_REDEEM_PAGE_COPY)) {
+      expect(typeof text, key).toBe("string");
+      expect(text, key).not.toMatch(/\$\{|\{\{|%s/);
     }
   });
 });

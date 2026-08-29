@@ -23,6 +23,13 @@ export const ADMIN_REDEEM_ERRORS = {
   disabled: "Tu cuenta de acceso está deshabilitada. Comunicate con la vecinal.",
 } as const;
 
+/** Lo ÚNICO que la página de canje admin lee del `User`. Que `name` no esté es
+ *  la garantía, y es estructural, mismo criterio que `REDEEM_CARD_SELECT`
+ *  (members/access.ts): la dirección la tipeó el superadmin desde el alta y el
+ *  correo pudo ir a la casilla equivocada, así que la página no tiene el
+ *  nombre a mano ni por descuido. */
+export const ADMIN_REDEEM_USER_SELECT = { email: true, active: true } as const;
+
 // Los textos de la variante admin de la página de canje. Constantes y sin
 // nombre propio, mismo criterio que REDEEM_PAGE_COPY: la dirección la tipeó
 // el superadmin y el correo pudo ir a la casilla equivocada.
