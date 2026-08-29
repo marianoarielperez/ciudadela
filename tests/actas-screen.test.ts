@@ -144,6 +144,40 @@ describe("detalle: invariantes", () => {
   });
 });
 
+describe("detalle rediseñado", () => {
+  const props = { params: Promise.resolve({ id: "16" }) };
+
+  it("ofrece PDF y Word contra la ruta de export", async () => {
+    const html = render(await ActaPage(props));
+    expect(html).toContain('href="/api/admin/actas/16/export?formato=pdf"');
+    expect(html).toContain('href="/api/admin/actas/16/export?formato=docx"');
+  });
+
+  it("muestra las clases de referencia que existen y omite las vacías", async () => {
+    prismaMock.minute.findUnique.mockResolvedValue({
+      ...DETAIL,
+      movements: [],
+      feeValues: [{ id: 1, activeAmount: 5000, sharedAmount: 3500,
+        validFrom: new Date(Date.UTC(2026, 8, 1, 12)) }],
+      booksClosed: [{ id: 1, number: 1 }],
+    });
+    const html = render(await ActaPage(props));
+    expect(html).toContain("Valores de cuota");
+    expect(html).toContain("Cierre del Libro de Socios N° 1");
+    expect(html).toContain('href="/admin/socios/libros/1"');
+    expect(html).not.toContain("Movimientos de socios");
+    expect(html).not.toContain("Solicitudes de asociación");
+  });
+
+  it("sin ninguna referencia lo dice sin fingir tabla", async () => {
+    prismaMock.minute.findUnique.mockResolvedValue({
+      ...DETAIL, movements: [],
+    });
+    const html = render(await ActaPage(props));
+    expect(html).toContain("todavía no respalda ningún asiento");
+  });
+});
+
 describe("edición: el bloqueo de fecha sobrevive al rediseño", () => {
   const minute = {
     id: 16, type: "board", number: 124, date: "2026-08-15",
