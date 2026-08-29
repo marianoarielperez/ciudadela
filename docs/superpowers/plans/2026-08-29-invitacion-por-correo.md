@@ -10,6 +10,18 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-invitacion-perdida-diagnostico.md` (leerla entera antes de empezar; la §7 es el contrato y la §7.4 lista lo que NO hay que hacer).
 
+> **EJECUTADO (29/08/2026).** El plan se ejecutó entero con tres desvíos aprobados
+> por el operador durante la revisión por tareas — el código de este documento es
+> el punto de partida histórico, no el estado final:
+> 1. El copy de `ACCESS_ERRORS.verifiedNoAccount` NO es el de la Task 3: se
+>    suavizó para ser cierto también en el caso de casilla compartida (no promete
+>    que crear la contraseña funcione; nombra el asunto real «Creá tu contraseña»).
+> 2. La ventana del §7.3 es por EDAD: `INVITE_FRESH_HOURS = 48` desde la emisión
+>    (no `INVITE_EXPIRING_HOURS` por vencimiento) y el estado se llama `"stale"`,
+>    no `"expiring"`. La consulta ordena por `emailVerifiedAt` asc.
+> 3. Se agregó `tests/verificar-page-dead.test.ts` (cobertura del GET, pedida por
+>    la revisión de la Task 3).
+
 ## Global Constraints
 
 - **UI en es-AR con voseo; código, variables y commits en inglés.** Los comentarios del código de este repo están en español: mantener ese estilo.
