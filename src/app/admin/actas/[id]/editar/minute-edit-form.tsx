@@ -8,6 +8,9 @@ import { FormMessage } from "@/components/admin/form-message";
 import { SelectField, TextField, useSyncedForm } from "@/components/admin/synced-fields";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+// El cleaner compartido, no una copia: su cabecera registra el incidente real
+// que las copias privadas dejan de heredar.
+import { digitsOnly } from "@/app/admin/tesoreria/efectivo/digits";
 
 export type MinuteEditData = {
   id: number;
@@ -17,10 +20,6 @@ export type MinuteEditData = {
   date: string;
   description: string | null;
 };
-
-function digitsOnly(raw: string): string {
-  return raw.replace(/\D/g, "");
-}
 
 export function MinuteEditForm(props: {
   minute: MinuteEditData;
