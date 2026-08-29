@@ -15,6 +15,7 @@ import { LIVE_APPLICATION_STATUSES, makeApplicationService } from "@/lib/applica
 import { audit } from "@/lib/audit";
 import { publicTokenLimiter } from "@/lib/auth/rate-limiter";
 import { applyEmailVerification, canRedeem, memberAccess } from "@/lib/members/access";
+import { invitationEmailer } from "@/lib/members/invitation-email";
 import { prisma } from "@/lib/prisma";
 import { makeTokens, tokens } from "@/lib/tokens";
 
@@ -124,11 +125,12 @@ export async function confirmEmailAction(_prev: VerifyState, formData: FormData)
       // La verificación llegó a la ficha: es el mismo hecho que asienta el
       // canje del token de socio, y se audita con el mismo nombre.
       await audit({ action: "member_email_verified", entity: "member", entityId: outcome.member.memberId, ip });
-      // Y termina donde termina el circuito de socios: en la creación de la
-      // contraseña (o en el login, si la ficha ya tenía cuenta). La persona
-      // acaba de demostrar que tiene el buzón, así que no hace falta un correo
-      // más; si pierde la pantalla, el panel puede reenviarle la invitación
-      // sola (`verificationTarget` ya la habilita: ficha verificada y sin cuenta).
+      // La red del §7.1: el MISMO token del redirect viaja también por correo,
+      // después del commit y best-effort (nunca rechaza). Si la persona pierde
+      // esta pantalla, el enlace la espera en el buzón que acaba de confirmar.
+      if (outcome.member.invite) {
+        await invitationEmailer.sendAfterVerification(outcome.member.memberId, outcome.member.invite);
+      }
       redirect(outcome.member.invite ? `/acceso/${outcome.member.invite}` : "/ingresar");
     }
 
@@ -145,6 +147,10 @@ export async function confirmEmailAction(_prev: VerifyState, formData: FormData)
   // Sin `userId`: la persona todavía no tiene sesión. El asiento identifica al
   // socio por `entityId`; no van ni el email ni el token al log (Ley 25.326).
   await audit({ action: "member_email_verified", entity: "member", entityId: res.memberId, ip });
+
+  // La red del §7.1, idéntica a la rama de solicitud: mismo token, después del
+  // commit, best-effort.
+  if (res.invite) await invitationEmailer.sendAfterVerification(res.memberId, res.invite);
 
   // Fuera de cualquier try: `redirect` señaliza con una excepción.
   redirect(res.invite ? `/acceso/${res.invite}` : "/ingresar");
