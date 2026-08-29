@@ -87,6 +87,46 @@ describe("listado: invariantes que el rediseño no puede romper", () => {
   });
 });
 
+describe("listado rediseñado", () => {
+  it("agrupa por año con encabezado y conteo", async () => {
+    const html = render(await ActasPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain(">2026<");
+    expect(html).toContain(">2025<");
+    expect(html).toContain("1 acta");
+  });
+
+  it("chips con conteos que filtran exactamente lo que cuentan", async () => {
+    const html = render(await ActasPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain('href="/admin/actas?tipo=board"');
+    expect(html).toContain('href="/admin/actas?tipo=assembly"');
+    expect(html).toContain("Asambleas");
+  });
+
+  it("la tarjeta muestra el conteo real de asientos, no solo movimientos", async () => {
+    prismaMock.minute.findMany.mockResolvedValueOnce([
+      { ...LIST[1], _count: { ...LIST[1]._count, movements: 0, feeValues: 1 } },
+    ]);
+    prismaMock.minute.count.mockResolvedValueOnce(1);
+    const html = render(await ActasPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain("1 asiento");
+    expect(html).not.toContain("Sin asientos");
+  });
+
+  it("con filtros y sin resultados ofrece limpiar", async () => {
+    prismaMock.minute.findMany.mockResolvedValue([]);
+    prismaMock.minute.count.mockResolvedValue(0);
+    const html = render(await ActasPage({ searchParams: Promise.resolve({ q: "zzz" }) }));
+    expect(html).toContain("Limpiar filtros");
+    expect(html).toContain('href="/admin/actas"');
+  });
+
+  it("el formulario de filtros expone q y anio", async () => {
+    const html = render(await ActasPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain('name="q"');
+    expect(html).toContain('name="anio"');
+  });
+});
+
 describe("detalle: invariantes", () => {
   const props = { params: Promise.resolve({ id: "16" }) };
 
