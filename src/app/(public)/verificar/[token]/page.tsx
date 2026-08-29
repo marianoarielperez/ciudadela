@@ -1,7 +1,7 @@
 import { ConfirmForm } from "./confirm-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  ACCESS_ERRORS, canRedeem, REDEEM_CARD_SELECT, REDEEM_PAGE_COPY,
+  ACCESS_ERRORS, canRedeem, deadVerificationCopy, REDEEM_CARD_SELECT, REDEEM_PAGE_COPY,
 } from "@/lib/members/access";
 import { prisma } from "@/lib/prisma";
 import { tokens } from "@/lib/tokens";
@@ -60,7 +60,17 @@ export default async function VerificarPage(props: { params: Promise<{ token: st
   // elegir cuál de los dos textos corresponde. Si el token no está ni siquiera
   // como rastro, queda el genérico, que es correcto para el circuito de fichas.
   const deadOwner = t ? null : await tokens.ownerOf(token, "email_verification");
-  const deadCopy = deadOwner?.applicationId ? APPLICATION_COPY.dead : ACCESS_ERRORS.dead;
+  // §7.2: si el dueño es una FICHA verificada y sin cuenta, el enlace murió pero
+  // el trámite avanzó — el texto lo dice (deadVerificationCopy, compartida con
+  // la action). El select es mínimo y sin nombre, mismo criterio que
+  // REDEEM_CARD_SELECT: esta página sigue siendo anónima.
+  const deadMember = deadOwner?.memberId
+    ? await prisma.member.findUnique({
+        where: { id: deadOwner.memberId },
+        select: { status: true, emailStatus: true, userId: true },
+      })
+    : null;
+  const deadCopy = deadOwner?.applicationId ? APPLICATION_COPY.dead : deadVerificationCopy(deadMember);
 
   // La misma revalidación en vivo que hace el canje: si el socio quedó dado de
   // baja después del envío, la página no le ofrece el botón. Lo que cierra el

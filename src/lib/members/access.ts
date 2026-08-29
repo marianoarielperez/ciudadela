@@ -26,6 +26,13 @@ import { makeTokens, MEMBER_EMAIL_TOKEN_PURPOSES } from "@/lib/tokens";
  *  las páginas los reusen sin duplicar texto. */
 export const ACCESS_ERRORS = {
   dead: "El enlace venció o ya fue usado. Pedí a la vecinal que te lo reenvíe.",
+  /** §7.2 del diagnóstico de la invitación perdida: el token de verificación ya
+   *  se usó pero el trámite de fondo SÍ avanzó (email verificado, cuenta sin
+   *  crear). "Venció o ya fue usado" a secas es cierto sobre el token y falso
+   *  sobre lo que le pasó a la persona. No promete que el correo salió —el
+   *  envío de la red es best-effort—: manda a buscarlo y nombra el reenvío. */
+  verifiedNoAccount:
+    "Tu email ya está confirmado: lo que falta es crear tu contraseña. Buscá en tu casilla el correo para crearla (mirá también el spam) y, si no lo encontrás, pedile a la vecinal que te reenvíe el enlace.",
   withdrawn: "Figurás con baja en el padrón: el enlace ya no es válido. Comunicate con la vecinal.",
   noEmail: "Tu ficha no tiene un email registrado. Comunicate con la vecinal.",
   // Caso típico: un matrimonio (u otro hogar) que comparte casilla. La cuenta es
@@ -108,6 +115,32 @@ export type CreatePasswordResult =
 export function canRedeem(member: Pick<Member, "status">): { ok: true } | { ok: false; error: string } {
   if (member.status === "withdrawn") return { ok: false, error: ACCESS_ERRORS.withdrawn };
   return { ok: true };
+}
+
+/** Qué decir ante un enlace de verificación MUERTO cuando la ficha del dueño se
+ *  conoce (`tokens.ownerOf` la devuelve aunque el token esté usado o vencido).
+ *
+ *  No es un oráculo abierto: sólo se llega acá con el hash de un token real,
+ *  o sea desde el correo que lo trajo, y la rama no dispara ningún envío. Lo
+ *  único que revela es "confirmado, falta la contraseña", que es exactamente lo
+ *  que el destinatario legítimo necesita para no abandonar el trámite (el
+ *  incidente del socio 106: su verificación funcionó y la pantalla le dijo que
+ *  falló).
+ *
+ *  Vive acá y no en la página NI en la action porque lo usan las dos: es la
+ *  lección de `coverageFloor` — compartir la función, no copiarla. */
+export function deadVerificationCopy(
+  member: Pick<Member, "status" | "emailStatus" | "userId"> | null,
+): string {
+  if (
+    member !== null &&
+    member.status !== "withdrawn" &&
+    member.emailStatus === "verified" &&
+    member.userId === null
+  ) {
+    return ACCESS_ERRORS.verifiedNoAccount;
+  }
+  return ACCESS_ERRORS.dead;
 }
 
 /** Rechazo que además tiene que DESHACER el consumo del token.

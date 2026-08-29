@@ -14,7 +14,9 @@ import { redirect } from "next/navigation";
 import { LIVE_APPLICATION_STATUSES, makeApplicationService } from "@/lib/applications/service";
 import { audit } from "@/lib/audit";
 import { publicTokenLimiter } from "@/lib/auth/rate-limiter";
-import { applyEmailVerification, canRedeem, memberAccess } from "@/lib/members/access";
+import {
+  ACCESS_ERRORS, applyEmailVerification, canRedeem, deadVerificationCopy, memberAccess,
+} from "@/lib/members/access";
 import { invitationEmailer } from "@/lib/members/invitation-email";
 import { prisma } from "@/lib/prisma";
 import { makeTokens, tokens } from "@/lib/tokens";
@@ -142,7 +144,24 @@ export async function confirmEmailAction(_prev: VerifyState, formData: FormData)
   // escáneres de enlaces de los clientes de correo abren la URL, y con una
   // página que consumiera, el token moriría antes de que la persona haga clic.
   const res = await memberAccess.verifyEmail(raw);
-  if (!res.ok) return { error: res.error };
+  if (!res.ok) {
+    // §7.2: el "ya fue usado" genérico es cierto sobre el token y puede ser
+    // falso sobre la persona — su verificación pudo haber funcionado un
+    // segundo antes (segunda pestaña, botón atrás). `ownerOf` lee el dueño
+    // aunque el token esté usado; la ficha decide el texto. Sin envíos acá:
+    // el correo ya salió (o saldrá por el reenvío del panel).
+    if (res.error === ACCESS_ERRORS.dead) {
+      const owner = await tokens.ownerOf(raw, "email_verification");
+      if (owner?.memberId) {
+        const member = await prisma.member.findUnique({
+          where: { id: owner.memberId },
+          select: { status: true, emailStatus: true, userId: true },
+        });
+        return { error: deadVerificationCopy(member) };
+      }
+    }
+    return { error: res.error };
+  }
 
   // Sin `userId`: la persona todavía no tiene sesión. El asiento identifica al
   // socio por `entityId`; no van ni el email ni el token al log (Ley 25.326).
