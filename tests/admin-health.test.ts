@@ -3,10 +3,11 @@ import {
   classifyDebits, CRON_EXPECTATION, cronState, fetchHealth, safeSummary,
   SIGNATURE_WINDOW_HOURS, WEBHOOK_ERROR_WINDOW_HOURS, type HealthDb,
 } from "@/lib/admin/health";
-import { readBackupHealth } from "@/lib/admin/health-backup";
+import { healthAlerts } from "@/lib/admin/health-alerts";
+import { type BackupHealth, readBackupHealth } from "@/lib/admin/health-backup";
 import { formatRelativeAgo } from "@/lib/format";
 import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
-import { ACTIVE_SUPERADMINS_WHERE } from "@/lib/users/query";
+import { ACTIVE_SUPERADMINS_WHERE, SIGN_IN_READY_SUPERADMINS_WHERE } from "@/lib/users/query";
 
 const NOW = new Date("2026-09-15T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -215,7 +216,7 @@ type NotifRow = {
   id: bigint; sentAt: Date; type: string; status: string; error: string | null;
   payloadSummary: string | null; memberId: number | null; applicationId: number | null;
 };
-type UserRoleRow = { role: { name: string }; user: { active: boolean } };
+type UserRoleRow = { role: { name: string }; user: { active: boolean; passwordChangedAt: Date | null } };
 type ReceiptRow = {
   id: number; number: string; issuedAt: Date; emailedAt: Date | null; voidedAt: Date | null;
   payment: {
@@ -541,10 +542,11 @@ describe("fetchHealth — recibos sin enviar", () => {
   });
 });
 
-describe("fetchHealth — superadmins activos", () => {
-  const role = (name: string, active: boolean): UserRoleRow => ({ role: { name }, user: { active } });
+describe("fetchHealth — superadmins que pueden entrar", () => {
+  const role = (name: string, active: boolean, withPassword = true): UserRoleRow =>
+    ({ role: { name }, user: { active, passwordChangedAt: withPassword ? hoursAgo(100) : null } });
 
-  it("cuenta los superadmin cuya CUENTA está activa, y sólo ésos", async () => {
+  it("cuenta los superadmin cuya CUENTA está activa y tiene contraseña, y sólo ésos", async () => {
     const h = await fetchHealth(fakeDb({
       roles: [
         role("superadmin", true),
@@ -555,19 +557,49 @@ describe("fetchHealth — superadmins activos", () => {
         role("admin", true),
       ],
     }), NOW);
-    expect(h.activeSuperadmins).toBe(2);
+    expect(h.signInReadySuperadmins).toBe(2);
+  });
+
+  // El caso que la verificación en vivo encontró: cuenta de gestión creada,
+  // invitación revocada, rol otorgado. Activa, sin contraseña y sin token: hoy
+  // no entra. Contarla apagaba la alerta prometiendo una red inexistente.
+  it("NO cuenta un superadmin activo que todavía no creó su contraseña", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [role("superadmin", true), role("superadmin", true, false)],
+    }), NOW);
+    expect(h.signInReadySuperadmins).toBe(1);
   });
 
   it("sin ninguna fila el conteo es 0 y no un null que la alerta tendría que adivinar", async () => {
-    expect((await fetchHealth(fakeDb(), NOW)).activeSuperadmins).toBe(0);
+    expect((await fetchHealth(fakeDb(), NOW)).signInReadySuperadmins).toBe(0);
   });
 
-  it("consulta con el MISMO `where` que la guarda del dominio, importado y no copiado", async () => {
-    // Es la invariante del chequeo: si el tablero contara con un `where` propio,
-    // alcanzaría con que se olvidara `user: { active: true }` para que el panel
-    // dijera "hay dos" mientras el sistema está a una baja de socio del lockout.
+  // De la fila de la base al renglón del tablero, que es donde el hallazgo
+  // dolía: la alerta se apaga con un segundo superadmin que ENTRA, y sigue
+  // encendida con uno que todavía no creó su contraseña. Con el criterio viejo
+  // —cuentas activas a secas— el segundo caso la apagaba y el tablero decía que
+  // el sistema estaba cubierto por una cuenta que no puede iniciar sesión.
+  it("de punta a punta: sólo un segundo superadmin con contraseña apaga la alerta", async () => {
+    const FRESH: BackupHealth = { state: "fresh", lastOkAt: hoursAgo(6) };
+    const alertsFor = async (roles: UserRoleRow[]) =>
+      healthAlerts(await fetchHealth(fakeDb({ roles }), NOW), FRESH);
+
+    const invited = await alertsFor([role("superadmin", true), role("superadmin", true, false)]);
+    expect(invited.act.map((a) => a.key)).toEqual(["superadmins"]);
+
+    const real = await alertsFor([role("superadmin", true), role("superadmin", true)]);
+    expect(real.act.map((a) => a.key)).toEqual([]);
+  });
+
+  it("consulta con el `where` de la alerta, importado y no copiado", async () => {
+    // Es la invariante del chequeo: con un `where` propio alcanzaría con que se
+    // olvidara una cláusula para que el panel dijera "hay dos" mientras el
+    // sistema está a una baja de socio del lockout. Y es a propósito OTRO
+    // `where` que el de las guardas del dominio (`ACTIVE_SUPERADMINS_WHERE`,
+    // que no mira `passwordChangedAt`): son dos preguntas distintas.
     const db = fakeDb() as unknown as { userRole: { count: ReturnType<typeof vi.fn> } };
     await fetchHealth(db as unknown as HealthDb, NOW);
-    expect(db.userRole.count).toHaveBeenCalledWith({ where: ACTIVE_SUPERADMINS_WHERE });
+    expect(db.userRole.count).toHaveBeenCalledWith({ where: SIGN_IN_READY_SUPERADMINS_WHERE });
+    expect(SIGN_IN_READY_SUPERADMINS_WHERE).not.toEqual(ACTIVE_SUPERADMINS_WHERE);
   });
 });

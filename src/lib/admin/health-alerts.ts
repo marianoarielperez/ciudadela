@@ -84,11 +84,22 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
     review.push({ key: "backup", label: "El panel no sabe si el backup corre: falta configurarlo.", href: "#backup" });
   }
 
-  // Un solo superadmin activo es `act`, y la frontera se cumple en los dos
-  // términos: el estado es una rotura real —perder esa cuenta deja el sistema
-  // sin nadie que pueda administrarlo, y volver a entrar es SQL contra la base
-  // de producción— y hay UNA salida concreta que lo apaga, que la alerta
-  // nombra: otorgarle el rol a una segunda cuenta desde /admin/usuarios.
+  // Un solo superadmin que pueda entrar es `act`, y la frontera se cumple en
+  // los dos términos: el estado es una rotura real —perder esa cuenta deja el
+  // sistema sin nadie que pueda administrarlo, y volver a entrar es SQL contra
+  // la base de producción— y hay UNA salida concreta que lo apaga, que la
+  // alerta nombra: otorgarle el rol a una segunda cuenta desde /admin/usuarios.
+  //
+  // El conteo mira `signInReadySuperadmins` y NO el `where` de las guardas del
+  // dominio, que cuentan cuentas ACTIVAS a secas. Es la corrección que salió de
+  // la verificación en vivo: una cuenta de gestión recién creada, con la
+  // invitación revocada y el rol otorgado, está activa y NO puede iniciar
+  // sesión —nace con `passwordChangedAt: null` y un hash incanjeable—, y sin
+  // embargo apagaba la alerta. Una red de seguridad que sólo funciona si el
+  // segundo superadmin recupera su contraseña por correo, y sólo si controla
+  // esa casilla, no es la red que esta línea promete. Las guardas siguen
+  // contando activos: son otra pregunta ("¿queda alguien con el rol?"), y ahí
+  // una cuenta recuperable sí cuenta.
   //
   // No es de la familia de `inboxTotal`, `failedEver` o los mismatches, que
   // están en `review` o no alertan: aquéllos son contadores acumulativos que
@@ -100,14 +111,19 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
   // cuenta vinculada sin mirar roles, desde una pantalla que sólo exige admin.
   // Con la única superadmin siendo además socia, ese camino deja el sistema en
   // cero. Mientras la guarda de raíz no exista, esta línea es el aviso.
-  if (health.activeSuperadmins <= 1) {
+  if (health.signInReadySuperadmins <= 1) {
     act.push({
       key: "superadmins",
-      label: health.activeSuperadmins === 0
+      label: health.signInReadySuperadmins === 0
         // Sin ninguno no queda salida por pantalla —esta misma exige
         // superadmin—: decirlo es más útil que ofrecer un botón imposible.
-        ? "No queda ningún superadmin activo: el rol sólo se puede reponer desde la base."
-        : "Queda un solo superadmin activo: si se pierde esa cuenta, nadie puede administrar el sistema. Otorgale el rol de superadmin a una segunda cuenta desde Usuarios.",
+        // Puede quedar alguna cuenta con el rol y sin contraseña, así que el
+        // camino por correo se nombra: es lo único cierto que queda antes de
+        // la base.
+        ? "Ningún superadmin puede entrar: sólo se recupera restableciendo la contraseña por correo o desde la base."
+        // "que pueda entrar" y no "activo": el paréntesis dice por qué una
+        // segunda cuenta recién creada no apagó este renglón.
+        : "Queda un solo superadmin que pueda entrar: si se pierde esa cuenta, nadie puede administrar el sistema. Otorgale el rol de superadmin a una segunda cuenta desde Usuarios (una que todavía no creó su contraseña no cuenta).",
       href: "/admin/usuarios",
     });
   }

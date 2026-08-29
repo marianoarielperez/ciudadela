@@ -307,9 +307,10 @@ roles ni reactiva cuentas (a propósito), la recuperación sería SQL directo co
 la base de producción: exactamente lo que este módulo existe para eliminar.
 
 **Tratamiento acordado (29/08/2026): que lo vea `/admin/salud`.** El tablero
-suma una alerta `act` cuando quedan **uno o menos** superadmins activos, contados
-con el MISMO `where` que la guarda del dominio (`ACTIVE_SUPERADMINS_WHERE`, en
-`users/query.ts`, importado y no copiado). Va como `act` y no como `review`
+suma una alerta `act` cuando queda **uno o menos** superadmins que **puedan
+entrar hoy**: activos y con contraseña creada
+(`SIGN_IN_READY_SUPERADMINS_WHERE`, en `users/query.ts`, importado y no
+copiado). Va como `act` y no como `review`
 porque cumple los dos términos de esa frontera: el estado es una rotura real
 —perder esa cuenta obliga a entrar por SQL— y hay una salida concreta que lo
 apaga, que el texto de la alerta nombra: otorgarle el rol a una segunda cuenta
@@ -317,6 +318,33 @@ desde `/admin/usuarios`. No es de la familia de los contadores acumulativos que
 "nacen en rojo" y que ninguna acción baja: es el estado de hoy y se apaga solo al
 resolverse. Hoy está encendido —hay un único superadmin— y eso es precisamente lo
 que la alerta quiere inducir.
+
+**Corrección de la verificación en vivo (29/08/2026): el criterio de la alerta
+NO es el de la guarda.** Medido paso a paso: se creó una cuenta de gestión (nace
+`active: true`, `passwordChangedAt: null` y un hash de bytes aleatorios), se le
+revocó la invitación y se le otorgó `superadmin`. Esa cuenta hoy **no puede
+iniciar sesión** y, contada como "superadmin activo", **apagaba la alerta**. Una
+red de seguridad que sólo funciona si esa persona recupera la contraseña por
+correo —y sólo si controla esa casilla; con un dedazo en el email no existe—
+promete más de lo que da. Desde acá el tablero cuenta
+`SIGN_IN_READY_SUPERADMINS_WHERE` y se apaga recién cuando la red es real.
+
+Las **guardas del dominio no cambian**: `revokeRole` y `setUserActive` siguen
+contando con `ACTIVE_SUPERADMINS_WHERE` (activas, sin mirar la contraseña), que
+es el criterio correcto ahí — impiden quedarse en **cero con el rol**, y una
+cuenta activa sin contraseña sí puede recuperar el acceso. Son dos preguntas
+distintas —«¿queda alguien con el rol?» versus «¿queda alguien que pueda entrar
+hoy?»— y el sistema las responde por separado, a propósito, con un nombre y un
+comentario por consulta en `users/query.ts`.
+
+**Ojo con el null histórico.** La migración `20260819133654_add_password_changed_at`
+**no rellenó** la columna: una cuenta anterior al 19/08/2026 que no cambió su
+contraseña desde entonces tiene `passwordChangedAt: null` y sí puede entrar. Con
+el criterio nuevo, un superadmin así no se cuenta y la alerta se enciende de
+más. Es el mismo criterio que `accountState` ya aplica a las cuentas de gestión
+(las muestra "Sin invitación"), así que el desvío es visible en pantalla y se
+apaga solo en cuanto esa persona cambia la contraseña una vez. Fallar por
+exceso de aviso es el lado correcto para una alerta de lockout.
 
 **Regla operativa:** conviene que al menos un superadmin activo **no sea socio**,
 para que ningún ciclo de baja o readmisión pueda tocarle la cuenta.

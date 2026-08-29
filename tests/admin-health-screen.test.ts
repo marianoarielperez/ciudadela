@@ -57,9 +57,9 @@ function snapshot(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
     },
     failed: [], failedEver: 0,
     receipts: { rows: [], total: 0 },
-    // Dos superadmins activos es el sistema sano: con uno solo, perder esa
-    // cuenta obliga a entrar por SQL (ver el describe de más abajo).
-    activeSuperadmins: 2,
+    // Dos superadmins que pueden entrar es el sistema sano: con uno solo,
+    // perder esa cuenta obliga a entrar por SQL (ver el describe de más abajo).
+    signInReadySuperadmins: 2,
     ...over,
   };
 }
@@ -219,9 +219,9 @@ describe("healthAlerts: los mismatches son historia, no una alarma", () => {
 // única superadmin siendo además socia el sistema puede quedar en cero sin que
 // ninguna guarda se entere. Mientras esa guarda de raíz no exista, el aviso es
 // esta alerta.
-describe("healthAlerts: quedarse con un solo superadmin", () => {
+describe("healthAlerts: quedarse con un solo superadmin que pueda entrar", () => {
   it("con dos o más no dice absolutamente nada", () => {
-    const alerts = healthAlerts(snapshot({ activeSuperadmins: 2 }), FRESH);
+    const alerts = healthAlerts(snapshot({ signInReadySuperadmins: 2 }), FRESH);
     expect(alerts.act).toEqual([]);
     expect(alerts.review).toEqual([]);
   });
@@ -231,17 +231,31 @@ describe("healthAlerts: quedarse con un solo superadmin", () => {
     // estado es una rotura real —perder esa cuenta obliga a entrar por SQL— y
     // hay una acción concreta que lo apaga. Una alerta que sólo dijera el
     // problema sería de las que enseñan a ignorar el tablero.
-    const alerts = healthAlerts(snapshot({ activeSuperadmins: 1 }), FRESH);
+    const alerts = healthAlerts(snapshot({ signInReadySuperadmins: 1 }), FRESH);
     expect(alerts.act.map((a) => a.key)).toEqual(["superadmins"]);
     expect(alerts.act[0].href).toBe("/admin/usuarios");
     expect(alerts.act[0].label).toContain("Otorgale el rol de superadmin a una segunda cuenta");
     expect(alerts.review).toEqual([]);
   });
 
+  // El caso medido en la verificación en vivo: se creó una segunda cuenta de
+  // gestión, se le revocó la invitación y se le otorgó superadmin. Está activa,
+  // no tiene contraseña y hoy NO entra, así que el conteo llega acá como 1 y la
+  // alerta sigue encendida (el camino entero, de la fila de la base a este
+  // renglón, está en admin-health.test.ts). Lo que se verifica acá es que el
+  // TEXTO no mienta: dice "que pueda entrar" y no "activo", y explica por qué
+  // esa segunda cuenta no lo apagó.
+  it("el texto dice que una cuenta sin contraseña no cuenta", () => {
+    const alerts = healthAlerts(snapshot({ signInReadySuperadmins: 1 }), FRESH);
+    expect(alerts.act[0].label).toContain("Queda un solo superadmin que pueda entrar");
+    expect(alerts.act[0].label).toContain("una que todavía no creó su contraseña no cuenta");
+    expect(alerts.act[0].label).not.toContain("superadmin activo");
+  });
+
   it("en cero no ofrece una salida por pantalla que no existe", () => {
-    // Sin ningún superadmin activo nadie puede ni abrir /admin/usuarios: decir
-    // que el rol se repone desde la base es lo único cierto.
-    const alerts = healthAlerts(snapshot({ activeSuperadmins: 0 }), FRESH);
+    // Sin ningún superadmin que pueda entrar nadie puede ni abrir
+    // /admin/usuarios: el correo y la base es lo único cierto que queda.
+    const alerts = healthAlerts(snapshot({ signInReadySuperadmins: 0 }), FRESH);
     expect(alerts.act.map((a) => a.key)).toEqual(["superadmins"]);
     expect(alerts.act[0].label).toContain("desde la base");
     expect(alerts.act[0].label).not.toContain("Otorgale");
@@ -249,7 +263,7 @@ describe("healthAlerts: quedarse con un solo superadmin", () => {
 
   it("el veredicto lo pinta en rojo y lo enlaza a Usuarios", () => {
     const html = render(createElement(HealthVerdict, {
-      alerts: healthAlerts(snapshot({ activeSuperadmins: 1 }), FRESH), now: NOW,
+      alerts: healthAlerts(snapshot({ signInReadySuperadmins: 1 }), FRESH), now: NOW,
     }));
     expect(html).toContain("Hay una cosa para atender");
     expect(html).toContain("text-destructive");
@@ -359,7 +373,7 @@ describe("las anclas del veredicto existen en los paneles", () => {
       receipts: { rows, total: 2 },
       // También el destino de la alerta nueva entra en el barrido de abajo: es
       // una ruta absoluta y tiene que seguir siéndolo.
-      activeSuperadmins: 1,
+      signInReadySuperadmins: 1,
     });
     const alerts = healthAlerts(broken, { state: "missing", lastOkAt: null });
     const anchors = [...alerts.act, ...alerts.review]

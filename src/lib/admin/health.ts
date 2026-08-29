@@ -17,10 +17,11 @@ import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 // Módulo sin dependencias: no rompe la premisa de que este archivo se prueba
 // sin `.env` (el mailer del recibo, en cambio, evalúa Prisma al importarse).
 import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
-// Módulo puro también (inyecta Prisma, no lo importa): traerse el conteo de
-// superadmins de acá es lo que evita que el tablero y la guarda del dominio
-// cuenten cosas distintas.
-import { countActiveSuperadmins } from "@/lib/users/query";
+// Módulo puro también (inyecta Prisma, no lo importa). El tablero cuenta a los
+// superadmins que YA PUEDEN ENTRAR, que no es el `where` de las guardas del
+// dominio: son dos preguntas distintas y las dos viven en `users/query.ts`, con
+// su nombre y su comentario, para que ninguna se reescriba acá.
+import { countSignInReadySuperadmins } from "@/lib/users/query";
 
 /** Cada cuánto se espera una corrida EFECTIVA de cada job. No es el intervalo
  *  del crontab: `accrual` y `reminder` corren a diario y actúan una vez por mes,
@@ -209,19 +210,26 @@ export type HealthSnapshot = {
    *  historia, nunca como trabajo pendiente. */
   failedEver: number;
   receipts: ReceiptsHealth;
-  /** Cuántas cuentas con rol `superadmin` están activas (mismo `where` que la
-   *  guarda del dominio: `ACTIVE_SUPERADMINS_WHERE`).
+  /** Cuántas cuentas con rol `superadmin` están activas Y pueden entrar hoy
+   *  (`SIGN_IN_READY_SUPERADMINS_WHERE`: activa y con contraseña creada).
+   *
+   *  NO es el `where` de la guarda del dominio, y la diferencia es deliberada:
+   *  la guarda impide quedarse en cero con el rol —y ahí una cuenta activa sin
+   *  contraseña cuenta, porque puede recuperar el acceso—, mientras que este
+   *  número promete una RED DE SEGURIDAD. Medido en la verificación en vivo: un
+   *  segundo superadmin recién creado, con la invitación revocada, apagaba la
+   *  alerta sin poder iniciar sesión.
    *
    *  No es un contador histórico: es el estado de HOY y se apaga solo cuando
-   *  alguien nombra un segundo superadmin. Está en el tablero porque la
-   *  garantía de "nunca cero superadmins activos" es INTRA-MÓDULO —las
+   *  alguien nombra un segundo superadmin que entra. Está en el tablero porque
+   *  la garantía de "nunca cero superadmins activos" es INTRA-MÓDULO —las
    *  operaciones de /admin/usuarios cuentan después de escribir y adentro de la
    *  transacción— y hay una puerta afuera: la baja de un socio apaga
    *  `User.active` de la cuenta vinculada sin mirar roles, desde una pantalla
    *  que sólo exige admin. Si la única superadmin es además socia, un admin
    *  común declarando su baja deja el sistema sin ninguno, y la recuperación es
    *  SQL contra la base de producción. */
-  activeSuperadmins: number;
+  signInReadySuperadmins: number;
 };
 
 /** Ventana del contador de firmas rechazadas. */
@@ -366,7 +374,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
   const [
     runs, lastEvent, unprocessedWithError, signatureRejections, legacyIpns, inboxOpen, inboxTotal,
     subscriptionRows, mismatchRows, mismatchesEver, failedRows, failedEver, receiptRows, receiptsTotal,
-    activeSuperadmins,
+    signInReadySuperadmins,
   ] = await Promise.all([
     // Una consulta por job y no un groupBy: son cinco, el índice
     // `[job, startedAt]` está hecho para esto y el groupBy no puede traer la
@@ -428,9 +436,10 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
       },
     }),
     db.receipt.count({ where: { emailedAt: null, voidedAt: null } }),
-    // La MISMA consulta que la ficha de la cuenta y que la guarda de la
-    // transacción: acá se importa en vez de reescribirse.
-    countActiveSuperadmins(db),
+    // La pregunta del tablero, importada en vez de reescrita: "¿cuántos
+    // superadmins pueden entrar hoy?". La de la ficha y la guarda —"¿cuántos
+    // tienen el rol?"— es `countActiveSuperadmins`, y son distintas a propósito.
+    countSignInReadySuperadmins(db),
   ]);
 
   // El `detail` de un asiento es JSON libre: se acepta el número y nada más.
@@ -506,7 +515,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
       receiptNumber: receiptNumberOf(r.payloadSummary),
     })),
     failedEver,
-    activeSuperadmins,
+    signInReadySuperadmins,
     receipts: {
       total: receiptsTotal,
       rows: receiptRows.map((r) => {

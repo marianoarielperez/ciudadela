@@ -9,22 +9,54 @@ import {
 
 export type UsersDb = Pick<PrismaClient, "user" | "auditLog" | "userRole">;
 
-/** "Superadmin ACTIVO", en un solo `where`. Es el mismo criterio que la guarda
- *  del dominio cuenta después de escribir y dentro de la transacción
- *  (`service.ts`), el que el veredicto de la ficha lee para deshabilitar «quitar
- *  superadmin» y el que la alerta de /admin/salud mira para avisar que quedó uno
- *  solo. Con un `where` por camino alcanza con que uno se olvide del
- *  `user: { active: true }` para que el tablero cuente cuentas desactivadas y
- *  calle un lockout (la lección de coverageFloor). */
+// Dos preguntas PARECIDAS y distintas, cada una con su `where`. La primera es
+// «¿queda alguien con el rol?» y la segunda «¿queda alguien que pueda entrar
+// HOY?». Se separaron a propósito (verificación en vivo, 29/08/2026): una
+// cuenta de gestión recién creada nace `active: true`, con
+// `passwordChangedAt: null` y un hash de bytes aleatorios que nadie conoce, así
+// que otorgarle superadmin suma para la primera pregunta y no para la segunda.
+// Mezclarlas hacía que la alerta del tablero se apagara con una red que no
+// existe.
+
+/** "Superadmin ACTIVO": tiene el rol y su cuenta no está desactivada. Es el
+ *  criterio de las GUARDAS del dominio —`revokeRole` y `setUserActive` cuentan
+ *  con él después de escribir y dentro de la transacción (`service.ts`)— y el
+ *  que el veredicto de la ficha lee para deshabilitar «quitar superadmin». Ahí
+ *  la pregunta es si queda alguien con el rol: una cuenta activa sin contraseña
+ *  puede recuperar el acceso, así que no dejarla contar cerraría operaciones
+ *  legítimas. Con un `where` por camino alcanza con que uno se olvide del
+ *  `user: { active: true }` para que la pantalla y la guarda no cuenten lo
+ *  mismo (la lección de coverageFloor). */
 export const ACTIVE_SUPERADMINS_WHERE: Prisma.UserRoleWhereInput = {
   role: { name: "superadmin" },
   user: { active: true },
 };
 
-/** El conteo, para los dos consumidores que lo necesitan fuera de una
- *  transacción: la ficha de la cuenta y el tablero de salud. */
+/** El conteo de la pregunta «¿queda alguien con el rol?», para el consumidor que
+ *  lo necesita fuera de una transacción: la ficha de la cuenta. */
 export function countActiveSuperadmins(db: Pick<PrismaClient, "userRole">): Promise<number> {
   return db.userRole.count({ where: ACTIVE_SUPERADMINS_WHERE });
+}
+
+/** "Superadmin que YA PUEDE ENTRAR": activo y con contraseña creada. Es el
+ *  criterio de la ALERTA de /admin/salud, que promete una red de seguridad —si
+ *  se pierde una cuenta queda otra— y por eso sólo puede contar a quien entra
+ *  hoy. Un segundo superadmin sin contraseña ni invitación viva sólo entraría
+ *  por «olvidé mi contraseña», y sólo si controla esa casilla: si el email
+ *  tiene un dedazo, no entra nadie y el tablero estaría diciendo que el sistema
+ *  está cubierto.
+ *
+ *  Deliberadamente NO es el `where` de las guardas: éstas impiden quedarse en
+ *  cero con el rol, y ahí una cuenta recuperable sí cuenta. */
+export const SIGN_IN_READY_SUPERADMINS_WHERE: Prisma.UserRoleWhereInput = {
+  role: { name: "superadmin" },
+  user: { active: true, passwordChangedAt: { not: null } },
+};
+
+/** El conteo de la pregunta «¿queda alguien que pueda entrar hoy?», para el
+ *  tablero de salud. */
+export function countSignInReadySuperadmins(db: Pick<PrismaClient, "userRole">): Promise<number> {
+  return db.userRole.count({ where: SIGN_IN_READY_SUPERADMINS_WHERE });
 }
 
 export type UserChip = "gestion" | "socios" | "inactivas" | "todas";
