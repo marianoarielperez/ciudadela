@@ -69,7 +69,9 @@ export default async function ConfigPage(props: {
     feeValueReader.current(),
     feeValueReader.history(),
     // `select` explícito: de la fila del acta acá sólo se arma la etiqueta del
-    // combo, y sin él Prisma trae también el texto y los adjuntos del acta.
+    // combo (tipo, número y fecha). Un acta no tiene texto ni adjuntos —es
+    // tipo + número + fecha + una descripción corta—, pero el select chico
+    // sigue siendo lo correcto: la descripción libre no viaja a esta pantalla.
     prisma.minute.findMany({
       orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 30,
