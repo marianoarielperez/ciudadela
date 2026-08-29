@@ -9,6 +9,24 @@ import {
 
 export type UsersDb = Pick<PrismaClient, "user" | "auditLog" | "userRole">;
 
+/** "Superadmin ACTIVO", en un solo `where`. Es el mismo criterio que la guarda
+ *  del dominio cuenta después de escribir y dentro de la transacción
+ *  (`service.ts`), el que el veredicto de la ficha lee para deshabilitar «quitar
+ *  superadmin» y el que la alerta de /admin/salud mira para avisar que quedó uno
+ *  solo. Con un `where` por camino alcanza con que uno se olvide del
+ *  `user: { active: true }` para que el tablero cuente cuentas desactivadas y
+ *  calle un lockout (la lección de coverageFloor). */
+export const ACTIVE_SUPERADMINS_WHERE: Prisma.UserRoleWhereInput = {
+  role: { name: "superadmin" },
+  user: { active: true },
+};
+
+/** El conteo, para los dos consumidores que lo necesitan fuera de una
+ *  transacción: la ficha de la cuenta y el tablero de salud. */
+export function countActiveSuperadmins(db: Pick<PrismaClient, "userRole">): Promise<number> {
+  return db.userRole.count({ where: ACTIVE_SUPERADMINS_WHERE });
+}
+
 export type UserChip = "gestion" | "socios" | "inactivas" | "todas";
 export type UserListFilters = { vista?: Exclude<UserChip, "todas">; q?: string };
 
@@ -180,7 +198,7 @@ export async function getUserDetail(
   });
   if (!u) return null;
   const [activeSuperadmins, activity] = await Promise.all([
-    db.userRole.count({ where: { role: { name: "superadmin" }, user: { active: true } } }),
+    countActiveSuperadmins(db),
     db.auditLog.findMany({
       where: {
         OR: [

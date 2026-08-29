@@ -84,6 +84,34 @@ export function healthAlerts(health: HealthSnapshot, backup: BackupHealth): Heal
     review.push({ key: "backup", label: "El panel no sabe si el backup corre: falta configurarlo.", href: "#backup" });
   }
 
+  // Un solo superadmin activo es `act`, y la frontera se cumple en los dos
+  // términos: el estado es una rotura real —perder esa cuenta deja el sistema
+  // sin nadie que pueda administrarlo, y volver a entrar es SQL contra la base
+  // de producción— y hay UNA salida concreta que lo apaga, que la alerta
+  // nombra: otorgarle el rol a una segunda cuenta desde /admin/usuarios.
+  //
+  // No es de la familia de `inboxTotal`, `failedEver` o los mismatches, que
+  // están en `review` o no alertan: aquéllos son contadores acumulativos que
+  // ninguna acción baja. Éste es el estado de HOY y se apaga solo al
+  // resolverse. Que hoy esté encendido —hay un único superadmin— es el punto:
+  // el módulo de usuarios garantiza "nunca cero superadmins activos" sólo
+  // PUERTAS ADENTRO (revokeRole y setUserActive cuentan después de escribir y
+  // dentro de la transacción), y la baja de un socio apaga `User.active` de la
+  // cuenta vinculada sin mirar roles, desde una pantalla que sólo exige admin.
+  // Con la única superadmin siendo además socia, ese camino deja el sistema en
+  // cero. Mientras la guarda de raíz no exista, esta línea es el aviso.
+  if (health.activeSuperadmins <= 1) {
+    act.push({
+      key: "superadmins",
+      label: health.activeSuperadmins === 0
+        // Sin ninguno no queda salida por pantalla —esta misma exige
+        // superadmin—: decirlo es más útil que ofrecer un botón imposible.
+        ? "No queda ningún superadmin activo: el rol sólo se puede reponer desde la base."
+        : "Queda un solo superadmin activo: si se pierde esa cuenta, nadie puede administrar el sistema. Otorgale el rol de superadmin a una segunda cuenta desde Usuarios.",
+      href: "/admin/usuarios",
+    });
+  }
+
   if (health.mp.unprocessedWithError > 0) {
     act.push({
       key: "mp-error",

@@ -119,8 +119,11 @@ export function userDetailVerdict(
           ? USER_GUARD_MESSAGES.lastSuperadmin
           : undefined,
 
-    // `updateManagedUser` sólo acepta cuentas de gestión: el nombre de un socio
-    // puro sale de su ficha (`fullName`) y editarlo desde acá lo desincroniza.
+    // `updateManagedUser` sólo acepta cuentas de gestión, y el motivo es de
+    // RESPONSABILIDAD y no de sincronización: el nombre de una cuenta de socio
+    // se corrige junto con su ficha, y esta pantalla administra cuentas de
+    // gestión — no es la fuente de ese dato. (`User.name` se escribe una sola
+    // vez, al crear la cuenta: no hay sincronización que romper.)
     editData: managed ? undefined : USER_GUARD_MESSAGES.notManaged,
 
     // `resendInvitation`, en el ORDEN en que el servicio corta: gestión,

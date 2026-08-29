@@ -168,8 +168,14 @@ export function makeUserAdminService(db: UsersWriteDb) {
         });
         if (!target) throw new UserGuardAbort(USER_GUARD_MESSAGES.notFound);
         // Sólo cuentas de gestión, igual que `setUserActive` y
-        // `resendInvitation`: el nombre de un socio puro sale de su ficha
-        // (`fullName`) y editarlo desde acá lo desincroniza en silencio.
+        // `resendInvitation`. El motivo es de RESPONSABILIDAD, no de
+        // sincronización: el nombre de una cuenta de socio se corrige junto con
+        // su ficha, y esta pantalla administra cuentas de gestión — no es la
+        // fuente de ese dato. (No hay ninguna sincronización que romper:
+        // `User.name` se escribe una sola vez, al crear la cuenta en
+        // `members/access.ts`, y ni `card-edit.ts` ni `write.ts` lo vuelven a
+        // tocar; la ficha y el `User.name` ya divergen desde el primer cambio
+        // de nombre.)
         const managed = hasManagedRole(target.roles.map((r) => r.role.name));
         if (!managed) throw new UserGuardAbort(USER_GUARD_MESSAGES.notManaged);
         const email = input.email?.toLowerCase().trim();

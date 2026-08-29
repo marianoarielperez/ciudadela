@@ -285,7 +285,7 @@ personales** (Ley 25.326: roles y flags, nunca el email):
 
 | Riesgo (del análisis del 29/08) | Tratamiento |
 |---|---|
-| Lockout: un solo superadmin, el seed no re-otorga | Guardas completas transaccionales (§4.2) |
+| Lockout: un solo superadmin, el seed no re-otorga | Guardas completas transaccionales (§4.2), que son **intra-módulo**; la puerta de afuera la avisa `/admin/salud` (abajo) |
 | Quitar `socio` deja al socio sin `/mi` con débito vivo | El rol `socio` no se puede tocar desde el módulo (decisión 2) |
 | `active` de socios lo gobierna la baja/readmisión | Interruptor solo para cuentas de gestión (decisión 11) |
 | Editar email rompe `Member.email ↔ User.email` | Email editable solo sin `Member` (decisión 10) |
@@ -293,6 +293,39 @@ personales** (Ley 25.326: roles y flags, nunca el email):
 | Invitación de socio sobre cuenta admin (anti-escalada) | El alta detecta el email de ficha y redirige el flujo (§4.2) |
 | Red dentro de transacción | Email post-commit, best-effort, con reenvío (§4.4) |
 | Concurrencia en guardas de rol | Mutex `user-roles` + revalidación en transacción (§4.2) |
+
+**La garantía de "nunca cero superadmins activos" es INTRA-MÓDULO.** `revokeRole`
+y `setUserActive` cuentan los superadmins activos *después* de escribir y
+*dentro* de la transacción, así que ninguna operación de `/admin/usuarios` puede
+dejar el sistema sin ninguno. Lo que queda afuera es la **baja de un socio**:
+`members/service.ts` apaga el `User.active` de la cuenta vinculada sin mirar
+roles, y esa pantalla exige `requireAdmin`, no `requireSuperadmin`. Si la única
+superadmin fuera además socia —que es justamente el caso que esta spec promueve,
+darle el rol a la tesorera o a la presidenta—, un admin común declarando su baja
+dejaría el sistema con cero superadmins activos. Y como el seed no re-otorga
+roles ni reactiva cuentas (a propósito), la recuperación sería SQL directo contra
+la base de producción: exactamente lo que este módulo existe para eliminar.
+
+**Tratamiento acordado (29/08/2026): que lo vea `/admin/salud`.** El tablero
+suma una alerta `act` cuando quedan **uno o menos** superadmins activos, contados
+con el MISMO `where` que la guarda del dominio (`ACTIVE_SUPERADMINS_WHERE`, en
+`users/query.ts`, importado y no copiado). Va como `act` y no como `review`
+porque cumple los dos términos de esa frontera: el estado es una rotura real
+—perder esa cuenta obliga a entrar por SQL— y hay una salida concreta que lo
+apaga, que el texto de la alerta nombra: otorgarle el rol a una segunda cuenta
+desde `/admin/usuarios`. No es de la familia de los contadores acumulativos que
+"nacen en rojo" y que ninguna acción baja: es el estado de hoy y se apaga solo al
+resolverse. Hoy está encendido —hay un único superadmin— y eso es precisamente lo
+que la alerta quiere inducir.
+
+**Regla operativa:** conviene que al menos un superadmin activo **no sea socio**,
+para que ningún ciclo de baja o readmisión pueda tocarle la cuenta.
+
+**Queda como tarea aparte** la guarda de raíz: que la baja de socio se niegue a
+apagar la cuenta del último superadmin activo. No se hizo en esta branch porque
+`src/lib/members/*` está congelado acá —es código de bajas verificado y en
+producción— y porque la verificación de cierre de este módulo exige `git diff`
+vacío sobre ese directorio (abajo).
 
 **Pagos: verificado que no hay superficie de contacto.** El webhook de MP, los
 cinco crons, `registerPayment` y toda la tesorería no leen roles ni `User` en

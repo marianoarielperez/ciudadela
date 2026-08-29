@@ -6,6 +6,7 @@ import {
 import { readBackupHealth } from "@/lib/admin/health-backup";
 import { formatRelativeAgo } from "@/lib/format";
 import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
+import { ACTIVE_SUPERADMINS_WHERE } from "@/lib/users/query";
 
 const NOW = new Date("2026-09-15T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -214,6 +215,7 @@ type NotifRow = {
   id: bigint; sentAt: Date; type: string; status: string; error: string | null;
   payloadSummary: string | null; memberId: number | null; applicationId: number | null;
 };
+type UserRoleRow = { role: { name: string }; user: { active: boolean } };
 type ReceiptRow = {
   id: number; number: string; issuedAt: Date; emailedAt: Date | null; voidedAt: Date | null;
   payment: {
@@ -231,6 +233,7 @@ function fakeDb(over: Partial<{
   notifications: NotifRow[];
   members: Array<{ id: number; fullName: string }>;
   receipts: ReceiptRow[];
+  roles: UserRoleRow[];
 }> = {}) {
   const events = over.events ?? [];
   const db = {
@@ -262,6 +265,9 @@ function fakeDb(over: Partial<{
     receipt: {
       findMany: vi.fn(async (args: { where?: Row; take?: number }) => query(over.receipts ?? [], args)),
       count: vi.fn(async (args: { where?: Row }) => query(over.receipts ?? [], args).length),
+    },
+    userRole: {
+      count: vi.fn(async (args: { where?: Row }) => query(over.roles ?? [], args).length),
     },
   };
   return db as unknown as HealthDb;
@@ -532,5 +538,36 @@ describe("fetchHealth — recibos sin enviar", () => {
     const h = await fetchHealth(fakeDb({ receipts }), NOW);
     expect(h.receipts.rows).toHaveLength(50);
     expect(h.receipts.total).toBe(60);
+  });
+});
+
+describe("fetchHealth — superadmins activos", () => {
+  const role = (name: string, active: boolean): UserRoleRow => ({ role: { name }, user: { active } });
+
+  it("cuenta los superadmin cuya CUENTA está activa, y sólo ésos", async () => {
+    const h = await fetchHealth(fakeDb({
+      roles: [
+        role("superadmin", true),
+        role("superadmin", true),
+        // Desactivada: no puede entrar, así que no repone a nadie.
+        role("superadmin", false),
+        // Otro rol: administrar no es lo mismo que poder tocar la configuración.
+        role("admin", true),
+      ],
+    }), NOW);
+    expect(h.activeSuperadmins).toBe(2);
+  });
+
+  it("sin ninguna fila el conteo es 0 y no un null que la alerta tendría que adivinar", async () => {
+    expect((await fetchHealth(fakeDb(), NOW)).activeSuperadmins).toBe(0);
+  });
+
+  it("consulta con el MISMO `where` que la guarda del dominio, importado y no copiado", async () => {
+    // Es la invariante del chequeo: si el tablero contara con un `where` propio,
+    // alcanzaría con que se olvidara `user: { active: true }` para que el panel
+    // dijera "hay dos" mientras el sistema está a una baja de socio del lockout.
+    const db = fakeDb() as unknown as { userRole: { count: ReturnType<typeof vi.fn> } };
+    await fetchHealth(db as unknown as HealthDb, NOW);
+    expect(db.userRole.count).toHaveBeenCalledWith({ where: ACTIVE_SUPERADMINS_WHERE });
   });
 });

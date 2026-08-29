@@ -17,6 +17,10 @@ import { isCharging, isNotCancelled } from "@/lib/mp/subscription-status";
 // Módulo sin dependencias: no rompe la premisa de que este archivo se prueba
 // sin `.env` (el mailer del recibo, en cambio, evalúa Prisma al importarse).
 import { receiptNumberOf, receiptSummaryOf } from "@/lib/treasury/receipt-summary";
+// Módulo puro también (inyecta Prisma, no lo importa): traerse el conteo de
+// superadmins de acá es lo que evita que el tablero y la guarda del dominio
+// cuenten cosas distintas.
+import { countActiveSuperadmins } from "@/lib/users/query";
 
 /** Cada cuánto se espera una corrida EFECTIVA de cada job. No es el intervalo
  *  del crontab: `accrual` y `reminder` corren a diario y actúan una vez por mes,
@@ -205,6 +209,19 @@ export type HealthSnapshot = {
    *  historia, nunca como trabajo pendiente. */
   failedEver: number;
   receipts: ReceiptsHealth;
+  /** Cuántas cuentas con rol `superadmin` están activas (mismo `where` que la
+   *  guarda del dominio: `ACTIVE_SUPERADMINS_WHERE`).
+   *
+   *  No es un contador histórico: es el estado de HOY y se apaga solo cuando
+   *  alguien nombra un segundo superadmin. Está en el tablero porque la
+   *  garantía de "nunca cero superadmins activos" es INTRA-MÓDULO —las
+   *  operaciones de /admin/usuarios cuentan después de escribir y adentro de la
+   *  transacción— y hay una puerta afuera: la baja de un socio apaga
+   *  `User.active` de la cuenta vinculada sin mirar roles, desde una pantalla
+   *  que sólo exige admin. Si la única superadmin es además socia, un admin
+   *  común declarando su baja deja el sistema sin ninguno, y la recuperación es
+   *  SQL contra la base de producción. */
+  activeSuperadmins: number;
 };
 
 /** Ventana del contador de firmas rechazadas. */
@@ -225,7 +242,7 @@ const CURRENT_MEMBER_STATUSES: readonly string[] = ["active", "suspended"];
 
 export type HealthDb = Pick<
   PrismaClient,
-  "cronRun" | "webhookEvent" | "auditLog" | "notification" | "mpUnmatchedPayment" | "mpSubscription" | "member" | "receipt"
+  "cronRun" | "webhookEvent" | "auditLog" | "notification" | "mpUnmatchedPayment" | "mpSubscription" | "member" | "receipt" | "userRole"
 >;
 
 /** Las dos formas en que el débito automático y la ficha se desalinean. Función
@@ -349,6 +366,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
   const [
     runs, lastEvent, unprocessedWithError, signatureRejections, legacyIpns, inboxOpen, inboxTotal,
     subscriptionRows, mismatchRows, mismatchesEver, failedRows, failedEver, receiptRows, receiptsTotal,
+    activeSuperadmins,
   ] = await Promise.all([
     // Una consulta por job y no un groupBy: son cinco, el índice
     // `[job, startedAt]` está hecho para esto y el groupBy no puede traer la
@@ -410,6 +428,9 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
       },
     }),
     db.receipt.count({ where: { emailedAt: null, voidedAt: null } }),
+    // La MISMA consulta que la ficha de la cuenta y que la guarda de la
+    // transacción: acá se importa en vez de reescribirse.
+    countActiveSuperadmins(db),
   ]);
 
   // El `detail` de un asiento es JSON libre: se acepta el número y nada más.
@@ -485,6 +506,7 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
       receiptNumber: receiptNumberOf(r.payloadSummary),
     })),
     failedEver,
+    activeSuperadmins,
     receipts: {
       total: receiptsTotal,
       rows: receiptRows.map((r) => {
