@@ -175,4 +175,26 @@ describe("la sección Invitación", () => {
     const v = userDetailVerdict(user({ roles: ["socio"], passwordChangedAt: null }), ACTOR);
     expect(v.showInvitation).toBe(false);
   });
+
+  // El segundo hallazgo del mismo tipo: quitarle el ÚLTIMO rol a una cuenta que
+  // todavía no canjeó dejaba el `admin_invitation` vivo hasta 7 días con la
+  // sección —y su botón Revocar— escondida, o sea sin ninguna manera de matar
+  // el enlace desde el producto. `revokeInvitation` no tiene guarda `managed`
+  // (service.ts): acepta ese caso perfectamente.
+  it("se muestra en una cuenta sin roles si quedó una invitación viva", () => {
+    const v = userDetailVerdict(
+      user({ roles: [], passwordChangedAt: null, invitation: liveInvitation }),
+      ACTOR,
+    );
+    expect(v.managed).toBe(false);
+    expect(v.showInvitation).toBe(true);
+    expect(v.revokeInvitation).toBeUndefined();
+    // Reenviarla sí queda cortado: `resendInvitation` exige gestión.
+    expect(v.resendInvitation).toBe(USER_GUARD_MESSAGES.notManaged);
+  });
+
+  it("sigue escondida en una cuenta sin roles y SIN invitación (no hay nada que revocar)", () => {
+    const v = userDetailVerdict(user({ roles: [], passwordChangedAt: null, invitation: null }), ACTOR);
+    expect(v.showInvitation).toBe(false);
+  });
 });

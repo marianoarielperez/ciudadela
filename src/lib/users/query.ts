@@ -3,14 +3,18 @@
 // importan tests puros (patrón de applications/query.ts).
 import type { MemberStatus, Prisma, PrismaClient } from "@/generated/prisma/client";
 import { paginate, parsePage } from "@/lib/admin/pagination";
-import { accountState, type UserAccountState } from "@/lib/users/labels";
+import {
+  accountState, hasManagedRole, MANAGED_ROLES, type UserAccountState,
+} from "@/lib/users/labels";
 
 export type UsersDb = Pick<PrismaClient, "user" | "auditLog" | "userRole">;
 
 export type UserChip = "gestion" | "socios" | "inactivas" | "todas";
 export type UserListFilters = { vista?: Exclude<UserChip, "todas">; q?: string };
 
-const MANAGED_ROLE_NAMES = ["admin", "superadmin"];
+// La lista vive en `labels.ts` (módulo puro): el chip, el conteo, el estado de
+// la cuenta y las guardas del dominio deciden todos con la MISMA definición.
+const MANAGED_ROLE_NAMES: string[] = [...MANAGED_ROLES];
 
 // Un `where` por chip, COMPARTIDO entre el conteo y el filtro: cada chip
 // filtra exactamente lo que cuenta (regla de /admin/socios). "todas" no está:
@@ -105,15 +109,21 @@ export async function fetchUsersPage(
       actionTokens: LAST_INVITATION,
     },
   });
-  const rows: UserRow[] = users.map((u) => ({
-    id: u.id,
-    email: u.email,
-    name: u.name,
-    lastLoginAt: u.lastLoginAt,
-    roles: u.roles.map((r) => r.role.name),
-    member: u.member,
-    state: accountState(u, u.actionTokens[0] ?? null, now),
-  }));
+  const rows: UserRow[] = users.map((u) => {
+    const roles = u.roles.map((r) => r.role.name);
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      lastLoginAt: u.lastLoginAt,
+      roles,
+      member: u.member,
+      // Los roles entran al estado: sin ellos, una cuenta de gestión sin
+      // invitación (revocada, o borrada al cambiarle el email) se pintaba de
+      // verde como "Activa" sin poder entrar.
+      state: accountState(u, u.actionTokens[0] ?? null, hasManagedRole(roles), now),
+    };
+  });
   return { rows, total, page, pageCount, pageSize: PAGE_SIZE };
 }
 
@@ -187,6 +197,7 @@ export async function getUserDetail(
     }),
   ]);
   const last = u.actionTokens[0] ?? null;
+  const roles = u.roles.map((r) => r.role.name);
   return {
     id: u.id,
     email: u.email,
@@ -194,9 +205,9 @@ export async function getUserDetail(
     active: u.active,
     lastLoginAt: u.lastLoginAt,
     passwordChangedAt: u.passwordChangedAt,
-    roles: u.roles.map((r) => r.role.name),
+    roles,
     member: u.member,
-    state: accountState(u, last, now),
+    state: accountState(u, last, hasManagedRole(roles), now),
     invitation: last && last.usedAt === null
       ? { expiresAt: last.expiresAt, createdAt: last.createdAt }
       : null,

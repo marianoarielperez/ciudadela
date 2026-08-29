@@ -41,7 +41,7 @@ export default async function NuevoUsuarioPage() {
       {/* La action rechaza el email de la ficha de un socio con este mismo
           criterio (`memberCardEmail`). Decirlo ACÁ, antes de que el operador lo
           intente, le ahorra el rechazo y le da el camino correcto. */}
-      <FormMessage kind="neutral" box role="none" as="div" className="max-w-md space-y-2">
+      <FormMessage kind="neutral" box as="div" className="max-w-md space-y-2">
         <p className="font-medium text-foreground">¿La persona a la que querés dar acceso ya es socia?</p>
         <p>
           No le crees una cuenta aparte. Si ya tiene cuenta, buscala en Usuarios y otorgale el

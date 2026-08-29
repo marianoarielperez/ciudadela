@@ -16,7 +16,8 @@
 // El juez sigue siendo el dominio: esto es la pantalla diciendo por adelantado
 // lo mismo, nunca la autorización. Las guardas reales se revalidan dentro de la
 // transacción de `service.ts`.
-import { USER_GUARD_MESSAGES, MANAGED_ROLES } from "@/lib/users/service";
+import { hasManagedRole } from "@/lib/users/labels";
+import { USER_GUARD_MESSAGES } from "@/lib/users/service";
 
 /** Lo que el veredicto necesita de la cuenta. Estructural a propósito: el
  *  `UserDetail` de `query.ts` se le pasa entero sin adaptarlo. */
@@ -56,7 +57,7 @@ export function userDetailVerdict(
   actorId: number,
 ): UserDetailVerdict {
   const isSelf = user.id === actorId;
-  const managed = user.roles.some((r) => (MANAGED_ROLES as readonly string[]).includes(r));
+  const managed = hasManagedRole(user.roles);
   const redeemed = user.passwordChangedAt !== null;
 
   // Último superadmin ACTIVO: quitarle el rol o desactivarlo dejaría al sistema
@@ -77,7 +78,14 @@ export function userDetailVerdict(
     // encabezado mostraba "Invitación pendiente" y no había ninguna manera de
     // matar el enlace. `revokeInvitation` no tiene guarda `alreadyRedeemed`:
     // acepta ese caso perfectamente.
-    showInvitation: managed && (!redeemed || user.invitation !== null),
+    //
+    // Y el `managed` NO puede envolver a la invitación: si el superadmin le
+    // quita el último rol a una cuenta que todavía no canjeó, la sección
+    // desaparecía con su botón Revocar y el `admin_invitation` seguía vivo hasta
+    // 7 días sin ninguna manera de matarlo desde el producto. `revokeInvitation`
+    // tampoco tiene guarda `managed` (service.ts): acepta ese caso. Mientras
+    // haya algo que revocar, la sección se muestra.
+    showInvitation: user.invitation !== null || (managed && !redeemed),
 
     // `revokeRole("superadmin")`: guarda 1 (self, fuera de la tx) y guarda 2
     // (cero superadmins activos, después de la escritura y adentro). El botón

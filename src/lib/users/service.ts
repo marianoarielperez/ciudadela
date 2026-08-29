@@ -24,9 +24,12 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { makeTokens } from "@/lib/tokens";
 import { isUniqueViolation } from "@/lib/treasury/unique-violation";
+// "Qué es una cuenta de gestión" es UNA definición y vive en `labels.ts`, que es
+// puro: las guardas de este archivo, el `where` de los chips y el veredicto de
+// la pantalla la comparten en vez de copiarla.
+import { hasManagedRole, type ManagedRole } from "@/lib/users/labels";
 
-export type ManagedRole = "admin" | "superadmin";
-export const MANAGED_ROLES: readonly ManagedRole[] = ["admin", "superadmin"];
+export type { ManagedRole };
 
 // Los TEXTOS salen del dominio (patrón GRANT_GUARD_MESSAGES de la exención):
 // el operador lee lo mismo se corte donde se corte, y la pantalla deshabilita
@@ -82,7 +85,6 @@ globalForMutex.userAdminMutex = userAdminMutex;
 const LOCK = "user-roles";
 
 export function makeUserAdminService(db: UsersWriteDb) {
-
   function run<T>(fn: (tx: Tx) => Promise<{ ok: true } & T>): Promise<ServiceResult<T>> {
     return userAdminMutex.run(LOCK, async () => {
       try {
@@ -101,7 +103,7 @@ export function makeUserAdminService(db: UsersWriteDb) {
     });
     if (!target) throw new UserGuardAbort(USER_GUARD_MESSAGES.notFound);
     const names = target.roles.map((r) => r.role.name);
-    return { target, names, managed: names.some((n) => (MANAGED_ROLES as readonly string[]).includes(n)) };
+    return { target, names, managed: hasManagedRole(names) };
   }
 
   /** Cuántos superadmins ACTIVOS quedan. Se llama DESPUÉS de la escritura y
@@ -168,7 +170,7 @@ export function makeUserAdminService(db: UsersWriteDb) {
         // Sólo cuentas de gestión, igual que `setUserActive` y
         // `resendInvitation`: el nombre de un socio puro sale de su ficha
         // (`fullName`) y editarlo desde acá lo desincroniza en silencio.
-        const managed = target.roles.some((r) => (MANAGED_ROLES as readonly string[]).includes(r.role.name));
+        const managed = hasManagedRole(target.roles.map((r) => r.role.name));
         if (!managed) throw new UserGuardAbort(USER_GUARD_MESSAGES.notManaged);
         const email = input.email?.toLowerCase().trim();
         const emailChanged = email !== undefined && email !== "" && email !== target.email;
