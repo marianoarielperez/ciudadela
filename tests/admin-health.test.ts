@@ -231,7 +231,7 @@ type UserRoleRow = {
 type StuckMemberRow = {
   id: number; fullName: string; status: string; emailStatus: string;
   userId: number | null; emailVerifiedAt: Date | null;
-  tokens: Array<{ purpose: string; usedAt: Date | null; expiresAt: Date }>;
+  tokens: Array<{ purpose: string; usedAt: Date | null; createdAt: Date; expiresAt: Date }>;
 };
 
 type ReceiptRow = {
@@ -279,18 +279,32 @@ function fakeDb(over: Partial<{
       count: vi.fn(async (args: { where?: Row }) => query(over.notifications ?? [], args).length),
     },
     member: {
-      // Por acá pasan DOS consultas distintas y el doble DESPACHA por el `where`
-      // que recibe, no lo re-implementa: la de §7.3 es la única que filtra por
-      // `emailStatus`; la otra resuelve nombres por id. Un fake que sintetizara
-      // el filtro dejaría cláusulas del `where` real sin ejercitar (lección del
-      // Módulo 6).
+      // Por acá pasan DOS consultas distintas y el doble DESPACHA por lo que
+      // recibe, no lo re-implementa: la de §7.3 es la única que selecciona una
+      // RELACIÓN (`tokens`); la otra sólo resuelve nombres por id. Un fake que
+      // sintetizara el filtro dejaría cláusulas del `where` real sin ejercitar
+      // (lección del Módulo 6).
+      //
+      // El discriminador es `select.tokens` y NO `where.emailStatus`: distingue
+      // por la forma de la consulta en vez de por una de las cláusulas que estos
+      // mismos tests quieren poder borrar para verificar por mutación. Con el
+      // otro, borrar `emailStatus` del `where` real desviaba la consulta a la
+      // rama equivocada y el rojo no señalaba la guarda que se estaba probando.
       findMany: vi.fn(async (args: { where?: Row; select?: Row }) => {
-        if (args.where?.emailStatus === undefined) return query(over.members ?? [], args);
+        if (args.select?.tokens === undefined) return query(over.members ?? [], args);
         // El `where` anidado de las invitaciones VIVAS también se aplica de
-        // verdad: la función pura sólo decide frescura, así que si el doble
+        // verdad: la función pura sólo decide antigüedad, así que si el doble
         // dejara pasar una usada o vencida, el corte no se estaría probando.
         const tokenWhere = (args.select?.tokens as { where?: Row } | undefined)?.where;
-        return query(over.stuck ?? [], args).map((m) => ({
+        // El `orderBy` también se aplica, y sólo en esta rama: `query` lo ignora
+        // para todas las demás, y varios fixtures (los mismatches, sin ir más
+        // lejos) esperan hoy el orden de inserción. Acá importa porque el
+        // criterio es "el que hace más rato que espera, primero".
+        const ordered = query(over.stuck ?? [], args).slice();
+        if ((args as { orderBy?: Row }).orderBy?.emailVerifiedAt === "asc") {
+          ordered.sort((a, b) => (a.emailVerifiedAt?.getTime() ?? 0) - (b.emailVerifiedAt?.getTime() ?? 0));
+        }
+        return ordered.map((m) => ({
           id: m.id, fullName: m.fullName, emailVerifiedAt: m.emailVerifiedAt,
           tokens: m.tokens.filter((t) => matches(t as unknown as Row, tokenWhere)),
         }));
@@ -675,8 +689,11 @@ describe("fetchHealth — verificados sin cuenta (§7.3)", () => {
     id: 106, fullName: "Vecina Uno", status: "active", emailStatus: "verified",
     userId: null, emailVerifiedAt: hoursAgo(200), tokens: [], ...over,
   });
-  const token = (over: Partial<StuckMemberRow["tokens"][number]> = {}) =>
-    ({ purpose: "password_invitation", usedAt: null, expiresAt: hoursAgo(-100), ...over });
+  /** Una invitación viva emitida hace `ageHours`, con el TTL real de 7 días. */
+  const token = (ageHours: number, over: Partial<StuckMemberRow["tokens"][number]> = {}) => ({
+    purpose: "password_invitation", usedAt: null,
+    createdAt: hoursAgo(ageHours), expiresAt: hoursAgo(ageHours - 168), ...over,
+  });
 
   it("sin nadie a mitad del canje la lista viene vacía, no en null", async () => {
     expect((await fetchHealth(fakeDb(), NOW)).stuckAccess).toEqual([]);
@@ -692,24 +709,38 @@ describe("fetchHealth — verificados sin cuenta (§7.3)", () => {
     }]);
   });
 
-  it("el que tiene la invitación fresca NO se lista: es el transitorio normal", async () => {
-    const h = await fetchHealth(fakeDb({ stuck: [stuck({ tokens: [token()] })] }), NOW);
+  it("el que RECIÉN recibió su invitación NO se lista: es el transitorio normal", async () => {
+    const h = await fetchHealth(fakeDb({ stuck: [stuck({ tokens: [token(1)] })] }), NOW);
     expect(h.stuckAccess).toEqual([]);
   });
 
+  it("la invitación viva emitida hace 48 h y sin usar se lista como 'stale'", async () => {
+    // De punta a punta: la fila del padrón, el token vivo de la relación y el
+    // veredicto. Es el caso que la regla vieja —contra el vencimiento— dejaba
+    // invisible cinco días.
+    const h = await fetchHealth(fakeDb({ stuck: [stuck({ tokens: [token(48)] })] }), NOW);
+    expect(h.stuckAccess).toEqual([{
+      memberId: 106, memberName: "Vecina Uno", verifiedAt: hoursAgo(200),
+      invite: "stale", inviteExpiresAt: hoursAgo(48 - 168),
+    }]);
+  });
+
   it("una invitación USADA o VENCIDA no cuenta como viva: el `where` anidado es parte del corte", async () => {
+    // Las tres llegan por la vía de una invitación de HACE UNA HORA: si el
+    // `where` anidado no las descartara, el socio contaría como fresco y no
+    // aparecería. Que salgan como `none` prueba que el filtro corrió.
     const usada = await fetchHealth(fakeDb({
-      stuck: [stuck({ tokens: [token({ usedAt: hoursAgo(3) })] })],
+      stuck: [stuck({ tokens: [token(1, { usedAt: hoursAgo(3) })] })],
     }), NOW);
     expect(usada.stuckAccess[0]).toMatchObject({ invite: "none" });
     const vencida = await fetchHealth(fakeDb({
-      stuck: [stuck({ tokens: [token({ expiresAt: hoursAgo(1) })] })],
+      stuck: [stuck({ tokens: [token(1, { expiresAt: hoursAgo(1) })] })],
     }), NOW);
     expect(vencida.stuckAccess[0]).toMatchObject({ invite: "none" });
     // Y un token de OTRO propósito tampoco: el de recuperación no da acceso a
     // quien todavía no tiene cuenta.
     const otro = await fetchHealth(fakeDb({
-      stuck: [stuck({ tokens: [token({ purpose: "password_reset" })] })],
+      stuck: [stuck({ tokens: [token(1, { purpose: "password_reset" })] })],
     }), NOW);
     expect(otro.stuckAccess[0]).toMatchObject({ invite: "none" });
   });
@@ -727,5 +758,16 @@ describe("fetchHealth — verificados sin cuenta (§7.3)", () => {
       ],
     }), NOW);
     expect(h.stuckAccess.map((r) => r.memberId)).toEqual([1]);
+  });
+
+  it("el que hace más rato que espera va primero", async () => {
+    const h = await fetchHealth(fakeDb({
+      stuck: [
+        stuck({ id: 2, emailVerifiedAt: hoursAgo(50) }),
+        stuck({ id: 1, emailVerifiedAt: hoursAgo(400) }),
+        stuck({ id: 3, emailVerifiedAt: hoursAgo(10) }),
+      ],
+    }), NOW);
+    expect(h.stuckAccess.map((r) => r.memberId)).toEqual([1, 2, 3]);
   });
 });

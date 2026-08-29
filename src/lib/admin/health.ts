@@ -206,16 +206,34 @@ export type StuckAccessRow = {
   /** Cuándo verificó, para que el operador dimensione la espera. */
   verifiedAt: Date | null;
   /** `none` = sin invitación viva (venció, o se revocó sin reemplazo);
-   *  `expiring` = viva pero le quedan menos de `INVITE_EXPIRING_HOURS`. */
-  invite: "none" | "expiring";
+   *  `stale` = viva pero emitida hace `INVITE_FRESH_HOURS` o más y sin usar.
+   *
+   *  NO se llama `expiring`: una invitación listada todavía tiene cinco de sus
+   *  siete días por delante. Lo que la pone en la lista es que nadie la usó, no
+   *  que se esté por caer, y esa distancia al vencimiento es justamente lo que
+   *  hace barato el reenvío. */
+  invite: "none" | "stale";
   inviteExpiresAt: Date | null;
 };
 
-/** Frescura de la invitación viva: por debajo de esto, "está por vencer" y el
- *  socio entra a la lista aunque el enlace todavía sirva. 48 de las 168 h del
- *  TTL: si en cinco días no lo usó, esperar los dos que quedan es apostar a
- *  que el correo aparezca solo. */
-export const INVITE_EXPIRING_HOURS = 48;
+/** Frescura de la invitación viva, medida por ANTIGÜEDAD DE EMISIÓN: una emitida
+ *  hace menos que esto es fresca —el socio acaba de verificar y todavía no
+ *  eligió su contraseña—, y no hay nada que destrabar. A partir de las 48 h sin
+ *  usarla, entra a la lista.
+ *
+ *  Se mide desde la emisión y no contra el vencimiento a propósito. El TTL de
+ *  la invitación es de 7 días (`TOKEN_TTL.password_invitation`, en
+ *  `src/lib/tokens.ts` — la constante NO se importa: ese módulo evalúa
+ *  `@/lib/prisma` al cargarse y este archivo se prueba sin `.env`, el mismo
+ *  motivo por el que `WEBHOOK_ERROR_WINDOW_HOURS` se repite en vez de
+ *  importarse). Con la regla contra el vencimiento, un socio trabado quedaba
+ *  invisible los primeros CINCO días; recién aparecía cuando ya casi no había
+ *  enlace que reenviar. Al revés, a las 48 h quedan 5 de los 7 días: es la
+ *  ventana barata, cuando reenviar todavía cuesta un clic.
+ *
+ *  Y hoy es la ÚNICA red: en producción `EMAIL_ALLOWLIST` está definida, así que
+ *  el correo automático de invitación no le sale a casi ningún socio. */
+export const INVITE_FRESH_HOURS = 48;
 
 /** Función PURA (patrón de `classifyDebits`): la consulta ya filtró vigencia
  *  (socio vigente, email verificado, sin cuenta) e invitaciones VIVAS; acá sólo
@@ -224,24 +242,32 @@ export const INVITE_EXPIRING_HOURS = 48;
 export function classifyStuckAccess(
   rows: ReadonlyArray<{
     id: number; fullName: string; emailVerifiedAt: Date | null;
-    tokens: ReadonlyArray<{ expiresAt: Date }>;
+    tokens: ReadonlyArray<{ createdAt: Date; expiresAt: Date }>;
   }>,
   now: Date,
 ): StuckAccessRow[] {
-  const soon = new Date(now.getTime() + INVITE_EXPIRING_HOURS * 3_600_000);
+  const freshSince = new Date(now.getTime() - INVITE_FRESH_HOURS * 3_600_000);
   const out: StuckAccessRow[] = [];
   for (const r of rows) {
-    // Más de una viva no puede haber (revocar-al-emitir), pero si hubiera,
-    // manda la que más lejos vence: es la que decide si hay que actuar.
-    const best = r.tokens.reduce<Date | null>(
-      (acc, t) => (acc === null || t.expiresAt > acc ? t.expiresAt : acc),
-      null,
-    );
-    if (best !== null && best > soon) continue; // fresca: transitorio normal
+    // Más de una viva no puede haber (revocar-al-emitir), pero si hubiera, manda
+    // la MÁS NUEVA: si se reenvió hace una hora, el socio tiene un enlace fresco
+    // en el buzón y no hay nada que destrabar todavía.
+    //
+    // Se elige por `createdAt` y no por `expiresAt`. Hoy son intercambiables
+    // —el TTL es una constante, así que la más nueva es también la que más lejos
+    // vence—, pero la regla habla de CUÁNDO SE EMITIÓ, y leer eso directamente
+    // deja la clasificación en pie si el TTL alguna vez deja de ser único.
+    let newest: { createdAt: Date; expiresAt: Date } | null = null;
+    for (const t of r.tokens) {
+      if (newest === null || t.createdAt > newest.createdAt) newest = t;
+    }
+    // Emitida hace menos de la ventana: transitorio normal, no se lista. El
+    // borde es inclusivo — a las 48 h justas ya se lista.
+    if (newest !== null && newest.createdAt > freshSince) continue;
     out.push({
       memberId: r.id, memberName: r.fullName, verifiedAt: r.emailVerifiedAt,
-      invite: best === null ? "none" : "expiring",
-      inviteExpiresAt: best,
+      invite: newest === null ? "none" : "stale",
+      inviteExpiresAt: newest?.expiresAt ?? null,
     });
   }
   return out;
@@ -505,11 +531,14 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
         emailStatus: "verified",
         userId: null,
       },
+      // El que hace más rato que espera, primero: mismo criterio que el resto de
+      // las listas del snapshot.
+      orderBy: { emailVerifiedAt: "asc" },
       select: {
         id: true, fullName: true, emailVerifiedAt: true,
         tokens: {
           where: { purpose: "password_invitation", usedAt: null, expiresAt: { gt: now } },
-          select: { expiresAt: true },
+          select: { createdAt: true, expiresAt: true },
         },
       },
     }),
