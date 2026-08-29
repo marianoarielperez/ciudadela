@@ -29,6 +29,13 @@ const USER_WRITABLE = [
   "email", "passwordHash", "passwordChangedAt", "name", "active", "lastLoginAt",
 ];
 
+/** Ídem para `actionToken.create`: los escalares de la fila (el `id` lo pone el
+ *  doble). Un write anidado —`user: { connect: … }`— tira. */
+const TOKEN_WRITABLE = [
+  "purpose", "tokenHash", "memberId", "applicationId", "userId",
+  "expiresAt", "usedAt", "createdAt",
+];
+
 export function makeFakeUsersDb(seed?: Partial<FakeState>) {
   let state: FakeState = {
     users: [], roles: [
@@ -59,8 +66,17 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
    *  implementado: comparado con `===` daría un predicado que nunca es
    *  verdadero, así que un `count` devolvería 0 y una guarda rota —"nunca cero
    *  superadmins activos" es la del caso— pasaría el test por el motivo
-   *  equivocado. Se valida al COMPILAR: tira aunque la tabla esté vacía. */
+   *  equivocado. Se valida al COMPILAR: tira aunque la tabla esté vacía.
+   *
+   *  `undefined` es el otro lado de la misma trampa y NO tira: en Prisma
+   *  significa "cláusula ignorada", y los tipos admiten `number | undefined` en
+   *  esas posiciones sin ningún cast. Comparado con `===` daría el mismo
+   *  predicado que nunca matchea —un `userRole.count({ where: { userId:
+   *  excludeId, … } })` con `excludeId` sin definir devolvería 0, que es lo que
+   *  la guarda lee como "rechazar"—. La única respuesta inadmisible es cero:
+   *  acá se ignora, igual que hace `compileNameFilter` más abajo. */
   function scalarEquals(key: string, value: unknown): (actual: unknown) => boolean {
+    if (value === undefined) return () => true;
     if (value !== null && typeof value === "object") {
       throw new Error(
         `fake: filtro no escalar sobre ${key} no soportado: ${JSON.stringify(value)}`,
@@ -176,7 +192,13 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
             throw new Error(`fake: user.findUnique where no soportado: ${k}`);
           }
         }
-        if (keys.length === 0) throw new Error("fake: user.findUnique sin id ni email");
+        // Se cuentan las claves DEFINIDAS: desde que `scalarEquals` ignora un
+        // `undefined` (semántica de Prisma), un `{ id: undefined }` compilaría a
+        // "todo matchea" y `findUnique` devolvería una fila cualquiera. Prisma
+        // también rechaza ese where.
+        if (keys.every((k) => where[k] === undefined)) {
+          throw new Error("fake: user.findUnique sin id ni email");
+        }
         const match = compileUserWhere(where);
         const u = state.users.find(match);
         return u ? userView(u, args) : null;
@@ -207,12 +229,22 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
         state.users.push(u);
         return { ...u };
       },
-      async update(args: { where: { id: number }; data: Record<string, unknown> }) {
+      async update(args: { where: { id?: number; email?: string }; data: Record<string, unknown> }) {
+        // El doble sólo sabe ubicar por id. Un `update({ where: { email } })`
+        // compila contra el tipo real, y sin este corte caía en el mensaje de
+        // "id inexistente": tiraba (bien) pero mentía el motivo.
+        if (args.where.id === undefined) {
+          throw new Error(`fake: user.update where sin id: ${JSON.stringify(args.where)}`);
+        }
         const u = state.users.find((x) => x.id === args.where.id);
         if (!u) throw new Error("fake: user.update sobre id inexistente");
-        // Mismo motivo que en `create`: un `roles: { deleteMany: {} }` acá
-        // escribiría una propiedad basura sobre la fila y no tocaría los roles.
+        // Mismo motivo que en `create`, y con la misma lista blanca: un
+        // `roles: { deleteMany: {} }` —o un campo que no existe— escribiría una
+        // propiedad basura sobre la fila y no tocaría los roles.
         for (const [k, v] of Object.entries(args.data)) {
+          if (!USER_WRITABLE.includes(k)) {
+            throw new Error(`fake: user.update data.${k} no soportado`);
+          }
           if (v !== null && typeof v === "object" && !(v instanceof Date)) {
             throw new Error(`fake: user.update data.${k} anidado no soportado: ${JSON.stringify(v)}`);
           }
@@ -230,8 +262,26 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
       },
     },
     role: {
-      async findUnique(args: { where: { name: string } }) {
-        const r = state.roles.find((x) => x.name === args.where.name);
+      async findUnique(args: { where: { name?: string; id?: number } }) {
+        // Las dos claves únicas de `roles`. Sin esto un `where: { id }` miraba
+        // `where.name` (undefined), no matcheaba nada y devolvía `null`:
+        // indistinguible de "ese rol no existe".
+        const where = args.where as Record<string, unknown>;
+        const keys = Object.keys(where);
+        for (const k of keys) {
+          if (k !== "name" && k !== "id") {
+            throw new Error(`fake: role.findUnique where no soportado: ${k}`);
+          }
+        }
+        if (keys.every((k) => where[k] === undefined)) {
+          throw new Error("fake: role.findUnique sin name ni id");
+        }
+        const checks = keys.map((k) => {
+          const field = k as "name" | "id";
+          const eq = scalarEquals(k, where[k]);
+          return (r: RoleRow) => eq(r[field]);
+        });
+        const r = state.roles.find((x) => checks.every((c) => c(x)));
         return r ? { ...r } : null;
       },
     },
@@ -248,13 +298,17 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
         state.userRoles.push({ ...args.data });
         return { ...args.data };
       },
-      async deleteMany(args: { where: Record<string, unknown> }) {
+      async deleteMany(args?: { where?: Record<string, unknown> }) {
+        // Sin `where` el `Object.entries(undefined)` reventaba con un TypeError
+        // ilegible; y borrar la tabla entera no es lo que quiso escribir nadie.
+        if (!args?.where) throw new Error("fake: userRole.deleteMany where requerido");
         const match = compileUserRoleWhere(args.where);
         const before = state.userRoles.length;
         state.userRoles = state.userRoles.filter((ur) => !match(ur));
         return { count: before - state.userRoles.length };
       },
-      async count(args: { where: Record<string, unknown> }) {
+      async count(args?: { where?: Record<string, unknown> }) {
+        if (!args?.where) throw new Error("fake: userRole.count where requerido");
         const match = compileUserRoleWhere(args.where);
         return state.userRoles.filter(match).length;
       },
@@ -270,12 +324,26 @@ export function makeFakeUsersDb(seed?: Partial<FakeState>) {
     },
     actionToken: {
       async create(args: { data: Omit<TokenRow, "id" | "usedAt" | "createdAt"> }) {
+        // Misma lista blanca que `user.create`: un `user: { connect: { id } }`
+        // en vez de `userId` compila contra el tipo real, se spreadearía tal
+        // cual y dejaría la fila con `userId: undefined` —y después un
+        // `deleteMany({ where: { userId } })` no borraría nada—.
+        for (const [k, v] of Object.entries(args.data as Record<string, unknown>)) {
+          if (!TOKEN_WRITABLE.includes(k)) {
+            throw new Error(`fake: actionToken.create data.${k} no soportado`);
+          }
+          if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+            throw new Error(`fake: actionToken.create data.${k} anidado no soportado: ${JSON.stringify(v)}`);
+          }
+        }
         const t: TokenRow = { id: nextId++, usedAt: null, createdAt: new Date(), ...args.data };
         state.actionTokens.push(t);
         return { ...t };
       },
-      async findUnique(args: { where: { tokenHash: string } }) {
-        const t = state.actionTokens.find((x) => x.tokenHash === args.where.tokenHash);
+      async findUnique(args: { where: Record<string, unknown> }) {
+        // El canje consulta `{ tokenHash, usedAt: null }`: comparando el
+        // `tokenHash` a pelo el `usedAt` se perdía y devolvía un token ya usado.
+        const t = state.actionTokens.find(compileTokenWhere(args.where));
         return t ? { ...t } : null;
       },
       async deleteMany(args: { where: Record<string, unknown> }) {
