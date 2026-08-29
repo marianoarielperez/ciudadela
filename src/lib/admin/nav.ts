@@ -5,7 +5,7 @@ import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
   | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings"
-  | "activity" | "vote" | "clipboard-check";
+  | "activity" | "vote" | "clipboard-check" | "user-cog";
 
 export type AdminNavItem = {
   href: string;
@@ -57,6 +57,11 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       // El padrón electoral se usa dos veces cada dos años, así que va después
       // de Salud; pero antes de Configuración, que es la pantalla-cajón.
       { href: "/admin/padron-electoral", label: "Padrón electoral", icon: "vote", superadminOnly: true },
+      // Usuarios se usa poco (el recambio de la Comisión Directiva): más que el
+      // padrón bianual no, pero sí antes que Configuración, que es la
+      // pantalla-cajón. `superadminOnly` es display: la guarda real es
+      // `requireSuperadminUsers` en la ruta y en cada action.
+      { href: "/admin/usuarios", label: "Usuarios", icon: "user-cog", superadminOnly: true },
       { href: "/admin/configuracion", label: "Configuración", icon: "settings", superadminOnly: true },
     ],
   },

@@ -7,6 +7,7 @@ import type {
 import type { CronState, PendingReceiptState } from "@/lib/admin/health";
 import type { BackupState } from "@/lib/admin/health-backup";
 import type { ArrearsLevel } from "@/lib/treasury/rules";
+import type { UserAccountState } from "@/lib/users/labels";
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "success" | "link";
 
@@ -130,4 +131,22 @@ export function presentationStatusBadgeVariant(status: PresentationStatus): Badg
   if (status === "observed") return "secondary";
   if (status === "rejected") return "destructive";
   return "outline"; // pending, withdrawn
+}
+
+// Los roles de una cuenta (módulo de usuarios). Por PESO: superadmin con
+// relleno celeste (acá hay poder), admin gris con relleno, socio borde fino.
+export function userRoleBadgeVariant(role: string): BadgeVariant {
+  if (role === "superadmin") return "default";
+  if (role === "admin") return "secondary";
+  return "outline";
+}
+
+// El estado derivado de la cuenta (accountState, @/lib/users/labels). La
+// invitación vencida es lo único accionable de la columna —reenviar o
+// revocar— y por eso es la que lleva el celeste de "acá hay trabajo".
+export function userAccountBadgeVariant(state: UserAccountState): BadgeVariant {
+  if (state === "active") return "success";
+  if (state === "disabled") return "secondary";
+  if (state === "invitation_expired") return "default";
+  return "outline"; // invited: todavía no ocurrió
 }

@@ -92,6 +92,14 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
         superadminOnly: true,
       },
       {
+        // `title` idéntico al `label` de la nav: lo verifica dashboard-cards.test.ts.
+        title: "Usuarios",
+        description: "Cuentas de acceso al panel: roles de gestión, altas e invitaciones.",
+        href: "/admin/usuarios",
+        cta: "Gestionar",
+        superadminOnly: true,
+      },
+      {
         title: "Configuración",
         description: "Parámetros del sistema.",
         href: "/admin/configuracion",

@@ -11,6 +11,7 @@ import {
   Newspaper,
   ScrollText,
   Settings,
+  UserCog,
   Users,
   Vote,
   Wallet,
@@ -29,5 +30,6 @@ export const NAV_ICONS: Record<AdminNavIcon, typeof Home> = {
   "calendar-days": CalendarDays,
   activity: Activity,
   vote: Vote,
+  "user-cog": UserCog,
   settings: Settings,
 };

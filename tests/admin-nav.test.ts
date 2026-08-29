@@ -40,7 +40,7 @@ describe("navForRoles", () => {
       "/admin", "/admin/solicitudes", "/admin/reempadronamiento", "/admin/socios",
       "/admin/tesoreria", "/admin/actas",
       "/admin/noticias", "/admin/actividades", "/admin/salud", "/admin/padron-electoral",
-      "/admin/configuracion",
+      "/admin/usuarios", "/admin/configuracion",
     ]);
   });
 
@@ -52,7 +52,7 @@ describe("navForRoles", () => {
     const salud = sistema.items.find((i) => i.href === "/admin/salud")!;
     expect(salud).toMatchObject({ label: "Salud", icon: "activity", superadminOnly: true });
     expect(sistema.items.map((i) => i.href)).toEqual([
-      "/admin/salud", "/admin/padron-electoral", "/admin/configuracion",
+      "/admin/salud", "/admin/padron-electoral", "/admin/usuarios", "/admin/configuracion",
     ]);
     expect(
       navForRoles(["admin"]).some((g) => g.items.some((i) => i.href === "/admin/salud")),
@@ -68,6 +68,18 @@ describe("navForRoles", () => {
     expect(padron).toMatchObject({ label: "Padrón electoral", icon: "vote", superadminOnly: true });
     expect(
       navForRoles(["admin"]).some((g) => g.items.some((i) => i.href === "/admin/padron-electoral")),
+    ).toBe(false);
+  });
+
+  it("Usuarios vive en Sistema, entre Padrón electoral y Configuración, y es sólo del superadmin", () => {
+    // Otorgar y quitar roles de gestión es el acto más sensible del panel: la
+    // pantalla no puede siquiera listarse para un admin común (y la guarda
+    // real, requireSuperadminUsers, corta en la ruta y en cada action).
+    const sistema = ADMIN_NAV.find((g) => g.label === "Sistema")!;
+    const usuarios = sistema.items.find((i) => i.href === "/admin/usuarios")!;
+    expect(usuarios).toMatchObject({ label: "Usuarios", icon: "user-cog", superadminOnly: true });
+    expect(
+      navForRoles(["admin"]).some((g) => g.items.some((i) => i.href === "/admin/usuarios")),
     ).toBe(false);
   });
 
