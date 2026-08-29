@@ -1,8 +1,13 @@
 // Detalle de una cuenta (módulo de usuarios). Secciones: Datos, Roles, Cuenta,
 // Invitación y Actividad. La pantalla deshabilita EXACTAMENTE lo que las
 // guardas del dominio rechazan (auto-degradación, último superadmin, cuentas
-// de socios, invitación de una cuenta desactivada) y lo dice con el mismo
-// texto: USER_GUARD_MESSAGES es la única fuente, acá no se reescribe ninguno.
+// de socios, invitación de una cuenta desactivada o ya canjeada) y lo dice con
+// el mismo texto: USER_GUARD_MESSAGES es la única fuente, acá no se reescribe
+// ninguno.
+//
+// Ese veredicto NO se decide acá: vive en `users/detail-verdict.ts`, puro y
+// testeado (patrón debit-adhesion). Esta pantalla sólo lo consume y redacta.
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -16,6 +21,7 @@ import { formatDateAR, formatDateTimeAR } from "@/lib/format";
 import {
   ACCOUNT_STATE_LABELS, auditActionLabel, ROLE_LABELS,
 } from "@/lib/users/labels";
+import { userDetailVerdict } from "@/lib/users/detail-verdict";
 import { getUserDetail } from "@/lib/users/query";
 import { USER_GUARD_MESSAGES } from "@/lib/users/service";
 import { prisma } from "@/lib/prisma";
@@ -86,15 +92,34 @@ export default async function UsuarioDetailPage(props: {
   if (!user) notFound();
 
   const label = user.name ?? user.email;
-  const isSelf = user.id === actor.actorId;
-  const managed = user.roles.includes("admin") || user.roles.includes("superadmin");
-  // Último superadmin activo: quitarle el rol o desactivarlo dejaría al sistema
-  // sin ninguno, y eso es lo que la transacción cuenta DESPUÉS de escribir. Si
-  // la cuenta ya está desactivada no suma al conteo, así que no es "el último".
-  const lastSuperadmin =
-    user.roles.includes("superadmin") && user.active && user.activeSuperadmins <= 1;
-  const invitationExpired = user.invitation !== null && user.invitation.expiresAt < now;
+  // Qué está bloqueado y por qué: una sola función pura, la misma para las
+  // cinco acciones de la pantalla. Acá no se decide nada más.
+  const verdict = userDetailVerdict(user, actor.actorId);
   const banner = activeBanner(sp);
+
+  // La sección Invitación, redactada. La invitación puede seguir viva DESPUÉS
+  // de que la cuenta creó su contraseña (entró por "olvidé mi contraseña", que
+  // revoca los `password_reset` y no el `admin_invitation`): ahí lo único que
+  // se puede —y se debe— hacer es revocarla.
+  const invitation = user.invitation;
+  const invitationExpired = invitation !== null && invitation.expiresAt < now;
+  const invitationDate = invitation && (
+    <span className="font-mono tabular-nums">{formatDateAR(invitation.expiresAt)}</span>
+  );
+  const invitationCopy: ReactNode =
+    invitation === null ? (
+      "No hay una invitación viva: la cuenta no puede crear su contraseña hasta que le reenvíes una."
+    ) : user.passwordChangedAt !== null ? (
+      invitationExpired ? (
+        <>Esta cuenta ya creó su contraseña por otro camino. Su enlace de invitación venció el {invitationDate} y ya no sirve, pero podés revocarlo para darlo de baja.</>
+      ) : (
+        <>Esta cuenta ya creó su contraseña por otro camino, pero su enlace de invitación sigue vivo hasta el {invitationDate} y todavía permite fijarle una contraseña: revocalo.</>
+      )
+    ) : invitationExpired ? (
+      <>La invitación venció el {invitationDate}: reenviala para que pueda crear su contraseña.</>
+    ) : (
+      <>Invitación pendiente: vence el {invitationDate}.</>
+    );
 
   return (
     <div className="space-y-6">
@@ -115,7 +140,7 @@ export default async function UsuarioDetailPage(props: {
 
       <section aria-labelledby="datos-title" className="space-y-3">
         <h2 id="datos-title" className="text-lg font-semibold">Datos</h2>
-        {managed ? (
+        {verdict.editData === undefined ? (
           <EditUserForm
             userId={user.id}
             name={user.name ?? ""}
@@ -189,39 +214,29 @@ export default async function UsuarioDetailPage(props: {
             userLabel={label}
             role="admin"
             mode={user.roles.includes("admin") ? "revoke" : "grant"}
+            // Hoy siempre `undefined` (quitar Admin no tiene guarda propia en
+            // el dominio); cableado igual para que una guarda futura llegue
+            // sola a la pantalla.
+            disabledReason={user.roles.includes("admin") ? verdict.revokeAdmin : undefined}
           />
           <RoleActionButton
             userId={user.id}
             userLabel={label}
             role="superadmin"
             mode={user.roles.includes("superadmin") ? "revoke" : "grant"}
-            disabledReason={
-              user.roles.includes("superadmin")
-                ? isSelf
-                  ? USER_GUARD_MESSAGES.selfSuperadmin
-                  : lastSuperadmin
-                    ? USER_GUARD_MESSAGES.lastSuperadmin
-                    : undefined
-                : undefined
-            }
+            disabledReason={verdict.revokeSuperadmin}
           />
         </div>
       </section>
 
       <section aria-labelledby="cuenta-title" className="space-y-3">
         <h2 id="cuenta-title" className="text-lg font-semibold">Cuenta</h2>
-        {managed ? (
+        {verdict.managed ? (
           <SetActiveButton
             userId={user.id}
             userLabel={label}
             active={user.active}
-            disabledReason={
-              user.active && isSelf
-                ? USER_GUARD_MESSAGES.selfDisable
-                : user.active && lastSuperadmin
-                  ? USER_GUARD_MESSAGES.lastSuperadmin
-                  : undefined
-            }
+            disabledReason={verdict.setActive}
           />
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -236,24 +251,19 @@ export default async function UsuarioDetailPage(props: {
         )}
       </section>
 
-      {managed && user.passwordChangedAt === null && (
+      {verdict.showInvitation && (
         <section aria-labelledby="invitacion-title" className="space-y-3">
           <h2 id="invitacion-title" className="text-lg font-semibold">Invitación</h2>
-          <p className="text-sm text-muted-foreground">
-            {user.invitation
-              ? invitationExpired
-                ? `La invitación venció el ${formatDateAR(user.invitation.expiresAt)}: reenviala para que pueda crear su contraseña.`
-                : `Invitación pendiente: vence el ${formatDateAR(user.invitation.expiresAt)}.`
-              : "No hay una invitación viva: la cuenta no puede crear su contraseña hasta que le reenvíes una."}
-          </p>
+          <p className="text-sm text-muted-foreground">{invitationCopy}</p>
           <InvitationButtons
             userId={user.id}
             userLabel={label}
-            // Las dos guardas de invitación que el dominio rechaza, con su
-            // texto: una cuenta desactivada no recibe invitación, y no hay nada
-            // que revocar si no quedó ninguna viva.
-            resendDisabledReason={user.active ? undefined : USER_GUARD_MESSAGES.inactiveInvitation}
-            revokeDisabledReason={user.invitation ? undefined : USER_GUARD_MESSAGES.noInvitation}
+            // Las tres guardas de invitación que el dominio rechaza, con su
+            // texto: una cuenta que ya creó su contraseña no recibe otra
+            // invitación, una desactivada tampoco, y no hay nada que revocar si
+            // no quedó ninguna sin usar.
+            resendDisabledReason={verdict.resendInvitation}
+            revokeDisabledReason={verdict.revokeInvitation}
           />
         </section>
       )}

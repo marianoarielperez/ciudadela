@@ -18,17 +18,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { resendInvitationAction, revokeInvitationAction, setActiveAction } from "../actions";
-
-/** El botón que la pantalla no ofrece, con el motivo al lado. Misma forma que
- *  la rama deshabilitada de `RoleActionButton`. */
-function DisabledAction({ label, reason }: { label: string; reason: string }) {
-  return (
-    <span className="flex flex-wrap items-center gap-2">
-      <Button variant="outline" className="min-h-11" disabled>{label}</Button>
-      <span className="text-xs text-muted-foreground">{reason}</span>
-    </span>
-  );
-}
+// El botón deshabilitado con su motivo lo comparte con `role-forms.tsx`: mismo
+// markup, y la accesibilidad (aria-label + aria-describedby) en un solo lugar.
+import { DisabledAction } from "./disabled-action";
 
 export function SetActiveButton(props: {
   userId: number;
@@ -40,9 +32,17 @@ export function SetActiveButton(props: {
   const formId = `set-active-${props.userId}`;
   const disabling = props.active;
   const verb = disabling ? "Desactivar cuenta" : "Reactivar cuenta";
+  const ariaLabel = `${verb} de ${props.userLabel}`;
 
   if (props.disabledReason) {
-    return <DisabledAction label={verb} reason={props.disabledReason} />;
+    return (
+      <DisabledAction
+        label={verb}
+        reason={props.disabledReason}
+        ariaLabel={ariaLabel}
+        reasonId={`${formId}-reason`}
+      />
+    );
   }
 
   return (
@@ -58,7 +58,7 @@ export function SetActiveButton(props: {
           <Button
             variant={disabling ? "outline" : "default"}
             className="min-h-11"
-            aria-label={`${verb} de ${props.userLabel}`}
+            aria-label={ariaLabel}
           >
             {verb}
           </Button>
@@ -106,6 +106,8 @@ export function InvitationButtons(props: {
 }) {
   const [resendState, resendAction, resendPending] = useActionState(resendInvitationAction, {});
   const [revokeState, revokeAction, revokePending] = useActionState(revokeInvitationAction, {});
+  const resendLabel = `Reenviar la invitación a ${props.userLabel}`;
+  const revokeLabel = `Revocar la invitación de ${props.userLabel}`;
   // Sin Dialog a propósito: ninguna de las dos es irreversible —reenviar emite
   // un enlace nuevo y revocar se deshace reenviando— y el efecto ya está
   // escrito arriba de los botones.
@@ -113,7 +115,12 @@ export function InvitationButtons(props: {
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         {props.resendDisabledReason ? (
-          <DisabledAction label="Reenviar invitación" reason={props.resendDisabledReason} />
+          <DisabledAction
+            label="Reenviar invitación"
+            reason={props.resendDisabledReason}
+            ariaLabel={resendLabel}
+            reasonId={`resend-invitation-${props.userId}-reason`}
+          />
         ) : (
           <form action={resendAction}>
             <input type="hidden" name="id" value={props.userId} />
@@ -122,14 +129,19 @@ export function InvitationButtons(props: {
               variant="secondary"
               className="min-h-11"
               disabled={resendPending}
-              aria-label={`Reenviar la invitación a ${props.userLabel}`}
+              aria-label={resendLabel}
             >
               {resendPending ? "Reenviando…" : "Reenviar invitación"}
             </Button>
           </form>
         )}
         {props.revokeDisabledReason ? (
-          <DisabledAction label="Revocar invitación" reason={props.revokeDisabledReason} />
+          <DisabledAction
+            label="Revocar invitación"
+            reason={props.revokeDisabledReason}
+            ariaLabel={revokeLabel}
+            reasonId={`revoke-invitation-${props.userId}-reason`}
+          />
         ) : (
           <form action={revokeAction}>
             <input type="hidden" name="id" value={props.userId} />
@@ -138,7 +150,7 @@ export function InvitationButtons(props: {
               variant="outline"
               className="min-h-11"
               disabled={revokePending}
-              aria-label={`Revocar la invitación de ${props.userLabel}`}
+              aria-label={revokeLabel}
             >
               {revokePending ? "Revocando…" : "Revocar invitación"}
             </Button>

@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { grantRoleAction, revokeRoleAction } from "../actions";
+import { DisabledAction } from "./disabled-action";
 
 export function RoleActionButton(props: {
   userId: number;
@@ -33,13 +34,19 @@ export function RoleActionButton(props: {
   const formId = `role-${props.mode}-${props.role}-${props.userId}`;
   const roleLabel = props.role === "superadmin" ? "Superadmin" : "Admin";
   const verb = props.mode === "grant" ? "Otorgar" : "Quitar";
+  // El MISMO texto para el lector de pantalla en las dos ramas: la habilitada
+  // y la deshabilitada. Sin él, "Quitar Superadmin, no disponible" no dice de
+  // quién.
+  const ariaLabel = `${verb} el rol ${roleLabel} a ${props.userLabel}`;
 
   if (props.disabledReason) {
     return (
-      <span className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" className="min-h-11" disabled>{`${verb} ${roleLabel}`}</Button>
-        <span className="text-xs text-muted-foreground">{props.disabledReason}</span>
-      </span>
+      <DisabledAction
+        label={`${verb} ${roleLabel}`}
+        reason={props.disabledReason}
+        ariaLabel={ariaLabel}
+        reasonId={`${formId}-reason`}
+      />
     );
   }
 
@@ -72,7 +79,7 @@ export function RoleActionButton(props: {
             className="min-h-11"
             // Sin esto, el lector de pantalla dicta varios botones "Otorgar
             // Admin" idénticos y ninguno dice a quién afectan.
-            aria-label={`${verb} el rol ${roleLabel} a ${props.userLabel}`}
+            aria-label={ariaLabel}
           >
             {`${verb} ${roleLabel}`}
           </Button>

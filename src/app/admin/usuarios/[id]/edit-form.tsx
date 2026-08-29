@@ -3,6 +3,7 @@
 // ACTUAL: en `updateUserAction` un email vacío significa "no lo toques", así
 // que un campo que naciera en blanco haría parecer que el guardado lo borró.
 import { useActionState } from "react";
+import Link from "next/link";
 
 import { FormMessage } from "@/components/admin/form-message";
 import { TextField, useSyncedForm } from "@/components/admin/synced-fields";
@@ -35,7 +36,7 @@ export function EditUserForm(props: {
       ) : (
         <p className="text-sm text-muted-foreground">
           El email se cambia desde{" "}
-          <a className={INLINE_LINK} href={`/admin/socios/${props.memberId}`}>la ficha del socio</a>
+          <Link className={INLINE_LINK} href={`/admin/socios/${props.memberId}`}>la ficha del socio</Link>
           : es la misma dirección con la que ingresa.
         </p>
       )}
