@@ -12,10 +12,15 @@ describe("MI_TABS", () => {
     expect(MI_TABS[0]).toMatchObject({ href: "/mi", label: "Inicio" });
   });
 
-  it("includes Solicitudes between Mis datos and Estatuto", () => {
+  it("includes Solicitudes between Mis datos and Documentos", () => {
     const hrefs = MI_TABS.map((t) => t.href);
     expect(hrefs.indexOf("/mi/solicitudes")).toBeGreaterThan(hrefs.indexOf("/mi/datos"));
-    expect(hrefs.indexOf("/mi/solicitudes")).toBeLessThan(hrefs.indexOf("/mi/estatuto"));
+    expect(hrefs.indexOf("/mi/solicitudes")).toBeLessThan(hrefs.indexOf("/mi/documentos"));
+  });
+
+  it("closes with Documentos (the old Estatuto tab, renamed)", () => {
+    expect(MI_TABS.at(-1)).toMatchObject({ href: "/mi/documentos", label: "Documentos", icon: "library" });
+    expect(MI_TABS.some((t) => t.href === "/mi/estatuto")).toBe(false);
   });
 
   it("includes Débito automático between Mi cuenta and Mis datos, marked paysFeeOnly", () => {

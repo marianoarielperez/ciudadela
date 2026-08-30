@@ -39,7 +39,8 @@ describe("navForRoles", () => {
     expect(hrefs).toEqual([
       "/admin", "/admin/solicitudes", "/admin/reempadronamiento", "/admin/socios",
       "/admin/tesoreria", "/admin/actas",
-      "/admin/noticias", "/admin/actividades", "/admin/salud", "/admin/padron-electoral",
+      "/admin/noticias", "/admin/actividades", "/admin/documentos",
+      "/admin/salud", "/admin/padron-electoral",
       "/admin/usuarios", "/admin/configuracion",
     ]);
   });

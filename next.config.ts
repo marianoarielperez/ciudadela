@@ -176,6 +176,42 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
+      // Documentos institucionales (estatuto, memorias, balances). Mismo
+      // problema que las dos entradas de arriba —el handler emite su CSP dura
+      // en el `Response` y la entrada global la pisa con `setHeader`, que
+      // REEMPLAZA—, con una diferencia que cambia el valor: estas dos rutas NO
+      // tienen visor embebido. El socio y el admin abren el PDF en una pestaña
+      // (o lo bajan), nadie lo framea, así que acá NO se reabre nada:
+      // `frame-ancestors 'none'` y, deliberadamente, sin `X-Frame-Options` —
+      // el DENY de la entrada global es el que corresponde y tiene que quedar.
+      // Reponer sólo la CSP no lo toca: `headers()` pisa por CLAVE.
+      //
+      // Van dos entradas por el mismo motivo que las dos de arriba: las rutas
+      // no comparten prefijo (`/api/mi/...` y `/api/admin/...`) y el único
+      // `source` con comodín que abarcaría a las dos —`/api/:scope/documentos/:id`—
+      // capturaría también cualquier `/api/<lo-que-sea>/documentos/<id>` que
+      // se agregue después, incluida una ruta que sí necesite framing. Dos
+      // líneas explícitas cuestan una repetición y no sorprenden a nadie.
+      {
+        // El PDF que lee el socio desde /mi/documentos.
+        source: "/api/mi/documentos/:id",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        // El mismo PDF desde el panel, para verificar lo subido.
+        source: "/api/admin/documentos/:id",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
     ];
   },
   experimental: {

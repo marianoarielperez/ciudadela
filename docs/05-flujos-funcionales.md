@@ -468,8 +468,9 @@ La pestaña de cuenta corriente muestra:
 Login email + contraseña (Auth.js). Recupero por email.
 
 Desde la **fase 5A** (24/08/2026) el panel tiene shell propio: pestañas por URL
-—Inicio, Mi cuenta, Mis datos, Estatuto— con skip link y foco al `<main>`, config
-declarativa en `src/lib/mi/nav.ts` (mismo patrón que la lateral del admin) y
+—Inicio, Mi cuenta, Mis datos, Documentos (entonces "Estatuto")— con skip link y
+foco al `<main>`, config declarativa en `src/lib/mi/nav.ts` (mismo patrón que la
+lateral del admin) y
 fronteras `error.tsx`/`not-found.tsx` propias. El **Inicio** abre con la
 credencial de socio —franja con la foto aérea del barrio, número de socio del
 libro abierto, categoría, antigüedad y estado electoral REG-31 (reutiliza la
@@ -495,9 +496,19 @@ accesos a las demás secciones.
   tesorería del admin, arma los links a recibo desde la lista completa de pagos,
   y filtrarla por año dejaba celdas pagadas sin link. Detalle técnico en la spec
   del Módulo 5, §3.3.
-- **Estatuto** (`/mi/estatuto` + `GET /api/mi/estatuto`, implementada en la fase
-  5A): el PDF (`datos/estatuto.pdf`) servido detrás de autenticación, movido
-  desde el sitio público el 19/08/2026.
+- **Documentos** (`/mi/documentos`, implementada en la fase 5A como **Estatuto**
+  y reemplazada el 30/08/2026 por el módulo de documentos institucionales): la
+  biblioteca del socio, detrás de autenticación. Arriba, la **norma vigente
+  destacada** (la fila `featured` de `institutional_documents`) con su CTA para
+  abrir el PDF; debajo, **secciones por tipo** —Normas, Memorias, Balances,
+  Otros documentos— donde cada documento es una fila-link entera. Sin ningún
+  documento, un `EmptyState`. **El PDF no sale del repo**: cada documento se
+  abre por su **ruta autenticada** `GET /api/mi/documentos/[id]`, que lee la
+  fila y sirve el archivo desde `UPLOADS_DIR/institucional/`. La ruta anterior
+  `GET /api/mi/estatuto` (que servía `datos/estatuto.pdf`) **se eliminó**;
+  `/mi/estatuto` quedó como `redirect` a `/mi/documentos` para no romper
+  marcadores. El estatuto lo carga en la base el script one-shot
+  `scripts/import-estatuto.ts` (paso del despliegue, `docs/10` §4.7).
 - **Pagar**: si hay pendientes, botón que genera el link de Checkout Pro por los
   períodos seleccionados. Si es adherente sin débito: botón "hacer un aporte
   voluntario" y/o "adherir al débito automático" — **queda para la fase 5B**.

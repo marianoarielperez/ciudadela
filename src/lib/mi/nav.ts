@@ -6,7 +6,7 @@
 // La fase 5A lista SOLO secciones que funcionan (la regla del shell admin:
 // nada de "Próximamente" en la navegación). Solicitudes y Débito automático
 // (5B) ya tienen su página real.
-export type MiTabIcon = "home" | "wallet" | "user" | "file-text" | "scroll-text" | "refresh-cw";
+export type MiTabIcon = "home" | "wallet" | "user" | "file-text" | "library" | "refresh-cw";
 
 export type MiTab = {
   href: string;
@@ -24,12 +24,14 @@ export const MI_TABS: MiTab[] = [
   { href: "/mi", label: "Inicio", icon: "home" },
   { href: "/mi/cuenta", label: "Mi cuenta", icon: "wallet" },
   // "Débito" a secas: con seis pestañas en el ancho del panel, la etiqueta
-  // completa era la que empujaba a "Estatuto" fuera de la vista en escritorio.
+  // completa era la que empujaba a "Documentos" fuera de la vista en escritorio.
   // El nombre entero lo dice el título de la página.
   { href: "/mi/debito", label: "Débito", icon: "refresh-cw", paysFeeOnly: true },
   { href: "/mi/datos", label: "Mis datos", icon: "user" },
   { href: "/mi/solicitudes", label: "Solicitudes", icon: "file-text" },
-  { href: "/mi/estatuto", label: "Estatuto", icon: "scroll-text" },
+  // El módulo de documentos institucionales absorbió al estatuto: la pestaña
+  // lista todo lo que la Comisión publica (normas, memorias, balances).
+  { href: "/mi/documentos", label: "Documentos", icon: "library" },
 ];
 
 /** El subconjunto de `MI_TABS` que le corresponde a esta categoría. Puro: el

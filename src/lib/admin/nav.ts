@@ -5,7 +5,7 @@ import { isSuperadmin } from "@/lib/auth/roles";
 
 export type AdminNavIcon =
   | "home" | "inbox" | "users" | "wallet" | "scroll-text" | "newspaper" | "calendar-days" | "settings"
-  | "activity" | "vote" | "clipboard-check" | "user-cog";
+  | "activity" | "vote" | "clipboard-check" | "user-cog" | "library";
 
 export type AdminNavItem = {
   href: string;
@@ -45,6 +45,10 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     items: [
       { href: "/admin/noticias", label: "Noticias", icon: "newspaper" },
       { href: "/admin/actividades", label: "Actividades", icon: "calendar-days" },
+      // Documentos institucionales (estatuto, memorias, balances): lo que la
+      // Comisión publica a los socios en /mi/documentos. Sin superadminOnly:
+      // es Contenido, como Noticias.
+      { href: "/admin/documentos", label: "Documentos", icon: "library" },
     ],
   },
   {

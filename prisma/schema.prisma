@@ -11,20 +11,20 @@ datasource db {
 }
 
 model User {
-  id                     Int                  @id @default(autoincrement())
-  email                  String               @unique @db.VarChar(191)
-  passwordHash           String               @map("password_hash") @db.VarChar(60)
+  id                     Int                     @id @default(autoincrement())
+  email                  String                  @unique @db.VarChar(191)
+  passwordHash           String                  @map("password_hash") @db.VarChar(60)
   // Sello del ÚLTIMO cambio de contraseña de esta cuenta. No es informativo:
   // lo comparan `require-admin` y `require-member` contra el momento en que se
   // emitió la sesión (`session.user.authAt`) para cerrar las sesiones que le
   // son anteriores. Nulo = no se escribió ninguna contraseña desde que existe
   // esta columna (filas previas a la migración), y entonces no invalida nada.
-  passwordChangedAt      DateTime?            @map("password_changed_at")
-  name                   String?              @db.VarChar(120)
-  active                 Boolean              @default(true)
-  lastLoginAt            DateTime?            @map("last_login_at")
-  createdAt              DateTime             @default(now()) @map("created_at")
-  updatedAt              DateTime             @updatedAt @map("updated_at")
+  passwordChangedAt      DateTime?               @map("password_changed_at")
+  name                   String?                 @db.VarChar(120)
+  active                 Boolean                 @default(true)
+  lastLoginAt            DateTime?               @map("last_login_at")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
   roles                  UserRole[]
   auditLogs              AuditLog[]
   member                 Member?
@@ -33,15 +33,16 @@ model User {
   actionTokens           ActionToken[]
   newsAuthored           News[]
   documentsValidated     Document[]
-  feeValuesCreated       FeeValue[]           @relation("FeeValueCreatedBy")
-  paymentsRegistered     Payment[]            @relation("PaymentRegisteredBy")
-  receiptsVoided         Receipt[]            @relation("ReceiptVoidedBy")
-  unmatchedResolved      MpUnmatchedPayment[] @relation("UnmatchedResolvedBy")
-  incomesRegistered      OtherIncome[]        @relation("OtherIncomeRegisteredBy")
-  incomesVoided          OtherIncome[]        @relation("OtherIncomeVoidedBy")
-  decidedRequests        MemberRequest[]      @relation("MemberRequestDecider")
+  feeValuesCreated       FeeValue[]              @relation("FeeValueCreatedBy")
+  paymentsRegistered     Payment[]               @relation("PaymentRegisteredBy")
+  receiptsVoided         Receipt[]               @relation("ReceiptVoidedBy")
+  unmatchedResolved      MpUnmatchedPayment[]    @relation("UnmatchedResolvedBy")
+  incomesRegistered      OtherIncome[]           @relation("OtherIncomeRegisteredBy")
+  incomesVoided          OtherIncome[]           @relation("OtherIncomeVoidedBy")
+  decidedRequests        MemberRequest[]         @relation("MemberRequestDecider")
   presentationsValidated Presentation[]
   feeExemptionsCreated   FeeExemption[]
+  institutionalDocs      InstitutionalDocument[]
 
   @@map("users")
 }
@@ -1155,4 +1156,49 @@ model FeeExemption {
 
   @@index([memberId])
   @@map("fee_exemptions")
+}
+
+// ---------------------------------------------------------------------------
+// Documentos institucionales (spec 2026-08-29). NO es el modelo `Document`:
+// aquel es documentación PERSONAL de trámite (DNI/anexos, auditado por vista);
+// este es material que la Comisión publica a los socios (estatuto, memorias,
+// balances). Solo PDF; el archivo vive en UPLOADS_DIR/institucional/.
+enum InstitutionalDocumentType {
+  norm
+  annual_report
+  balance
+  other
+}
+
+model InstitutionalDocument {
+  id           Int                       @id @default(autoincrement())
+  type         InstitutionalDocumentType
+  title        String                    @db.VarChar(160)
+  description  String?                   @db.VarChar(200)
+  year         Int?
+  // La unicidad "una memoria/un balance por año" la garantiza la BASE, no un
+  // if: MySQL no tiene índices parciales, así que la clave se materializa solo
+  // para annual_report/balance ("annual_report:2025") y queda NULL para
+  // norm/other — los NULL de un unique de MySQL no chocan entre sí.
+  yearKey      String?                   @unique @map("year_key") @db.VarChar(30)
+  // {uuid}.pdf relativo a UPLOADS_DIR/institucional/. Nunca una ruta.
+  fileName     String                    @map("file_name") @db.VarChar(255)
+  size         Int
+  // Solo normas; a lo sumo una. No hay unique que lo sostenga —imposible en
+  // MySQL: `false` no es `NULL`—, así que lo sostiene la transacción del
+  // asiento, y con un alcance acotado: garantiza que no exista un estado
+  // intermedio con dos destacadas, NO cierra la carrera de dos altas
+  // simultáneas (`updateMany` no bloquea el insert fantasma de una transacción
+  // concurrente, y las dos podrían terminar en `true`). Con el volumen real
+  // —un alta ocasional desde el panel— esa ventana es inalcanzable. La
+  // redacción larga vive en `src/app/admin/documentos/actions.ts`.
+  // Es el documento que /mi/documentos destaca.
+  featured     Boolean                   @default(false)
+  uploadedById Int?                      @map("uploaded_by_id")
+  uploadedBy   User?                     @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime                  @default(now()) @map("created_at")
+  updatedAt    DateTime                  @updatedAt @map("updated_at")
+
+  @@index([type, year])
+  @@map("institutional_documents")
 }

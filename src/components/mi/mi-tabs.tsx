@@ -5,7 +5,7 @@
 // el anillo de foco (la trampa documentada en treasury-tabs.tsx).
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, Home, RefreshCw, ScrollText, User, Wallet } from "lucide-react";
+import { FileText, Home, Library, RefreshCw, User, Wallet } from "lucide-react";
 
 import { isMiTabActive, type MiTab, type MiTabIcon } from "@/lib/mi/nav";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ const ICONS: Record<MiTabIcon, React.ComponentType<{ className?: string }>> = {
   wallet: Wallet,
   user: User,
   "file-text": FileText,
-  "scroll-text": ScrollText,
+  library: Library,
   "refresh-cw": RefreshCw,
 };
 
