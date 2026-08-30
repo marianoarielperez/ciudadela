@@ -191,7 +191,7 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   `merchant_order` son legítimas en un formato que no implementamos: "recibido, no
   procesado". Un 4xx sostenido es algo que MP puede terminar deshabilitando, y ahí
   se perdería también la buena. Un POST sin `topic=` sigue dando 400 y sin auditar.
-- **`reconcile` (03:00) es la red, y tiene DOS fuentes**: `payments/search` por
+- **`reconcile` (03:17) es la red, y tiene DOS fuentes**: `payments/search` por
   fecha para los pagos de Checkout Pro, y `authorized_payments/search` **por cada
   suscripción viva**, que es lo único que encuentra los débitos recurrentes.
   Reutiliza `processor.applyPayment`: el resultado es idéntico al del aviso perdido.

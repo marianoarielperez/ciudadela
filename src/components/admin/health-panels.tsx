@@ -360,7 +360,7 @@ export function MpPanel({ mp, now }: { mp: MpHealth; now: Date }) {
             Es la señal más importante de este panel. Una suscripción no usa la URL de aviso de la
             preferencia: si la configuración de webhooks del panel de Mercado Pago se rompe, los débitos
             dejan de avisar sin ninguna otra señal, y la única red que queda es la conciliación de las
-            03:00.
+            03:17.
           </p>
           <ul className="space-y-1">
             <li>

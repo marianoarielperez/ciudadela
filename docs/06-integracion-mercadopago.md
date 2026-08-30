@@ -379,7 +379,7 @@ El campo `debito_automatico='Si'` del padrón importado marca los candidatos, pe
 **no es prueba**: tiene tres escrituras y ninguna lo baja, así que la ficha lo trata
 como una señal a contrastar, no como la verdad.
 
-### 6. Conciliación de respaldo — `POST /api/cron/reconcile`, 03:00
+### 6. Conciliación de respaldo — `POST /api/cron/reconcile`, 03:17
 
 La red de contención de la plata: si un webhook no llega, esto lo repara. Corre por
 crontab (`docs/11` Parte H), escribe una fila en `cron_runs` y deja el asiento

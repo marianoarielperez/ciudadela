@@ -317,8 +317,8 @@ Mercado Pago no lo repara nada — y el caso concreto que existe para atajar es 
 débito mensual del socio 14.
 
 ```
-# SIGeV — conciliación diaria con Mercado Pago (03:00 hora local)
-0 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1
+# SIGeV — conciliación diaria con Mercado Pago (03:17 hora local)
+17 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1
 ```
 
 Con `crontab -e` esa línea se pega y listo. Si preferís agregarla desde la shell,
@@ -338,9 +338,15 @@ viva** contra la API de MP, en serie.
 > servidor**. Un 524 en el log no significa que no haya corrido: lo que pasó de
 > verdad está en `cron_runs`, y ahí hay que mirarlo antes de relanzar nada.
 
-A las **03:00** y no a las 08:05 por dos razones: es el hueco más tranquilo (el
+De madrugada y no a las 08:05 por dos razones: es el hueco más tranquilo (el
 backup nocturno ya terminó) y deja cinco horas de margen antes de que corra el
-mantenimiento de solicitudes, que también habla con Mercado Pago.
+mantenimiento de solicitudes, que también habla con Mercado Pago. Y al minuto
+**17, no en punto**: la cuota que corta el 429 `local_rate_limited` es
+**compartida** entre clientes de MP (lo dice su propia FAQ), y a las horas
+redondas se amontonan los crons de todo el mundo — las corridas del 24/08 y del
+30/08/2026 se comieron 429 con menos de diez llamadas. Correr a un minuto
+"feo" esquiva esa estampida; el reintento con jitter de `src/lib/mp/retry.ts`
+es la otra mitad del mismo arreglo.
 
 Cómo leer el resultado:
 
@@ -366,7 +372,7 @@ definitivo** del crontab de root del VPS:
 
 | Hora | Qué | Cadencia real |
 |---|---|---|
-| `0 3 * * *` | `/api/cron/reconcile` | todos los días, actúa todos los días |
+| `17 3 * * *` | `/api/cron/reconcile` | todos los días, actúa todos los días |
 | `0 4 * * *` | `backup.sh` | todos los días (**no** es un endpoint) |
 | `5 8 * * *` | `/api/cron/applications` | todos los días, actúa todos los días |
 | `30 0 * * *` | `/api/cron/accrual` | todos los días, **actúa el día 1** |
@@ -388,7 +394,7 @@ add_cron() {  # $1 = expresión horaria, $2 = job
   local line="$1 curl -sS --max-time 900 -X POST -H \"Authorization: Bearer \$(cat /root/.sigev-cron-secret)\" $CRON_URL/$2 >> /var/log/sigev-cron.log 2>&1"
   crontab -l 2>/dev/null | grep -qF "/api/cron/$2" || (crontab -l 2>/dev/null; echo "$line") | crontab -
 }
-add_cron "0 3 * * *"  reconcile     # conciliación con Mercado Pago
+add_cron "17 3 * * *" reconcile     # conciliación con Mercado Pago (al 17: esquiva la estampida de la hora en punto)
 add_cron "5 8 * * *"  applications  # mantenimiento de solicitudes
 add_cron "30 0 * * *" accrual       # devengo — corre a diario, ACTÚA el día 1
 add_cron "30 7 * * *" digest        # resumen diario — sin novedades no envía
@@ -400,6 +406,17 @@ crontab -l | grep -E 'backup|api/cron'   # verificación: 5 de app + el backup
 El `grep -qF` es lo que lo hace idempotente. La versión sin guarda
 —`(crontab -l; echo …) | crontab -` a secas— **duplica la línea** en el segundo
 intento.
+
+> **Ojo: la idempotencia es por EXISTENCIA, no por contenido.** Si el VPS ya
+> tiene la línea de reconcile con el horario viejo (`0 3 * * *`, instalada el
+> 24/08/2026), el bloque de arriba **no la corrige**: ve que existe y no hace
+> nada. Migrarla es un reemplazo aparte, también idempotente (si ya dice
+> `17 3`, el `sed` no cambia nada):
+>
+> ```bash
+> crontab -l | sed 's|^0 3 \(\* \* \* curl.*api/cron/reconcile\)|17 3 \1|' | crontab -
+> crontab -l | grep 'api/cron/reconcile'   # tiene que decir 17 3 * * *
+> ```
 
 **La sexta línea es la del backup**, a las 04:00 (`scripts/backup.sh:3` dice esa
 hora), y **no** es un endpoint: es el script de shell que deja el sello `LAST_OK`

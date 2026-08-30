@@ -611,7 +611,7 @@ crontab -l > /root/crontab.bak
 if crontab -l | grep -q 'cron/reconcile'; then
   echo 'La línea de reconcile YA está: no se agrega nada.'
 else
-  (crontab -l; echo '0 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1') | crontab -
+  (crontab -l; echo '17 3 * * * curl -sS --max-time 900 -X POST -H "Authorization: Bearer $(cat /root/.sigev-cron-secret)" https://vecinalciudadela.ar/api/cron/reconcile >> /var/log/sigev-cron.log 2>&1') | crontab -
 fi
 
 crontab -l
@@ -619,11 +619,11 @@ crontab -l
 
 El `if` es lo que lo hace **idempotente**: corrido dos veces no deja dos líneas de
 reconcile. La versión sin `if` —`(crontab -l; echo …) | crontab -` a secas— duplica
-la línea en el segundo intento, y dos conciliaciones simultáneas a las 03:00 no
+la línea en el segundo intento, y dos conciliaciones simultáneas a las 03:17 no
 rompen nada (la idempotencia por `mpPaymentId` aguanta) pero ensucian `cron_runs` y
 duplican las llamadas a MP.
 
-Tienen que quedar **dos** líneas: solicitudes 08:05 y conciliación 03:00. El archivo
+Tienen que quedar **dos** líneas: solicitudes 08:05 y conciliación 03:17. El archivo
 `/root/.sigev-cron-secret` tiene que existir, con permisos `600` y el mismo valor que
 `CRON_SECRET` del `.env`.
 
@@ -667,7 +667,7 @@ Cuenta corriente.
 
 **7. Lo que NO hay que hacer**: probar un cobro. El débito del socio 14 del
 **10/09** es la verificación real, y tiene que entrar solo: `Payment.debit` + cuota
-2026-09 + recibo + email. Si el webhook no llega, el reconcile de las 03:00 del
+2026-09 + recibo + email. Si el webhook no llega, el reconcile de las 03:17 del
 11/09 lo registra igual — para eso está.
 
 ### 4.5 Específico de la fase 4C (crons, notificaciones, salud, padrón electoral)
@@ -743,7 +743,7 @@ dirección de la Comisión. **Vacío = el resumen no se manda a nadie**, y la co
 igual cierra en verde: `recipients: 0` no es un fallo.
 
 **6. Las líneas del crontab** — el bloque idempotente de `docs/11` Parte H, "El
-crontab final: seis líneas". Tienen que quedar **seis**: `reconcile` 03:00, backup
+crontab final: seis líneas". Tienen que quedar **seis**: `reconcile` 03:17, backup
 04:00, `applications` 08:05, `accrual` 00:30, `digest` 07:30 y `reminder` 10:00.
 
 **7. Prueba en seco de los tres endpoints nuevos**, sin esperar al horario:
