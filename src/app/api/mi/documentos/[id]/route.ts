@@ -2,40 +2,26 @@
 // propósito: no es documentación personal (esa regla queda para DNIs y
 // facturas); la auditoría de este módulo es de gestión, en las actions.
 // El suspendido lee (modo lectura del panel); el dado de baja no (requireMember).
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
 import { requireMember } from "@/lib/auth/require-member";
-import { prisma } from "@/lib/prisma";
-import { isValidInstitutionalDocFileName } from "@/lib/institutional-documents/doc-name";
 import { pdfDownloadName } from "@/lib/institutional-documents/rules";
-import { institutionalDocResponse } from "@/lib/institutional-documents/response";
-import { institutionalDocsDir } from "@/lib/institutional-documents/storage";
+import {
+  INSTITUTIONAL_DOC_NOT_FOUND,
+  institutionalDocResponse,
+  loadInstitutionalDocFile,
+} from "@/lib/institutional-documents/response";
 
 export async function GET(
   _req: Request,
   props: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  // La guarda va primero y acá: sin sesión no se toca la base.
   const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return new Response(actor.error, { status: 403 });
   const { id } = await props.params;
-  const numericId = Number(id);
-  if (!Number.isInteger(numericId) || numericId <= 0) {
-    return new Response("El documento no existe", { status: 404 });
-  }
-  const doc = await prisma.institutionalDocument.findUnique({ where: { id: numericId } });
-  if (!doc) return new Response("El documento no existe", { status: 404 });
-  // Defensa en profundidad: el fileName viene de la base (lo escribió el
-  // storage con un UUID), pero concatenar al filesystem exige revalidar.
-  if (!isValidInstitutionalDocFileName(doc.fileName)) {
-    return new Response("El documento no existe", { status: 404 });
-  }
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(path.join(institutionalDocsDir(), doc.fileName));
-  } catch {
-    return new Response("El archivo no está disponible", { status: 404 });
-  }
+  // El parseo del id, la consulta, la revalidación del fileName y la lectura
+  // del disco viven en el módulo: las dos rutas no pueden divergir.
+  const file = await loadInstitutionalDocFile(id);
+  if (!file) return new Response(INSTITUTIONAL_DOC_NOT_FOUND, { status: 404 });
   // La normalización del Buffer vive en el helper, no repetida por handler.
-  return institutionalDocResponse(bytes, pdfDownloadName(doc.title));
+  return institutionalDocResponse(file.bytes, pdfDownloadName(file.title));
 }
