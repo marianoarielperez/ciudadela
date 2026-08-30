@@ -1178,7 +1178,7 @@ autenticado en Brevo) → carga de fichas completa (160 vigentes: 36 activos +
 desde la fase 4B; se hace al desplegarla, ver `docs/10` §4.4) → acta marco de
 admisión digital dictada (REG-12) → **textos legales aprobados por la CD y cargados
 en `/admin/configuracion`** → **crontab con sus seis líneas** (`docs/11`, Parte H:
-backup 04:00, `reconcile` 03:00, `applications` 08:05, `accrual` 00:30,
+backup 04:00, `reconcile` 03:17, `applications` 08:05, `accrual` 00:30,
 `digest` 07:30 y `reminder` 10:00) → **`digest_recipients` cargada** en
 `/admin/configuracion`, o el resumen diario no se le manda a nadie → activar
 `asociate_activo` → convocar re-empadronamiento dentro de los 90 días.

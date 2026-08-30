@@ -151,7 +151,7 @@ prenderla ahí.
 | Frecuencia | Tarea |
 |---|---|
 | Diario 08:05 | **`POST /api/cron/applications`** (Módulo 3, ya en uso): recordatorio de pago a las solicitudes creadas hace 3 días o más, y expiración de las creadas hace 7 días o más (el corte es por `createdAt`, no por última actividad), con cancelación de la suscripción MP. Bloque copiable en `docs/11` |
-| Diario 03:00 | Conciliación MP de respaldo (script Node: consulta pagos y suscripciones por API, detecta lo que los webhooks no registraron) |
+| Diario 03:17 | Conciliación MP de respaldo (script Node: consulta pagos y suscripciones por API, detecta lo que los webhooks no registraron) |
 | Diario 04:00 | Backup: `mysqldump sigev` + `tar` de `/var/sigev/uploads` y `/var/sigev/recibos` → cifrado GPG simétrico → `rclone` a Google Drive de la vecinal (av.ciudadela@gmail.com). Retención 30 días. Complementa los snapshots de Contabo |
 | Diario 08:00 | Generación de cuotas devengadas del período (día 1 de cada mes), recordatorios de vencimiento, alertas de mora, avisos de vencimiento de plazos de re-empadronamiento |
 | Mensual | Detección de candidatos a vitalicio (REG-06) |
