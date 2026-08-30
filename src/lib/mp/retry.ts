@@ -29,6 +29,15 @@ import { describeMpError } from "./error-log";
  *  encarece la corrida entera sin comprar nada. */
 export const MP_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 
+/** Jitter sumado a cada espera. La cuota que corta el 429 es COMPARTIDA entre
+ *  clientes de MP (lo dice su FAQ): con esperas fijas, todos los que chocaron
+ *  en la misma ráfaga reintentan otra vez juntos. */
+export const MP_RETRY_JITTER_MS = 1_000;
+
+/** Tope para el `Retry-After` del servidor. El mismo máximo que usa el SDK
+ *  oficial: un header desmedido no puede colgar la corrida minutos. */
+export const MP_RETRY_AFTER_CAP_MS = 30_000;
+
 export type Sleep = (ms: number) => Promise<void>;
 
 const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,7 +46,18 @@ export type RetryOptions = {
   /** Inyectable para que los tests no duerman de verdad. */
   sleep?: Sleep;
   delays?: readonly number[];
+  /** Inyectable para que los tests fijen el jitter. */
+  random?: () => number;
 };
+
+/** El `Retry-After` que el gateway le colgó al error (en ms), si MP lo mandó.
+ *  Sólo llega en los fallos de las búsquedas por `fetch` directo: el SDK lanza
+ *  el cuerpo pelado de la respuesta, sin headers. */
+function retryAfterMsOf(e: unknown): number | null {
+  if (typeof e !== "object" || e === null) return null;
+  const v = (e as Record<string, unknown>).retryAfterMs;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
 
 /** ¿El fallo es el límite de ráfaga de MP?
  *
@@ -55,12 +75,20 @@ export function isMpRateLimit(e: unknown): boolean {
 export async function withMpRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
   const delays = opts.delays ?? MP_RETRY_DELAYS_MS;
   const sleep = opts.sleep ?? realSleep;
+  const random = opts.random ?? Math.random;
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (e) {
       if (attempt >= delays.length || !isMpRateLimit(e)) throw e;
-      await sleep(delays[attempt]);
+      // Si el servidor dijo cuánto esperar, eso manda (acotado); si no, la
+      // espera propia más el jitter que desincroniza de los demás clientes.
+      const hinted = retryAfterMsOf(e);
+      await sleep(
+        hinted !== null
+          ? Math.min(hinted, MP_RETRY_AFTER_CAP_MS)
+          : delays[attempt] + Math.round(random() * MP_RETRY_JITTER_MS),
+      );
     }
   }
 }

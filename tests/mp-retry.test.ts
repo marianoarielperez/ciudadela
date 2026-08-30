@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { isMpRateLimit, MP_RETRY_DELAYS_MS, retrying, withMpRetry } from "@/lib/mp/retry";
+import {
+  isMpRateLimit,
+  MP_RETRY_AFTER_CAP_MS,
+  MP_RETRY_DELAYS_MS,
+  MP_RETRY_JITTER_MS,
+  retrying,
+  withMpRetry,
+} from "@/lib/mp/retry";
 
 /** Un fallo del SDK de Mercado Pago tal como llega al `catch`: el cliente HTTP
  *  hace `throw await response.json()`, o sea un objeto plano con `status`. */
@@ -12,9 +19,13 @@ const sdkError = (status: number, message = "rate limited") => ({
 });
 
 /** Un fallo de las búsquedas por `fetch` directo: el gateway lanza un `Error`
- *  con el `status` colgado, que es lo que lo hace reconocible acá. */
-const httpError = (status: number) =>
-  Object.assign(new Error(`authorized_payments/search respondió ${status}`), { status });
+ *  con el `status` colgado —y, si MP lo mandó, el `Retry-After` en ms—, que es
+ *  lo que lo hace reconocible acá. */
+const httpError = (status: number, retryAfterMs?: number) =>
+  Object.assign(new Error(`authorized_payments/search respondió ${status}`), {
+    status,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  });
 
 function recordingSleep() {
   const waited: number[] = [];
@@ -44,7 +55,7 @@ describe("withMpRetry", () => {
       .mockRejectedValueOnce(sdkError(429))
       .mockResolvedValueOnce("ok");
 
-    await expect(withMpRetry(fn, { sleep })).resolves.toBe("ok");
+    await expect(withMpRetry(fn, { sleep, random: () => 0 })).resolves.toBe("ok");
     expect(fn).toHaveBeenCalledTimes(3);
     expect(waited).toEqual([...MP_RETRY_DELAYS_MS]);
   });
@@ -54,9 +65,72 @@ describe("withMpRetry", () => {
     const boom = sdkError(429);
     const fn = vi.fn().mockRejectedValue(boom);
 
-    await expect(withMpRetry(fn, { sleep })).rejects.toBe(boom);
+    await expect(withMpRetry(fn, { sleep, random: () => 0 })).rejects.toBe(boom);
     // Un intento + los dos reintentos: no hay un cuarto.
     expect(fn).toHaveBeenCalledTimes(3);
+    expect(waited).toEqual([...MP_RETRY_DELAYS_MS]);
+  });
+
+  // La cuota que corta el 429 es COMPARTIDA entre clientes de MP (su FAQ lo
+  // dice con todas las letras): con esperas fijas, todos los que chocaron
+  // juntos reintentan juntos. El jitter desincroniza.
+  it("cada espera suma un jitter aleatorio de hasta MP_RETRY_JITTER_MS", async () => {
+    const { waited, sleep } = recordingSleep();
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(sdkError(429))
+      .mockRejectedValueOnce(sdkError(429))
+      .mockResolvedValueOnce("ok");
+
+    await expect(withMpRetry(fn, { sleep, random: () => 0.5 })).resolves.toBe("ok");
+    expect(waited).toEqual([
+      MP_RETRY_DELAYS_MS[0] + MP_RETRY_JITTER_MS / 2,
+      MP_RETRY_DELAYS_MS[1] + MP_RETRY_JITTER_MS / 2,
+    ]);
+  });
+
+  // MP puede decir cuánto esperar (`Retry-After`); su propio SDK lo prioriza
+  // sobre el backoff calculado. Si el servidor pide más que nuestra espera,
+  // insistir antes es regalar el reintento.
+  it("un Retry-After del servidor manda sobre la espera propia, sin jitter", async () => {
+    const { waited, sleep } = recordingSleep();
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(httpError(429, 7_000))
+      .mockResolvedValueOnce("ok");
+
+    await expect(withMpRetry(fn, { sleep, random: () => 0.5 })).resolves.toBe("ok");
+    expect(waited).toEqual([7_000]);
+  });
+
+  it("el Retry-After se respeta también cuando pide MENOS que la espera propia", async () => {
+    const { waited, sleep } = recordingSleep();
+    const fn = vi.fn().mockRejectedValueOnce(httpError(429, 200)).mockResolvedValueOnce("ok");
+
+    await expect(withMpRetry(fn, { sleep, random: () => 0 })).resolves.toBe("ok");
+    expect(waited).toEqual([200]);
+  });
+
+  it("un Retry-After desmedido se recorta al tope: el cron no espera minutos", async () => {
+    const { waited, sleep } = recordingSleep();
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(httpError(429, 120_000))
+      .mockResolvedValueOnce("ok");
+
+    await expect(withMpRetry(fn, { sleep, random: () => 0 })).resolves.toBe("ok");
+    expect(waited).toEqual([MP_RETRY_AFTER_CAP_MS]);
+  });
+
+  it("un retryAfterMs inválido (cero, negativo, basura) cae a la espera propia", async () => {
+    const { waited, sleep } = recordingSleep();
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(httpError(429, 0))
+      .mockRejectedValueOnce(httpError(429, -5))
+      .mockResolvedValueOnce("ok");
+
+    await expect(withMpRetry(fn, { sleep, random: () => 0 })).resolves.toBe("ok");
     expect(waited).toEqual([...MP_RETRY_DELAYS_MS]);
   });
 
@@ -81,12 +155,13 @@ describe("withMpRetry", () => {
 
   // La pausa por defecto es un `setTimeout` real: acá se verifica que exista y
   // que sean los milisegundos documentados, sin que la suite duerma de verdad.
+  // Se avanza base + jitter entero porque el `random` por defecto es real.
   it("por defecto duerme con el reloj (verificado con timers falsos)", async () => {
     vi.useFakeTimers();
     try {
       const fn = vi.fn().mockRejectedValueOnce(sdkError(429)).mockResolvedValueOnce("ok");
       const p = withMpRetry(fn);
-      await vi.advanceTimersByTimeAsync(MP_RETRY_DELAYS_MS[0]);
+      await vi.advanceTimersByTimeAsync(MP_RETRY_DELAYS_MS[0] + MP_RETRY_JITTER_MS);
       await expect(p).resolves.toBe("ok");
     } finally {
       vi.useRealTimers();

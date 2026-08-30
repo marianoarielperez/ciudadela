@@ -105,9 +105,17 @@ const PAGE = 100;
  *  El `status` va COLGADO del `Error` y no sólo dentro del texto: es lo que
  *  `describeMpError` lee, y por lo tanto lo único que hace reconocible un 429
  *  para el reintento. Con el mensaje solo, un `authorized_payments/search
- *  respondió 429` se leía con `status=null` y nunca se reintentaba. */
-function httpFailure(label: string, status: number): Error {
-  return Object.assign(new Error(`${label} respondió ${status}`), { status });
+ *  respondió 429` se leía con `status=null` y nunca se reintentaba.
+ *
+ *  El `Retry-After` (Envoy lo emite en segundos) viaja como `retryAfterMs`
+ *  para que el reintento espere lo que el servidor pidió. Sólo el formato
+ *  numérico: un HTTP-date se ignora y se cae a la espera propia. */
+function httpFailure(label: string, res: Response): Error {
+  const seconds = Number(res.headers.get("retry-after") ?? NaN);
+  return Object.assign(new Error(`${label} respondió ${res.status}`), {
+    status: res.status,
+    ...(Number.isFinite(seconds) && seconds > 0 ? { retryAfterMs: seconds * 1000 } : {}),
+  });
 }
 
 /** MP manda ISO con offset argentino (`...-03:00`). El gateway es el ÚNICO
@@ -259,7 +267,7 @@ export function makeMpGateway(): MpGateway {
       const res = await fetch(`${API}${path}?${qs}`, {
         headers: { Authorization: `Bearer ${accessToken()}` },
       });
-      if (!res.ok) throw httpFailure(label, res.status);
+      if (!res.ok) throw httpFailure(label, res);
       const data = (await res.json()) as { paging?: { total?: number }; results?: T[] };
       const page = data.results ?? [];
       out.push(...page);
@@ -337,7 +345,7 @@ export function makeMpGateway(): MpGateway {
       const res = await fetch(`${API}/authorized_payments/${id}`, {
         headers: { Authorization: `Bearer ${accessToken()}` },
       });
-      if (!res.ok) throw httpFailure(`authorized_payments/${id}`, res.status);
+      if (!res.ok) throw httpFailure(`authorized_payments/${id}`, res);
       return mapAuthorized((await res.json()) as RawAuthorized, id);
     },
     async searchPreapprovals(input) {

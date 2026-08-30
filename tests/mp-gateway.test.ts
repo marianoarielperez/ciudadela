@@ -474,6 +474,33 @@ describe("reintento ante 429", () => {
     }
   });
 
+  // MP a veces manda `Retry-After` en el 429; el borde que corta (Envoy) lo
+  // emite en segundos. El gateway lo cuelga del error y el reintento lo
+  // respeta: reintentar antes de lo que el servidor pidió es regalar el tiro.
+  it("searchAuthorizedPayments: el Retry-After del 429 gobierna la espera", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.fetch
+        .mockResolvedValueOnce(
+          new Response("local_rate_limited", { status: 429, headers: { "Retry-After": "7" } }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ paging: { total: 0 }, results: [] }), { status: 200 }),
+        );
+
+      const p = makeMpGateway().searchAuthorizedPayments("pre-1");
+      // Antes de los 7 s del header no hay segundo intento, aunque la espera
+      // propia (1 s + jitter ≤ 1 s) ya haya pasado de sobra.
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(mocks.fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(p).resolves.toEqual([]);
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("un 500 no se reintenta: se propaga en el primer intento", async () => {
     mocks.fetch.mockResolvedValue(new Response("nope", { status: 500 }));
     await expect(makeMpGateway().searchPreapprovals()).rejects.toThrow(
