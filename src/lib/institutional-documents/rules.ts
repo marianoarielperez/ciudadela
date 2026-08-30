@@ -9,7 +9,7 @@ export const DOCUMENT_TYPE_LABELS: Record<InstitutionalDocumentType, string> = {
   norm: "Norma",
   annual_report: "Memoria",
   balance: "Balance",
-  other: "Documento",
+  other: "Otro documento",
 };
 
 // El artículo por tipo, para mensajes en castellano ("una Memoria", "un Balance").
@@ -19,6 +19,12 @@ const TYPE_ARTICLE: Record<InstitutionalDocumentType, "un" | "una"> = {
   balance: "un",
   other: "un",
 };
+
+/** "de la Memoria" / "del Balance": la preposición sale del artículo del tipo,
+ *  nunca hardcodeada — con "de la" fijo, el balance salía "de la Balance". */
+function typePreposition(type: InstitutionalDocumentType): "de la" | "del" {
+  return TYPE_ARTICLE[type] === "una" ? "de la" : "del";
+}
 
 export function requiresYear(type: InstitutionalDocumentType): boolean {
   return type === "annual_report" || type === "balance";
@@ -48,7 +54,10 @@ export function prepareDocumentInput(input: {
   const year = input.year ?? null;
   if (requiresYear(type)) {
     if (year === null) {
-      return { ok: false, error: `Ingresá el año de la ${DOCUMENT_TYPE_LABELS[type]}.` };
+      return {
+        ok: false,
+        error: `Ingresá el año ${typePreposition(type)} ${DOCUMENT_TYPE_LABELS[type]}.`,
+      };
     }
     return {
       ok: true,

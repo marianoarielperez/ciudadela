@@ -52,10 +52,15 @@ describe("prepareDocumentInput", () => {
     });
   });
 
-  it("rechaza memoria/balance sin año, con el tipo en el mensaje", () => {
-    const r = prepareDocumentInput({ type: "annual_report" });
-    expect(r).toMatchObject({ ok: false });
-    if (!r.ok) expect(r.error).toContain("Memoria");
+  // El mensaje lo lee el operador: la preposición se deriva del artículo del
+  // tipo, no se hardcodea ("de la Memoria" pero "del Balance").
+  it("rechaza memoria/balance sin año, con el tipo y su preposición en el mensaje", () => {
+    const memoria = prepareDocumentInput({ type: "annual_report" });
+    expect(memoria).toMatchObject({ ok: false });
+    if (!memoria.ok) expect(memoria.error).toBe("Ingresá el año de la Memoria.");
+    const balance = prepareDocumentInput({ type: "balance" });
+    expect(balance).toMatchObject({ ok: false });
+    if (!balance.ok) expect(balance.error).toBe("Ingresá el año del Balance.");
   });
 
   it("normas y otros exigen título libre y no llevan yearKey", () => {
@@ -76,13 +81,24 @@ describe("prepareDocumentInput", () => {
     expect(norm).toMatchObject({ ok: true, data: { featured: true } });
     const memoria = prepareDocumentInput({ type: "annual_report", year: 2025, featured: true });
     expect(memoria).toMatchObject({ ok: true, data: { featured: false } });
+    // Rama de título libre: acá `featured` NO está hardcodeado en false, así que
+    // es la única que ejercita la cláusula `type === "norm"` (un POST forjado
+    // sobre un documento cualquiera no puede colar el destacado).
+    const otro = prepareDocumentInput({ type: "other", title: "x", featured: true });
+    expect(otro).toMatchObject({ ok: true, data: { featured: false } });
   });
 
-  it("la descripción vacía queda null", () => {
+  it("la descripción vacía o en blanco queda null", () => {
     const r = prepareDocumentInput({ type: "other", title: "x" });
     expect(r).toMatchObject({ ok: true, data: { description: null } });
+    const blanco = prepareDocumentInput({ type: "other", title: "x", description: "   " });
+    expect(blanco).toMatchObject({ ok: true, data: { description: null } });
     const con = prepareDocumentInput({ type: "other", title: "x", description: "Aprobado en asamblea." });
     expect(con).toMatchObject({ ok: true, data: { description: "Aprobado en asamblea." } });
+  });
+
+  it("un título de solo espacios no alcanza", () => {
+    expect(prepareDocumentInput({ type: "other", title: "   " })).toMatchObject({ ok: false });
   });
 });
 
@@ -109,5 +125,11 @@ describe("DOCUMENT_TYPE_LABELS", () => {
     expect(Object.keys(DOCUMENT_TYPE_LABELS).sort()).toEqual(
       ["annual_report", "balance", "norm", "other"].sort(),
     );
+  });
+
+  // En la columna "Tipo" del panel, "Documento" no distinguía nada frente a
+  // Norma / Memoria / Balance.
+  it("el tipo suelto se lee como Otro documento", () => {
+    expect(DOCUMENT_TYPE_LABELS.other).toBe("Otro documento");
   });
 });
