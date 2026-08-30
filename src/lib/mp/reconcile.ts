@@ -23,7 +23,7 @@ export const RECONCILE_WINDOW_MS = 72 * 60 * 60_000;
  *  corrida terminaron en `errors` con 429, incluido el único camino que
  *  recupera un débito cuyo webhook no llegó. El gateway ya reintenta el 429
  *  (`mp/retry.ts`); esto es la otra mitad: no provocarlo. Con el padrón actual
- *  —decenas de suscripciones— agrega segundos a una corrida de las 03:00 que
+ *  —decenas de suscripciones— agrega segundos a una corrida de las 03:17 que
  *  no le rinde cuentas a nadie. */
 export const SUBSCRIPTION_PACING_MS = 250;
 /** Solicitudes por las que vale la pena conservar un preapproval huérfano. */

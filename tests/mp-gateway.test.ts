@@ -474,10 +474,10 @@ describe("reintento ante 429", () => {
     }
   });
 
-  // MP a veces manda `Retry-After` en el 429; el borde que corta (Envoy) lo
-  // emite en segundos. El gateway lo cuelga del error y el reintento lo
+  // El borde de MP que corta (Envoy) puede mandar `Retry-After` en segundos.
+  // El gateway lo cuelga del error como `retryAfterMs` y el reintento lo
   // respeta: reintentar antes de lo que el servidor pidió es regalar el tiro.
-  it("searchAuthorizedPayments: el Retry-After del 429 gobierna la espera", async () => {
+  it("searchAuthorizedPayments: el Retry-After del 429 estira la espera", async () => {
     vi.useFakeTimers();
     try {
       mocks.fetch
@@ -490,12 +490,46 @@ describe("reintento ante 429", () => {
 
       const p = makeMpGateway().searchAuthorizedPayments("pre-1");
       // Antes de los 7 s del header no hay segundo intento, aunque la espera
-      // propia (1 s + jitter ≤ 1 s) ya haya pasado de sobra.
-      await vi.advanceTimersByTimeAsync(6_000);
+      // propia (1 s + jitter ≤ 1 s) ya haya pasado de sobra. Con el jitter
+      // real, el reintento cae entre 7 y 8 s.
+      await vi.advanceTimersByTimeAsync(6_900);
       expect(mocks.fetch).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(1_200);
       await expect(p).resolves.toEqual([]);
       expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // `Retry-After` sólo vale como `delta-seconds` (dígitos pelados, RFC 9110).
+  // Un HTTP-date o un número "creativo" (`1e3`, `0x1E`) se ignoran: mejor la
+  // espera propia que obedecer un parseo equivocado.
+  it("un Retry-After que no es delta-seconds se descarta y el error no lleva retryAfterMs", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.fetch
+        .mockResolvedValueOnce(
+          new Response("local_rate_limited", {
+            status: 429,
+            headers: { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response("local_rate_limited", { status: 429, headers: { "Retry-After": "1e3" } }),
+        )
+        .mockResolvedValueOnce(
+          new Response("local_rate_limited", { status: 429, headers: { "Retry-After": "0x1E" } }),
+        );
+
+      const p = makeMpGateway().searchAuthorizedPayments("pre-1");
+      const caught = p.catch((e: unknown) => e);
+      // Sin hint válido rigen las esperas propias (máx. 1+1 + 3+1 = 6 s).
+      await vi.advanceTimersByTimeAsync(6_100);
+      const e = (await caught) as { status?: number; retryAfterMs?: unknown };
+      expect(e.status).toBe(429);
+      expect("retryAfterMs" in (e as object)).toBe(false);
+      expect(mocks.fetch).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

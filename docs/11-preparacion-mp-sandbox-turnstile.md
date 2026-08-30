@@ -407,6 +407,17 @@ El `grep -qF` es lo que lo hace idempotente. La versión sin guarda
 —`(crontab -l; echo …) | crontab -` a secas— **duplica la línea** en el segundo
 intento.
 
+> **Ojo: la idempotencia es por EXISTENCIA, no por contenido.** Si el VPS ya
+> tiene la línea de reconcile con el horario viejo (`0 3 * * *`, instalada el
+> 24/08/2026), el bloque de arriba **no la corrige**: ve que existe y no hace
+> nada. Migrarla es un reemplazo aparte, también idempotente (si ya dice
+> `17 3`, el `sed` no cambia nada):
+>
+> ```bash
+> crontab -l | sed 's|^0 3 \(\* \* \* curl.*api/cron/reconcile\)|17 3 \1|' | crontab -
+> crontab -l | grep 'api/cron/reconcile'   # tiene que decir 17 3 * * *
+> ```
+
 **La sexta línea es la del backup**, a las 04:00 (`scripts/backup.sh:3` dice esa
 hora), y **no** es un endpoint: es el script de shell que deja el sello `LAST_OK`
 que `/admin/salud` lee. Por eso el bloque de arriba no la agrega, sólo la verifica

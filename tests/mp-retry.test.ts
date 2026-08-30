@@ -89,10 +89,11 @@ describe("withMpRetry", () => {
     ]);
   });
 
-  // MP puede decir cuánto esperar (`Retry-After`); su propio SDK lo prioriza
-  // sobre el backoff calculado. Si el servidor pide más que nuestra espera,
-  // insistir antes es regalar el reintento.
-  it("un Retry-After del servidor manda sobre la espera propia, sin jitter", async () => {
+  // Si MP dice cuánto esperar (`Retry-After`) y pide MÁS que la espera propia,
+  // insistir antes es regalar el reintento. El jitter se suma IGUAL: la cuota
+  // compartida le reparte el mismo header a todos los que chocaron en la
+  // ráfaga, y sin jitter volverían a despertarse sincronizados.
+  it("un Retry-After mayor que la espera propia la estira, y el jitter se suma igual", async () => {
     const { waited, sleep } = recordingSleep();
     const fn = vi
       .fn()
@@ -100,18 +101,25 @@ describe("withMpRetry", () => {
       .mockResolvedValueOnce("ok");
 
     await expect(withMpRetry(fn, { sleep, random: () => 0.5 })).resolves.toBe("ok");
-    expect(waited).toEqual([7_000]);
+    expect(waited).toEqual([7_000 + MP_RETRY_JITTER_MS / 2]);
   });
 
-  it("el Retry-After se respeta también cuando pide MENOS que la espera propia", async () => {
+  // Un header corto no acorta nada: la escalada 1 s → 3 s es el piso. Envoy
+  // suele mandar los segundos que quedan de la ventana; obedecer un "0.2 s"
+  // quemaría los dos reintentos dentro de la misma ventana cortada.
+  it("un Retry-After menor que la espera propia NO la acorta: la escalada es el piso", async () => {
     const { waited, sleep } = recordingSleep();
-    const fn = vi.fn().mockRejectedValueOnce(httpError(429, 200)).mockResolvedValueOnce("ok");
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(httpError(429, 200))
+      .mockRejectedValueOnce(httpError(429, 200))
+      .mockResolvedValueOnce("ok");
 
     await expect(withMpRetry(fn, { sleep, random: () => 0 })).resolves.toBe("ok");
-    expect(waited).toEqual([200]);
+    expect(waited).toEqual([...MP_RETRY_DELAYS_MS]);
   });
 
-  it("un Retry-After desmedido se recorta al tope: el cron no espera minutos", async () => {
+  it("un Retry-After desmedido se recorta al tope: el peor llamador es el webhook", async () => {
     const { waited, sleep } = recordingSleep();
     const fn = vi
       .fn()

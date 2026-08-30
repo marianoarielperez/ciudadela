@@ -48,6 +48,10 @@ export type MpErrorDetail = {
   /** Último recurso: los nombres de campo de lo que se lanzó, cuando no hubo
    *  ningún texto legible. Son nombres, no valores: no hay dato personal. */
   keys: string[];
+  /** El `Retry-After` (en ms) que el gateway le colgó a un 429 de las
+   *  búsquedas por `fetch` directo. Presente sólo si es positivo; los fallos
+   *  del SDK no lo traen nunca (el SDK lanza el cuerpo, sin headers). */
+  retryAfterMs?: number;
 };
 
 function asObject(v: unknown): Record<string, unknown> | null {
@@ -113,6 +117,7 @@ export function describeMpError(e: unknown): MpErrorDetail {
   else if (e !== undefined && e !== null) raw = asText(String(e));
 
   const message = raw === null ? "" : clean(raw, MESSAGE_MAX);
+  const retryAfterMs = o ? asNumber(o.retryAfterMs) : null;
   return {
     status,
     message,
@@ -121,6 +126,7 @@ export function describeMpError(e: unknown): MpErrorDetail {
     // Sólo cuando no quedó texto: si MP cambia la forma del cuerpo, esto es lo
     // que evita otra ronda a ciegas.
     keys: message === "" && o ? Object.keys(o).slice(0, MAX_KEYS) : [],
+    ...(retryAfterMs !== null && retryAfterMs > 0 ? { retryAfterMs } : {}),
   };
 }
 
@@ -142,6 +148,9 @@ export function mpErrorLog(operation: string, ref: MpErrorRef, e: unknown): stri
   }
   parts.push(`status=${d.status ?? "?"}`);
   if (d.code) parts.push(`code=${d.code}`);
+  // Todavía no está MEDIDO si MP manda `Retry-After` en sus 429: esta línea es
+  // la medición. Si nunca aparece en el log de PM2, el hint no existe.
+  if (d.retryAfterMs !== undefined) parts.push(`retryAfterMs=${d.retryAfterMs}`);
   parts.push(`message=${JSON.stringify(d.message === "" ? "(sin mensaje)" : d.message)}`);
   if (d.cause.length > 0) {
     const causes = d.cause

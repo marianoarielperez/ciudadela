@@ -1,7 +1,7 @@
 // Reintento ante el límite de ráfaga de Mercado Pago (HTTP 429).
 //
-// EL PORQUÉ: la conciliación de las 03:00 recorre las suscripciones una por
-// una y por cada una hace al menos dos llamadas
+// EL PORQUÉ: la conciliación nocturna (03:17; corría a las 03:00 hasta el
+// 30/08/2026) recorre las suscripciones una por una y hace al menos dos llamadas
 // (`authorized_payments/search` + `preapproval`). La primera corrida real en
 // producción (24/08/2026) terminó con `errors` así:
 //
@@ -29,14 +29,20 @@ import { describeMpError } from "./error-log";
  *  encarece la corrida entera sin comprar nada. */
 export const MP_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 
-/** Jitter sumado a cada espera. La cuota que corta el 429 es COMPARTIDA entre
- *  clientes de MP (lo dice su FAQ): con esperas fijas, todos los que chocaron
- *  en la misma ráfaga reintentan otra vez juntos. */
+/** Jitter sumado a TODAS las esperas, con y sin `Retry-After`. La cuota que
+ *  corta el 429 es compartida entre clientes de MP —las corridas del 24/08 y
+ *  del 30/08/2026 comieron 429 con menos de diez llamadas—, así que los que
+ *  chocaron juntos reciben el mismo corte (y el mismo header, si viene): con
+ *  esperas fijas volverían a despertarse sincronizados. */
 export const MP_RETRY_JITTER_MS = 1_000;
 
-/** Tope para el `Retry-After` del servidor. El mismo máximo que usa el SDK
- *  oficial: un header desmedido no puede colgar la corrida minutos. */
-export const MP_RETRY_AFTER_CAP_MS = 30_000;
+/** Tope para el `Retry-After` del servidor. El presupuesto NO es del cron (que
+ *  tiene toda la madrugada): es del peor llamador. El webhook de MP responde
+ *  síncrono y MP lo da por caído a los ~22 s, y `getAuthorizedPayment` —una de
+ *  las lecturas que sí pueden traer el hint— corre adentro. Peor caso por
+ *  llamada: 2 reintentos × (8 s de tope + 1 s de jitter) = 18 s < 22 s. Subir
+ *  este número es comerse ese margen, no una perilla suelta. */
+export const MP_RETRY_AFTER_CAP_MS = 8_000;
 
 export type Sleep = (ms: number) => Promise<void>;
 
@@ -49,15 +55,6 @@ export type RetryOptions = {
   /** Inyectable para que los tests fijen el jitter. */
   random?: () => number;
 };
-
-/** El `Retry-After` que el gateway le colgó al error (en ms), si MP lo mandó.
- *  Sólo llega en los fallos de las búsquedas por `fetch` directo: el SDK lanza
- *  el cuerpo pelado de la respuesta, sin headers. */
-function retryAfterMsOf(e: unknown): number | null {
-  if (typeof e !== "object" || e === null) return null;
-  const v = (e as Record<string, unknown>).retryAfterMs;
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
-}
 
 /** ¿El fallo es el límite de ráfaga de MP?
  *
@@ -80,15 +77,15 @@ export async function withMpRetry<T>(fn: () => Promise<T>, opts: RetryOptions = 
     try {
       return await fn();
     } catch (e) {
-      if (attempt >= delays.length || !isMpRateLimit(e)) throw e;
-      // Si el servidor dijo cuánto esperar, eso manda (acotado); si no, la
-      // espera propia más el jitter que desincroniza de los demás clientes.
-      const hinted = retryAfterMsOf(e);
-      await sleep(
-        hinted !== null
-          ? Math.min(hinted, MP_RETRY_AFTER_CAP_MS)
-          : delays[attempt] + Math.round(random() * MP_RETRY_JITTER_MS),
-      );
+      const d = describeMpError(e);
+      if (attempt >= delays.length || d.status !== 429) throw e;
+      // La espera propia (1 s, 3 s) es el PISO: un `Retry-After` corto no
+      // acorta la escalada — Envoy suele mandar los segundos que quedan de la
+      // ventana, y obedecer un hint chico quema los reintentos adentro de la
+      // misma ventana cortada. Uno largo la estira, acotado. Y el jitter se
+      // suma SIEMPRE: el header es el mismo para todos los que chocaron.
+      const hinted = Math.min(d.retryAfterMs ?? 0, MP_RETRY_AFTER_CAP_MS);
+      await sleep(Math.max(delays[attempt], hinted) + Math.round(random() * MP_RETRY_JITTER_MS));
     }
   }
 }

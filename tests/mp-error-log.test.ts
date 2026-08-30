@@ -150,3 +150,32 @@ describe("mpErrorLog", () => {
     );
   });
 });
+
+// El hint que el gateway le cuelga a un 429 (`retryAfterMs`) se lee ACÁ, no con
+// un lector paralelo en `retry.ts`: describeMpError es el único que sabe qué
+// forma tiene un fallo de MP. Y va al log porque todavía no se MIDIÓ si MP lo
+// manda: la línea de PM2 es la medición.
+describe("describeMpError — retryAfterMs", () => {
+  it("expone el retryAfterMs colgado por el gateway", () => {
+    const e = Object.assign(new Error("payments/search respondió 429"), {
+      status: 429,
+      retryAfterMs: 7_000,
+    });
+    expect(describeMpError(e).retryAfterMs).toBe(7_000);
+  });
+
+  it("lo omite cuando falta, es cero o es basura", () => {
+    expect(describeMpError({ status: 429, message: "x" }).retryAfterMs).toBeUndefined();
+    expect(describeMpError({ status: 429, message: "x", retryAfterMs: 0 }).retryAfterMs).toBeUndefined();
+    expect(describeMpError({ status: 429, message: "x", retryAfterMs: -1 }).retryAfterMs).toBeUndefined();
+    expect(describeMpError({ status: 429, message: "x", retryAfterMs: "7" }).retryAfterMs).toBe(7);
+  });
+
+  it("mpErrorLog lo escribe, para medir si MP manda el header", () => {
+    const e = Object.assign(new Error("payments/search respondió 429"), {
+      status: 429,
+      retryAfterMs: 7_000,
+    });
+    expect(mpErrorLog("searchPayments", {}, e)).toContain("retryAfterMs=7000");
+  });
+});

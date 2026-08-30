@@ -107,14 +107,21 @@ const PAGE = 100;
  *  para el reintento. Con el mensaje solo, un `authorized_payments/search
  *  respondió 429` se leía con `status=null` y nunca se reintentaba.
  *
- *  El `Retry-After` (Envoy lo emite en segundos) viaja como `retryAfterMs`
- *  para que el reintento espere lo que el servidor pidió. Sólo el formato
- *  numérico: un HTTP-date se ignora y se cae a la espera propia. */
+ *  Si el 429 trae `Retry-After`, viaja como `retryAfterMs` y el reintento lo
+ *  respeta (acotado). Sólo el formato `delta-seconds` del RFC 9110 —dígitos
+ *  pelados—: `Number()` aceptaría `1e3` o `0x1E`, que no son un pedido del
+ *  servidor sino un parseo equivocado, y un HTTP-date se ignora. OJO: que MP
+ *  mande el header todavía no está medido; `mpErrorLog` lo escribe cuando
+ *  aparece, y esa línea de PM2 es la medición. */
 function httpFailure(label: string, res: Response): Error {
-  const seconds = Number(res.headers.get("retry-after") ?? NaN);
+  const raw = res.headers.get("retry-after");
+  const seconds = raw !== null && /^\d+$/.test(raw) ? Number(raw) : 0;
+  // Drenar el cuerpo que no se va a leer: sin esto, undici no puede devolver
+  // el socket al pool y rehace el TLS justo durante la ráfaga limitada.
+  void res.body?.cancel().catch(() => {});
   return Object.assign(new Error(`${label} respondió ${res.status}`), {
     status: res.status,
-    ...(Number.isFinite(seconds) && seconds > 0 ? { retryAfterMs: seconds * 1000 } : {}),
+    ...(seconds > 0 ? { retryAfterMs: seconds * 1000 } : {}),
   });
 }
 
@@ -421,7 +428,7 @@ export function makeMpGateway(): MpGateway {
   };
 
   // Reintento ante 429 SÓLO en las LECTURAS (ver la cabecera de `retry.ts`). La
-  // conciliación de las 03:00 recorre todas las suscripciones seguidas y en
+  // conciliación de las 03:17 recorre todas las suscripciones seguidas y en
   // producción MP le cortó tres pasos por límite de ráfaga. Las escrituras
   // —`createPreapproval`, `cancelPreapproval`, `updatePreapprovalAmount`,
   // `createPreference`— quedan AFUERA a propósito: reintentar ahí puede

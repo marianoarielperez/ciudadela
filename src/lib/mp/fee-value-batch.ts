@@ -71,7 +71,7 @@ export type BatchRun = {
  *  vuelve a cobrar el monto viejo hasta que el cron de conciliación la
  *  sincronice y le escriba `authorized` —desde esa corrida aparece acá y en
  *  `amountDivergent`—. Ningún webhook sincroniza estados de preapproval, así que
- *  la ventana es de hasta ~24 h (el cron corre a las 03:00).
+ *  la ventana es de hasta ~24 h (el cron corre a las 03:17).
  *
  *  El monto de referencia sale de la base (`MpSubscription.amount`), que el
  *  cron diario de conciliación refresca contra MP. Nunca se relee MP acá: son

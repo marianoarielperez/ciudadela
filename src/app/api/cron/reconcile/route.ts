@@ -1,4 +1,4 @@
-// POST /api/cron/reconcile — lo dispara el crontab del VPS a las 03:00
+// POST /api/cron/reconcile — lo dispara el crontab del VPS a las 03:17
 // (docs/11 Parte H). Mismo esquema de autenticación que `/api/cron/applications`
 // y estrena el registro en `cron_runs` (spec M4 §8): la última corrida de cada
 // cron es lo que `/admin/salud` (4C) va a mostrar.
