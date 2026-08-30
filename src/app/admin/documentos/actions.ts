@@ -276,10 +276,13 @@ export async function deleteDocumentAction(
   });
   if (!existing) return { error: NOT_FOUND };
   await prisma.institutionalDocument.delete({ where: { id: existing.id } });
-  // El asiento va ANTES de tocar el disco: `deleteInstitutionalDocument`
-  // propaga lo que no sea ENOENT, y con el orden al revés esa excepción se
-  // llevaría puesto el asiento de un borrado que ya ocurrió en la base. El
-  // orden garantiza que el asiento se INTENTE, no que exista: `audit()` es
+  // El asiento va ANTES de tocar el disco, que es la regla del proyecto para
+  // toda acción sensible de admin: primero se deja el rastro de lo que ya
+  // ocurrió en la base, después el filesystem. Lo que hace SEGURO ese orden es
+  // `deleteDocBestEffort`, que se traga todo lo que tire el borrado del
+  // archivo: un PDF huérfano en `UPLOADS_DIR/institucional` es basura barata,
+  // pero un borrado sin asiento sería un agujero de auditoría. El orden
+  // garantiza que el asiento se INTENTE, no que exista: `audit()` también es
   // best-effort y se traga sus errores.
   await audit({
     userId: actor.actorId,

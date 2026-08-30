@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -237,5 +237,33 @@ describe("next.config.ts repone la CSP dura de los documentos institucionales", 
     }[];
     const global = rules.find((r) => r.source === "/(.*)");
     expect(global?.headers.find((h) => h.key === "X-Frame-Options")?.value).toBe("DENY");
+  });
+});
+
+// `response.ts` es PURO —no tiene un solo import— y esa pureza es lo que deja
+// testear las cabeceras sin `.env`: el singleton de `@/lib/prisma` tira al
+// EVALUARSE si falta `DATABASE_URL`. Un refactor ya le metió ese import una vez
+// y costó dos oleadas de arreglos. Hoy nadie lo importa aislado —toda la suite
+// mockea Prisma, incluida ésta—, así que reponerlo mañana no rompería ningún
+// test: esto es lo que lo ata. Molde: el caso de `image-url.ts` en
+// `news-images.test.ts`.
+describe("response.ts se mantiene puro", () => {
+  it("no importa nada: ni estático, ni dinámico, ni require", () => {
+    const src = readFileSync(
+      new URL("../src/lib/institutional-documents/response.ts", import.meta.url),
+      "utf8",
+    );
+    // Los comentarios del módulo NOMBRAN sus importaciones prohibidas (habla de
+    // Prisma y del `import()` dinámico de `receipt-response.ts`), así que se
+    // sacan antes de mirar: si no, el test se cae por lo que el archivo
+    // explica, no por lo que hace.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/^\s*import\b/m);
+    expect(code).not.toMatch(/^\s*export\b[^;]*\bfrom\b/m);
+    expect(code).not.toMatch(/\bimport\s*\(/);
+    expect(code).not.toMatch(/\brequire\s*\(/);
+    // Y el archivo sigue siendo el que importa: si se vaciara o se renombrara
+    // el helper, las cuatro aserciones de arriba pasarían contra la nada.
+    expect(code).toMatch(/export function institutionalDocResponse/);
   });
 });

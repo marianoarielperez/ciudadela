@@ -114,7 +114,13 @@ Dos route handlers finos que comparten un helper de respuesta:
   por visualización queda para DNIs/facturas). La auditoría de este módulo
   es de gestión (§5).
 - Documento inexistente o archivo faltante → 404.
-- No hay visor embebido/iframe → **no se toca la CSP de `next.config.ts`**.
+- No hay visor embebido/iframe, así que no hay que reabrir `frame-ancestors`
+  ni `X-Frame-Options`. **Pero `next.config.ts` SÍ se tocó** (lo planificado
+  era no tocarlo): la CSP dura que los handlers emiten en su `Response`
+  **nunca llegaba al cliente** —Next copia las cabeceras de `headers()` con
+  `setHeader`, que REEMPLAZA—, así que hay **una entrada por ruta** que la
+  repone con `default-src 'none'; sandbox; frame-ancestors 'none'`
+  (commit `e19075f`). **Ver §13**, que es donde está contado entero.
 
 ## 5. /admin/documentos
 
@@ -228,7 +234,11 @@ Script one-shot `scripts/import-estatuto.ts` (patrón `import-padron.ts`):
   lectura), nada de `src/lib/mp/*`, webhooks, crons, `resolve.ts` ni
   `registerPayment`. Verificable con `git diff --stat` al cerrar, como se
   hizo con la exención.
-- Ninguna variable de entorno nueva. Ningún cambio de CSP.
+- Ninguna variable de entorno nueva. **La CSP sí cambió**, contra lo
+  planificado acá: `next.config.ts` sumó dos entradas de `headers()` —una por
+  ruta del PDF— para reponer la CSP dura que la entrada global pisaba
+  (commit `e19075f`). **El desvío está contado en §13**; la CSP global del
+  sitio y `X-Frame-Options: DENY` quedaron sin tocar.
 - El modelo `Document` existente y sus rutas quedan intactos.
 
 ---

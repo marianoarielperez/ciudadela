@@ -11,7 +11,12 @@ export const metadata = { title: "Editar documento — SIGeV" };
 export default async function EditDocumentPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
   const numericId = Number(id);
-  if (!Number.isInteger(numericId) || numericId <= 0) notFound();
+  // `isSafeInteger`, no `isInteger`: para "999999999999999999999" `Number` da
+  // `1e21`, que es entero, se cuela al `where` de Prisma y tira un
+  // `PrismaClientValidationError` sin atrapar — 500 en vez de 404. Es la misma
+  // guarda, con el mismo motivo, que `parseDocId` en
+  // `@/lib/institutional-documents/file-load`.
+  if (!Number.isSafeInteger(numericId) || numericId <= 0) notFound();
   const doc = await prisma.institutionalDocument.findUnique({ where: { id: numericId } });
   if (!doc) notFound();
   const editable: EditableDocument = {

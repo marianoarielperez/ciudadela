@@ -1184,8 +1184,15 @@ model InstitutionalDocument {
   // {uuid}.pdf relativo a UPLOADS_DIR/institucional/. Nunca una ruta.
   fileName     String                    @map("file_name") @db.VarChar(255)
   size         Int
-  // Solo normas; a lo sumo una (lo sostiene la transacción del asiento, no un
-  // unique: false no es NULL). Es el documento que /mi/documentos destaca.
+  // Solo normas; a lo sumo una. No hay unique que lo sostenga —imposible en
+  // MySQL: `false` no es `NULL`—, así que lo sostiene la transacción del
+  // asiento, y con un alcance acotado: garantiza que no exista un estado
+  // intermedio con dos destacadas, NO cierra la carrera de dos altas
+  // simultáneas (`updateMany` no bloquea el insert fantasma de una transacción
+  // concurrente, y las dos podrían terminar en `true`). Con el volumen real
+  // —un alta ocasional desde el panel— esa ventana es inalcanzable. La
+  // redacción larga vive en `src/app/admin/documentos/actions.ts`.
+  // Es el documento que /mi/documentos destaca.
   featured     Boolean                   @default(false)
   uploadedById Int?                      @map("uploaded_by_id")
   uploadedBy   User?                     @relation(fields: [uploadedById], references: [id], onDelete: SetNull)

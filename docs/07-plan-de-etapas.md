@@ -506,6 +506,12 @@ y `accountEmailNotice.announce`). `/mi/estatuto` + `GET /api/mi/estatuto`
 publican el PDF (`datos/estatuto.pdf`) detrás de autenticación — el movido desde
 el Módulo 2 del 19/08/2026 queda hecho.
 
+> **Superado el 30/08/2026** (registro histórico, no se reescribe): el módulo de
+> documentos institucionales reemplazó esa pestaña por **Documentos**
+> (`/mi/documentos`), eliminó `GET /api/mi/estatuto` y dejó `/mi/estatuto` como
+> redirect. El PDF ya no sale de `datos/`: sale de la base por
+> `GET /api/mi/documentos/[id]`. Ver `docs/05` §7 y la spec del módulo.
+
 Doce commits, 2346 tests, build y lint limpios.
 
 **Dos enmiendas que dejó la fase:**

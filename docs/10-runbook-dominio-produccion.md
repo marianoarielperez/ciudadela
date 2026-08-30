@@ -816,6 +816,76 @@ panel entero, y `NEXT_PUBLIC_TURNSTILE_SITE_KEY` se hornea en el build. `npm run
 build` falla a propósito si falta alguna (guarda de `next.config.ts`), pero un
 `pm2 restart` con el `.env` mutilado sigue siendo posible.
 
+### 4.7 Específico del módulo de documentos institucionales (estatuto, memorias, balances)
+
+Es un **despliegue normal** (4.1): una migración aditiva, ninguna variable de
+entorno nueva y ningún cron. Lo que tiene de propio es **un paso posterior que no
+es opcional**.
+
+> **El estatuto hay que importarlo, y en la misma sesión del deploy.** Entre el
+> `pm2 restart` y la corrida del script, `/mi/documentos` se ve **vacía** para
+> todo socio y el estatuto queda **inaccesible**: la ruta vieja
+> (`GET /api/mi/estatuto`, que servía `datos/estatuto.pdf`) se **eliminó** en
+> este módulo. Anotarlo como tarea suelta no alcanza — el proyecto ya tiene un
+> script pendiente hace semanas justamente por no estar en este runbook
+> (`scripts/fix-withdrawal-reasons.ts`, de la 6A).
+
+**1. Migración que trae**: `20260830130453_add_institutional_documents`. Es
+**estrictamente aditiva** —una tabla nueva, `institutional_documents`, con su
+enum de tipo—, sin un solo `DROP` ni `MODIFY` sobre lo existente. No toca
+`payments`, `fees`, `receipts` ni `members`.
+
+**2. El deploy**, que es el de 4.1 sin nada agregado (backup previo primero):
+
+```bash
+cd /root/dev/ciudadela && git pull --ff-only && npm ci && npx prisma migrate deploy && NODE_ENV=production npx prisma db seed && npm run build && pm2 restart sigev --update-env && pm2 save && pm2 logs sigev --lines 20 --nostream
+```
+
+**3. Importar el estatuto — INMEDIATAMENTE después del restart.** Una sola vez:
+
+```bash
+cd /root/dev/ciudadela && npx tsx scripts/import-estatuto.ts
+```
+
+Copia `datos/estatuto.pdf` (viene en el repo) a `UPLOADS_DIR/institucional/` con
+nombre `{uuid}.pdf`, crea la fila como **norma vigente** ("Estatuto social",
+`featured`) y deja su asiento de auditoría. La primera vez imprime
+`Estatuto importado como documento N (…, NNNNN bytes).`
+
+Es **idempotente**: si ya hay una norma vigente no hace nada y lo dice
+(`Ya existe una norma vigente ("…", id N). No se hace nada.`), así que
+re-correrlo por error no duplica ni pisa nada. Si aborta con `ENOENT`, lo que
+falta es el PDF fuente en el checkout — no se inventa nada: se revisa el
+`git pull`.
+
+**4. Verificación post-deploy.** Además de la de 4.6, dos cosas propias:
+
+```bash
+curl -sI https://vecinalciudadela.ar/api/mi/documentos/1 | grep -i 'content-security-policy'
+```
+
+Tiene que devolver **exactamente**:
+
+```
+content-security-policy: default-src 'none'; sandbox; frame-ancestors 'none'
+```
+
+Sin cookie de sesión la ruta responde **403**, y está bien: la cabecera la pone
+`headers()` de `next.config.ts` y viaja igual, así que el id da lo mismo. **Éste
+es el único lugar donde esa CSP se puede medir de verdad**: el handler la emite
+en su `Response`, pero Next copia las cabeceras de `headers()` con `setHeader`,
+que **REEMPLAZA**, y sin la entrada específica de la ruta lo que llega es la CSP
+larga del sitio (la que nombra `script-src`, Mercado Pago y Turnstile). Si ves
+ésa, la entrada específica no entró en el build.
+
+Y entrá a **`/mi/documentos`** con una cuenta de socio: arriba tiene que verse
+"Estatuto social" como norma vigente destacada, y el CTA tiene que abrir el PDF.
+Una pantalla vacía con el `EmptyState` significa que faltó el paso 3.
+
+**5. Lo que NO hay que hacer**: borrar `datos/estatuto.pdf` del repo. Queda como
+fuente histórica; el sistema deja de leerlo, pero el script lo necesita si alguna
+vez hay que reimportar sobre una base rearmada (4.2).
+
 ---
 
 ## 5. Correo: nada que hacer
