@@ -71,6 +71,13 @@ export const DASHBOARD_GROUPS: DashboardGroup[] = [
         href: "/admin/actividades",
         cta: "Ver el calendario",
       },
+      {
+        // `title` idéntico al `label` de la nav: lo verifica dashboard-cards.test.ts.
+        title: "Documentos",
+        description: "Estatuto, memorias, balances y otros documentos que ven los socios.",
+        href: "/admin/documentos",
+        cta: "Gestionar documentos",
+      },
     ],
   },
   {
