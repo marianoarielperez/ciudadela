@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   // Como el real: `redirect` NUNCA devuelve (tipo `never`), corta la ejecución
   // tirando. Un spy que devuelve undefined dejaría pasar una página que después
   // del redirect siguiera haciendo cosas.
-  redirect: vi.fn((_url: string): never => {
+  redirect: vi.fn((): never => {
     throw new Error("NEXT_REDIRECT");
   }),
 }));

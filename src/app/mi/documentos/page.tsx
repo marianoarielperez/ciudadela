@@ -28,6 +28,9 @@ function DocRow({ doc }: { doc: InstitutionalDocument }) {
         </span>
         <span className="shrink-0 text-xs text-muted-foreground">
           PDF · {formatDateAR(doc.createdAt)}
+          {/* WCAG 3.2.5: el rótulo anuncia el formato pero no el cambio de
+              contexto. Mismo recurso que /admin/tesoreria/recibos. */}
+          <span className="sr-only"> (se abre en una pestaña nueva)</span>
         </span>
       </a>
     </li>
@@ -96,6 +99,7 @@ export default async function MiDocumentosPage() {
             className="inline-flex min-h-12 items-center text-sm font-medium text-primary underline underline-offset-2 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             Abrir el PDF
+            <span className="sr-only"> (se abre en una pestaña nueva)</span>
           </a>
         </section>
       )}
