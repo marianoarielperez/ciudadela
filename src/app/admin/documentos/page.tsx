@@ -5,7 +5,8 @@ import type { InstitutionalDocument, InstitutionalDocumentType } from "@/generat
 
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
-import { initialDocumentosTab } from "@/lib/admin/documentos-tabs";
+import { initialDocumentosTab, type DocumentosTabId } from "@/lib/admin/documentos-tabs";
+import { documentFeaturedBadgeVariant } from "@/lib/admin/status-badges";
 import { EmptyState } from "@/components/admin/empty-state";
 import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +32,17 @@ function StatusStrip({ rows }: { rows: Row[] }) {
   const featured = rows.find((r) => r.featured);
   const lastMemoria = rows.filter((r) => r.type === "annual_report")[0];
   const lastBalance = rows.filter((r) => r.type === "balance")[0];
-  const items = [
+  // La cuarta tarjeta NO linkea: su valor es el total de las cuatro pestañas, y
+  // cualquier destino sería un subconjunto — un clic en un total que aterriza en
+  // una parte contradice la etiqueta. Sin `href` tampoco lleva el gesto del link
+  // estirado (`after:absolute`), que sin ancla adentro no hace nada.
+  const items: {
+    href?: string;
+    icon: typeof Scale;
+    label: string;
+    value: string;
+    warning: boolean;
+  }[] = [
     {
       href: "?tab=normas", icon: Scale, label: "Norma vigente",
       value: featured ? featured.title : "Sin norma vigente", warning: !featured,
@@ -45,7 +56,7 @@ function StatusStrip({ rows }: { rows: Row[] }) {
       value: lastBalance ? lastBalance.title : "Ninguno cargado", warning: !lastBalance,
     },
     {
-      href: "?tab=otros", icon: Files, label: "Documentos publicados",
+      icon: Files, label: "Total de documentos",
       value: `${rows.length}`, warning: false,
     },
   ];
@@ -53,19 +64,26 @@ function StatusStrip({ rows }: { rows: Row[] }) {
     <ul className="grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-4">
       {items.map((item) => (
         <li key={item.label}>
-          <Card size="sm" className="relative h-full transition-shadow hover:shadow-md">
+          <Card
+            size="sm"
+            className={cn("relative h-full", item.href && "transition-shadow hover:shadow-md")}
+          >
             <CardContent className="flex items-center gap-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <item.icon aria-hidden className="size-5" />
               </span>
               <div className="min-w-0">
                 <div className="text-xs text-muted-foreground">
-                  <Link
-                    href={item.href}
-                    className="outline-hidden after:absolute after:inset-0 after:rounded-xl after:ring-ring after:ring-inset focus-visible:after:ring-2"
-                  >
-                    {item.label}
-                  </Link>
+                  {item.href ? (
+                    <Link
+                      href={item.href}
+                      className="outline-hidden after:absolute after:inset-0 after:rounded-xl after:ring-ring after:ring-inset focus-visible:after:ring-2"
+                    >
+                      {item.label}
+                    </Link>
+                  ) : (
+                    item.label
+                  )}
                 </div>
                 <div
                   title={item.value}
@@ -85,10 +103,15 @@ function StatusStrip({ rows }: { rows: Row[] }) {
 // Chips de año para memorias/balances: links server-side (deep-link y botón
 // atrás gratis) que conservan la pestaña en el href.
 function YearChips({ tab, years, selected }: { tab: string; years: number[]; selected?: number }) {
-  if (years.length < 2) return null;
+  // Con menos de dos años distintos los chips no filtran nada. Pero si HAY un
+  // filtro puesto tienen que dibujarse igual: "Todos" es la única salida del
+  // callejón cuando el `?anio=` no matchea ninguna fila de la pestaña.
+  if (years.length < 2 && selected === undefined) return null;
   const chip = (active: boolean) =>
     cn(
-      "inline-flex min-h-9 items-center rounded-full border px-3 text-sm outline-hidden",
+      // ≥44px como el resto de los controles del panel (misma medida que la
+      // barra hermana de filtros por URL, `treasury-tabs`).
+      "inline-flex min-h-11 items-center rounded-full border px-3 text-sm outline-hidden",
       "focus-visible:ring-2 focus-visible:ring-ring",
       active
         ? "border-primary bg-primary/10 font-semibold text-primary"
@@ -96,11 +119,23 @@ function YearChips({ tab, years, selected }: { tab: string; years: number[]; sel
     );
   return (
     <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por año">
-      <Link href={`?tab=${tab}`} className={chip(selected === undefined)}>
+      {/* `aria-current="page"`, el idioma del repo para links que filtran por
+          URL (`treasury-tabs`): sin él el chip activo se anuncia igual que los
+          demás, porque hoy sólo cambian el color y el peso tipográfico. */}
+      <Link
+        href={`?tab=${tab}`}
+        aria-current={selected === undefined ? "page" : undefined}
+        className={chip(selected === undefined)}
+      >
         Todos
       </Link>
       {years.map((y) => (
-        <Link key={y} href={`?tab=${tab}&anio=${y}`} className={chip(selected === y)}>
+        <Link
+          key={y}
+          href={`?tab=${tab}&anio=${y}`}
+          aria-current={selected === y ? "page" : undefined}
+          className={chip(selected === y)}
+        >
           {y}
         </Link>
       ))}
@@ -108,14 +143,20 @@ function YearChips({ tab, years, selected }: { tab: string; years: number[]; sel
   );
 }
 
-function DocumentsTable({ rows, emptyText }: { rows: Row[]; emptyText: string }) {
+function DocumentsTable({ rows, tab, emptyText }: {
+  rows: Row[];
+  // La pestaña del panel: viaja en el alta para que el formulario preseleccione
+  // el tipo. Cada estado vacío lleva la SUYA, no la que esté activa.
+  tab: DocumentosTabId;
+  emptyText: string;
+}) {
   if (rows.length === 0) {
     return (
       <EmptyState
         description={emptyText}
         action={
           <Button asChild>
-            <Link href="/admin/documentos/nuevo">Subir documento</Link>
+            <Link href={`/admin/documentos/nuevo?tab=${tab}`}>Subir documento</Link>
           </Button>
         }
       />
@@ -139,13 +180,17 @@ function DocumentsTable({ rows, emptyText }: { rows: Row[]; emptyText: string })
                 <Link className="text-primary hover:underline" href={`/admin/documentos/${d.id}`}>
                   {d.title}
                 </Link>
-                {d.featured && <Badge variant="success">Vigente</Badge>}
+                {d.featured && (
+                  <Badge variant={documentFeaturedBadgeVariant(d.featured)}>Vigente</Badge>
+                )}
               </span>
               {d.description && (
                 <span className="block text-xs text-muted-foreground">{d.description}</span>
               )}
             </TableCell>
-            <TableCell>{d.year ?? "—"}</TableCell>
+            <TableCell>
+              {d.year === null ? "—" : <Badge variant="outline">{d.year}</Badge>}
+            </TableCell>
             <TableCell>{formatSize(d.size)}</TableCell>
             <TableCell>{formatDateAR(d.createdAt)}</TableCell>
             <TableCell>{d.uploadedBy?.name ?? "—"}</TableCell>
@@ -183,20 +228,41 @@ export default async function AdminDocumentsPage(props: {
     include: { uploadedBy: { select: { name: true } } },
   });
   const anio = typeof sp.anio === "string" && /^\d{4}$/.test(sp.anio) ? Number(sp.anio) : undefined;
+  const activeTab = initialDocumentosTab(sp);
 
   const byType = (type: InstitutionalDocumentType) => rows.filter((r) => r.type === type);
+  // Descendente y explícito: heredar el orden del `orderBy` de la consulta ata
+  // el orden de los chips a un detalle de la query.
   const yearsOf = (type: InstitutionalDocumentType) =>
-    [...new Set(byType(type).map((r) => r.year).filter((y): y is number => y !== null))];
+    [...new Set(byType(type).map((r) => r.year).filter((y): y is number => y !== null))]
+      .sort((a, b) => b - a);
 
-  const panel = (tab: "memorias" | "balances", type: InstitutionalDocumentType, emptyText: string) => (
-    <div className="space-y-3">
-      <YearChips tab={tab} years={yearsOf(type)} selected={anio} />
-      <DocumentsTable
-        rows={byType(type).filter((r) => anio === undefined || r.year === anio)}
-        emptyText={emptyText}
-      />
-    </div>
-  );
+  const panel = (
+    tab: "memorias" | "balances",
+    type: InstitutionalDocumentType,
+    noun: string,
+    emptyText: string,
+  ) => {
+    // El `?anio=` es de la pestaña ACTIVA y de ninguna otra. Aplicado a los
+    // paneles ocultos daba un vacío FALSO: Radix cambia de panel al instante y
+    // el `router.replace` que borra el parámetro llega después, así que un clic
+    // en Balances desde `?tab=memorias&anio=2025` mostraba "Todavía no hay
+    // balances cargados" aunque hubiera balances de otros años.
+    const year = tab === activeTab ? anio : undefined;
+    const shown = byType(type).filter((r) => year === undefined || r.year === year);
+    return (
+      <div className="space-y-3">
+        <YearChips tab={tab} years={yearsOf(type)} selected={year} />
+        <DocumentsTable
+          rows={shown}
+          tab={tab}
+          // Con un filtro puesto, "todavía no hay memorias" es mentira si las
+          // hay de otro año: el vacío tiene que hablar del AÑO filtrado.
+          emptyText={year === undefined ? emptyText : `No hay ${noun} de ${year}.`}
+        />
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -204,7 +270,9 @@ export default async function AdminDocumentsPage(props: {
         title="Documentos"
         actions={
           <Button asChild>
-            <Link href="/admin/documentos/nuevo">Subir documento</Link>
+            {/* La pestaña activa viaja al alta: el formulario preselecciona el
+                tipo con ella. */}
+            <Link href={`/admin/documentos/nuevo?tab=${activeTab}`}>Subir documento</Link>
           </Button>
         }
       >
@@ -215,18 +283,20 @@ export default async function AdminDocumentsPage(props: {
       <StatusStrip rows={rows} />
       <Suspense fallback={null}>
         <DocumentosTabs
-          initial={initialDocumentosTab(sp)}
+          initial={activeTab}
           normas={
             <DocumentsTable
               rows={byType("norm")}
+              tab="normas"
               emptyText="Todavía no hay normas. El estatuto y los reglamentos internos van acá."
             />
           }
-          memorias={panel("memorias", "annual_report", "Todavía no hay memorias cargadas.")}
-          balances={panel("balances", "balance", "Todavía no hay balances cargados.")}
+          memorias={panel("memorias", "annual_report", "memorias", "Todavía no hay memorias cargadas.")}
+          balances={panel("balances", "balance", "balances", "Todavía no hay balances cargados.")}
           otros={
             <DocumentsTable
               rows={byType("other")}
+              tab="otros"
               emptyText="Todavía no hay otros documentos."
             />
           }

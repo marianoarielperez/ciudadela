@@ -25,6 +25,13 @@ export function activityBadgeVariant(active: boolean): BadgeVariant {
   return active ? "default" : "secondary";
 }
 
+// El documento institucional destacado: la norma "Vigente", que es la que rige
+// hoy. Verde —es el desenlace bueno de la columna, no trabajo pendiente— y el
+// borde fino para el resto, que en el listado no lleva pastilla.
+export function documentFeaturedBadgeVariant(featured: boolean): BadgeVariant {
+  return featured ? "success" : "outline";
+}
+
 // La bandeja resalta lo accionable: la aceptada que espera acta es "default"
 // (celeste); lo terminal va apagado.
 export function applicationStatusBadgeVariant(status: ApplicationStatus): BadgeVariant {
