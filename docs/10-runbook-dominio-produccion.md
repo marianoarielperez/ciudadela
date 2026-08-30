@@ -886,6 +886,77 @@ Una pantalla vacía con el `EmptyState` significa que faltó el paso 3.
 fuente histórica; el sistema deja de leerlo, pero el script lo necesita si alguna
 vez hay que reimportar sobre una base rearmada (4.2).
 
+### 4.8 Cloudflare bloquea una subida y no queda rastro en el servidor
+
+**Síntoma**: al subir un archivo desde el panel, la pantalla falla con
+`An unexpected response was received from the server` y en la consola del
+navegador se ve un **403** contra la URL de la página. En el VPS **no aparece
+nada**: `pm2 logs sigev` no registra el request, porque nunca llegó a la
+aplicación.
+
+**Cómo se reconoce, en 10 segundos.** En la pestaña Red del navegador, cabeceras
+de respuesta del request que falló:
+
+- `server: cloudflare` y un `cf-ray` → lo cortó Cloudflare en el borde.
+- `content-type: text/html` con ~3 kB → es la página de bloqueo, no una respuesta
+  de Next (la app habría devuelto `text/x-component`).
+
+**Nuestro código no produce 403 en una server action**: las actions devuelven
+`{ error }` con 200, y el proxy de autenticación **redirige** (302). Un 403 crudo
+sobre una ruta de página es siempre de una capa anterior.
+
+**Cómo saber qué regla fue.** Panel de Cloudflare → **Security → Events**,
+filtrando por el `cf-ray` del request. El evento nombra la regla.
+
+**El caso del 30/08/2026** (`cf-ray a335aa9628afaf5f`): la regla administrada
+**"React - Leaking Server Functions - CVE:CVE-2025-55183"** bloqueó la subida de
+un balance de 1,2 MB. Era **falso positivo**: los parches de ese CVE salieron en
+react 19.0.4 / 19.1.5 / 19.2.4, el proyecto corre 19.2.8, y el runtime RSC que
+Next 16.3.1 empaqueta es `19.3.0-canary-…-20260731`. No somos vulnerables.
+Cloudflare subió el límite de inspección de cuerpo a 1 MB en diciembre de 2025 y
+eso disparó una ola de falsos positivos: cuanto más binario viaja en un POST, más
+chances de que una secuencia matchee la firma. Por eso fallaba **ese** archivo y
+no los balances más chicos.
+
+**El arreglo, en plan Free.** El ruleset administrado no se edita (el botón dice
+"Upgrade plan"), pero se puede saltear desde una **custom rule**, que corre antes:
+
+- **Security rules → Custom rules → Create rule**
+- Expresión:
+
+```
+http.request.method eq "POST" and starts_with(http.request.uri.path, "/admin/documentos")
+```
+
+- Acción **Skip**, marcando **solo** `All managed rules`. Las otras tres
+  (`All remaining custom rules`, `All rate limiting rules`,
+  `All Super Bot Fight Mode Rules`) van **sin marcar**.
+- `Log matching requests` **encendido**: es como se comprueba que la regla trabaja.
+
+Aplicado así el 30/08/2026 (regla `docs-subida`), la subida entró sin modificar el
+archivo.
+
+**Lo que esto cuesta, dicho con todas las letras.** En Free no hay forma de
+saltear *solo* la regla del CVE: se apaga el ruleset administrado **entero** para
+esos POST. Es aceptable en `/admin/documentos` porque exige sesión de admin y
+porque el CVE está descartado; **no es automáticamente aceptable en las rutas
+públicas**.
+
+**Las cinco rutas que suben archivos** (las dos primeras son **públicas**):
+
+| Ruta | Formulario |
+|---|---|
+| `/asociate` | foto del DNI del alta web |
+| `/reempadronate` | documentación de la presentación |
+| `/admin/documentos` | documentos institucionales |
+| `/admin/noticias` | portada de la noticia |
+| `/admin/reempadronamiento/presencial` | carga presencial |
+
+**Pendiente asociado**: revisar en Security → Events si esa regla bloqueó alguna
+vez un POST a `/asociate`. Si lo hizo, hay un vecino que intentó asociarse y no
+pudo, y **no hay ninguna otra forma de enterarse**: el request no llega a la app,
+así que no deja ni log ni asiento de auditoría.
+
 ---
 
 ## 5. Correo: nada que hacer
