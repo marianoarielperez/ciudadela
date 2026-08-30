@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +24,7 @@ vi.mock("@/lib/auth/require-admin", () => ({ requireAdmin: requireAdminMock }));
 
 import { GET as memberGet } from "@/app/api/mi/documentos/[id]/route";
 import { GET as adminGet } from "@/app/api/admin/documentos/[id]/route";
+import { INSTITUTIONAL_DOC_CSP } from "@/lib/institutional-documents/response";
 import { institutionalDocsDir } from "@/lib/institutional-documents/storage";
 
 const DOC = {
@@ -57,7 +59,15 @@ describe("GET /api/mi/documentos/[id]", () => {
     // Sin este assert, borrarla del helper dejaba la suite verde (mutación).
     expect(res.headers.get("Vary")).toBe("Cookie");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(res.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
+    // Lo que se verifica acá es lo que EMITE EL HANDLER, no lo que llega al
+    // navegador: este test llama a la función, no pasa por el servidor de Next.
+    // Next copia las cabeceras de `headers()` de `next.config.ts` con
+    // `setHeader`, que REEMPLAZA, así que quien decide la CSP que llega al
+    // cliente es `next.config.ts`. Esta aserción sola pasó en verde durante
+    // todo el módulo mientras la cabecera real era la CSP global del sitio
+    // (medida en el navegador el 30/08/2026); lo que ata la config a estas dos
+    // rutas es el describe del final, no ésta.
+    expect(res.headers.get("Content-Security-Policy")).toBe(INSTITUTIONAL_DOC_CSP);
     // El cuerpo son los bytes del archivo que se leyó, no uno vacío ni otro.
     expect(Buffer.from(await res.arrayBuffer()).toString()).toBe("%PDF-1.7 contenido");
     // Y la lectura fue de la ruta del documento PEDIDO: el doble resuelve el
@@ -131,7 +141,9 @@ describe("GET /api/admin/documentos/[id]", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store, private");
     expect(res.headers.get("Vary")).toBe("Cookie");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(res.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
+    // Otra vez: esto es lo que emite el handler. Que llegue al cliente lo
+    // decide `next.config.ts` (ver el describe del final).
+    expect(res.headers.get("Content-Security-Policy")).toBe(INSTITUTIONAL_DOC_CSP);
     expect(Buffer.from(await res.arrayBuffer()).toString()).toBe("%PDF-1.7 contenido");
   });
 
@@ -165,5 +177,65 @@ describe("GET /api/admin/documentos/[id]", () => {
     const res = await adminGet(req(), props("7"));
     expect(res.status).toBe(403);
     expect(prismaMock.institutionalDocument.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// La guarda REAL de la CSP. Los dos describes de arriba llaman al handler, así
+// que ven lo que el handler devuelve; lo que el navegador recibe lo decide
+// `headers()` de `next.config.ts`, porque Next copia esas cabeceras con
+// `setHeader` (REEMPLAZA). Entre el 29 y el 30/08/2026 el handler emitía su CSP
+// dura, el test estaba en verde y al cliente le llegaba la CSP global del sitio.
+// Esto es lo que ata una cosa con la otra.
+describe("next.config.ts repone la CSP dura de los documentos institucionales", () => {
+  // El `source` no se escribe a mano: se DERIVA del route.ts que existe en el
+  // disco. Si alguien mueve o renombra la carpeta de la ruta, la derivación
+  // cambia, la entrada de la config deja de encontrarse y este test se cae —
+  // que es exactamente el día en que la CSP volvería a perderse en silencio.
+  const routeFiles = [
+    "src/app/api/mi/documentos/[id]/route.ts",
+    "src/app/api/admin/documentos/[id]/route.ts",
+  ];
+  const sourceOf = (routeFile: string) =>
+    "/" +
+    routeFile
+      .replace(/^src\/app\//, "")
+      .replace(/\/route\.ts$/, "")
+      .replace(/\[(\w+)\]/g, ":$1");
+
+  it("tiene una entrada por ruta, con el mismo valor que emite el handler", async () => {
+    // `next.config.ts` exporta una función que recibe la fase: con una fase que
+    // no es la del build no corre la guarda de Turnstile, que exige el .env.
+    const { default: config } = await import("../next.config");
+    const rules = (await config("phase-development-server").headers!()) as {
+      source: string;
+      headers: { key: string; value: string }[];
+    }[];
+
+    for (const routeFile of routeFiles) {
+      // El route.ts del que se deriva el `source` tiene que existir de verdad:
+      // sin esto, renombrar la ruta Y la constante de acá dejaría el test verde
+      // contra una entrada que no gobierna ninguna ruta.
+      expect(existsSync(path.join(import.meta.dirname, "..", routeFile))).toBe(true);
+      const source = sourceOf(routeFile);
+      const rule = rules.find((r) => r.source === source);
+      expect(rule, `falta la entrada de headers() para ${source}`).toBeDefined();
+      const csp = rule!.headers.find((h) => h.key === "Content-Security-Policy");
+      expect(csp?.value).toBe(INSTITUTIONAL_DOC_CSP);
+      // Y NO se toca X-Frame-Options: estas dos rutas no tienen visor embebido,
+      // así que el DENY de la entrada global es el que corresponde. Reponerlo
+      // como SAMEORIGIN —copiando las entradas de solicitudes y de
+      // re-empadronamiento, que sí framean— reabriría el framing sin motivo.
+      expect(rule!.headers.some((h) => h.key === "X-Frame-Options")).toBe(false);
+    }
+  });
+
+  it("la entrada global sigue negando el framing de todo el sitio", async () => {
+    const { default: config } = await import("../next.config");
+    const rules = (await config("phase-development-server").headers!()) as {
+      source: string;
+      headers: { key: string; value: string }[];
+    }[];
+    const global = rules.find((r) => r.source === "/(.*)");
+    expect(global?.headers.find((h) => h.key === "X-Frame-Options")?.value).toBe("DENY");
   });
 });

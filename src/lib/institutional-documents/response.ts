@@ -16,6 +16,19 @@
  *  distingue una fila que no existe de un archivo que no está en el disco. */
 export const INSTITUTIONAL_DOC_NOT_FOUND = "El documento no existe";
 
+/** CSP del documento: no carga nada, corre en sandbox y nadie lo puede framear.
+ *  Las dos rutas NO tienen visor embebido (a diferencia de los documentos de
+ *  solicitudes y de re-empadronamiento), así que no hay nada que reabrir.
+ *
+ *  OJO: emitirla acá NO alcanza para que llegue al cliente. Next copia las
+ *  cabeceras de `headers()` de `next.config.ts` con `setHeader`, que REEMPLAZA,
+ *  así que la CSP global del sitio pisa ésta salvo que haya una entrada
+ *  específica que la reponga. Esas entradas —una por ruta— están en
+ *  `next.config.ts` con este mismo valor, y `institutional-documents-routes.test.ts`
+ *  verifica que no se desincronicen. Cambiar esta constante sin tocar aquéllas
+ *  no cambia una sola cabecera de las que ve el navegador. */
+export const INSTITUTIONAL_DOC_CSP = "default-src 'none'; sandbox; frame-ancestors 'none'";
+
 // Respuesta HTTP de un PDF institucional. Cabeceras defensivas calcadas de la
 // ruta del estatuto del M5 (que este módulo retira) y de receipt-response.ts:
 // inline, sin caché compartida, sin sniffing, CSP con sandbox.
@@ -32,7 +45,7 @@ export function institutionalDocResponse(bytes: Uint8Array, downloadName: string
       "Cache-Control": "no-store, private",
       Vary: "Cookie",
       "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Security-Policy": INSTITUTIONAL_DOC_CSP,
     },
   });
 }
