@@ -230,3 +230,44 @@ Script one-shot `scripts/import-estatuto.ts` (patrón `import-padron.ts`):
   hizo con la exención.
 - Ninguna variable de entorno nueva. Ningún cambio de CSP.
 - El modelo `Document` existente y sus rutas quedan intactos.
+
+---
+
+## 12. Estado
+
+**IMPLEMENTADO — 30/08/2026**, rama `institutional-documents` (18 commits, de
+`8378505` a la importación del estatuto). Cubre las nueve secciones de esta
+spec: modelo y migración (§2), dominio puro (§1), storage bajo
+`UPLOADS_DIR/institucional` (§3), las dos rutas autenticadas del PDF (§4), la
+sección **Documentos** del panel con sus tres pantallas (§5), `/mi/documentos`
+con la norma destacada (§6), el script one-shot `scripts/import-estatuto.ts`
+(§7) y los tests (§8).
+
+Verificado al cerrar: suite completa en verde (247 archivos, 3640 tests), lint
+sin errores, build OK, y el perímetro de §9 —`src/lib/treasury` y
+`src/lib/mp` sin un solo archivo tocado— comprobado con
+`git diff --stat main...HEAD`, no de memoria.
+
+Pendiente operativo: correr `npx tsx scripts/import-estatuto.ts` en el VPS una
+sola vez, después del deploy.
+
+## 13. Desvíos de ejecución
+
+Dos cosas salieron distinto de lo planificado. Ninguna cambia el alcance.
+
+- **§9 decía "ningún cambio de CSP", y `next.config.ts` cambió.** La CSP dura
+  que los dos handlers del PDF emiten en su `Response` no llegaba al cliente:
+  la entrada global de `headers()` la pisa con `setHeader`, que REEMPLAZA en
+  vez de sumar, así que el PDF se servía con la CSP genérica del sitio. Se
+  agregaron dos entradas explícitas —`/api/mi/documentos/:id` y
+  `/api/admin/documentos/:id`, una por ruta porque no comparten prefijo y el
+  único comodín que las abarcaría capturaría de más— con
+  `default-src 'none'; sandbox; frame-ancestors 'none'` (commit `e19075f`). El
+  operador levantó la restricción a mitad del plan. `X-Frame-Options: DENY`
+  de la entrada global queda como está a propósito: estas rutas no tienen
+  visor embebido y nadie las framea.
+- **La fecha de carga se quitó de las filas de `/mi/documentos`** (§6 la
+  listaba junto al año), a pedido del operador: es contabilidad interna y no
+  le dice nada al socio —para memorias y balances el ejercicio ya está en el
+  título, y un documento resubido no cambia de contenido— (commit `e1d2fda`).
+  La fecha sigue en el listado del admin, que es donde sirve.
