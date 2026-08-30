@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Comportamiento de las actions con el admin YA autorizado (la guarda en sí la
 // fija `documentos-actions-auth.test.ts`).
 //
-// Lo que se asierta acá son las dos invariantes que NO tienen respaldo en la
+// Lo que se asierta acá son las tres invariantes que NO tienen respaldo en la
 // base: "a lo sumo una norma destacada" —no hay unique que lo sostenga, `false`
 // no es NULL, así que el `updateMany` que apaga la anterior es lo único que
-// hay— y que el `size` persistido sea el que DEVOLVIÓ el store (bytes
-// realmente escritos) y no `file.size`, que lo declara el caller y puede mentir.
+// hay—, que el `size` persistido sea el que DEVOLVIÓ el store (bytes realmente
+// escritos) y no `file.size`, que lo declara el caller y puede mentir, y que la
+// edición IGNORE el `type` posteado: es la guarda anti-POST-forjado del módulo.
 //
 // `vi.hoisted` porque `vi.mock` se iza al tope del archivo.
 const prismaMock = vi.hoisted(() => {
@@ -131,5 +132,35 @@ describe("edición de documentos", () => {
     await updateDocumentAction({}, form({ id: "5", type: "norm", title: "Estatuto" }));
 
     expect(prismaMock.institutionalDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  // La fila 5 es una norma y el POST forjado dice "memoria 2025": si la action
+  // tomara el `type` posteado, `prepareDocumentInput` le reescribiría el título
+  // ("Memoria 2025") y le materializaría un `yearKey` de otro tipo. El título y
+  // el yearKey que llegan al update son, entonces, la prueba de qué tipo mandó.
+  it("ignora el tipo posteado y usa el de la fila", async () => {
+    await updateDocumentAction(
+      {},
+      form({ id: "5", type: "annual_report", year: "2025", title: "Estatuto reformado" }),
+    );
+
+    expect(prismaMock.institutionalDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 5 },
+        data: expect.objectContaining({ title: "Estatuto reformado", yearKey: null }),
+      }),
+    );
+  });
+
+  it("al reemplazar el archivo persiste el tamaño que devolvió el store", async () => {
+    await updateDocumentAction({}, form({ id: "5", type: "norm", title: "Estatuto" }, pdf()));
+
+    expect(prismaMock.institutionalDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 5 },
+        // 4242 es lo que devuelve el store; el File declara 5.
+        data: expect.objectContaining({ fileName: "nuevo.pdf", size: 4242 }),
+      }),
+    );
   });
 });

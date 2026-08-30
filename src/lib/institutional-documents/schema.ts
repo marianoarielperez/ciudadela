@@ -12,7 +12,10 @@ export const documentFormSchema = z.object({
     .min(1900, "Año inválido.")
     .max(2100, "Año inválido.")
     .optional(),
-  featured: z.literal("on").optional(),
+  // El checkbox postea "on" o nada, pero esto es un endpoint público: sin
+  // mensaje propio, un POST forjado con cualquier otro valor devolvía el texto
+  // crudo de zod en inglés ('Invalid input: expected "on"').
+  featured: z.literal("on", "Dato inválido.").optional(),
 });
 
 export type DocumentFormValues = z.infer<typeof documentFormSchema>;

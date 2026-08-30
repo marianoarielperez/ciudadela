@@ -110,8 +110,15 @@ export async function createDocumentAction(
   const d = prepared.data;
   let docId: number;
   try {
-    // La transacción sostiene "a lo sumo una norma vigente": desmarcar y marcar
-    // son un solo commit. Sin llamadas de red adentro (regla del proyecto).
+    // La transacción hace que apagar la destacada anterior y crear la nueva
+    // sean un solo commit: no hay estado intermedio visible con dos destacadas,
+    // ni queda una norma apagada si el INSERT falla. Lo que NO cubre es la
+    // carrera: `updateMany` no bloquea el insert fantasma de una transacción
+    // concurrente, así que dos altas simultáneas de norma destacada podrían
+    // terminar las dos en `true`. Es inherente a sostener la invariante sin un
+    // unique —imposible en MySQL: `false` no es `NULL`— y con el volumen real
+    // (un alta ocasional desde el panel) esa ventana es inalcanzable.
+    // Sin llamadas de red adentro (regla del proyecto).
     docId = await prisma.$transaction(async (tx) => {
       if (d.featured) {
         await tx.institutionalDocument.updateMany({
@@ -269,9 +276,11 @@ export async function deleteDocumentAction(
   });
   if (!existing) return { error: NOT_FOUND };
   await prisma.institutionalDocument.delete({ where: { id: existing.id } });
-  // El asiento va ANTES de tocar el disco (regla dura: acción sensible sin
-  // asiento no puede existir; deleteInstitutionalDocument propaga lo que no
-  // sea ENOENT).
+  // El asiento va ANTES de tocar el disco: `deleteInstitutionalDocument`
+  // propaga lo que no sea ENOENT, y con el orden al revés esa excepción se
+  // llevaría puesto el asiento de un borrado que ya ocurrió en la base. El
+  // orden garantiza que el asiento se INTENTE, no que exista: `audit()` es
+  // best-effort y se traga sus errores.
   await audit({
     userId: actor.actorId,
     action: "institutional_document_delete",
