@@ -1,12 +1,12 @@
 // El mismo PDF para el panel de admin (verificar lo subido sin sesión de
 // socio). Sin auditoría por vista: no es documentación personal.
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { pdfDownloadName } from "@/lib/institutional-documents/rules";
+import { loadInstitutionalDocFile } from "@/lib/institutional-documents/file-load";
 import {
   INSTITUTIONAL_DOC_NOT_FOUND,
   institutionalDocResponse,
-  loadInstitutionalDocFile,
 } from "@/lib/institutional-documents/response";
+import { pdfDownloadName } from "@/lib/institutional-documents/rules";
 
 export async function GET(
   _req: Request,

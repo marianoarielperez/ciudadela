@@ -1,9 +1,19 @@
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
   institutionalDocument: { findUnique: vi.fn() },
 }));
-const fsMock = vi.hoisted(() => ({ readFile: vi.fn() }));
+// `readFile` es lo único que ejercita esta suite, pero el módulo de carga
+// arrastra `storage.ts` (y éste `news/images.ts`), que importan `mkdir`,
+// `unlink` y `writeFile`: sin ellos en el doble, el import ESM falla.
+const fsMock = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  mkdir: vi.fn(),
+  unlink: vi.fn(),
+  writeFile: vi.fn(),
+}));
 const requireMemberMock = vi.hoisted(() => vi.fn());
 const requireAdminMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
@@ -13,6 +23,7 @@ vi.mock("@/lib/auth/require-admin", () => ({ requireAdmin: requireAdminMock }));
 
 import { GET as memberGet } from "@/app/api/mi/documentos/[id]/route";
 import { GET as adminGet } from "@/app/api/admin/documentos/[id]/route";
+import { institutionalDocsDir } from "@/lib/institutional-documents/storage";
 
 const DOC = {
   id: 7,
@@ -20,6 +31,10 @@ const DOC = {
   fileName: "123e4567-e89b-42d3-a456-426614174000.pdf",
 };
 const PDF = Buffer.from("%PDF-1.7 contenido");
+// La fila que existe con el PDF ausente del disco deja un `console.error`: es el
+// único rastro (este módulo no audita por vista). Se silencia acá para no
+// ensuciar la salida y se verifica abajo, en el caso del archivo faltante.
+const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
 const props = (id: string) => ({ params: Promise.resolve({ id }) });
 const req = () => new Request("http://localhost/api/x");
@@ -43,9 +58,12 @@ describe("GET /api/mi/documentos/[id]", () => {
     expect(res.headers.get("Vary")).toBe("Cookie");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
-    // El cuerpo son los bytes del archivo que se leyó, no uno vacío ni otro:
-    // ata el readFile a la ruta del documento pedido.
+    // El cuerpo son los bytes del archivo que se leyó, no uno vacío ni otro.
     expect(Buffer.from(await res.arrayBuffer()).toString()).toBe("%PDF-1.7 contenido");
+    // Y la lectura fue de la ruta del documento PEDIDO: el doble resuelve el
+    // mismo Buffer con cualquier argumento, así que sin este assert mutar la
+    // ruta a un nombre fijo dejaba la suite en verde.
+    expect(fsMock.readFile).toHaveBeenCalledWith(path.join(institutionalDocsDir(), DOC.fileName));
     // El suspendido lee: modo lectura del panel de socio.
     expect(requireMemberMock).toHaveBeenCalledWith({ allowSuspended: true });
   });
@@ -64,6 +82,17 @@ describe("GET /api/mi/documentos/[id]", () => {
     prismaMock.institutionalDocument.findUnique.mockResolvedValue(DOC);
     fsMock.readFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
     expect((await memberGet(req(), props("7"))).status).toBe(404);
+    // El 404 es opaco para el cliente —y así tiene que ser—, pero "la fila está
+    // y el PDF no" es irrecuperable (el archivo subido es la única copia) y no
+    // puede quedar sin rastro. Con el id numérico y el CÓDIGO del error; nunca
+    // el fileName ni el `message`, que lleva la ruta absoluta de UPLOADS_DIR.
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining("falta en el disco"),
+      7,
+      "code:",
+      "ENOENT",
+    );
+    expect(errorLog.mock.calls.flat().join(" ")).not.toContain(DOC.fileName);
   });
 
   // `Number("999999999999999999999")` es 1e21: `Number.isInteger` lo daba por

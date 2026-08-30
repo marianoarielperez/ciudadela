@@ -3,12 +3,12 @@
 // facturas); la auditoría de este módulo es de gestión, en las actions.
 // El suspendido lee (modo lectura del panel); el dado de baja no (requireMember).
 import { requireMember } from "@/lib/auth/require-member";
-import { pdfDownloadName } from "@/lib/institutional-documents/rules";
+import { loadInstitutionalDocFile } from "@/lib/institutional-documents/file-load";
 import {
   INSTITUTIONAL_DOC_NOT_FOUND,
   institutionalDocResponse,
-  loadInstitutionalDocFile,
 } from "@/lib/institutional-documents/response";
+import { pdfDownloadName } from "@/lib/institutional-documents/rules";
 
 export async function GET(
   _req: Request,
