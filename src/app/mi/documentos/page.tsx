@@ -4,7 +4,6 @@ import type { InstitutionalDocument, InstitutionalDocumentType } from "@/generat
 import { EmptyState } from "@/components/admin/empty-state";
 import { PanelHeader } from "@/components/admin/panel-header";
 import { requireMember } from "@/lib/auth/require-member";
-import { formatDateAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +26,11 @@ function DocRow({ doc }: { doc: InstitutionalDocument }) {
           )}
         </span>
         <span className="shrink-0 text-xs text-muted-foreground">
-          PDF · {formatDateAR(doc.createdAt)}
+          {/* Sólo el formato: la fecha de CARGA es contabilidad nuestra y no le
+              dice nada al socio (para memorias y balances el ejercicio ya está
+              en el título, y un documento resubido no cambia de contenido).
+              La fecha sigue estando en el listado del admin, que es donde sirve. */}
+          PDF
           {/* WCAG 3.2.5: el rótulo anuncia el formato pero no el cambio de
               contexto. Mismo recurso que /admin/tesoreria/recibos. */}
           <span className="sr-only"> (se abre en una pestaña nueva)</span>
