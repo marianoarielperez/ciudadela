@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 // Static import (no se copia a public/): así next/image genera las variantes
 // responsive y el blur placeholder del hero en tiempo de build.
-import heroImg from "../../../assets/hero-nuevo.jpg";
+import heroImg from "../../../assets/hero-3.jpg";
 import { getActiveReregistration, getAsociateActive } from "@/lib/config";
 import { getLatestNews } from "@/lib/news/query";
 import { NewsCard } from "@/components/public/news-card";
@@ -65,7 +65,7 @@ export default async function HomePage() {
       <section className="relative">
         <Image
           src={heroImg}
-          alt="Vista aérea del Barrio Ciudadela"
+          alt="Ilustración en acuarela de la sede de la Asociación Vecinal del Barrio Ciudadela, vista desde el aire"
           placeholder="blur"
           priority
           sizes="100vw"
