@@ -49,19 +49,34 @@ export default async function HomePage() {
           }),
         }}
       />
-      {/* Hero: la foto tiene pixeles casi blancos (techos, chapa) en TODA su
-          altura, así que el contraste del texto no puede depender de qué zona
-          le toque atrás. El overlay se define en píxeles desde el borde
-          inferior — no en porcentajes de la altura del hero — porque el bloque
-          de texto mide lo mismo en cualquier viewport: así el mismo degradé
-          sirve en mobile (donde el título ocupa dos líneas y sube hasta ~290 px
-          del piso) y en desktop, sin variantes responsive.
-          Calibrado contra el peor pixel posible (un techo blanco puro): a la
-          altura del título el overlay compone ~0,60 de negro, o sea que 255
-          cae a ~100 y el blanco da ~5,8:1 — piso garantizado, no promedio.
-          Arriba de los 420 px el overlay ya no existe: la foto queda intacta
-          justo donde tiene información (las manzanas, las calles, los árboles)
-          y el hero se sigue leyendo como una foto aérea del barrio. */}
+      {/* Hero: la ilustración tiene pixeles blancos (el papel de la acuarela,
+          el patio) en TODA su altura, así que el contraste del texto no puede
+          depender de qué zona le toque atrás. El overlay se define en píxeles
+          desde el borde inferior — no en porcentajes de la altura del hero —
+          porque el bloque de texto mide lo mismo en cualquier viewport: así el
+          mismo degradé sirve en mobile y en desktop, sin variantes responsive.
+          Calibrado contra el peor pixel posible (papel blanco puro, 255), que
+          en esta imagen existe de verdad: el máximo de la banda del texto es
+          255. Pisos MEDIDOS en el navegador, no estimados — la línea más alta
+          del título en mobile cae a 184 px del piso, no a los ~290 que decía
+          este comentario cuando el hero era una foto:
+
+            desktop  título 4,58:1 (36 px bold) · subtítulo 5,15:1 (16 px)
+            mobile   título 3,61:1 (24 px bold, 2 líneas) · subtítulo 4,74:1
+
+          Los dos títulos son texto grande (piso AA 3:1) y los dos subtítulos
+          son texto normal (piso AA 4,5:1): pasa en los cuatro. El del
+          subtítulo en mobile es el más justo (4,74 contra 4,50), así que si
+          algún día se cambia la imagen del hero o el tamaño de ese texto, hay
+          que volver a medir acá. El text-shadow NO está contado en esos
+          números: WCAG no lo acredita, y de eso se trata — es margen extra
+          sobre un piso que ya cierra solo.
+          Este degradé es más flojo que el que llevaba la foto aérea (0,68 en
+          vez de 0,86 al ras del piso). Sobre una acuarela clara el negro se
+          lee como una mancha y no como una sombra, así que se compensa con un
+          text-shadow más marcado en lugar de oscurecer más el dibujo.
+          Arriba de los 400 px el overlay ya no existe: la ilustración queda
+          intacta justo donde tiene información (la sede, la arboleda). */}
       <section className="relative">
         <Image
           src={heroImg}
@@ -71,14 +86,14 @@ export default async function HomePage() {
           sizes="100vw"
           className="h-[52vh] min-h-[26rem] w-full object-cover sm:h-[55vh]"
         />
-        <div className="absolute inset-0 flex flex-col items-center justify-end bg-[linear-gradient(to_top,rgb(0_0_0/0.86)_0px,rgb(0_0_0/0.60)_230px,rgb(0_0_0/0.55)_300px,rgb(0_0_0/0)_420px)] px-4 pb-8 text-center text-white">
+        <div className="absolute inset-0 flex flex-col items-center justify-end bg-[linear-gradient(to_top,rgb(0_0_0/0.68)_0px,rgb(0_0_0/0.42)_230px,rgb(0_0_0/0.36)_300px,rgb(0_0_0/0)_400px)] px-4 pb-8 text-center text-white">
           {/* text-shadow real (no el filter `drop-shadow` de Tailwind, que es
               10 % y 6 % de negro y no mueve la aguja): suma contraste justo
-              donde está el glifo, sin oscurecer un pixel más de la foto. */}
-          <h1 className="text-2xl font-bold [text-shadow:0_1px_3px_rgb(0_0_0/0.55)] sm:text-4xl">
+              donde está el glifo, sin oscurecer un pixel más del dibujo. */}
+          <h1 className="text-2xl font-bold [text-shadow:0_2px_10px_rgb(0_0_0/0.85),0_1px_3px_rgb(0_0_0/0.7)] sm:text-4xl">
             {SITE.name}
           </h1>
-          <p className="mt-1 text-sm [text-shadow:0_1px_3px_rgb(0_0_0/0.55)] sm:text-base">
+          <p className="mt-1 text-sm [text-shadow:0_2px_10px_rgb(0_0_0/0.85),0_1px_3px_rgb(0_0_0/0.7)] sm:text-base">
             {SITE.city}
           </p>
           <div className="mt-4 flex flex-col items-center gap-3">
@@ -107,7 +122,7 @@ export default async function HomePage() {
                 {/* Lo accionable acá es la información, no el control: el aviso
                     va primero y se lleva el peso visual del bloque. Superficie
                     opaca (no un negro translúcido): su contraste no puede
-                    depender de qué pixel de la foto le toque atrás. */}
+                    depender de qué pixel de la ilustración le toque atrás. */}
                 <div className="max-w-md rounded-md bg-background px-4 py-2.5 text-left text-foreground shadow-lg">
                   {reregistration !== null ? (
                     /* Suspensión por re-empadronamiento: el vecino tiene que
