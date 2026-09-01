@@ -18,7 +18,13 @@ const mocks = vi.hoisted(() => {
   return {
     DuplicateLiveApplicationError,
     prisma: {
-      member: { findUnique: vi.fn() },
+      // `findMany` lo usa `findEmailCollisions` (la ficha con esa casilla);
+      // `findUnique` es la ficha por DNI de la elegibilidad. Son dos consultas
+      // distintas sobre la misma tabla y ningún test las confunde.
+      member: { findUnique: vi.fn(), findMany: vi.fn() },
+      // Las otras dos tablas que mira `findEmailCollisions`.
+      user: { findMany: vi.fn() },
+      application: { findMany: vi.fn() },
       configuration: { findUnique: vi.fn() },
       // Lo consulta la segunda causal de la guarda 0 (`openWizardProcess`), y
       // sólo cuando la clave `reempadronamiento_proceso_id` existe.
@@ -144,6 +150,11 @@ beforeEach(() => {
   );
   mocks.prisma.reregistrationProcess.findUnique.mockResolvedValue(null);
   mocks.prisma.member.findUnique.mockResolvedValue(null);
+  // Sin colisiones de casilla por defecto: el camino feliz es una dirección que
+  // no usa nadie más.
+  mocks.prisma.user.findMany.mockResolvedValue([]);
+  mocks.prisma.member.findMany.mockResolvedValue([]);
+  mocks.prisma.application.findMany.mockResolvedValue([]);
   mocks.service.findLiveByDni.mockResolvedValue(null);
   mocks.service.lastRejectionAt.mockResolvedValue(null);
   mocks.service.create.mockResolvedValue({ id: 7, resumeToken: "RESUME-RAW" });
@@ -492,6 +503,153 @@ describe("createApplicationAction", () => {
     const result = await createApplicationAction({}, form(VALID));
     expect(result.created).toEqual({ resumeToken: "RESUME-RAW" });
     expect(mocks.audit).toHaveBeenCalledTimes(1);
+  });
+
+  // ── El bloqueo por casilla en uso (decisión del operador, 01/09/2026) ───────
+  //
+  // Hasta ayer la colisión de email era sólo un AVISO en el panel. Desde hoy la
+  // casilla que ya es de una CUENTA del portal (con o sin rol de gestión) o de
+  // otra SOLICITUD viva corta el envío del paso "Tus datos": una invitación de
+  // socio sobre esa dirección sería un cambio de contraseña de otra persona.
+  //
+  // La ficha SIN cuenta sigue sin bloquear: el matrimonio que comparte buzón es
+  // el caso legítimo y documentado (docs/04), y para eso está el aviso del panel.
+  const EMAIL_IN_USE =
+    "Ese email ya está en uso en el sistema. Usá otra dirección; si creés que es un error, acercate a la sede vecinal.";
+
+  /** Lo que ven las TRES consultas de `findEmailCollisions`. Se arma con la
+   *  forma que devuelve Prisma (roles anidados, `member` para el vínculo con la
+   *  ficha) porque lo que se está probando es justamente el cableado. */
+  function collisions(over: {
+    users?: Array<{ id: number; roles?: string[]; memberId?: number | null }>;
+    members?: Array<{ id: number }>;
+    applications?: Array<{ id: number }>;
+  }) {
+    mocks.prisma.user.findMany.mockResolvedValue(
+      (over.users ?? []).map((u) => ({
+        id: u.id,
+        email: EMAIL,
+        roles: (u.roles ?? []).map((name) => ({ role: { name } })),
+        member: u.memberId == null ? null : { id: u.memberId },
+      })),
+    );
+    mocks.prisma.member.findMany.mockResolvedValue(
+      (over.members ?? []).map((m) => ({
+        id: m.id, fullName: "Vecino Homónimo", email: EMAIL, memberships: [],
+      })),
+    );
+    mocks.prisma.application.findMany.mockResolvedValue(
+      (over.applications ?? []).map((a) => ({ id: a.id, email: EMAIL })),
+    );
+  }
+
+  it("la casilla ya es de una cuenta del portal: no se crea la solicitud ni se manda nada", async () => {
+    collisions({ users: [{ id: 55, roles: ["socio"], memberId: 88 }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBe(EMAIL_IN_USE);
+    expect(result.created).toBeUndefined();
+    expect(result.blocked).toBeUndefined();
+    expect(mocks.service.create).not.toHaveBeenCalled();
+    // Y sobre todo: NINGÚN correo a una dirección que no es de quien completó
+    // el formulario.
+    expect(mocks.mailer.sendToApplication).not.toHaveBeenCalled();
+    expect(mocks.tokens.issue).not.toHaveBeenCalled();
+  });
+
+  it("la casilla es de una cuenta de GESTIÓN: el mismo texto, sin decir de qué es", async () => {
+    // El mensaje es UNO para las tres causales a propósito: uno propio diría
+    // que esa dirección es la de un admin del sistema.
+    collisions({ users: [{ id: 1, roles: ["superadmin", "admin"], memberId: null }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBe(EMAIL_IN_USE);
+    expect(result.error).not.toMatch(/gestión|admin/i);
+    expect(mocks.service.create).not.toHaveBeenCalled();
+  });
+
+  it("otra solicitud VIVA con la misma casilla (otro DNI): bloquea", async () => {
+    collisions({ applications: [{ id: 4242 }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBe(EMAIL_IN_USE);
+    expect(mocks.service.create).not.toHaveBeenCalled();
+    // Sin filtrar el id del trámite ajeno, igual que el bloqueo in_progress.
+    expect(JSON.stringify(result)).not.toContain("4242");
+  });
+
+  it("la casilla figura sólo en una FICHA sin cuenta: NO bloquea (buzón compartido)", async () => {
+    collisions({ members: [{ id: 99 }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBeUndefined();
+    expect(result.created).toEqual({ resumeToken: "RESUME-RAW" });
+    expect(mocks.service.create).toHaveBeenCalled();
+  });
+
+  it("reingreso: la cuenta colgada de SU PROPIA ficha no lo bloquea", async () => {
+    // El ex socio que vuelve con su email de siempre choca contra la cuenta que
+    // el sistema le abrió a él. Bloquearlo lo dejaría afuera con un mensaje que
+    // le dice que use otra dirección: la suya.
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: 12, status: "withdrawn", withdrawalReason: "resignation",
+      reentryBlocked: false, rejectedUntil: null, _count: { fees: 0 },
+    });
+    collisions({ users: [{ id: 55, roles: ["socio"], memberId: 12 }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBeUndefined();
+    expect(result.created).toEqual({ resumeToken: "RESUME-RAW" });
+    expect(mocks.service.create.mock.calls[0][0].memberId).toBe(12);
+  });
+
+  it("reingreso: la cuenta de un TERCERO sí lo bloquea", async () => {
+    // La vuelta del caso anterior, que es la que se rompe sola si la exclusión
+    // se escribe como "en el reingreso no se mira": la cuenta cuelga de OTRA
+    // ficha, o de ninguna.
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: 12, status: "withdrawn", withdrawalReason: "resignation",
+      reentryBlocked: false, rejectedUntil: null, _count: { fees: 0 },
+    });
+    collisions({ users: [{ id: 55, roles: ["socio"], memberId: 77 }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBe(EMAIL_IN_USE);
+    expect(mocks.service.create).not.toHaveBeenCalled();
+  });
+
+  it("el intento bloqueado igual gasta cupo de la casilla", async () => {
+    // El mensaje explícito es un oráculo: dice que esa dirección existe en el
+    // sistema. Lo que lo raciona es el techo por casilla, que tiene que
+    // cobrarse ANTES de responder o el formulario queda como un verificador de
+    // direcciones gratis.
+    collisions({ users: [{ id: 55, roles: ["socio"], memberId: null }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.error).toBe(EMAIL_IN_USE);
+    expect(mocks.emailLimiter.record).toHaveBeenCalledWith(EMAIL);
+    expect(mocks.createLimiter.record).toHaveBeenCalledWith("1.2.3.4");
+    expect(mocks.emailLimiter.refund).not.toHaveBeenCalled();
+  });
+
+  it("la elegibilidad manda: el mismo DNI con solicitud viva ve in_progress, no el bloqueo de email", async () => {
+    // Es el retome de siempre —su propia solicitud tiene su propia casilla, así
+    // que las dos reglas disparan—: mandarlo a "usá otra dirección" en vez de a
+    // "te reenviamos el enlace" lo deja sin salida.
+    mocks.service.findLiveByDni.mockResolvedValue({ id: 4242, email: EMAIL });
+    collisions({ applications: [{ id: 4242 }] });
+
+    const result = await createApplicationAction({}, form(VALID));
+
+    expect(result.blocked?.code).toBe("in_progress");
+    expect(result.error).toBeUndefined();
   });
 });
 
