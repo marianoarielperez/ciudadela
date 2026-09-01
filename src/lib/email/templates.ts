@@ -992,3 +992,103 @@ ${button(opts.url, "Crear mi contraseña")}
 <p>Si no esperabas este correo, ignoralo y avisale a la vecinal: nadie puede usar la cuenta sin crear la contraseña.</p>`),
   };
 }
+
+// ── Módulo 7: Reportes ───────────────────────────────────────────────────────
+
+const REPORT_KIND_WORD = { claim: "reclamo", initiative: "iniciativa" } as const;
+
+/** Acuse al que reporta (spec §9). NO promete resolución: la asociación recibe
+ *  y canaliza. Cierra con el canal ARCO (docs/08): un vecino que no es socio no
+ *  tiene panel, y el email de contacto de `Configuration` es su única vía. */
+export function reportReceivedEmail(opts: {
+  number: number;
+  kind: "claim" | "initiative";
+  categoryLabel: string;
+  contactEmail: string | null;
+}): Rendered {
+  const word = REPORT_KIND_WORD[opts.kind];
+  const title = `Recibimos tu ${word} N° ${opts.number}`;
+  const arco = opts.contactEmail
+    ? `Podés pedir la rectificación o supresión de tus datos escribiendo a ${opts.contactEmail}.`
+    : "Podés pedir la rectificación o supresión de tus datos en la sede vecinal.";
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `La ${ORG} recibió tu ${word} N° ${opts.number} (${opts.categoryLabel}).
+
+La Comisión Directiva lo va a revisar y, si corresponde, lo va a presentar ante el organismo que corresponda. Te avisamos por este medio cuando eso pase.
+
+Este reporte no reemplaza el reclamo que podés hacer directamente ante el municipio o la SCPL.
+
+${arco}${SIGNATURE}`,
+    html: layout(title, `<p>La ${esc(ORG)} recibió tu ${esc(word)} <strong>N° ${opts.number}</strong> (${esc(opts.categoryLabel)}).</p>
+<p>La Comisión Directiva lo va a revisar y, si corresponde, lo va a presentar ante el organismo que corresponda. Te avisamos por este medio cuando eso pase.</p>
+<p>Este reporte no reemplaza el reclamo que podés hacer directamente ante el municipio o la SCPL.</p>
+<p style="font-size:12px;color:#666">${esc(arco)}</p>`),
+  };
+}
+
+/** Aviso al presentar (reclamo) o tratar (iniciativa). */
+export function reportFiledEmail(opts: {
+  number: number;
+  kind: "claim" | "initiative";
+  agencyLabel: string | null;
+  filedAt: Date;
+  reference: string | null;
+}): Rendered {
+  const day = formatDateAR(opts.filedAt);
+  const ref = opts.reference ? ` (expediente ${opts.reference})` : "";
+  const line =
+    opts.kind === "claim"
+      ? `Presentamos tu reporte N° ${opts.number} ante ${opts.agencyLabel ?? "el organismo"} el ${day}${ref}.`
+      : `La Comisión Directiva trató tu iniciativa N° ${opts.number} el ${day}${ref}.`;
+  const title = opts.kind === "claim" ? `Presentamos tu reporte N° ${opts.number}` : `Tratamos tu iniciativa N° ${opts.number}`;
+  return {
+    subject: `${title} — Vecinal Ciudadela`,
+    text: `${line}
+
+Desde acá el seguimiento queda en manos del organismo; si te dieron un número de trámite, guardalo.${SIGNATURE}`,
+    html: layout(title, `<p>${esc(line)}</p>
+<p>Desde acá el seguimiento queda en manos del organismo; si te dieron un número de trámite, guardalo.</p>`),
+  };
+}
+
+/** Alerta INMEDIATA a la Comisión por cada reporte nuevo (decisión del
+ *  operador: con identidad completa). Va a `digest_recipients`, casillas de la
+ *  propia Comisión, y por eso —a diferencia del digest— lleva nombre y DNI. El
+ *  texto del vecino se escapa: entra tal cual lo tipeó. */
+export function reportBoardAlertEmail(opts: {
+  number: number;
+  kind: "claim" | "initiative";
+  categoryLabel: string;
+  subtypeLabel: string | null;
+  street: string | null;
+  description: string;
+  reporter: { name: string | null; dni: string | null; phone: string | null; email: string | null; anonymous: boolean };
+  panelUrl: string;
+}): Rendered {
+  const kind = opts.kind === "claim" ? "Reclamo" : "Iniciativa";
+  const what = opts.subtypeLabel ? `${opts.categoryLabel} › ${opts.subtypeLabel}` : opts.categoryLabel;
+  const who = `${opts.reporter.name ?? "—"} · DNI ${opts.reporter.dni ?? "—"} · ${opts.reporter.phone ?? "—"} · ${opts.reporter.email ?? "—"}`;
+  const reserved = opts.reporter.anonymous ? "Pidió que su identidad quede reservada ante el organismo." : "";
+  const title = `${kind} N° ${opts.number}: ${what}`;
+  return {
+    subject: `Nuevo reporte — ${title}`,
+    text: `Entró un ${kind.toLowerCase()} nuevo en el sitio.
+
+${what}
+${opts.street ? `Ubicación: ${opts.street}\n` : ""}
+Quién reporta: ${who}
+${reserved ? `${reserved}\n` : ""}
+Descripción:
+${opts.description}
+
+Verlo en el panel: ${opts.panelUrl}${SIGNATURE}`,
+    html: layout(title, `<p>Entró un ${esc(kind.toLowerCase())} nuevo en el sitio.</p>
+${opts.street ? `<p><strong>Ubicación:</strong> ${esc(opts.street)}</p>` : ""}
+<p><strong>Quién reporta:</strong> ${esc(who)}</p>
+${reserved ? `<p><em>${esc(reserved)}</em></p>` : ""}
+<p><strong>Descripción:</strong></p>
+<p style="white-space:pre-line">${esc(opts.description)}</p>
+${button(opts.panelUrl, "Ver en el panel")}`),
+  };
+}

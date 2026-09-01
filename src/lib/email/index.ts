@@ -44,10 +44,12 @@ export function makeMailer(deps: MailerDeps) {
     message: Omit<MailMessage, "to">;
     summary: string;
     period?: string | null;
+    reportId?: number | null;
   }): Promise<{ messageId: string | null }> {
     const row = {
       memberId: input.memberId,
       applicationId: input.applicationId,
+      reportId: input.reportId ?? null,
       type: input.type,
       via: "email" as const,
       payloadSummary: input.summary,
@@ -109,6 +111,19 @@ export function makeMailer(deps: MailerDeps) {
       period?: string | null;
     }) {
       return send({ ...input, memberId: null });
+    },
+    // M7: el destinatario es quien reportó (socio o no) o la Comisión, y la fila
+    // cuelga del REPORTE. `memberId: null` aunque el autor sea socio: lo que se
+    // acredita es el aviso sobre ese reporte, y su ficha ya lo apunta por
+    // `Report.memberId`.
+    sendToReport(input: {
+      reportId: number;
+      to: string;
+      type: NotificationType;
+      message: Omit<MailMessage, "to">;
+      summary: string;
+    }) {
+      return send({ ...input, memberId: null, applicationId: null });
     },
   };
 }
