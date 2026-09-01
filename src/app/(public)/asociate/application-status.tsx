@@ -13,6 +13,7 @@
 // ofrece el botón, porque una rueda girando para siempre es peor que decir "esto
 // puede tardar".
 import Link from "next/link";
+import { CreditCard, Landmark, Stamp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ApplicationStatus } from "@/generated/prisma/client";
 import { FormMessage } from "@/components/admin/form-message";
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { checkoutUrlFor } from "@/lib/mp/checkout";
 import { cn } from "@/lib/utils";
 import { applicationStatusAction } from "./actions";
+import { TramiteTimeline } from "./tramite-timeline";
 import { CONTROL_HEIGHT, LINK_TARGET } from "./wizard-shared";
 
 const POLL_MS = 5_000;
@@ -65,6 +67,8 @@ export function ApplicationStatusScreen({
             preapprovalId={preapprovalId}
             onStatus={setStatus}
           />
+        ) : typeof view.body === "function" ? (
+          view.body(fullName)
         ) : (
           view.body
         )}
@@ -83,26 +87,55 @@ export function ApplicationStatusScreen({
 /* Textos por estado                                                   */
 /* ------------------------------------------------------------------ */
 
-// El nombre sólo se usa en la bienvenida: es la única pantalla que celebra algo.
-// En las demás sobra y, en un dispositivo compartido, es un dato de más en
-// pantalla.
-const VIEWS: Record<string, { title: string | ((name: string) => string); body?: React.ReactNode }> = {
+const VIEWS: Record<
+  string,
+  {
+    title: string | ((name: string) => string);
+    body?: React.ReactNode | ((name: string) => React.ReactNode);
+  }
+> = {
   pending_payment: { title: "Estamos confirmando tu pago" },
 
   approved_pending_minute: {
-    title: (name) => `¡Bienvenido/a${name ? `, ${firstName(name)}` : ""}!`,
-    body: (
+    title: "Tu solicitud quedó completa",
+    body: (name: string) => (
       <>
-        <FormMessage kind="success" box>
-          Tu solicitud fue <strong>aceptada</strong>.
+        <FormMessage kind="info" box>
+          Recibimos tu pago{firstName(name) ? `, ${firstName(name)}` : ""}.{" "}
+          <strong>Ya cumpliste todos los requisitos del estatuto</strong> para pedir el ingreso a
+          la vecinal.
         </FormMessage>
+        <TramiteTimeline
+          items={[
+            {
+              state: "done",
+              title: "Solicitud completa y pago acreditado",
+              children: "Te enviamos por correo el recibo de la cuota de ingreso.",
+            },
+            {
+              state: "now",
+              icon: Landmark,
+              title: "La Comisión Directiva resuelve",
+              children: (
+                <>
+                  <strong className="text-foreground">Todavía no sos socio/a.</strong> La admisión
+                  se resuelve en la próxima reunión (Art. 5 del estatuto) y te avisamos el
+                  resultado por correo.
+                </>
+              ),
+            },
+            {
+              state: "next",
+              icon: Stamp,
+              title: "Alta en acta",
+              children:
+                "Si te admiten, la fecha del acta es tu fecha de ingreso — y desde ahí corren los 90 días para votar en asambleas y elecciones.",
+            },
+          ]}
+        />
         <p className="text-sm text-muted-foreground">
-          El alta formal se asienta en la próxima reunión de la Comisión Directiva, y la fecha de
-          esa acta va a quedar registrada como tu fecha de ingreso como socio/a.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          Te mandamos un correo para verificar tu dirección de email: confirmalo así podés recibir
-          el acceso al portal de socios apenas se asiente tu alta.
+          Te mandamos un correo aparte para verificar tu dirección: confirmala así podés recibir el
+          acceso al portal de socios si tu alta se asienta.
         </p>
       </>
     ),
@@ -112,13 +145,27 @@ const VIEWS: Record<string, { title: string | ((name: string) => string); body?:
     title: "Recibimos tu solicitud",
     body: (
       <>
-        <FormMessage kind="success" box>
-          Tu solicitud quedó <strong>enviada</strong>.
+        <FormMessage kind="info" box>
+          Tu solicitud quedó <strong>presentada</strong>.
         </FormMessage>
-        <p className="text-sm text-muted-foreground">
-          La Comisión Directiva la va a tratar en su próxima reunión y te avisamos el resultado por
-          email.
-        </p>
+        <TramiteTimeline
+          items={[
+            { state: "done", title: "Solicitud presentada" },
+            {
+              state: "now",
+              icon: Landmark,
+              title: "La Comisión Directiva resuelve",
+              children:
+                "Todavía no sos socio/a: la va a resolver en su próxima reunión y te avisamos el resultado por email.",
+            },
+            {
+              state: "next",
+              icon: Stamp,
+              title: "Alta en acta",
+              children: "Si te admiten, la fecha del acta es tu fecha de ingreso.",
+            },
+          ]}
+        />
         <p className="text-sm text-muted-foreground">
           Te mandamos aparte un correo para verificar tu dirección. Revisá también la carpeta de
           correo no deseado.
@@ -165,8 +212,8 @@ const VIEWS: Record<string, { title: string | ((name: string) => string); body?:
 };
 VIEWS.completed = VIEWS.rejected;
 
-/** Sólo el primer nombre para el saludo: "¡Bienvenida, María Fernanda Gómez!"
- *  suena a formulario, no a bienvenida. */
+/** Sólo el primer nombre para el acuse: "Recibimos tu pago, María Fernanda
+ *  Gómez" suena a formulario, no a alguien hablándole al vecino. */
 function firstName(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] ?? "";
 }
@@ -263,6 +310,14 @@ function PendingPayment({
           "Todavía no nos llegó la confirmación. A veces tarda más; también te vamos a avisar por email cuando entre."
         )}
       </FormMessage>
+
+      <TramiteTimeline
+        items={[
+          { state: "now", icon: CreditCard, title: "Estamos confirmando tu pago" },
+          { state: "next", icon: Landmark, title: "La Comisión Directiva resuelve" },
+          { state: "next", icon: Stamp, title: "Alta en acta" },
+        ]}
+      />
 
       {stalled === "timeout" && (
         <Button
