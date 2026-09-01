@@ -132,4 +132,36 @@ describe("renderReceiptPdf", () => {
       expect(bold.widthOfTextAtSize(line.text, 9)).toBeLessThanOrEqual(595.28 - 48 * 2);
     }
   });
+
+  // El recibo de la cuota de ingreso previo al acta no puede funcionar como
+  // constancia de admisión (spec 2026-09-01 §6.4). La leyenda sale SOLO con el
+  // flag: un recibo de socio (o de ingreso ya asentado en acta) no la lleva.
+  it("recibo de ingreso sin socio: leyenda de admisión pendiente; con socio: no", async () => {
+    const base = {
+      number: "2026-00010", issuedAt: new Date("2026-09-03T15:00:00Z"),
+      memberName: "Perez Juan", memberNumber: 12,
+      concept: "Cuota de ingreso", methodLabel: "Efectivo", amount: 6000, voided: null,
+    } as const;
+    const con = await drawnText(await renderReceiptPdf({ ...base, memberNumber: null, admissionPending: true }));
+    const sin = await drawnText(await renderReceiptPdf(base));
+    const all = (texts: Drawn[]) => texts.map((t) => t.text).join(" ");
+    expect(all(con)).toContain("No acredita la condición de socio/a");
+    expect(all(con)).toContain("asentada en acta");
+    expect(all(sin)).not.toContain("asentada en acta");
+  });
+
+  // El sello y el motivo de la anulación se posicionan DESPUÉS del pie: con la
+  // leyenda de arriba, el motivo tiene que bajar con ella y no montarse encima.
+  it("la leyenda de admisión empuja el motivo de la anulación hacia abajo", async () => {
+    const base = {
+      number: "2026-00011", issuedAt: new Date("2026-09-03T15:00:00Z"),
+      memberName: "Perez Juan", memberNumber: null,
+      concept: "Cuota de ingreso", methodLabel: "Efectivo", amount: 6000,
+      voided: { reason: "Cargado por error" },
+    } as const;
+    const sin = await drawnText(await renderReceiptPdf(base));
+    const con = await drawnText(await renderReceiptPdf({ ...base, admissionPending: true }));
+    expect(yOf(sin, "Anulado: Cargado por error") - yOf(con, "Anulado: Cargado por error")).toBe(23);
+    expect(con.map((d) => d.text)).toContain("ANULADO");
+  });
 });

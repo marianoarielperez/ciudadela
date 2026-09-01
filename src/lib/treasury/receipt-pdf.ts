@@ -18,6 +18,9 @@ export type ReceiptPdfData = {
   methodLabel: string;
   amount: number;
   voided: { reason: string } | null;
+  /** Recibo de la cuota de ingreso previo al acta: suma la leyenda del pie
+   *  (spec 2026-09-01 §6.4). Ausente o false → el pie de siempre. */
+  admissionPending?: boolean;
 };
 
 const PRIMARY = rgb(0 / 255, 121 / 255, 188 / 255); // #0079BC
@@ -126,6 +129,19 @@ export async function renderReceiptPdf(data: ReceiptPdfData): Promise<Uint8Array
   page.drawText(safe("Comprobante interno de la asociación. No válido como factura."), {
     x: margin, y, size: 8, font, color: MUTED,
   });
+
+  if (data.admissionPending) {
+    // Recibo de cuota de ingreso previo al acta (spec 2026-09-01 §6.4): el
+    // comprobante no puede funcionar como constancia de admisión.
+    y -= 12;
+    page.drawText(safe("Acredita el pago de la cuota de ingreso. No acredita la condición de socio/a,"), {
+      x: margin, y, size: 8, font, color: MUTED,
+    });
+    y -= 11;
+    page.drawText(safe("que se adquiere con la resolución de la Comisión Directiva asentada en acta."), {
+      x: margin, y, size: 8, font, color: MUTED,
+    });
+  }
 
   if (data.voided) {
     page.drawText("ANULADO", { x: 120, y: 380, size: 72, font: bold, color: RED, opacity: 0.35, rotate: degrees(30) });

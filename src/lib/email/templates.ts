@@ -446,11 +446,24 @@ El detalle completo está en el panel: Salud, Tesorería y Solicitudes.${SIGNATU
   };
 }
 
+/** Recibo de la cuota de ingreso previo al acta (spec 2026-09-01 §6.4). Una
+ *  sola constante para el texto plano y el HTML: si divergieran, el vecino que
+ *  lee uno y el que lee el otro recibirían aclaraciones distintas. */
+const ADMISSION_PENDING_LEGEND =
+  "Este comprobante acredita el pago de la cuota de ingreso. No acredita la condición de socio/a, " +
+  "que se adquiere con la resolución de la Comisión Directiva asentada en acta.";
+
 /** Recibo de tesorería (M4). El PDF viaja adjunto; el cuerpo repite lo esencial
  *  para quien no abre adjuntos. Saluda por nombre: va a la casilla del socio
  *  que pagó, registrada en su ficha. */
-export function receiptEmail(opts: { name: string; number: string; concept: string; amount: number }): Rendered {
+export function receiptEmail(opts: {
+  name: string; number: string; concept: string; amount: number;
+  /** Recibo de la cuota de ingreso previo al acta (spec 2026-09-01 §6.4): el
+   *  comprobante no acredita la condición de socio. Ausente → correo de siempre. */
+  admissionPending?: boolean;
+}): Rendered {
   const amount = formatARS(opts.amount);
+  const admission = opts.admissionPending ? `\n\n${ADMISSION_PENDING_LEGEND}` : "";
   return {
     subject: `Recibo ${opts.number} — Vecinal Ciudadela`,
     text: `Hola ${opts.name}:
@@ -458,12 +471,12 @@ export function receiptEmail(opts: { name: string; number: string; concept: stri
 Registramos tu pago y te enviamos el recibo N° ${opts.number}.
 
 Concepto: ${opts.concept}
-Importe: ${amount}
+Importe: ${amount}${admission}
 
 El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
     html: layout(`Recibo ${opts.number}`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
 <p>Registramos tu pago y te enviamos el recibo <strong>N° ${esc(opts.number)}</strong>.</p>
-<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>
+<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>${opts.admissionPending ? `\n<p>${esc(ADMISSION_PENDING_LEGEND)}</p>` : ""}
 <p>El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.</p>`),
   };
 }

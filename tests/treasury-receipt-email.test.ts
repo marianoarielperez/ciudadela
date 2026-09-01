@@ -75,6 +75,8 @@ describe("sendReceiptEmail", () => {
     const call = s.mailer.sendToMember.mock.calls[0][0];
     expect(call.message.text).toContain("Cuota social · septiembre 2026");
     expect(call.message.text).toContain("$ 6.000,00");
+    // El recibo de un socio NO lleva la leyenda de admisión pendiente.
+    expect(call.message.text).not.toContain("No acredita la condición de socio/a");
   });
 
   it("sin email no envía y lo dice", async () => {
@@ -155,6 +157,9 @@ describe("sendReceiptEmail", () => {
     const call = s.mailer.sendToApplication.mock.calls[0][0];
     expect(call).toMatchObject({ applicationId: 55, to: "a@b.com", type: "receipt" });
     expect(call.message.attachments[0].filename).toBe("recibo-2026-00007.pdf");
+    // Todavía no hay resolución de la Comisión: el correo tiene que decir que
+    // el comprobante no acredita la condición de socio (spec 2026-09-01 §6.4).
+    expect(call.message.text).toContain("No acredita la condición de socio/a");
   });
 
   // El socio manda sobre la solicitud: si la ficha existe pero no tiene casilla,
