@@ -407,6 +407,7 @@ export function boardDigestEmail(d: {
   paymentsCount: number; paymentsTotal: number;
   applications: number; inboxNew: number; notificationsFailed: number;
   cronFailures: Array<{ job: string; runs: number }>; webhookErrors: number;
+  reportsReceived: number; reportsClaims: number; reportsInitiatives: number; reportsPending: number;
 }): Rendered {
   const lines: string[] = [];
   const html: string[] = [];
@@ -419,6 +420,14 @@ export function boardDigestEmail(d: {
     add(`Pagos registrados: ${d.paymentsCount} por ${formatARS(d.paymentsTotal)} — ${detail}`);
   }
   if (d.applications > 0) add(`Solicitudes de alta iniciadas en el sitio: ${d.applications}`);
+  // El renglón lo dispara lo que ENTRÓ ayer; la cola va de contexto adentro del
+  // mismo renglón y nunca sola (`hasNews` no la cuenta como novedad).
+  if (d.reportsReceived > 0) {
+    add(
+      `Reportes recibidos: ${d.reportsReceived} (${d.reportsClaims} ${d.reportsClaims === 1 ? "reclamo" : "reclamos"}, ` +
+        `${d.reportsInitiatives} ${d.reportsInitiatives === 1 ? "iniciativa" : "iniciativas"}) · ${d.reportsPending} sin presentar`,
+    );
+  }
   // "entraron", no "quedaron": el renglón cuenta los que ENTRARON ayer sin
   // conciliar, resueltos o no. Si el operador resolvió a la tarde el que entró a
   // la mañana, "quedaron" mandaría a la Comisión a una bandeja vacía.

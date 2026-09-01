@@ -13,6 +13,7 @@ const empty: DigestData = {
   from: new Date(), to: new Date(), label: "14/09/2026",
   payments: [], paymentsCount: 0, paymentsTotal: 0,
   applications: 0, inboxNew: 0, notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+  reportsReceived: 0, reportsClaims: 0, reportsInitiatives: 0, reportsPending: 0,
 };
 
 function build(over?: Partial<{
@@ -20,6 +21,7 @@ function build(over?: Partial<{
   applications: number; inboxNew: number; failed: number;
   cronFailures: Array<{ job: string; _count: { job: number } }>;
   webhookErrors: number; recipients: string | null;
+  reportsClaims: number; reportsInitiatives: number; reportsPending: number;
   send: ReturnType<typeof vi.fn>;
 }>) {
   const send = over?.send ?? vi.fn(async () => ({ messageId: "id" }));
@@ -34,6 +36,17 @@ function build(over?: Partial<{
     notification: { count: vi.fn(async () => over?.failed ?? 0) },
     cronRun: { groupBy: vi.fn(async () => over?.cronFailures ?? []) },
     webhookEvent: { count: vi.fn(async () => over?.webhookErrors ?? 0) },
+    // El doble HONRA el `where` que recibe en vez de devolver una constante:
+    // así el filtro por `kind` y el de la cola (`status: "received"` a secas)
+    // quedan efectivamente ejercitados (lección del M6).
+    report: {
+      count: vi.fn(async ({ where }: { where: { kind?: string; status: string | { in: string[] } } }) => {
+        if (where.status === "received" && !where.kind) return over?.reportsPending ?? 0;
+        if (where.kind === "claim") return over?.reportsClaims ?? 0;
+        if (where.kind === "initiative") return over?.reportsInitiatives ?? 0;
+        return (over?.reportsClaims ?? 0) + (over?.reportsInitiatives ?? 0);
+      }),
+    },
   };
   const cron = makeDigestCron({
     db: db as never,
@@ -71,6 +84,10 @@ describe("hasNews", () => {
     expect(hasNews({ ...empty, webhookErrors: 1 })).toBe(true);
     expect(hasNews({ ...empty, cronFailures: [{ job: "reconcile", runs: 1 }] })).toBe(true);
   });
+  it("un reporte recibido ayer es novedad; la cola sin novedades, no", () => {
+    expect(hasNews({ ...empty, reportsReceived: 1 })).toBe(true);
+    expect(hasNews({ ...empty, reportsPending: 7 })).toBe(false);
+  });
 });
 
 describe("digest cron", () => {
@@ -107,6 +124,12 @@ describe("digest cron", () => {
       where: expect.objectContaining({ ok: false }),
       take: expect.any(Number),
     }));
+  });
+
+  it("junta los reportes recibidos ayer por tipo y la cola sin presentar", async () => {
+    const { cron } = build({ reportsClaims: 2, reportsInitiatives: 1, reportsPending: 7 });
+    const d = await cron.collect();
+    expect(d).toMatchObject({ reportsReceived: 3, reportsClaims: 2, reportsInitiatives: 1, reportsPending: 7 });
   });
 
   it("manda a cada destinatario configurado y cuenta los envíos", async () => {
