@@ -364,3 +364,32 @@ export const asociateDniCheckLimiter = createRateLimiter({
   limit: ASOCIATE_DNI_CHECK_LIMIT,
   windowMs: ASOCIATE_DNI_CHECK_WINDOW_MS,
 })
+
+export const REPORT_WINDOW_MS = 60 * 60_000
+export const REPORT_DRAFT_LIMIT = 5
+export const REPORT_SUBMIT_LIMIT = 5
+export const REPORT_UPLOAD_LIMIT = 30
+export const REPORT_MEMBER_WINDOW_MS = 24 * 60 * 60_000
+export const REPORT_MEMBER_LIMIT = 5
+
+/** Creación del BORRADOR de un reporte (paso 1 del wizard público), por IP.
+ *  Detrás de Turnstile, pero el captcha no raciona al humano persistente. Cinco
+ *  por hora desde un origen alcanzan para un hogar detrás del CGNAT móvil y
+ *  frenan el llenado masivo de borradores (que además se purgan a las 48 h). */
+export const reportDraftLimiter = createRateLimiter({ limit: REPORT_DRAFT_LIMIT, windowMs: REPORT_WINDOW_MS })
+
+/** ENVÍO del reporte (paso 3), por IP. Presupuesto SEPARADO del borrador: es
+ *  el POST que dispara dos correos (el acuse y la alerta a la Comisión), y
+ *  gastar borradores no puede dejar sin envío a quien ya cargó todo. */
+export const reportSubmitLimiter = createRateLimiter({ limit: REPORT_SUBMIT_LIMIT, windowMs: REPORT_WINDOW_MS })
+
+/** Subida de archivos contra la llave del borrador, por IP. Un reporte completo
+ *  son cuatro archivos (dos caras del DNI y dos fotos) más los reintentos de
+ *  una foto movida: treinta por hora sobra para el vecino y sigue siendo un
+ *  techo para quien martille el disco con la misma llave. */
+export const reportUploadLimiter = createRateLimiter({ limit: REPORT_UPLOAD_LIMIT, windowMs: REPORT_WINDOW_MS })
+
+/** Reportes de un SOCIO desde /mi, por memberId (pantalla autenticada: hay una
+ *  identidad mejor que la IP). Cinco por día: nadie legítimo reporta más, y sin
+ *  Turnstile este techo es lo único que raciona un script con sesión. */
+export const reportMemberLimiter = createRateLimiter({ limit: REPORT_MEMBER_LIMIT, windowMs: REPORT_MEMBER_WINDOW_MS })
