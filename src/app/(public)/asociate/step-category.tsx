@@ -3,6 +3,7 @@
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { formatARS } from "@/lib/format";
+import { Handshake, Heart, Vote } from "lucide-react";
 import type { AsociateDraft, FeeAmounts } from "./wizard-shared";
 import { Amount, ChoiceCard, NavButtons } from "./wizard-ui";
 
@@ -54,43 +55,62 @@ export function StepCategory({
   return (
     <div>
       {inBarrio ? (
-        <fieldset>
-          <legend className="sr-only">Elegí tu categoría</legend>
-          <div className="space-y-3">
-            <ChoiceCard
-              name="category"
-              value="active"
-              checked={draft.requestedCategory === "active"}
-              onSelect={() => patch({ requestedCategory: "active", wantsDebit: "" })}
-              title="Socio activo"
-              aside={<Amount amount={fees.active} note="por mes · obligatoria" />}
-            >
-              Voz y voto en las asambleas. Podés ocupar cargos en la Comisión Directiva.
-            </ChoiceCard>
-            <ChoiceCard
-              name="category"
-              value="adherent"
-              checked={draft.requestedCategory === "adherent"}
-              onSelect={() => patch({ requestedCategory: "adherent" })}
-              title="Socio adherente"
-              aside={<Amount amount={fees.shared} note="por mes · voluntaria" />}
-            >
-              Voz sin voto en las asambleas. Votás en las elecciones.
-            </ChoiceCard>
-          </div>
-        </fieldset>
+        <>
+          <p className="mb-4 text-sm text-muted-foreground">
+            La categoría se solicita: la admisión la resuelve la Comisión Directiva.
+          </p>
+          <fieldset>
+            <legend className="sr-only">¿En qué categoría querés asociarte?</legend>
+            <div className="space-y-3">
+              <ChoiceCard
+                name="category"
+                value="active"
+                checked={draft.requestedCategory === "active"}
+                onSelect={() => patch({ requestedCategory: "active", wantsDebit: "" })}
+                title="Socio activo"
+                icon={<Vote className="size-4" />}
+                aside={<Amount amount={fees.active} note="por mes · obligatoria" />}
+              >
+                <span className="font-semibold text-primary">Si la Comisión te admite:</span> voz y voto en
+                las asambleas, y podés ocupar cargos. El voto rige a los 90 días de tu fecha de ingreso.
+              </ChoiceCard>
+              <ChoiceCard
+                name="category"
+                value="adherent"
+                checked={draft.requestedCategory === "adherent"}
+                onSelect={() => patch({ requestedCategory: "adherent" })}
+                title="Socio adherente"
+                icon={<Heart className="size-4" />}
+                aside={<Amount amount={fees.shared} note="por mes · voluntaria" />}
+              >
+                <span className="font-semibold text-primary">Si la Comisión te admite:</span> voz en las
+                asambleas y votás en las elecciones, también a los 90 días del ingreso.
+              </ChoiceCard>
+            </div>
+          </fieldset>
+        </>
       ) : (
         <>
+          <p className="mb-4 text-sm text-muted-foreground">
+            La categoría se solicita: la admisión la resuelve la Comisión Directiva.
+          </p>
           {/* Una sola categoría posible (Art. 5 bis): no hay elección que
               ofrecer, así que la tarjeta informa y `requestedCategory` ya quedó
               fijada al elegir "En otro barrio" en el paso 2. */}
           <div className="rounded-xl border-2 border-primary bg-primary/5 p-4">
+            <span
+              aria-hidden
+              className="mb-2 flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
+            >
+              <Handshake className="size-4" />
+            </span>
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <p className="text-base font-semibold">Socio colaborador</p>
               <Amount amount={fees.shared} note="por mes · obligatoria" />
             </div>
             <p className="mt-1.5 text-sm text-muted-foreground">
-              Es la categoría que corresponde a quienes viven fuera del barrio.
+              <span className="font-semibold text-primary">Si la Comisión te admite:</span> participás como
+              socio colaborador. Es la categoría que corresponde a quienes viven fuera del barrio.
             </p>
           </div>
           <FormMessage kind="neutral" box className="mt-4">
@@ -133,10 +153,10 @@ export function StepCategory({
             // Aviso suave de docs/05 §2: informa, no bloquea. Quien va a pagar
             // todos los meses como adherente puede tener voz Y voto por lo
             // mismo, y nadie se lo dijo nunca.
-            <FormMessage kind="neutral" box className="mt-4">
+            <FormMessage kind="info" box className="mt-4">
               <span className="block">
-                Por {formatARS(fees.active)} al mes podés ser <strong>socio activo</strong>, con
-                voz y voto en las asambleas y la posibilidad de ocupar cargos.
+                Por {formatARS(fees.active)} al mes podés <strong>solicitar el ingreso como socio activo</strong>,
+                la categoría con voz y voto en las asambleas.
               </span>
               <Button
                 type="button"

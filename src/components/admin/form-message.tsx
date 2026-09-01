@@ -5,6 +5,7 @@ const KIND_CLASSES = {
   success: "text-success",
   warning: "text-warning",
   neutral: "text-muted-foreground",
+  info: "text-primary",
 } as const;
 
 const BOX_CLASSES = {
@@ -12,6 +13,7 @@ const BOX_CLASSES = {
   success: "border-success/40 bg-success/10",
   warning: "border-warning/40 bg-warning/10",
   neutral: "border-border bg-muted/50",
+  info: "border-primary/40 bg-primary/5",
 } as const;
 
 // Mensaje post-acción único del panel (antes: 19 sitios, 6 estilos). `alert`
@@ -31,8 +33,11 @@ const BOX_CLASSES = {
 // tipea—. Un `role="alert"` ahí interrumpiría al lector de pantalla en cada
 // tecla. No se puede expresar con `undefined` porque eso significa "deducilo del
 // kind", así que hace falta un valor explícito que se traduce a "sin atributo".
+//
+// "info" (2026-09): nota institucional celeste del sitio público; sin anuncio,
+// como neutral.
 export function FormMessage({ kind, box = false, as: Tag = "p", role: roleOverride, className, children }: {
-  kind: "error" | "success" | "warning" | "neutral";
+  kind: "error" | "success" | "warning" | "neutral" | "info";
   box?: boolean;
   as?: "p" | "span" | "div";
   role?: "status" | "alert" | "none";

@@ -441,6 +441,18 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   datos revalida la elegibilidad entera, y el veredicto `ok` no distingue el
   reingreso habilitado del DNI desconocido (decisión del operador, 27/08/2026).
 
+## Patrones que estrenó el rediseño de admisión de ASOCIATE
+
+- **El wizard ASOCIATE dice el proceso entero y no promete admisión.** El stepper es un
+  `ProcessRail` (formulario → "La Comisión resuelve" → "Alta en acta") y las pantallas de
+  estado usan `TramiteTimeline`; ninguna superficie dice "aceptada" ni "bienvenido" antes del
+  acta (el acta marco de REG-12 no existe; spec 2026-09-01). `applicationAcceptedEmail` es un
+  ACUSE — el nombre es histórico para no tocar el webhook. Los recibos de ingreso pre-acta
+  llevan leyenda de admisión pendiente (`admissionPending`, que se OMITE —no `false`— cuando
+  no aplica). OJO: `ChoiceCard`/`NavButtons` de `asociate/wizard-ui.tsx` los IMPORTAN también
+  REEMPADRONATE y `/mi/solicitudes` —son compartidos, extendidos aditivamente—; lo que diverge
+  a propósito desde el 01/09/2026 es el STEPPER: REEMPADRONATE conserva el suyo inline.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.

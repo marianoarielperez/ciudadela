@@ -81,6 +81,9 @@ export function makeReceiptEmailer(deps: {
           number: r.number,
           concept: r.concept,
           amount: Number(r.payment.amount),
+          // El recibo va contra la solicitud: todavía no hay resolución de la
+          // Comisión, así que el correo lo dice (spec 2026-09-01 §6.4).
+          admissionPending: target.kind === "application",
         });
         const payload = {
           to: target.to,

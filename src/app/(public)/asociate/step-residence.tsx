@@ -57,7 +57,10 @@ export function StepResidence({
 
   return (
     <div>
-      <fieldset>
+      <p className="text-sm text-muted-foreground">
+        De tu domicilio depende en qué categorías podés solicitar el ingreso.
+      </p>
+      <fieldset className="mt-4">
         <legend className="sr-only">¿Dónde vivís?</legend>
         <div className="space-y-3">
           <ChoiceCard
@@ -67,7 +70,7 @@ export function StepResidence({
             onSelect={() => chooseBranch("si")}
             title="En el Barrio Ciudadela"
           >
-            Podés asociarte como socio activo o adherente.
+            Podés solicitar el ingreso como socio activo o adherente.
           </ChoiceCard>
           <ChoiceCard
             name="residence"
@@ -76,7 +79,7 @@ export function StepResidence({
             onSelect={() => chooseBranch("no")}
             title="En otro barrio"
           >
-            Podés asociarte como socio colaborador.
+            Podés solicitar el ingreso como socio colaborador.
           </ChoiceCard>
         </div>
       </fieldset>

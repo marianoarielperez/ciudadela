@@ -226,41 +226,50 @@ ${button(url, "Confirmar mi email")}
 
 // ── Módulo 3: circuito de la solicitud de alta ────────────────────────────────
 //
-// Criterio de nombres (mismo razonamiento que arriba): la ACEPTADA y la
+// Criterio de nombres (mismo razonamiento que arriba): el ACUSE con pago y la
 // RECIBIDA sí saludan por nombre — la dirección la tipeó la propia persona en
 // el wizard y confirmó el tipeo, no hay operador en el medio—. La RECHAZADA no
 // saluda ni da causa: el estatuto no la exige (Art. 5 inc. 7) y el correo no
 // tiene por qué cargar más datos que el hecho.
 
-/** Aceptación automática (REG-12): el débito se autorizó y el primer pago entró. */
+/** Acuse de solicitud completa: el débito se autorizó y el primer pago entró.
+ *  NO es una aceptación — el acta marco de REG-12 nunca se dictó y la admisión
+ *  la resuelve la CD (Art. 5 inc. 7). El nombre exportado es histórico: se
+ *  conserva para no tocar el webhook (spec 2026-09-01 §6.1). */
 export function applicationAcceptedEmail(opts: { name: string }): Rendered {
   return {
-    subject: "¡Tu solicitud fue aceptada! — Vecinal Ciudadela",
+    subject: "Recibimos tu solicitud y tu pago — Vecinal Ciudadela",
     text: `Hola ${opts.name}:
 
-¡Bienvenido/a! Tu solicitud de asociación fue aceptada.
+Registramos tu solicitud de asociación y acreditamos el pago de la cuota de ingreso. El recibo te lo enviamos en un correo aparte.
 
-El alta formal se asentará en la próxima reunión de la Comisión Directiva, y la fecha de esa acta será tu fecha de ingreso como socio/a.
+Con esto tu solicitud quedó completa, pero todavía no sos socio/a de la vecinal. La admisión la resuelve la Comisión Directiva en su próxima reunión y queda asentada en acta (Art. 5 del estatuto). La fecha de esa acta será tu fecha de ingreso.
 
-Te enviamos aparte un correo para verificar tu dirección de email: confirmala para poder recibir el acceso al portal de socios apenas se asiente tu alta.${SIGNATURE}`,
-    html: layout("¡Tu solicitud fue aceptada!", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
-<p>¡Bienvenido/a! Tu solicitud de asociación fue <strong>aceptada</strong>.</p>
-<p>El alta formal se asentará en la próxima reunión de la Comisión Directiva, y la fecha de esa acta será tu <strong>fecha de ingreso</strong> como socio/a.</p>
-<p>Te enviamos aparte un correo para verificar tu dirección de email: confirmala para poder recibir el acceso al portal de socios apenas se asiente tu alta.</p>`),
+La Comisión puede no hacer lugar a la solicitud. Si eso pasa, según los términos que aceptaste la cuota de ingreso no se devuelve, damos de baja tu débito automático en Mercado Pago y podés volver a presentarte a los seis meses.
+
+Mientras tanto tu débito queda autorizado. Te avisamos el resultado por este mismo medio.
+
+Te enviamos aparte un correo para verificar tu dirección de email: confirmala para poder recibir el acceso al portal de socios si tu alta se asienta.${SIGNATURE}`,
+    html: layout("Recibimos tu solicitud y tu pago", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
+<p>Registramos tu solicitud de asociación y acreditamos el pago de la cuota de ingreso. El recibo te lo enviamos en un correo aparte.</p>
+<p><strong>Con esto tu solicitud quedó completa, pero todavía no sos socio/a de la vecinal.</strong> La admisión la resuelve la Comisión Directiva en su próxima reunión y queda asentada en acta (Art. 5 del estatuto). La fecha de esa acta será tu <strong>fecha de ingreso</strong>.</p>
+<p>La Comisión puede no hacer lugar a la solicitud. Si eso pasa, según los términos que aceptaste la cuota de ingreso no se devuelve, damos de baja tu débito automático en Mercado Pago y podés volver a presentarte a los seis meses.</p>
+<p>Mientras tanto tu débito queda autorizado. Te avisamos el resultado por este mismo medio.</p>
+<p>Te enviamos aparte un correo para verificar tu dirección de email: confirmala para poder recibir el acceso al portal de socios si tu alta se asienta.</p>`),
   };
 }
 
-/** Rama sin débito (adherente que no adhiere): la CD la trata en reunión. */
+/** Rama sin débito (adherente que no adhiere): la CD la resuelve en reunión. */
 export function applicationReceivedEmail(opts: { name: string }): Rendered {
   return {
     subject: "Recibimos tu solicitud — Vecinal Ciudadela",
     text: `Hola ${opts.name}:
 
-Tu solicitud de asociación fue recibida y será tratada por la Comisión Directiva en su próxima reunión. Te vamos a avisar por este medio el resultado.
+Tu solicitud de asociación fue recibida. Todavía no sos socio/a: la va a resolver la Comisión Directiva en su próxima reunión y te avisamos el resultado por este medio.
 
 Te enviamos aparte un correo para verificar tu dirección de email.${SIGNATURE}`,
     html: layout("Recibimos tu solicitud", `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
-<p>Tu solicitud de asociación fue recibida y será tratada por la Comisión Directiva en su próxima reunión. Te vamos a avisar por este medio el resultado.</p>
+<p>Tu solicitud de asociación fue recibida. <strong>Todavía no sos socio/a</strong>: la va a resolver la Comisión Directiva en su próxima reunión y te avisamos el resultado por este medio.</p>
 <p>Te enviamos aparte un correo para verificar tu dirección de email.</p>`),
   };
 }
@@ -437,11 +446,24 @@ El detalle completo está en el panel: Salud, Tesorería y Solicitudes.${SIGNATU
   };
 }
 
+/** Recibo de la cuota de ingreso previo al acta (spec 2026-09-01 §6.4). Una
+ *  sola constante para el texto plano y el HTML: si divergieran, el vecino que
+ *  lee uno y el que lee el otro recibirían aclaraciones distintas. */
+const ADMISSION_PENDING_LEGEND =
+  "Este comprobante acredita el pago de la cuota de ingreso. No acredita la condición de socio/a, " +
+  "que se adquiere con la resolución de la Comisión Directiva asentada en acta.";
+
 /** Recibo de tesorería (M4). El PDF viaja adjunto; el cuerpo repite lo esencial
  *  para quien no abre adjuntos. Saluda por nombre: va a la casilla del socio
  *  que pagó, registrada en su ficha. */
-export function receiptEmail(opts: { name: string; number: string; concept: string; amount: number }): Rendered {
+export function receiptEmail(opts: {
+  name: string; number: string; concept: string; amount: number;
+  /** Recibo de la cuota de ingreso previo al acta (spec 2026-09-01 §6.4): el
+   *  comprobante no acredita la condición de socio. Ausente → correo de siempre. */
+  admissionPending?: boolean;
+}): Rendered {
   const amount = formatARS(opts.amount);
+  const admission = opts.admissionPending ? `\n\n${ADMISSION_PENDING_LEGEND}` : "";
   return {
     subject: `Recibo ${opts.number} — Vecinal Ciudadela`,
     text: `Hola ${opts.name}:
@@ -449,12 +471,12 @@ export function receiptEmail(opts: { name: string; number: string; concept: stri
 Registramos tu pago y te enviamos el recibo N° ${opts.number}.
 
 Concepto: ${opts.concept}
-Importe: ${amount}
+Importe: ${amount}${admission}
 
 El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
     html: layout(`Recibo ${opts.number}`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
 <p>Registramos tu pago y te enviamos el recibo <strong>N° ${esc(opts.number)}</strong>.</p>
-<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>
+<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>${opts.admissionPending ? `\n<p>${esc(ADMISSION_PENDING_LEGEND)}</p>` : ""}
 <p>El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.</p>`),
   };
 }

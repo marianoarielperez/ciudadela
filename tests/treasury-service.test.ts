@@ -469,6 +469,8 @@ describe("voidReceipt", () => {
       number: "2026-00001", concept, voided: { reason: "Cargado por error" },
     }));
     expect(await svc.receiptPdfData(r.receiptId)).toMatchObject({ concept });
+    // Camino del socio: la clave ni siquiera existe, el flag es aditivo (spec 2026-09-01 §6.4).
+    expect((await svc.receiptPdfData(r.receiptId)).admissionPending).toBeUndefined();
   });
 
   it("dos anulaciones simultáneas: solo una prospera", async () => {
@@ -723,6 +725,8 @@ describe("registerPayment (núcleo 4B)", () => {
     const data = await svc.receiptPdfData(r.receiptId);
     expect(data.memberName).toBe("Juana Pérez");
     expect(data.memberNumber).toBeNull();
+    // Sin ficha y colgado de la solicitud: el PDF lleva la leyenda de admisión pendiente (spec 2026-09-01 §6.4).
+    expect(data.admissionPending).toBe(true);
   });
 
   // Carrera con el cron de devengo (4C): el cron corre a las 00:30 del día 1 y

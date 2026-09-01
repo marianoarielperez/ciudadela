@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   // El sufijo va a mano en cada página (ver el comentario del layout raíz: el
   // panel usa otro), y todas las públicas usan exactamente este.
   title: "Asociate — Vecinal Ciudadela",
-  description: `Asociate a la ${SITE.name} en línea, en cinco pasos.`,
+  description: `Asociate a la ${SITE.name} en línea, en seis pasos.`,
 };
 
 // Una hora de revalidación, y no `force-dynamic`.

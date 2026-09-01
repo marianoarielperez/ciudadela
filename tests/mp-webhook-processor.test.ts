@@ -403,7 +403,7 @@ describe("contratos de las revisiones anteriores", () => {
 
   // En el ingreso, la transición YA ocurrió: que el recibo no se pueda emitir no
   // puede dejar al vecino aceptado y sin la bienvenida.
-  it("si el ingreso no se puede asentar, la solicitud queda aceptada y la bienvenida sale igual", async () => {
+  it("si el ingreso no se puede asentar, la solicitud avanza igual y el acuse sale igual", async () => {
     const d = deps({ payment: { externalReference: "solicitud:55" }, application: { id: 55, status: "pending_payment", fullName: "Ana", email: "a@b.com", mpPaymentIdEntry: null, memberId: null } });
     d.treasury.registerPayment.mockRejectedValue(
       Object.assign(new Error("El monto del pago tiene que ser mayor a cero."), { name: "TreasuryError" }),

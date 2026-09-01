@@ -40,6 +40,15 @@
 // El estado de los pasos 1-3 NO viaja como campos del formulario del paso 4
 // hasta el submit: se guarda en `draft` y se emite como `<input type="hidden">`
 // dentro del form, con los nombres EXACTOS del schema de `createApplicationAction`.
+import {
+  CreditCard,
+  FileText,
+  IdCard,
+  MapPin,
+  UserRound,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useActionState } from "react";
 import type { ApplicationStatus, DocumentType, MemberCategory } from "@/generated/prisma/client";
@@ -49,6 +58,7 @@ import { checkDniAction, createApplicationAction, submitNoDebitAction } from "./
 import { ApplicationStatusScreen } from "./application-status";
 import { BlockedPanel } from "./blocked-panel";
 import { DniResultPanel } from "./dni-result-panel";
+import { ProcessRail } from "./process-rail";
 import { StepCategory } from "./step-category";
 import { StepDni } from "./step-dni";
 import { StepDocuments } from "./step-documents";
@@ -76,10 +86,21 @@ const TOTAL_STEPS = 6;
 const STEP_TITLES: Record<number, string> = {
   1: "Tu DNI",
   2: "¿Dónde vivís?",
-  3: "Elegí tu categoría",
+  3: "¿En qué categoría querés asociarte?",
   4: "Tus datos",
   5: "Documentación",
-  6: "Pago y envío",
+  6: "Pago y envío de tu solicitud",
+};
+
+// Ícono por paso, para el chip del h1 (el gesto size-9 bg-primary/10 del
+// tablero /admin). Decorativos: el título es el dato.
+const STEP_ICONS: Record<number, LucideIcon> = {
+  1: IdCard,
+  2: MapPin,
+  3: Users,
+  4: UserRound,
+  5: FileText,
+  6: CreditCard,
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -373,23 +394,22 @@ export function AsociateWizard(props: {
     );
   }
 
+  const StepIcon = STEP_ICONS[step] ?? IdCard;
+
   return (
     <div>
-      <p className="text-xs font-semibold tracking-[0.14em] text-primary uppercase">
-        Paso {step} de {TOTAL_STEPS}
-      </p>
-      {/* Decorativo: el mismo dato ya está en el texto de arriba. */}
-      <div aria-hidden className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none"
-          style={{ width: `${(step / TOTAL_STEPS) * 100}%` }}
-        />
-      </div>
+      <ProcessRail step={step} total={TOTAL_STEPS} />
       <h1
         ref={headingRef}
         tabIndex={-1}
-        className="mt-5 text-2xl font-bold tracking-tight outline-hidden sm:text-3xl"
+        className="mt-5 flex items-center gap-2.5 text-2xl font-bold tracking-tight outline-hidden sm:text-3xl"
       >
+        <span
+          aria-hidden
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+        >
+          <StepIcon className="size-5" />
+        </span>
         {STEP_TITLES[step]}
       </h1>
       {/* Sin esto, para un lector de pantalla el avance de paso es un cambio
@@ -508,7 +528,7 @@ function AnsweredTrail({
         : "";
     rows.push({
       step: 3,
-      label: "Categoría",
+      label: "Categoría solicitada",
       value: `${CATEGORY_LABELS[draft.requestedCategory]}${debit}`,
     });
   }

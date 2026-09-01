@@ -138,6 +138,12 @@ export function makeTreasuryService(deps: Deps) {
       methodLabel: PAYMENT_TYPE_LABELS[r.payment.type],
       amount: Number(r.payment.amount),
       voided: r.voidedAt ? { reason: r.voidReason ?? "" } : null,
+      // Recibo colgado de la solicitud, sin ficha: la leyenda de admisión pendiente
+      // del PDF (spec 2026-09-01 §6.4). Post-acta el pago ya tiene member y no aplica.
+      // La clave se OMITE cuando no aplica —en vez de mandar `false`— para que el
+      // dato del recibo de un socio siga siendo byte-idéntico al de siempre: este
+      // es el camino de la plata y el flag es puramente aditivo.
+      ...(!member && r.payment.application !== null ? { admissionPending: true } : {}),
     };
   }
 
