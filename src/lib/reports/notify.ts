@@ -71,7 +71,7 @@ export function makeReportNotifier(deps: {
      *  reporte al vecino. */
     async sendBoardAlert(reportId: number, recipients: string[]): Promise<{ sent: number; failed: number }> {
       const out = { sent: 0, failed: 0 };
-      let message;
+      let message: ReturnType<typeof reportBoardAlertEmail>;
       try {
         const r = await load(reportId);
         if (!r) return out;

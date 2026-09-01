@@ -1,12 +1,11 @@
 // La llave del borrador (spec §5.1): 32 bytes de randomBytes en base64url, sólo
 // el sha256 se persiste, y la forma se valida antes de consultar la base.
 // También fija los cupos de los cuatro limitadores nuevos.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// `claim.ts` importa `hashToken` de @/lib/tokens, que importa @/lib/prisma
-// (eager, explota sin .env) — mismo mock que tests/tokens.test.ts.
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-
+// SIN `vi.mock("@/lib/prisma")` a propósito: `claim.ts` es PURO (hashea con
+// node:crypto y no importa `@/lib/tokens`, que evalúa `@/lib/prisma`). Si
+// alguien le vuelve a colgar Prisma, este archivo se cae sin .env.
 import { hashClaim, isClaimShaped, mintClaim } from "@/lib/reports/claim";
 import {
   REPORT_DRAFT_LIMIT, REPORT_MEMBER_LIMIT, REPORT_MEMBER_WINDOW_MS, REPORT_SUBMIT_LIMIT,

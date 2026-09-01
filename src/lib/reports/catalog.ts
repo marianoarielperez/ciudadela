@@ -136,6 +136,14 @@ export function filedVerb(kind: ReportKindSlug): "Presentado" | "Tratada" {
   return kind === "claim" ? "Presentado" : "Tratada";
 }
 
+/** LA función que tienen que usar las pantallas para nombrar un estado: pasa
+ *  `filed` por `filedVerb` (un reclamo se presenta, una iniciativa se trata) y
+ *  el resto por `STATUS_LABELS`. Leer `STATUS_LABELS[status]` a mano le diría
+ *  "Presentado" a una iniciativa, que es justo lo que la spec §2 no quiere. */
+export function statusLabel(kind: ReportKindSlug, status: ReportStatusSlug): string {
+  return status === "filed" ? filedVerb(kind) : STATUS_LABELS[status];
+}
+
 export function findClaimCategory(slug: string | null | undefined): ClaimCategory | null {
   return CLAIM_CATEGORIES.find((c) => c.slug === slug) ?? null;
 }

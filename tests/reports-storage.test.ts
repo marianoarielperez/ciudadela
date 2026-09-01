@@ -6,9 +6,25 @@ import { mkdtempSync, existsSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-import { makeReportFileStore, REPORT_FILE_MESSAGES } from "@/lib/reports/storage";
+import {
+  makeReportFileStore,
+  REPORT_FILE_MESSAGES,
+  ReportFileError,
+  userMessageOf,
+} from "@/lib/reports/storage";
+
+// El disco real: sólo este test lo dobla, para que `writeFile` falle una vez.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...real, writeFile: (...args: Parameters<typeof real.writeFile>) => writeFileImpl(...args) };
+});
+let writeFileImpl: typeof import("node:fs/promises").writeFile;
+const { writeFile: realWriteFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+beforeEach(() => {
+  writeFileImpl = realWriteFile;
+});
 
 type Row = {
   id: number;
@@ -126,6 +142,39 @@ describe("reportFileStore.save", () => {
       REPORT_FILE_MESSAGES.photos,
     );
     expect(rows.filter((r) => r.kind === "photo")).toHaveLength(2);
+  });
+});
+
+// Los rechazos que decide el store son `ReportFileError` y su texto se le puede
+// mostrar al vecino; un error de fs NO lo es, y su `message` trae la ruta
+// absoluta (Ley 25.326): `userMessageOf` devuelve el genérico y no la filtra.
+describe("ReportFileError y userMessageOf", () => {
+  it("los rechazos del store son ReportFileError y llevan su userMessage", async () => {
+    const { db } = fakeDb();
+    const store = makeReportFileStore({ db: db as never, rootDir: tmp() });
+    const e = await store
+      .save({ reportId: 7, kind: "photo", data: Buffer.from("%PDF-1.7") })
+      .catch((err: unknown) => err);
+    expect(e).toBeInstanceOf(ReportFileError);
+    expect(userMessageOf(e, "genérico")).toBe(REPORT_FILE_MESSAGES.format);
+  });
+
+  it("un fallo crudo de fs se propaga tal cual y NO es ReportFileError", async () => {
+    const { db, rows } = fakeDb();
+    const store = makeReportFileStore({ db: db as never, rootDir: tmp() });
+    writeFileImpl = (async () => {
+      throw Object.assign(new Error("EACCES: /var/sigev/uploads/reports/7/x.jpg"), { code: "EACCES" });
+    }) as never;
+    const e = await store.save({ reportId: 7, kind: "photo", data: await img() }).catch((err: unknown) => err);
+    expect(e).toBeInstanceOf(Error);
+    expect(e).not.toBeInstanceOf(ReportFileError);
+    expect((e as { code?: string }).code).toBe("EACCES");
+    // Lo que ve el vecino no lleva la ruta del servidor.
+    const shown = userMessageOf(e, "genérico");
+    expect(shown).toBe("genérico");
+    expect(shown).not.toContain("/var/sigev");
+    // Y sin archivo escrito no queda fila.
+    expect(rows).toHaveLength(0);
   });
 });
 

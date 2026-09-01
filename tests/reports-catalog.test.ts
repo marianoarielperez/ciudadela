@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENCIES, CLAIM_CATEGORIES, INITIATIVE_CATEGORIES, KIND_LABELS, STATUS_LABELS,
   categoryLabel, filedVerb, findClaimCategory, findSubtype, isScplSubtype,
-  subtypeLabel, suggestedAgency, SCPL_WHATSAPP,
+  statusLabel, subtypeLabel, suggestedAgency, SCPL_WHATSAPP,
 } from "@/lib/reports/catalog";
 
 describe("CLAIM_CATEGORIES", () => {
@@ -89,6 +89,17 @@ describe("etiquetas", () => {
   it("el segundo estado se lee distinto por tipo", () => {
     expect(filedVerb("claim")).toBe("Presentado");
     expect(filedVerb("initiative")).toBe("Tratada");
+  });
+
+  // La función que tienen que llamar las pantallas: `filed` se lee por tipo y el
+  // resto sale de STATUS_LABELS tal cual.
+  it("statusLabel lee 'filed' por tipo y el resto de STATUS_LABELS", () => {
+    expect(statusLabel("initiative", "filed")).toBe("Tratada");
+    expect(statusLabel("claim", "filed")).toBe("Presentado");
+    expect(statusLabel("claim", "received")).toBe("Recibido");
+    expect(statusLabel("initiative", "received")).toBe("Recibido");
+    expect(statusLabel("claim", "dismissed")).toBe("Desestimado");
+    expect(statusLabel("initiative", "draft")).toBe("Borrador");
   });
 
   it("categoryLabel y subtypeLabel caen a un texto neutro si el slug no existe", () => {

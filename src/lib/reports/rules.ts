@@ -8,6 +8,9 @@ export const DRAFT_TTL_HOURS = 48;
 export const DNI_RETENTION_DAYS = 360;
 export const MAX_PHOTOS = 2;
 export const MAX_DESCRIPTION = 2000;
+/** El motivo de una desestimación (spec §5.3): mínimo real y tope de la columna. */
+export const MIN_DISMISS_REASON = 5;
+export const MAX_DISMISS_REASON = 300;
 
 /** Textos únicos por causal: el wizard y el servicio dicen lo mismo se corte
  *  donde se corte (patrón `GRANT_GUARD_MESSAGES`). */
@@ -23,6 +26,9 @@ export const REPORT_MESSAGES = {
   notDraft: "Este reporte ya fue enviado.",
   linkDead: "No encontramos tu reporte: el enlace puede estar incompleto o vencido. Empezá de nuevo desde Reportes.",
   notPending: "El reporte ya fue resuelto o no existe.",
+  consent: "Tenés que aceptar el consentimiento de datos personales.",
+  agencyOther: "Indicá ante qué organismo se presentó.",
+  dismissReason: `Escribí el motivo (al menos ${MIN_DISMISS_REASON} caracteres).`,
 } as const;
 
 export function isLocationRequired(input: { kind: ReportKindSlug; category: string | null }): boolean {

@@ -14,6 +14,13 @@ import { reportFileStore, type ReportFileStore } from "./storage";
 
 export type RetentionSummary = { dniPurged: number; draftsPurged: number; errors: number };
 
+/** Tope de filas por corrida y por paso. La purga es IDEMPOTENTE y corre todos
+ *  los días (`dniPurgedAt` estampado y el borrador borrado no vuelven a
+ *  aparecer), así que un atraso se drena solo en noches consecutivas. El tope
+ *  existe por tiempo: esto corre ANTES del digest, dentro de la ventana de 60 s
+ *  del proxy, y cada fila son varios unlink más un update. */
+export const PURGE_BATCH = 200;
+
 // El log lleva el id numérico y el CÓDIGO del fallo, nunca la ruta: los errores
 // de fs traen la ruta absoluta en `message` (Ley 25.326).
 function codeOf(e: unknown): string {
@@ -44,6 +51,7 @@ export function makeReportRetention(deps: {
           OR: [{ filedAt: { lte: dniCutoff } }, { dismissedAt: { lte: dniCutoff } }],
         },
         select: { id: true },
+        take: PURGE_BATCH,
       });
       for (const r of expired) {
         try {
@@ -60,6 +68,7 @@ export function makeReportRetention(deps: {
       const drafts = await deps.db.report.findMany({
         where: { status: "draft", createdAt: { lte: draftCutoff } },
         select: { id: true },
+        take: PURGE_BATCH,
       });
       for (const r of drafts) {
         try {

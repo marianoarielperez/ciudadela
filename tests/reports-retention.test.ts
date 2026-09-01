@@ -5,7 +5,7 @@
 // hubo algo que purgar.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-import { makeReportRetention } from "@/lib/reports/retention";
+import { makeReportRetention, PURGE_BATCH } from "@/lib/reports/retention";
 
 const NOW = new Date("2027-09-01T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -13,9 +13,11 @@ const DAY = 24 * 60 * 60 * 1000;
 function build(rows: Array<Record<string, unknown> & { id: number }>) {
   const db = {
     report: {
-      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      // El doble HONRA el `take` que recibe (CLAUDE.md: un fake que no aplica el
+      // `where`/`take` real deja la guarda sin ejercitar y el test pasa igual).
+      findMany: vi.fn(async ({ where, take }: { where: Record<string, unknown>; take?: number }) => {
         const cutoffOr = where.OR as Array<Record<string, { lte: Date }>> | undefined;
-        return rows.filter((r) => {
+        const hits = rows.filter((r) => {
           if (where.status && typeof where.status === "object") {
             if (!(where.status as { in: string[] }).in.includes(r.status as string)) return false;
           } else if (where.status && r.status !== where.status) return false;
@@ -30,6 +32,7 @@ function build(rows: Array<Record<string, unknown> & { id: number }>) {
             return false;
           return true;
         });
+        return take === undefined ? hits : hits.slice(0, take);
       }),
       updateMany: vi.fn(
         async ({ where, data }: { where: { id: number }; data: Record<string, unknown> }) => {
@@ -125,6 +128,26 @@ describe("purge", () => {
     expect(store.deleteReportDir).toHaveBeenCalledWith(7);
     expect(db.report.delete).toHaveBeenCalledWith({ where: { id: 7 } });
     expect(rows.map((r) => r.id)).toEqual([8]);
+  });
+
+  // El tope existe por TIEMPO: la purga corre antes del digest, dentro de la
+  // ventana de 60 s del proxy. Es idempotente y diaria, así que un atraso se
+  // drena en noches consecutivas; sin tope, una acumulación se lleva la corrida
+  // entera por delante.
+  it("una acumulación de 250 vencidos se recorta a PURGE_BATCH por corrida", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => ({
+      id: i + 1,
+      status: "filed",
+      filedAt: new Date(NOW.getTime() - 400 * DAY),
+      dismissedAt: null,
+      dniPurgedAt: null,
+      createdAt: NOW,
+    }));
+    const { retention, store } = build(many);
+    const s = await retention.purge();
+    expect(PURGE_BATCH).toBe(200);
+    expect(store.deleteFiles).toHaveBeenCalledTimes(200);
+    expect(s.dniPurged).toBe(200);
   });
 
   it("un fallo de disco cuenta como error y no corta la corrida; sin trabajo no audita", async () => {

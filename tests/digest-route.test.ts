@@ -46,11 +46,14 @@ describe("POST /api/cron/digest", () => {
     delete process.env.CRON_SECRET;
     expect((await POST(req("Bearer x"))).status).toBe(503);
     expect(mocks.collect).not.toHaveBeenCalled();
+    // La purga toca datos personales: va DESPUÉS de la guarda, nunca antes.
+    expect(mocks.purge).not.toHaveBeenCalled();
   });
 
   it("bearer incorrecto → 401", async () => {
     expect((await POST(req("Bearer nope"))).status).toBe(401);
     expect(mocks.collect).not.toHaveBeenCalled();
+    expect(mocks.purge).not.toHaveBeenCalled();
   });
 
   // EL caso de esta tarea: un día tranquilo no manda correo Y NO deja fila en
@@ -80,7 +83,7 @@ describe("POST /api/cron/digest", () => {
     });
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "digest_cron", entity: "cron", entityId: "7", detail: expect.objectContaining(summary),
+        action: "digest_cron", entity: "cron", entityId: "7", detail: { ...summary, retention: noPurge },
       }),
     );
   });

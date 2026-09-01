@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import type { mailer } from "@/lib/email";
+import { ALLOWLIST_BLOCK_CODE } from "@/lib/email/transport";
 import { makeReportNotifier } from "@/lib/reports/notify";
 
 type SendInput = Parameters<typeof mailer.sendToReport>[0];
@@ -40,6 +41,17 @@ describe("sendReceived / sendFiled", () => {
     await notifier.sendReceived(14);
     expect(send).not.toHaveBeenCalled();
   });
+  // Un bloqueo por EMAIL_ALLOWLIST NO es un fallo: es el entorno de prueba
+  // andando (CLAUDE.md, 4C). Si logueara, en producción —donde la lista está
+  // puesta— cada reporte dejaría una línea roja en el log del cron.
+  it("un bloqueo por la allowlist no loguea nada", async () => {
+    const { notifier, send } = build();
+    send.mockRejectedValueOnce(Object.assign(new Error("blocked"), { code: ALLOWLIST_BLOCK_CODE }));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(notifier.sendReceived(14)).resolves.toBeUndefined();
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
   it("un SMTP caído no tira: se loguea el código", async () => {
     const { notifier, send } = build();
     send.mockRejectedValueOnce(Object.assign(new Error("smtp ana@example.com"), { code: "EAUTH" }));
@@ -64,6 +76,14 @@ describe("sendBoardAlert", () => {
     send.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "ECONN" }));
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await notifier.sendBoardAlert(14, ["a@b.com", "c@d.com"])).toEqual({ sent: 1, failed: 1 });
+    log.mockRestore();
+  });
+  it("los dos destinatarios bloqueados por la allowlist: cero enviados, cero fallidos y sin log", async () => {
+    const { notifier, send } = build();
+    send.mockRejectedValue(Object.assign(new Error("blocked"), { code: ALLOWLIST_BLOCK_CODE }));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await notifier.sendBoardAlert(14, ["a@b.com", "c@d.com"])).toEqual({ sent: 0, failed: 0 });
+    expect(log).not.toHaveBeenCalled();
     log.mockRestore();
   });
   // Corre DESPUÉS del commit: si la base se cae al releer el reporte, esto no

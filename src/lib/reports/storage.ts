@@ -27,6 +27,25 @@ export const REPORT_FILE_MESSAGES = {
   broken: "No pudimos leer la imagen. Probá con otra foto.",
 } as const;
 
+/** Los rechazos INTENCIONALES del store (los cinco textos de arriba y el id
+ *  inválido) viajan con este tipo: el llamador puede mostrarle `userMessage` al
+ *  vecino sin adivinar. Un error crudo de fs —que trae la ruta absoluta en el
+ *  `message` (Ley 25.326)— NO es de esta clase y se propaga tal cual. */
+export class ReportFileError extends Error {
+  readonly userMessage: string;
+  constructor(message: string) {
+    super(message);
+    this.name = "ReportFileError";
+    this.userMessage = message;
+  }
+}
+
+/** El texto que se le muestra al vecino: el nuestro si el rechazo fue nuestro,
+ *  el genérico si el fallo vino de abajo (nunca una ruta ni un `errno`). */
+export function userMessageOf(e: unknown, fallback: string): string {
+  return e instanceof ReportFileError ? e.userMessage : fallback;
+}
+
 export const REPORTS_FOLDER = "reports";
 
 type Db = Pick<PrismaClient, "reportFile">;
@@ -38,7 +57,7 @@ export function makeReportFileStore(deps: { db: Db; rootDir?: string }) {
 
   function assertId(reportId: number) {
     // La ruta se arma con este número: un NaN o un "../" escaparía de UPLOADS_DIR.
-    if (!Number.isInteger(reportId) || reportId <= 0) throw new Error("Reporte inválido.");
+    if (!Number.isInteger(reportId) || reportId <= 0) throw new ReportFileError("Reporte inválido.");
   }
 
   async function unlinkQuiet(relative: string) {
@@ -57,13 +76,13 @@ export function makeReportFileStore(deps: { db: Db; rootDir?: string }) {
     }): Promise<{ id: number; width: number; height: number }> {
       assertId(input.reportId);
       if (input.data.length === 0 || input.data.length > MAX_IMAGE_BYTES)
-        throw new Error(REPORT_FILE_MESSAGES.size);
-      if (!sniffImage(input.data)) throw new Error(REPORT_FILE_MESSAGES.format);
+        throw new ReportFileError(REPORT_FILE_MESSAGES.size);
+      if (!sniffImage(input.data)) throw new ReportFileError(REPORT_FILE_MESSAGES.format);
       if (input.kind === "photo") {
         const photos = await db.reportFile.count({
           where: { reportId: input.reportId, kind: "photo" },
         });
-        if (photos >= MAX_PHOTOS) throw new Error(REPORT_FILE_MESSAGES.photos);
+        if (photos >= MAX_PHOTOS) throw new ReportFileError(REPORT_FILE_MESSAGES.photos);
       }
 
       let processed: { data: Buffer; width: number; height: number };
@@ -74,7 +93,7 @@ export function makeReportFileStore(deps: { db: Db; rootDir?: string }) {
       } catch {
         // sharp tira tanto por un archivo roto como por una bomba de
         // descompresión (su tope de píxeles): las dos son "no la pudimos leer".
-        throw new Error(REPORT_FILE_MESSAGES.broken);
+        throw new ReportFileError(REPORT_FILE_MESSAGES.broken);
       }
 
       const relative = path.posix.join(

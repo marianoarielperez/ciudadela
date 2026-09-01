@@ -189,7 +189,10 @@ describe("submit", () => {
       error: REPORT_MESSAGES.dni,
     });
     ctx.files.push({ id: 1, reportId: id, kind: "dni_front" }, { id: 2, reportId: id, kind: "dni_back" });
-    expect(await service.submit({ reportId: id, ...submission, consent: false })).toMatchObject({ ok: false });
+    expect(await service.submit({ reportId: id, ...submission, consent: false })).toEqual({
+      ok: false,
+      error: REPORT_MESSAGES.consent,
+    });
     expect(ctx.reports[0].status).toBe("draft");
   });
 
@@ -294,13 +297,21 @@ describe("file y dismiss", () => {
       reference: null,
       minuteId: null,
     });
-    expect(r).toMatchObject({ ok: false });
+    expect(r).toEqual({ ok: false, error: REPORT_MESSAGES.agencyOther });
     expect(ctx.reports[0].status).toBe("received");
   });
 
   it("desestimar exige motivo y sólo actúa sobre received; presentar sobre desestimado falla", async () => {
     const id = await received();
-    expect(await service.dismiss({ reportId: id, actorId: 9, reason: "  " })).toMatchObject({ ok: false });
+    // El piso son 5 caracteres (spec §5.3): el vacío y un motivo de 4 no pasan.
+    expect(await service.dismiss({ reportId: id, actorId: 9, reason: "  " })).toEqual({
+      ok: false,
+      error: REPORT_MESSAGES.dismissReason,
+    });
+    expect(await service.dismiss({ reportId: id, actorId: 9, reason: " dup " })).toEqual({
+      ok: false,
+      error: REPORT_MESSAGES.dismissReason,
+    });
     expect(await service.dismiss({ reportId: id, actorId: 9, reason: "Duplicado del N° 3." })).toEqual({
       ok: true,
     });

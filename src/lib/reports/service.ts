@@ -13,7 +13,7 @@ import { currentYearAR } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 import { isInsideBoundary } from "./boundary";
 import { hashClaim, isClaimShaped, mintClaim } from "./claim";
-import { REPORT_MESSAGES, validateSubmission } from "./rules";
+import { MAX_DISMISS_REASON, MIN_DISMISS_REASON, REPORT_MESSAGES, validateSubmission } from "./rules";
 
 export type ReportWithFiles = Report & { files: ReportFile[] };
 export type Result = { ok: true } | { ok: false; error: string };
@@ -21,7 +21,7 @@ export type SubmitResult = { ok: true; id: number } | { ok: false; error: string
 
 export type ReporterInput = { name: string; dni: string; phone: string; email: string };
 
-type Db = Pick<PrismaClient, "report" | "reportFile">;
+type Db = Pick<PrismaClient, "report">;
 
 /** Los estados que ya no son borrador: lo que el socio ve en su panel y lo que
  *  cuenta la landing como "enviado". Un solo lugar, no un `in` por consulta. */
@@ -103,7 +103,7 @@ export function makeReports(deps: { db: Db; now?: () => Date }) {
     }): Promise<SubmitResult> {
       const report = await db.report.findUnique({ where: { id: input.reportId }, include: { files: true } });
       if (!report || report.status !== "draft") return { ok: false, error: REPORT_MESSAGES.notDraft };
-      if (!input.consent) return { ok: false, error: "Tenés que aceptar el consentimiento de datos personales." };
+      if (!input.consent) return { ok: false, error: REPORT_MESSAGES.consent };
 
       const verdict = validateSubmission({
         kind: report.kind,
@@ -162,7 +162,7 @@ export function makeReports(deps: { db: Db; now?: () => Date }) {
       minuteId: number | null;
     }): Promise<Result> {
       if (input.agency === "other" && !input.agencyOther?.trim()) {
-        return { ok: false, error: "Indicá ante qué organismo se presentó." };
+        return { ok: false, error: REPORT_MESSAGES.agencyOther };
       }
       const { count } = await db.report.updateMany({
         where: { id: input.reportId, status: "received" },
@@ -181,14 +181,14 @@ export function makeReports(deps: { db: Db; now?: () => Date }) {
 
     async dismiss(input: { reportId: number; actorId: number; reason: string }): Promise<Result> {
       const reason = input.reason.trim();
-      if (reason.length < 3) return { ok: false, error: "Escribí el motivo (al menos 3 caracteres)." };
+      if (reason.length < MIN_DISMISS_REASON) return { ok: false, error: REPORT_MESSAGES.dismissReason };
       const { count } = await db.report.updateMany({
         where: { id: input.reportId, status: "received" },
         data: {
           status: "dismissed",
           dismissedAt: now(),
           dismissedById: input.actorId,
-          dismissReason: reason.slice(0, 300),
+          dismissReason: reason.slice(0, MAX_DISMISS_REASON),
         },
       });
       return count === 1 ? { ok: true } : { ok: false, error: REPORT_MESSAGES.notPending };
