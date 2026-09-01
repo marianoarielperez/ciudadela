@@ -1,0 +1,96 @@
+// Reglas de negocio del envío de un reporte (spec §4-§5). PURO: sin Prisma.
+// Las usa `service.submit` (la guarda real) y el wizard (para apagar el botón
+// antes de un viaje al server): compartir la función y no copiarla es la
+// lección de `coverageFloor` (CLAUDE.md).
+import { findClaimCategory, findInitiativeCategory, findSubtype, type ReportKindSlug } from "./catalog";
+
+export const DRAFT_TTL_HOURS = 48;
+export const DNI_RETENTION_DAYS = 360;
+export const MAX_PHOTOS = 2;
+export const MAX_DESCRIPTION = 2000;
+
+/** Textos únicos por causal: el wizard y el servicio dicen lo mismo se corte
+ *  donde se corte (patrón `GRANT_GUARD_MESSAGES`). */
+export const REPORT_MESSAGES = {
+  category: "Elegí una categoría.",
+  subtype: "Elegí el tipo de problema.",
+  description: "Contanos qué pasa: la descripción es obligatoria.",
+  descriptionLong: `La descripción no puede superar los ${MAX_DESCRIPTION} caracteres.`,
+  location: "Marcá en el mapa dónde está el problema.",
+  identity: "Faltan tus datos: nombre, DNI, teléfono y email.",
+  dni: "Falta subir el frente y el dorso de tu DNI.",
+  photos: `Podés adjuntar hasta ${MAX_PHOTOS} fotos.`,
+  notDraft: "Este reporte ya fue enviado.",
+  linkDead: "No encontramos tu reporte: el enlace puede estar incompleto o vencido. Empezá de nuevo desde Reportes.",
+  notPending: "El reporte ya fue resuelto o no existe.",
+} as const;
+
+export function isLocationRequired(input: { kind: ReportKindSlug; category: string | null }): boolean {
+  return input.kind === "claim" && input.category !== "other";
+}
+
+export type SubmissionInput = {
+  kind: ReportKindSlug;
+  category: string | null;
+  subtype: string | null;
+  description: string;
+  lat: number | null;
+  lng: number | null;
+  /** El socio no declara identidad ni sube DNI: viene de su ficha. */
+  isMember: boolean;
+  reporter: { name: string | null; dni: string | null; phone: string | null; email: string | null };
+  files: { dniFront: boolean; dniBack: boolean; photos: number };
+};
+
+export type SubmissionVerdict = { ok: true } | { ok: false; error: string };
+
+function validCoords(lat: number | null, lng: number | null): boolean {
+  return (
+    lat !== null && lng !== null &&
+    Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+  );
+}
+
+export function validateSubmission(input: SubmissionInput): SubmissionVerdict {
+  const fail = (error: string): SubmissionVerdict => ({ ok: false, error });
+
+  if (input.kind === "claim") {
+    const category = findClaimCategory(input.category);
+    if (!category) return fail(REPORT_MESSAGES.category);
+    if (category.subtypes.length > 0 && !findSubtype(category.slug, input.subtype)) {
+      return fail(REPORT_MESSAGES.subtype);
+    }
+    if (category.subtypes.length === 0 && input.subtype !== null) return fail(REPORT_MESSAGES.subtype);
+  } else if (!findInitiativeCategory(input.category)) {
+    return fail(REPORT_MESSAGES.category);
+  }
+
+  const description = input.description.trim();
+  if (description === "") return fail(REPORT_MESSAGES.description);
+  if (description.length > MAX_DESCRIPTION) return fail(REPORT_MESSAGES.descriptionLong);
+
+  const hasAny = input.lat !== null || input.lng !== null;
+  if (isLocationRequired(input) || hasAny) {
+    if (!validCoords(input.lat, input.lng)) return fail(REPORT_MESSAGES.location);
+  }
+
+  if (!input.isMember) {
+    const r = input.reporter;
+    if (!r.name?.trim() || !r.dni?.trim() || !r.phone?.trim() || !r.email?.trim()) {
+      return fail(REPORT_MESSAGES.identity);
+    }
+    if (!input.files.dniFront || !input.files.dniBack) return fail(REPORT_MESSAGES.dni);
+  }
+
+  if (input.files.photos > MAX_PHOTOS) return fail(REPORT_MESSAGES.photos);
+  return { ok: true };
+}
+
+export function retentionDueAt(closedAt: Date): Date {
+  return new Date(closedAt.getTime() + DNI_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+}
+
+export function draftExpiresAt(createdAt: Date): Date {
+  return new Date(createdAt.getTime() + DRAFT_TTL_HOURS * 60 * 60 * 1000);
+}
