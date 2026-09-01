@@ -301,6 +301,43 @@ describe("collisionsFor", () => {
     ]);
   });
 
+  // La cola, que lista solicitudes VIVAS: un `memberId` ahí es la ficha
+  // `withdrawn` del ex socio que reingresa. La ficha ya la descarta la consulta,
+  // pero la CUENTA del portal vinculada a ella no, y sin `ownMemberId` el
+  // reingreso se marcaba "Email en uso" por su propia cuenta — la misma clase de
+  // falso positivo que el aviso del alta ya asentada.
+  //
+  // No hay una cuenta de un TERCERO con esta misma casilla porque `User.email`
+  // es unique: sólo puede existir una. El caso de la cuenta colgada de otra
+  // ficha lo cubre el test de acá arriba; lo que sí acompaña acá es un socio
+  // vigente distinto y otra solicitud viva, que tienen que seguir avisando.
+  it("un reingreso no se marca por su propia cuenta, pero un tercero con la misma casilla sí", async () => {
+    const { db } = makeDb({
+      users: [{ id: 81, email: "reingreso@b.com", roles: ["socio"], boundMemberId: 80 }],
+      members: [
+        { id: 80, fullName: "Ex Socio Vuelve", email: "reingreso@b.com", status: "withdrawn", memberships: [] },
+        {
+          id: 82, fullName: "Tercera Distinta", email: "reingreso@b.com", status: "active",
+          memberships: [{ memberNumber: 150, bookStatus: "open" }],
+        },
+      ],
+      applications: [
+        { id: 90, email: "reingreso@b.com", status: "pending_board" },
+        { id: 91, email: "reingreso@b.com", status: "started" },
+      ],
+    });
+    const map = await findEmailCollisions(db, ["reingreso@b.com"]);
+    expect(collisionsFor(map, "reingreso@b.com", 90, 80)).toEqual([
+      { kind: "member", memberId: 82, memberNumber: 150, fullName: "Tercera Distinta" },
+      { kind: "application", applicationId: 91 },
+    ]);
+    // Sin el cuarto argumento —lo que hacía la cola antes— la cuenta propia del
+    // ex socio se colaba y la tarjeta se marcaba por ella sola.
+    expect(collisionsFor(map, "reingreso@b.com", 90)).toContainEqual(
+      { kind: "account", userId: 81, boundMemberId: 80 },
+    );
+  });
+
   // El caso MÁS común del detalle: una solicitud viva, cuyo `app.memberId` es
   // `null`, contra una cuenta del portal que no cuelga de ninguna ficha. Sin el
   // corto circuito de `ownMemberId` nulo, `null !== null` da false y la cuenta se

@@ -196,13 +196,17 @@ async function PendientesView({ sp }: { sp: SearchParams }) {
     findEmailCollisions(prisma, queue.map((r) => r.email)),
   ]);
   // La exclusión de lo propio la hace `collisionsFor` y no un filtro escrito
-  // acá: es el mismo criterio que usa el detalle. Sin cuarto argumento a
-  // propósito: la cola lista solicitudes VIVAS, que todavía no tienen la ficha
-  // que les crea el asiento. Un `memberId` acá es la ficha `withdrawn` del ex
-  // socio que reingresa (la elegibilidad no deja pasar una vigente), y esas ya
-  // las descarta la consulta: no hay nada "propio" que sacar.
+  // acá: es el mismo criterio, y la MISMA llamada, que usa el detalle.
+  //
+  // `r.memberId` también acá. En una solicitud viva ese id es la ficha
+  // `withdrawn` del ex socio que reingresa (la elegibilidad no deja pasar una
+  // vigente), y la ficha en sí ya la descarta la consulta — pero la CUENTA del
+  // portal vinculada a ella no: sin el cuarto argumento, un reingreso se
+  // marcaba "Email en uso" por su propia cuenta. Es la misma clase de falso
+  // positivo que el aviso del alta ya asentada: un cartel que nombra a la
+  // persona que lo está causando.
   const emailInUse = new Set(
-    queue.filter((r) => collisionsFor(collisions, r.email, r.id).length > 0).map((r) => r.id),
+    queue.filter((r) => collisionsFor(collisions, r.email, r.id, r.memberId).length > 0).map((r) => r.id),
   );
 
   // Sólo estas dos pueden llegar al libro; el resto de las tarjetas se listan
