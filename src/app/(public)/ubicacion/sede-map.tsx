@@ -7,6 +7,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { MapPin } from "lucide-react";
+import { PIN_ANCHOR, PIN_SIZE, PIN_SVG } from "@/components/map/brand-pin";
 import { SITE } from "@/lib/site";
 import {
   IGN_ATTRIBUTION,
@@ -19,15 +20,6 @@ import {
 } from "./map-config";
 
 const CENTER: [number, number] = [SITE.lat, SITE.lng];
-
-// Pin propio: gota celeste --primary (#0079BC) con halo blanco. Un divIcon
-// SVG evita los PNG del default de Leaflet, que llegan con rutas rotas por el
-// bundler, y queda 100% de marca.
-const PIN_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="48" viewBox="0 0 40 48" aria-hidden="true">' +
-  '<path d="M20 2C11.2 2 4 9.2 4 18c0 11.5 13.3 25.6 14.9 27.2a1.6 1.6 0 0 0 2.2 0C22.7 43.6 36 29.5 36 18 36 9.2 28.8 2 20 2Z" fill="#0079BC" stroke="#FFFFFF" stroke-width="3"/>' +
-  '<circle cx="20" cy="18" r="6" fill="#FFFFFF"/>' +
-  "</svg>";
 
 export default function SedeMap() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,8 +65,8 @@ export default function SedeMap() {
     const icon = L.divIcon({
       html: PIN_SVG,
       className: "", // sin la clase default (fondo blanco cuadrado)
-      iconSize: [40, 48],
-      iconAnchor: [20, 46],
+      iconSize: PIN_SIZE,
+      iconAnchor: PIN_ANCHOR,
     });
     // Decorativo a propósito: la información (dirección, botón) vive en la
     // tarjeta HTML de la página, nunca solo dentro del canvas del mapa.

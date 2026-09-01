@@ -9,13 +9,60 @@
 // dato viaja en el eyebrow, en el `role="status"` del wizard y en la frase
 // sr-only de acá abajo — que se dice UNA vez por montaje, no por paso, para no
 // castigar al lector de pantalla en cada avance.
-import { Landmark, Stamp } from "lucide-react";
+import { Landmark, Stamp, type LucideIcon } from "lucide-react";
 
-export function ProcessRail({ step, total }: { step: number; total: number }) {
+export type ProcessPhase = {
+  icon: LucideIcon;
+  /** Dos líneas cortas (con `<br />`), como las de ASOCIATE. */
+  label: React.ReactNode;
+  /** Cómo se dice esa fase en la frase sr-only. */
+  srText: string;
+};
+
+const ASOCIATE_PHASES: ProcessPhase[] = [
+  {
+    icon: Landmark,
+    label: (
+      <>
+        La Comisión
+        <br />
+        resuelve
+      </>
+    ),
+    srText: "la resuelve la Comisión Directiva",
+  },
+  {
+    icon: Stamp,
+    label: (
+      <>
+        Alta
+        <br />
+        en acta
+      </>
+    ),
+    srText: "y el alta se asienta en acta",
+  },
+];
+
+/** `subject` y `phases` son ADITIVAS (M7, spec §6.1): sin ellas el stepper es el
+ *  de ASOCIATE, byte por byte en lo que dice —incluida la frase sr-only, cuyo
+ *  arranque sale del propio `subject` en minúscula ("Después de enviar tu
+ *  solicitud, …") para que no haya un texto de ASOCIATE escrito dos veces. */
+export function ProcessRail({
+  step,
+  total,
+  subject = "Tu solicitud",
+  phases = ASOCIATE_PHASES,
+}: {
+  step: number;
+  total: number;
+  subject?: string;
+  phases?: ProcessPhase[];
+}) {
   return (
     <div>
       <p className="font-mono text-xs font-semibold tracking-[0.14em] text-primary uppercase">
-        Paso {step} de {total} · Tu solicitud
+        Paso {step} de {total} · {subject}
       </p>
       <div aria-hidden className="mt-2.5 flex items-start">
         <div className="min-w-0 flex-1">
@@ -27,18 +74,20 @@ export function ProcessRail({ step, total }: { step: number; total: number }) {
               />
             </div>
           </div>
-          <p className="mt-1 text-[10px] font-semibold leading-tight">Tu solicitud</p>
+          <p className="mt-1 text-[10px] font-semibold leading-tight">{subject}</p>
         </div>
-        <FuturePhase icon={<Landmark className="size-3.5" />}>
-          La Comisión<br />resuelve
-        </FuturePhase>
-        <FuturePhase icon={<Stamp className="size-3.5" />}>
-          Alta<br />en acta
-        </FuturePhase>
+        {phases.map((phase, i) => {
+          const Icon = phase.icon;
+          return (
+            <FuturePhase key={i} icon={<Icon className="size-3.5" />}>
+              {phase.label}
+            </FuturePhase>
+          );
+        })}
       </div>
       <p className="sr-only">
-        Después de enviar tu solicitud, la resuelve la Comisión Directiva y el alta se asienta en
-        acta.
+        Después de enviar {subject.toLocaleLowerCase("es-AR")},{" "}
+        {phases.map((p) => p.srText).join(" ")}.
       </p>
     </div>
   );
