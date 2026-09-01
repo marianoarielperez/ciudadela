@@ -11,16 +11,23 @@ import {
 import { makeMailer } from "@/lib/email";
 
 describe("plantillas de solicitud", () => {
-  it("aceptada: saluda por nombre y explica el asiento en acta", () => {
+  it("acuse con pago: saluda por nombre, niega la membresía y explica quién resuelve", () => {
     const m = applicationAcceptedEmail({ name: "Ana Pérez" });
-    expect(m.subject).toMatch(/aceptada/i);
+    expect(m.subject).toMatch(/Recibimos tu solicitud y tu pago/);
+    expect(m.subject).not.toMatch(/aceptada/i);
     expect(m.text).toContain("Ana Pérez");
+    expect(m.text).toContain("todavía no sos socio/a");
     expect(m.text).toMatch(/Comisión Directiva/);
     expect(m.text).toMatch(/fecha de ingreso/i);
+    expect(m.text).toMatch(/no se devuelve/);
+    expect(m.text).toMatch(/seis meses/);
+    expect(m.text).not.toMatch(/Bienvenid/);
   });
-  it("recibida: saluda por nombre y avisa que la trata la Comisión Directiva", () => {
+  it("recibida: saluda por nombre, niega la membresía y la resuelve la Comisión Directiva", () => {
     const m = applicationReceivedEmail({ name: "Ana Pérez" });
     expect(m.text).toContain("Ana Pérez");
+    expect(m.text).toContain("Todavía no sos socio/a");
+    expect(m.text).toMatch(/resolver/);
     expect(m.text).toMatch(/Comisión Directiva/);
   });
   it("rechazada: NO saluda por nombre, sin causa, y solo menciona el ingreso si se retuvo", () => {
