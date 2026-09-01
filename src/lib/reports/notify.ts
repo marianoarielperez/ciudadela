@@ -65,22 +65,31 @@ export function makeReportNotifier(deps: {
     },
 
     /** Una fila por destinatario, como el digest. Devuelve conteos para el log
-     *  de la action; nunca direcciones. */
+     *  de la action; nunca direcciones. Best-effort de punta a punta: también la
+     *  lectura y el armado del mensaje van dentro del `try`, porque esto corre
+     *  DESPUÉS del commit y una base que se cae acá no puede tirarle el alta del
+     *  reporte al vecino. */
     async sendBoardAlert(reportId: number, recipients: string[]): Promise<{ sent: number; failed: number }> {
       const out = { sent: 0, failed: 0 };
-      const r = await load(reportId);
-      if (!r) return out;
-      const message = reportBoardAlertEmail({
-        number: r.id, kind: r.kind,
-        categoryLabel: categoryLabel(r.kind, r.category),
-        subtypeLabel: r.kind === "claim" ? subtypeLabel(r.category, r.subtype) || null : null,
-        street: streetOf(r),
-        description: r.description ?? "",
-        reporter: {
-          name: r.reporterName, dni: r.reporterDni, phone: r.reporterPhone, email: r.reporterEmail, anonymous: r.anonymous,
-        },
-        panelUrl: `${deps.baseUrl()}/admin/solicitudes/reportes/${r.id}`,
-      });
+      let message;
+      try {
+        const r = await load(reportId);
+        if (!r) return out;
+        message = reportBoardAlertEmail({
+          number: r.id, kind: r.kind,
+          categoryLabel: categoryLabel(r.kind, r.category),
+          subtypeLabel: r.kind === "claim" ? subtypeLabel(r.category, r.subtype) || null : null,
+          street: streetOf(r),
+          description: r.description ?? "",
+          reporter: {
+            name: r.reporterName, dni: r.reporterDni, phone: r.reporterPhone, email: r.reporterEmail, anonymous: r.anonymous,
+          },
+          panelUrl: `${deps.baseUrl()}/admin/solicitudes/reportes/${r.id}`,
+        });
+      } catch (e) {
+        console.error("[reports] no se pudo armar la alerta a la Comisión", reportId, "code:", codeOf(e));
+        return out;
+      }
       for (const to of recipients) {
         try {
           await deps.mailer.sendToReport({ reportId, to, type: "report_board_alert", message, summary: "alerta de reporte nuevo a la Comisión" });

@@ -66,4 +66,16 @@ describe("sendBoardAlert", () => {
     expect(await notifier.sendBoardAlert(14, ["a@b.com", "c@d.com"])).toEqual({ sent: 1, failed: 1 });
     log.mockRestore();
   });
+  // Corre DESPUÉS del commit: si la base se cae al releer el reporte, esto no
+  // puede tirarle la excepción al caller y deshacerle el alta al vecino.
+  it("una base caída al releer el reporte no tira: devuelve ceros", async () => {
+    const { notifier, send, db } = build();
+    db.report.findUnique.mockRejectedValueOnce(Object.assign(new Error("db ana@example.com"), { code: "P1001" }));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(notifier.sendBoardAlert(14, ["a@b.com", "c@d.com"])).resolves.toEqual({ sent: 0, failed: 0 });
+    expect(send).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(" ")).not.toContain("ana@example.com");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("a@b.com");
+    log.mockRestore();
+  });
 });

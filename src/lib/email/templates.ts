@@ -998,8 +998,13 @@ ${button(opts.url, "Crear mi contraseña")}
 const REPORT_KIND_WORD = { claim: "reclamo", initiative: "iniciativa" } as const;
 
 /** Acuse al que reporta (spec §9). NO promete resolución: la asociación recibe
- *  y canaliza. Cierra con el canal ARCO (docs/08): un vecino que no es socio no
- *  tiene panel, y el email de contacto de `Configuration` es su única vía. */
+ *  y canaliza. El cuerpo se bifurca por tipo: un RECLAMO puede terminar
+ *  presentado ante un organismo, una INICIATIVA la trata la propia Comisión
+ *  (Art. 6 del estatuto) y nunca se presenta ante nadie — prometerle a un
+ *  vecino un trámite ante la SCPL por una propuesta vecinal es prometer algo
+ *  que no va a pasar. Cierra con el canal ARCO (docs/08): un vecino que no es
+ *  socio no tiene panel, y el email de contacto de `Configuration` es su única
+ *  vía. */
 export function reportReceivedEmail(opts: {
   number: number;
   kind: "claim" | "initiative";
@@ -1011,23 +1016,30 @@ export function reportReceivedEmail(opts: {
   const arco = opts.contactEmail
     ? `Podés pedir la rectificación o supresión de tus datos escribiendo a ${opts.contactEmail}.`
     : "Podés pedir la rectificación o supresión de tus datos en la sede vecinal.";
+  const body =
+    opts.kind === "claim"
+      ? [
+          "La Comisión Directiva lo va a revisar y, si corresponde, lo va a presentar ante el organismo que corresponda. Te avisamos por este medio cuando eso pase.",
+          "Este reporte no reemplaza el reclamo que podés hacer directamente ante el municipio o la SCPL.",
+        ]
+      : ["La Comisión Directiva la va a evaluar (Art. 6 del estatuto) y te avisamos por este medio cuando la trate."];
   return {
     subject: `${title} — Vecinal Ciudadela`,
     text: `La ${ORG} recibió tu ${word} N° ${opts.number} (${opts.categoryLabel}).
 
-La Comisión Directiva lo va a revisar y, si corresponde, lo va a presentar ante el organismo que corresponda. Te avisamos por este medio cuando eso pase.
-
-Este reporte no reemplaza el reclamo que podés hacer directamente ante el municipio o la SCPL.
+${body.join("\n\n")}
 
 ${arco}${SIGNATURE}`,
     html: layout(title, `<p>La ${esc(ORG)} recibió tu ${esc(word)} <strong>N° ${opts.number}</strong> (${esc(opts.categoryLabel)}).</p>
-<p>La Comisión Directiva lo va a revisar y, si corresponde, lo va a presentar ante el organismo que corresponda. Te avisamos por este medio cuando eso pase.</p>
-<p>Este reporte no reemplaza el reclamo que podés hacer directamente ante el municipio o la SCPL.</p>
+${body.map((p) => `<p>${esc(p)}</p>`).join("\n")}
 <p style="font-size:12px;color:#666">${esc(arco)}</p>`),
   };
 }
 
-/** Aviso al presentar (reclamo) o tratar (iniciativa). */
+/** Aviso al presentar (reclamo) o tratar (iniciativa). La iniciativa no va a
+ *  ningún organismo: la resuelve la Comisión, así que su referencia es interna
+ *  (`ref.`, no un expediente) y el seguimiento es en la sede, no en una mesa de
+ *  entradas ajena. */
 export function reportFiledEmail(opts: {
   number: number;
   kind: "claim" | "initiative";
@@ -1036,19 +1048,24 @@ export function reportFiledEmail(opts: {
   reference: string | null;
 }): Rendered {
   const day = formatDateAR(opts.filedAt);
-  const ref = opts.reference ? ` (expediente ${opts.reference})` : "";
+  const refWord = opts.kind === "claim" ? "expediente" : "ref.";
+  const ref = opts.reference ? ` (${refWord} ${opts.reference})` : "";
   const line =
     opts.kind === "claim"
       ? `Presentamos tu reporte N° ${opts.number} ante ${opts.agencyLabel ?? "el organismo"} el ${day}${ref}.`
       : `La Comisión Directiva trató tu iniciativa N° ${opts.number} el ${day}${ref}.`;
+  const tail =
+    opts.kind === "claim"
+      ? "Desde acá el seguimiento queda en manos del organismo; si te dieron un número de trámite, guardalo."
+      : "Si querés saber más sobre lo resuelto, acercate a la sede vecinal.";
   const title = opts.kind === "claim" ? `Presentamos tu reporte N° ${opts.number}` : `Tratamos tu iniciativa N° ${opts.number}`;
   return {
     subject: `${title} — Vecinal Ciudadela`,
     text: `${line}
 
-Desde acá el seguimiento queda en manos del organismo; si te dieron un número de trámite, guardalo.${SIGNATURE}`,
+${tail}${SIGNATURE}`,
     html: layout(title, `<p>${esc(line)}</p>
-<p>Desde acá el seguimiento queda en manos del organismo; si te dieron un número de trámite, guardalo.</p>`),
+<p>${esc(tail)}</p>`),
   };
 }
 
