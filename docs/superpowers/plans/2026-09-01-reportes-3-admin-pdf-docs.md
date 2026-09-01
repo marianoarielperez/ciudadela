@@ -774,6 +774,11 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Files:**
 - Create: `src/app/admin/solicitudes/reportes/actions.ts`, `[id]/page.tsx`, `[id]/file-form.tsx`, `[id]/dismiss-form.tsx`, `[id]/report-mini-map.tsx`, `[id]/report-mini-map-loader.tsx`
 - Test: `tests/reports-admin-actions.test.ts`
+- **Agregado por decisión del operador (01/09/2026, revisión de P1 T3):**
+  - Modify: `prisma/schema.prisma` — `Report.filedMinuteId` pasa de `onDelete: SetNull` a `onDelete: Restrict` (el acta es el respaldo institucional, mismo criterio que `FeeExemption`). Segunda migración aditiva `npx prisma migrate dev --name report_minute_restrict` (la tabla está vacía: el DROP/ADD del constraint es seguro) + `npx prisma generate`.
+  - Modify: `src/lib/minutes/references.ts` — sumar `reportsFiled: true` (o el nombre de la relación inversa en `Minute`) a `REFERENCE_COUNT_SELECT` para que "N asientos" cuente los reportes que citan el acta.
+  - Modify: `src/lib/members/minute-form.ts` — `discardUnusedMinute` cuenta también `report` (`filedMinuteId`) como séptimo referente antes de borrar un acta nueva sin uso.
+  - Test: sumar a `tests/reports-admin-actions.test.ts` (o al test existente de `discardUnusedMinute`) el caso "un acta citada por un reporte no se descarta".
 
 **Interfaces:**
 - Produces: `fileReportAction(prev, fd)` (campos `reportId, agency, agencyOther?, filedAt (YYYY-MM-DD), reference?, minuteId? | minuteNew…`) y `dismissReportAction(prev, fd)` (`reportId, reason`), ambas `{ error?: string; done?: true }`.
