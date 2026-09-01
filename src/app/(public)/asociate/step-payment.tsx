@@ -2,31 +2,42 @@
 // Paso 6 del wizard ASOCIATE: pago y envío (docs/05 §2).
 //
 // Es el momento en que el vecino se compromete con plata, y la pantalla está
-// escrita para eso: antes del botón hay una BOLETA PREVIA —qué se debita ahora,
-// qué se debita todos los meses, con los montos reales de los planes de MP— y
-// pegado abajo, dentro del mismo recuadro, el aviso de que la cuota de ingreso no
-// se devuelve. No es una tarjeta de venta con un botón grande: es un comprobante
-// escrito antes del hecho. Nadie tiene que apretar "Ir a Mercado Pago" sin haber
-// leído en la misma línea de visión cuánto y por qué.
+// escrita para eso: antes del botón hay una BOLETA PREVIA de tres cuerpos, en
+// ese orden y dentro del mismo recuadro —(1) la REGLA del trámite: pagar no
+// convierte en socio, la admisión la resuelve la Comisión Directiva; (2) los
+// IMPORTES: qué se debita ahora y qué se debita todos los meses, con los montos
+// reales; (3) la CONDICIÓN DEL DINERO: por qué se cobra antes (Art. 5) y que,
+// según los términos aceptados, no se devuelve—. No es una tarjeta de venta con
+// un botón grande: es un comprobante escrito antes del hecho. Nadie tiene que
+// apretar "Pagar y enviar mi solicitud" sin haber leído en la misma línea de
+// visión qué compra, cuánto y por qué.
+//
+// La regla va primero y va en CELESTE: en este sistema el rojo es error y el
+// ámbar es dinero, y ésta es una condición institucional. Además lleva
+// `role="note"` con un `id` que el botón referencia por `aria-describedby`, para
+// que quien tabula directo al pago también la escuche.
 //
 // La rama sin débito (adherente que no adhiere) no tiene boleta: no hay plata de
-// por medio, sólo el envío a la Comisión Directiva.
+// por medio, sólo el envío a la Comisión Directiva — pero dice igual que todavía
+// no es socio/a.
 //
 // Reparto del estado (regla del wizard): la action que CAMBIA la pantalla del
 // wizard —`submitNoDebitAction`, que la lleva a "solicitud recibida"— vive en el
 // wizard; la que se va del sitio —`startPaymentAction`— vive acá.
+import { Landmark } from "lucide-react";
 import { useActionState, useEffect } from "react";
 import type { MemberCategory } from "@/generated/prisma/client";
 import { FormMessage } from "@/components/admin/form-message";
+import { Callout } from "@/components/public/callout";
 import { formatARS } from "@/lib/format";
 import { startPaymentAction } from "./actions";
 import type { FeeAmounts, PayState, SubmitState } from "./wizard-shared";
 import { NavButtons } from "./wizard-ui";
 
 const CATEGORY_FEE_LABEL: Record<string, string> = {
-  active: "Cuota de socio activo",
-  adherent: "Cuota de socio adherente",
-  collaborator: "Cuota de socio colaborador",
+  active: "Cuota mensual de la categoría activo",
+  adherent: "Cuota mensual de la categoría adherente",
+  collaborator: "Cuota mensual de la categoría colaborador",
 };
 
 export function StepPayment({
@@ -106,6 +117,16 @@ function DebitBranch({
       {fee !== null ? (
         <>
           <div className="overflow-hidden rounded-xl border-2 border-border">
+            {/* La regla del trámite, ANTES de los importes (spec §5.4): celeste y no
+                rojo — en este sistema el rojo es error y el ámbar es dinero; esto es
+                una condición institucional. role="note" + aria-describedby en el botón:
+                quien tabula directo al pago también la escucha. */}
+            <Callout tone="info" icon={Landmark} inset role="note" id="aviso-admision">
+              <p>
+                <strong>Pagar no te convierte en socio/a.</strong> La admisión la resuelve la Comisión
+                Directiva en su próxima reunión, y puede no hacer lugar a tu solicitud.
+              </p>
+            </Callout>
             <ul className="divide-y divide-border">
               <FeeRow when="Ahora, al autorizar" what="Cuota de ingreso" amount={fee} emphasis />
               <FeeRow
@@ -114,18 +135,20 @@ function DebitBranch({
                 amount={fee}
               />
             </ul>
-            {/* Texto de docs/05 §2, palabra por palabra: es lo que el vecino acepta
-                y lo que el email de rechazo va a citar si la CD no hace lugar. */}
+            {/* La condición del dinero: cita el Art. 5 (por qué se cobra antes) y
+                atribuye la retención a los términos aceptados — el estatuto no norma el
+                reembolso. NO menciona la "mensual adelantada": el flujo no la cobra. */}
             <p className="border-t-2 border-warning/40 bg-warning/10 px-4 py-3.5 text-sm text-warning">
-              El primer débito corresponde a la <strong>cuota de ingreso</strong> (equivale a un mes de
-              cuota). <strong>No es reembolsable</strong>, cualquiera sea el resultado de tu solicitud.
-              Luego se debitará la cuota mensual.
+              El estatuto pide abonar la cuota de ingreso —equivale a un mes de cuota— para poder ser
+              admitido (Art. 5). Según los términos que aceptaste, <strong>no se devuelve</strong>,
+              cualquiera sea el resultado. Luego se debita la cuota mensual.
             </p>
           </div>
 
           <p className="mt-5 text-sm text-muted-foreground">
-            Te llevamos a Mercado Pago para que autorices el débito automático. Cuando vuelvas, te
-            confirmamos el resultado acá mismo.
+            Te llevamos a Mercado Pago para que autorices el débito. Cuando vuelvas te confirmamos que
+            el pago entró; el resultado de tu solicitud te lo avisamos por correo cuando la Comisión la
+            resuelva.
           </p>
         </>
       ) : (
@@ -147,7 +170,8 @@ function DebitBranch({
       <NavButtons
         onBack={onBack}
         backLabel="Volver a la documentación"
-        nextLabel="Ir a Mercado Pago"
+        nextLabel="Pagar y enviar mi solicitud"
+        nextDescribedBy="aviso-admision"
         submit
         nextDisabled={blocked || fee === null}
         pending={pending || leaving}
@@ -213,9 +237,9 @@ function NoDebitBranch({
       <div className="rounded-xl border-2 border-border p-4">
         <p className="text-base font-semibold">Tu solicitud se envía sin pago</p>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Elegiste no adherir al débito automático de la cuota voluntaria, así que no te vamos a
-          cobrar nada. La Comisión Directiva va a tratar tu solicitud en su próxima reunión y te
-          avisamos el resultado por email.
+          Elegiste no adherir al débito automático de la cuota voluntaria, así que no te vamos a cobrar
+          nada. <strong>Todavía no sos socio/a</strong>: la Comisión Directiva va a resolver tu
+          solicitud en su próxima reunión y te avisamos el resultado por email.
         </p>
       </div>
 
