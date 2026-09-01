@@ -257,7 +257,14 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   //
   // El texto del bloqueo es el genérico de siempre, a propósito: uno propio
   // diría que esa casilla es conocida por el sistema.
-  if (!asociateEmailLimiter.allows(email)) return { error: TOO_MANY };
+  if (!asociateEmailLimiter.allows(email)) {
+    // Sin la dirección en el log (Ley 25.326): el bloqueo se registra como
+    // hecho —qué cupo lo frenó— y no como dato personal. Mismo estilo que el
+    // del reenvío del enlace de retome, más abajo; acá no hay ni siquiera un id
+    // de solicitud que nombrar, porque todavía no se creó ninguna.
+    console.warn("[asociate] alta frenada por cupo de la casilla (asociateEmailLimiter)");
+    return { error: TOO_MANY };
+  }
 
   const livesInBarrio = data.livesInBarrio === "si";
   if (livesInBarrio && !data.streetId) return { error: "Elegí tu calle del listado del barrio." };

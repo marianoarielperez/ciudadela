@@ -14,7 +14,7 @@
 // fecha desc, paginado de a 50): es una consulta propia, hecha acá. Historial
 // sí lo reusa tal cual, que es exactamente lo que ya hacía.
 import Link from "next/link";
-import { MapPinOff, UserPlus } from "lucide-react";
+import { AtSign, MapPinOff, UserPlus } from "lucide-react";
 import type { ApplicationStatus, MemberCategory } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatDateAR } from "@/lib/format";
@@ -24,6 +24,7 @@ import {
   fetchApprovedAfterExpiry, makeApplicationQueries, parseApplicationFilters,
   parseApplicationsPage, showsNoDebitBadge, showsReentryBadge, showsUnknownDebitBadge,
 } from "@/lib/applications/query";
+import { collisionsFor, findEmailCollisions } from "@/lib/applications/email-collision";
 import { RECORDABLE_STATUSES } from "@/lib/applications/record";
 import { categoryAllowedForResidence } from "@/lib/applications/wizard";
 import { CATEGORY_LABELS, MINUTE_TYPE_LABELS } from "@/lib/members/labels";
@@ -80,6 +81,7 @@ type QueueRow = {
   wantsDebit: boolean;
   status: ApplicationStatus;
   memberId: number | null;
+  email: string;
   createdAt: Date;
   subscriptionStatus: string | null;
   residenceMismatch: boolean;
@@ -94,7 +96,9 @@ async function fetchQueue(): Promise<QueueRow[]> {
     orderBy: { createdAt: "asc" },
     select: {
       id: true, fullName: true, dni: true, requestedCategory: true, wantsDebit: true,
-      status: true, memberId: true, createdAt: true,
+      // `email` no se muestra en la tarjeta: alimenta el cruce de casillas en
+      // uso (`findEmailCollisions`), que es UNA consulta para toda la cola.
+      status: true, memberId: true, email: true, createdAt: true,
       subscriptions: { select: { status: true }, orderBy: { createdAt: "desc" }, take: 1 },
       // Sólo para derivar `residenceMismatch` (mismo criterio EXACTO que
       // `recategorizeApplicationAction`, ver `query.ts`): se aplana abajo y
@@ -178,6 +182,19 @@ async function PendientesView({ sp }: { sp: SearchParams }) {
   // que viene en la fila — ver `lateEntryNotice`, `showsNoDebitBadge` y
   // `showsUnknownDebitBadge` (sin fila local NO es lo mismo que cancelada).
   const revived = await fetchApprovedAfterExpiry(prisma, queue.map((r) => r.id));
+
+  // Casillas ya en uso en otra parte del sistema (cuenta del portal, ficha de un
+  // socio no dado de baja, otra solicitud en trámite). Es un AVISO —un
+  // matrimonio que comparte buzón es legítimo—, y se marca ACÁ y no sólo en el
+  // detalle por el mismo motivo que "Sin débito": desde esta pantalla se asienta
+  // en acta en lote, sin abrir la solicitud. Tres consultas para toda la cola,
+  // no tres por tarjeta.
+  const collisions = await findEmailCollisions(prisma, queue.map((r) => r.email));
+  // La exclusión de la solicitud misma la hace `collisionsFor` y no un filtro
+  // escrito acá: es el mismo criterio que usa el detalle.
+  const emailInUse = new Set(
+    queue.filter((r) => collisionsFor(collisions, r.email, r.id).length > 0).map((r) => r.id),
+  );
 
   // Sólo estas dos pueden llegar al libro; el resto de las tarjetas se listan
   // pero no se pueden tildar. Con ninguna asentable en la cola, la barra de
@@ -271,6 +288,26 @@ async function PendientesView({ sp }: { sp: SearchParams }) {
                 <Badge variant="outline">
                   <MapPinOff className="size-3" aria-hidden />
                   Revisar domicilio
+                </Badge>
+              )}
+              {/* La casilla declarada ya está en uso (cuenta del portal, ficha
+                  de un socio vigente u otra solicitud en trámite). Variant
+                  "outline" a propósito: compartir buzón entre cónyuges es
+                  legítimo y esperable, así que el badge pide mirar, no acusa.
+                  El detalle explica cada colisión con su texto. */}
+              {emailInUse.has(app.id) && (
+                <Badge
+                  variant="outline"
+                  title="El email declarado ya figura en otra cuenta, en la ficha de un socio o en otra solicitud en trámite. Abrí la solicitud para ver el detalle."
+                >
+                  <AtSign className="size-3" aria-hidden />
+                  Email en uso
+                  {/* El `title` no lo lee un lector de pantalla: el motivo va
+                      también como texto. */}
+                  <span className="sr-only">
+                    {" "}— el email declarado ya figura en otra cuenta, en la ficha de un socio
+                    o en otra solicitud en trámite
+                  </span>
                 </Badge>
               )}
             </div>

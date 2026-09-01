@@ -8,6 +8,7 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { APPLICATION_STATUS_LABELS } from "@/lib/applications/labels";
 import { isDecidable } from "@/lib/applications/decision";
+import { collisionsFor, findEmailCollisions } from "@/lib/applications/email-collision";
 import {
   APPROVED_AFTER_EXPIRY_ACTION, lateEntryNotice, subscriptionIsActive,
 } from "@/lib/applications/query";
@@ -76,7 +77,9 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
   // Los documentos son polimórficos y no tienen FK sobre `ownerId` (docs/04):
   // se consultan aparte, acotados a este dueño.
   const decidable = isDecidable(app.status);
-  const [documents, notifications, minuteRows, recordedMovement, revivedEntry] = await Promise.all([
+  const [
+    documents, notifications, minuteRows, recordedMovement, revivedEntry, emailCollisions,
+  ] = await Promise.all([
     prisma.document.findMany({
       where: { ownerType: "application", ownerId: applicationId },
       orderBy: { uploadedAt: "asc" },
@@ -122,7 +125,17 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
       orderBy: { id: "desc" },
       select: { createdAt: true },
     }),
+    // ── La casilla declarada, ¿ya está en uso? ────────────────────────────────
+    // Aviso, no bloqueo: un matrimonio que comparte buzón es un caso legítimo
+    // (docs/04). Lo que el operador no tenía era la SEÑAL: la guarda que existe
+    // (`members/access.ts`) recién salta cuando la víctima intenta estrenar su
+    // portal, meses después del acta.
+    findEmailCollisions(prisma, [app.email]),
   ]);
+
+  // La exclusión de la solicitud misma vive en `collisionsFor`, que comparten
+  // esta pantalla y la cola: dos filtros no pueden divergir en qué es "otra".
+  const collisions = collisionsFor(emailCollisions, app.email, app.id);
 
   // Tres estados y no dos. Viva, `memberId` sí significa "matcheó una ficha
   // existente" y el reingreso está por venir. Asentada, manda el movimiento; y
@@ -245,6 +258,73 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
           cancelada: puede seguir debitándole la cuota al vecino. Cancelá el preapproval{" "}
           <span className="font-mono">{app.preapprovalId}</span> a mano desde el panel de
           Mercado Pago.
+        </FormMessage>
+      )}
+
+      {collisions.length > 0 && (
+        // Una sola caja con TODAS las colisiones: son hechos distintos sobre la
+        // misma casilla y el operador los tiene que leer juntos antes de
+        // asentar. No bloquea nada —compartir buzón entre cónyuges es
+        // legítimo—, pero el segundo de los dos no va a poder tener portal
+        // propio, y eso conviene saberlo antes del acta y no después.
+        // `as="div"`: la caja lleva una <ul> adentro y un <ul> dentro de un <p>
+        // es HTML inválido (el <p> se cierra solo y el navegador desarma la
+        // caja).
+        <FormMessage kind="warning" box as="div">
+          <span className="font-medium">
+            El email declarado (<span className="font-mono">{app.email}</span>) ya está en uso.
+          </span>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {collisions.map((c) => (
+              <li key={`${c.kind}-${"userId" in c ? c.userId : "memberId" in c ? c.memberId : c.applicationId}`}>
+                {c.kind === "admin_account" && (
+                  <>
+                    El email de esta solicitud es el de una{" "}
+                    <strong>cuenta de gestión del sistema</strong>. Verificá la identidad antes
+                    de asentar.
+                  </>
+                )}
+                {c.kind === "account" && (
+                  <>El email ya es la dirección de acceso de otra cuenta del portal.</>
+                )}
+                {c.kind === "member" && (
+                  <>
+                    El email ya figura en la ficha{" "}
+                    {c.memberNumber !== null ? (
+                      <>
+                        del socio N° {c.memberNumber} (
+                        <Link className="text-primary hover:underline" href={`/admin/socios/${c.memberId}`}>
+                          {c.fullName}
+                        </Link>
+                        )
+                      </>
+                    ) : (
+                      <>
+                        de{" "}
+                        <Link className="text-primary hover:underline" href={`/admin/socios/${c.memberId}`}>
+                          {c.fullName}
+                        </Link>
+                      </>
+                    )}
+                    . Si comparten casilla (p. ej. un matrimonio), es esperable; el segundo no
+                    va a poder tener portal propio.
+                  </>
+                )}
+                {c.kind === "application" && (
+                  <>
+                    Otra solicitud en trámite (
+                    <Link
+                      className="text-primary hover:underline"
+                      href={`/admin/solicitudes/${c.applicationId}`}
+                    >
+                      #{c.applicationId}
+                    </Link>
+                    ) declara la misma casilla.
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
         </FormMessage>
       )}
 
