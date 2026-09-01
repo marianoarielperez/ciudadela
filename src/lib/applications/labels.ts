@@ -7,7 +7,7 @@ export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
   started: "Iniciada",
   pending_payment: "Esperando pago",
   approved_pending_minute: "Completa — pendiente de resolución",
-  pending_board: "A tratar por la CD",
+  pending_board: "A resolver por la CD",
   completed: "Alta completada",
   rejected: "Rechazada",
   expired: "Vencida",

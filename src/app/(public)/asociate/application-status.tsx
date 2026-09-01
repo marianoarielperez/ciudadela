@@ -100,7 +100,8 @@ const VIEWS: Record<
     title: "Tu solicitud quedó completa",
     body: (name: string) => (
       <>
-        <FormMessage kind="info" box>
+        {/* Anuncia: la pantalla de espera del pago cambia a esta vista en el lugar (onStatus) y no se mueve el foco. */}
+        <FormMessage kind="info" box role="status">
           Recibimos tu pago{firstName(name) ? `, ${firstName(name)}` : ""}.{" "}
           <strong>Ya cumpliste todos los requisitos del estatuto</strong> para pedir el ingreso a
           la vecinal.

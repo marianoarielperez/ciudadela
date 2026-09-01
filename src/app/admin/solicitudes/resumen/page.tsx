@@ -82,9 +82,9 @@ export default async function ResumenPage(props: {
       </p>
 
       <Section
-        title="Aceptadas pendientes de asiento"
+        title="Completas pendientes de asiento"
         caption="Cumplieron los requisitos y pagaron: falta asentarlas en acta (REG-11)."
-        empty="No hay solicitudes aceptadas esperando asiento."
+        empty="No hay solicitudes completas esperando asiento."
         rows={accepted}
       />
 
