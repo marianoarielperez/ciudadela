@@ -181,17 +181,26 @@ async function PendientesView({ sp }: { sp: SearchParams }) {
   // es best-effort). Por eso se cruza con el estado vivo de la suscripción,
   // que viene en la fila — ver `lateEntryNotice`, `showsNoDebitBadge` y
   // `showsUnknownDebitBadge` (sin fila local NO es lo mismo que cancelada).
-  const revived = await fetchApprovedAfterExpiry(prisma, queue.map((r) => r.id));
-
-  // Casillas ya en uso en otra parte del sistema (cuenta del portal, ficha de un
-  // socio no dado de baja, otra solicitud en trámite). Es un AVISO —un
-  // matrimonio que comparte buzón es legítimo—, y se marca ACÁ y no sólo en el
-  // detalle por el mismo motivo que "Sin débito": desde esta pantalla se asienta
-  // en acta en lote, sin abrir la solicitud. Tres consultas para toda la cola,
-  // no tres por tarjeta.
-  const collisions = await findEmailCollisions(prisma, queue.map((r) => r.email));
-  // La exclusión de la solicitud misma la hace `collisionsFor` y no un filtro
-  // escrito acá: es el mismo criterio que usa el detalle.
+  // Las dos vueltas que dependen de la cola ya cargada van en paralelo: son
+  // independientes entre sí y encadenarlas le sumaba un round trip entero a la
+  // pantalla (el detalle ya las junta así).
+  //
+  // La segunda son las casillas ya en uso en otra parte del sistema (cuenta del
+  // portal, ficha de un socio no dado de baja, otra solicitud en trámite). Es un
+  // AVISO —un matrimonio que comparte buzón es legítimo—, y se marca ACÁ y no
+  // sólo en el detalle por el mismo motivo que "Sin débito": desde esta pantalla
+  // se asienta en acta en lote, sin abrir la solicitud. Tres consultas para toda
+  // la cola, no tres por tarjeta.
+  const [revived, collisions] = await Promise.all([
+    fetchApprovedAfterExpiry(prisma, queue.map((r) => r.id)),
+    findEmailCollisions(prisma, queue.map((r) => r.email)),
+  ]);
+  // La exclusión de lo propio la hace `collisionsFor` y no un filtro escrito
+  // acá: es el mismo criterio que usa el detalle. Sin cuarto argumento a
+  // propósito: la cola lista solicitudes VIVAS, que todavía no tienen la ficha
+  // que les crea el asiento. Un `memberId` acá es la ficha `withdrawn` del ex
+  // socio que reingresa (la elegibilidad no deja pasar una vigente), y esas ya
+  // las descarta la consulta: no hay nada "propio" que sacar.
   const emailInUse = new Set(
     queue.filter((r) => collisionsFor(collisions, r.email, r.id).length > 0).map((r) => r.id),
   );

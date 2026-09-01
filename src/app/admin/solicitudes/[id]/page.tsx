@@ -133,9 +133,13 @@ export default async function SolicitudPage(props: { params: Promise<{ id: strin
     findEmailCollisions(prisma, [app.email]),
   ]);
 
-  // La exclusión de la solicitud misma vive en `collisionsFor`, que comparten
-  // esta pantalla y la cola: dos filtros no pueden divergir en qué es "otra".
-  const collisions = collisionsFor(emailCollisions, app.email, app.id);
+  // La exclusión de lo que es la solicitud MISMA vive en `collisionsFor`, que
+  // comparten esta pantalla y la cola: dos filtros no pueden divergir en qué es
+  // "propio". Acá va además `app.memberId` porque una solicitud ya asentada TIENE
+  // ficha, y el asiento le copió a esa ficha su mismo email (`record.ts`): sin
+  // esto, toda alta resuelta se avisaba a sí misma "el email ya figura en la
+  // ficha del socio N° X" nombrando a la persona de la propia solicitud.
+  const collisions = collisionsFor(emailCollisions, app.email, app.id, app.memberId);
 
   // Tres estados y no dos. Viva, `memberId` sí significa "matcheó una ficha
   // existente" y el reingreso está por venir. Asentada, manda el movimiento; y

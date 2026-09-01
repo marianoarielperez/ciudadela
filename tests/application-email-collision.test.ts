@@ -9,7 +9,10 @@
 import { describe, expect, it } from "vitest";
 import { collisionsFor, findEmailCollisions } from "@/lib/applications/email-collision";
 
-type UserRow = { id: number; email: string; roles: string[] };
+// `boundMemberId`: la ficha a la que está vinculada esa cuenta del portal
+// (`Member.userId` es unique). Es lo que permite reconocer la cuenta del socio
+// que el asiento acaba de crear y no avisarle sobre sí mismo.
+type UserRow = { id: number; email: string; roles: string[]; boundMemberId?: number };
 type MemberRow = {
   id: number; fullName: string; email: string | null; status: string;
   memberships: Array<{ memberNumber: number; bookStatus: string }>;
@@ -51,6 +54,7 @@ function makeDb(data: { users?: UserRow[]; members?: MemberRow[]; applications?:
             id: u.id,
             email: u.email,
             roles: u.roles.map((name) => ({ role: { name } })),
+            member: u.boundMemberId === undefined ? null : { id: u.boundMemberId },
           }));
       },
     },
@@ -102,9 +106,9 @@ describe("findEmailCollisions", () => {
       ],
     });
     const map = await findEmailCollisions(db, ["socio@b.com", "jefe@b.com", "manda@b.com"]);
-    expect(map.get("socio@b.com")).toEqual([{ kind: "account", userId: 7 }]);
-    expect(map.get("jefe@b.com")).toEqual([{ kind: "admin_account", userId: 8 }]);
-    expect(map.get("manda@b.com")).toEqual([{ kind: "admin_account", userId: 9 }]);
+    expect(map.get("socio@b.com")).toEqual([{ kind: "account", userId: 7, boundMemberId: null }]);
+    expect(map.get("jefe@b.com")).toEqual([{ kind: "admin_account", userId: 8, boundMemberId: null }]);
+    expect(map.get("manda@b.com")).toEqual([{ kind: "admin_account", userId: 9, boundMemberId: null }]);
   });
 
   it("una dirección sin colisión NO deja entrada en el mapa", async () => {
@@ -187,7 +191,7 @@ describe("findEmailCollisions", () => {
     });
     const map = await findEmailCollisions(db, ["familia@b.com"]);
     expect(map.get("familia@b.com")).toEqual([
-      { kind: "account", userId: 5 },
+      { kind: "account", userId: 5, boundMemberId: null },
       { kind: "member", memberId: 6, memberNumber: 88, fullName: "Ana Gómez" },
       { kind: "application", applicationId: 30 },
     ]);
@@ -234,9 +238,86 @@ describe("collisionsFor", () => {
     expect(collisionsFor(map, "propia@b.com", 50)).toEqual([]);
   });
 
+  // El asiento en acta COPIA el email de la solicitud a la ficha que crea
+  // (`record.ts`, contactData.email), así que toda solicitud `completed` colisiona
+  // contra su PROPIO socio —y contra la cuenta que esa alta le abrió—. Sin esta
+  // exclusión el detalle de un alta ya resuelta mostraba un aviso que es falso
+  // sobre la persona misma: "el email ya figura en la ficha del socio N° X",
+  // siendo X ella.
+  it("una solicitud ya asentada no se avisa sobre su propia ficha ni sobre la cuenta de esa ficha", async () => {
+    const { db } = makeDb({
+      users: [{ id: 60, email: "asentada@b.com", roles: ["socio"], boundMemberId: 70 }],
+      members: [
+        {
+          id: 70, fullName: "Recién Asentada", email: "asentada@b.com", status: "active",
+          memberships: [{ memberNumber: 300, bookStatus: "open" }],
+        },
+        {
+          id: 71, fullName: "Cónyuge Pérez", email: "asentada@b.com", status: "active",
+          memberships: [{ memberNumber: 301, bookStatus: "open" }],
+        },
+      ],
+    });
+    const map = await findEmailCollisions(db, ["asentada@b.com"]);
+    // La ficha propia y su cuenta se van; el cónyuge que comparte casilla SIGUE
+    // avisando, que es todo el punto de la pantalla.
+    expect(collisionsFor(map, "asentada@b.com", 99, 70)).toEqual([
+      { kind: "member", memberId: 71, memberNumber: 301, fullName: "Cónyuge Pérez" },
+    ]);
+    // Sin `ownMemberId` —la solicitud viva de la cola, que todavía no creó
+    // ninguna ficha— no se excluye nada.
+    expect(collisionsFor(map, "asentada@b.com", 99)).toEqual([
+      { kind: "account", userId: 60, boundMemberId: 70 },
+      { kind: "member", memberId: 70, memberNumber: 300, fullName: "Recién Asentada" },
+      { kind: "member", memberId: 71, memberNumber: 301, fullName: "Cónyuge Pérez" },
+    ]);
+  });
+
+  it("la cuenta vinculada a OTRA ficha sigue avisando aunque se excluya la propia", async () => {
+    const { db } = makeDb({
+      // `User.email` es unique: la cuenta con esta casilla es una sola, y acá
+      // está vinculada a la ficha 72, que NO es la de la solicitud.
+      users: [{ id: 62, email: "ajena@b.com", roles: ["admin"], boundMemberId: 72 }],
+      members: [
+        {
+          id: 70, fullName: "Recién Asentada", email: "ajena@b.com", status: "active",
+          memberships: [{ memberNumber: 300, bookStatus: "open" }],
+        },
+      ],
+    });
+    const map = await findEmailCollisions(db, ["ajena@b.com"]);
+    expect(collisionsFor(map, "ajena@b.com", 99, 70)).toEqual([
+      { kind: "admin_account", userId: 62, boundMemberId: 72 },
+    ]);
+  });
+
+  it("una cuenta SIN ficha vinculada no la excluye ningún ownMemberId", async () => {
+    const { db } = makeDb({
+      users: [{ id: 63, email: "suelta@b.com", roles: ["socio"] }],
+    });
+    const map = await findEmailCollisions(db, ["suelta@b.com"]);
+    expect(collisionsFor(map, "suelta@b.com", 99, 70)).toEqual([
+      { kind: "account", userId: 63, boundMemberId: null },
+    ]);
+  });
+
+  // El caso MÁS común del detalle: una solicitud viva, cuyo `app.memberId` es
+  // `null`, contra una cuenta del portal que no cuelga de ninguna ficha. Sin el
+  // corto circuito de `ownMemberId` nulo, `null !== null` da false y la cuenta se
+  // excluiría sola: el aviso desaparecía justo donde tiene que estar.
+  it("con ownMemberId null, una cuenta sin ficha SIGUE avisando", async () => {
+    const { db } = makeDb({
+      users: [{ id: 64, email: "viva@b.com", roles: ["socio"] }],
+    });
+    const map = await findEmailCollisions(db, ["viva@b.com"]);
+    expect(collisionsFor(map, "viva@b.com", 99, null)).toEqual([
+      { kind: "account", userId: 64, boundMemberId: null },
+    ]);
+  });
+
   it("normaliza la dirección de consulta y tolera la ausente", () => {
-    const map = new Map([["vecino@b.com", [{ kind: "account" as const, userId: 1 }]]]);
-    expect(collisionsFor(map, "  Vecino@B.com ", 1)).toEqual([{ kind: "account", userId: 1 }]);
+    const map = new Map([["vecino@b.com", [{ kind: "account" as const, userId: 1, boundMemberId: null }]]]);
+    expect(collisionsFor(map, "  Vecino@B.com ", 1)).toEqual([{ kind: "account", userId: 1, boundMemberId: null }]);
     expect(collisionsFor(map, null, 1)).toEqual([]);
     expect(collisionsFor(map, "nadie@b.com", 1)).toEqual([]);
   });

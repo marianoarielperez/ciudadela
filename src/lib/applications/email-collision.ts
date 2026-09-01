@@ -21,12 +21,16 @@ import { LIVE_APPLICATION_STATUSES } from "@/lib/applications/statuses";
 
 type Db = Pick<PrismaClient, "user" | "member" | "application">;
 
+/** `boundMemberId`: la ficha a la que está vinculada esa cuenta del portal
+ *  (`Member.userId` es unique, así que es una o ninguna). No se muestra: sirve
+ *  para que `collisionsFor` reconozca la cuenta del socio que el asiento acaba
+ *  de abrirle a la solicitud y no le avise sobre sí mismo. */
 export type EmailCollision =
   /** Cuenta del portal CON rol de gestión. El caso caro: una invitación de
    *  socio sobre esa dirección sería un cambio de contraseña de un admin. */
-  | { kind: "admin_account"; userId: number }
+  | { kind: "admin_account"; userId: number; boundMemberId: number | null }
   /** Cuenta del portal sin rol de gestión. */
-  | { kind: "account"; userId: number }
+  | { kind: "account"; userId: number; boundMemberId: number | null }
   /** Ficha de un socio NO dado de baja (vigente o suspendido). */
   | { kind: "member"; memberId: number; memberNumber: number | null; fullName: string }
   /** Otra solicitud en trámite con la misma casilla. */
@@ -72,7 +76,13 @@ export async function findEmailCollisions(db: Db, emails: string[]): Promise<Ema
   const [users, members, applications] = await Promise.all([
     db.user.findMany({
       where: { email: { in: wanted } },
-      select: { id: true, email: true, roles: { select: { role: { select: { name: true } } } } },
+      select: {
+        id: true, email: true,
+        roles: { select: { role: { select: { name: true } } } },
+        // La ficha vinculada a la cuenta: la usa `collisionsFor` para no
+        // avisarle a un alta ya asentada sobre la cuenta que ella misma abrió.
+        member: { select: { id: true } },
+      },
     }),
     db.member.findMany({
       // Los dados de baja NO cuentan: su casilla quedó libre y marcarla llenaría
@@ -98,7 +108,10 @@ export async function findEmailCollisions(db: Db, emails: string[]): Promise<Ema
   // otra solicitud.
   for (const u of users) {
     const roles = u.roles.map((r) => r.role.name);
-    push(u.email, isAdmin(roles) ? { kind: "admin_account", userId: u.id } : { kind: "account", userId: u.id });
+    const boundMemberId = u.member?.id ?? null;
+    push(u.email, isAdmin(roles)
+      ? { kind: "admin_account", userId: u.id, boundMemberId }
+      : { kind: "account", userId: u.id, boundMemberId });
   }
   for (const m of members) {
     if (!m.email) continue;
@@ -114,19 +127,40 @@ export async function findEmailCollisions(db: Db, emails: string[]): Promise<Ema
   return out;
 }
 
-/** Lo que hay que mostrarle a UNA solicitud: su propia fila no es una colisión.
+/** Lo que hay que mostrarle a UNA solicitud: nada de lo que es ELLA MISMA
+ *  cuenta como colisión. Son tres cosas, no una:
  *
- *  Es el ÚNICO lugar donde se excluye la solicitud misma —la cola y el detalle
- *  pasan por acá— para que las dos pantallas no puedan divergir en qué
- *  consideran "otra" solicitud. Misma lección que `coverageFloor`. */
+ *  1. su propia fila en la lista de solicitudes vivas;
+ *  2. la ficha que su asiento en acta creó — el asiento COPIA `app.email` a
+ *     `Member.email` (`record.ts`), así que TODA solicitud `completed` colisiona
+ *     contra su propio socio y el aviso decía "el email ya figura en la ficha
+ *     del socio N° X" siendo X la misma persona;
+ *  3. la cuenta del portal vinculada a ESA ficha, que arrastra la misma
+ *     dirección por el mismo camino.
+ *
+ *  `ownMemberId` va `undefined` mientras la solicitud está viva (todavía no hay
+ *  ficha suya: cualquier socio con esa casilla es OTRO y tiene que avisar).
+ *
+ *  Es el ÚNICO lugar donde se decide qué es "propio" —la cola y el detalle pasan
+ *  por acá— para que las dos pantallas no puedan divergir. Misma lección que
+ *  `coverageFloor`. */
 export function collisionsFor(
   map: EmailCollisionMap,
   email: string | null | undefined,
   applicationId: number,
+  ownMemberId?: number | null,
 ): EmailCollision[] {
   const key = normalize(email);
   if (!key) return [];
   const list = map.get(key);
   if (!list) return [];
-  return list.filter((c) => c.kind !== "application" || c.applicationId !== applicationId);
+  return list.filter((c) => {
+    if (c.kind === "application") return c.applicationId !== applicationId;
+    if (ownMemberId === undefined || ownMemberId === null) return true;
+    if (c.kind === "member") return c.memberId !== ownMemberId;
+    // `account` / `admin_account`: sólo se va la que cuelga de la ficha propia.
+    // Una cuenta sin ficha (`boundMemberId` en null) o colgada de otra sigue
+    // avisando.
+    return c.boundMemberId !== ownMemberId;
+  });
 }
