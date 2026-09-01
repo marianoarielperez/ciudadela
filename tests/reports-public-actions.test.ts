@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn(async () => true), audit: vi.fn(async () => {}),
   getString: vi.fn(async () => "a@b.com"),
   draftAllows: vi.fn(() => true), draftRecord: vi.fn(),
-  submitAllows: vi.fn(() => true), submitRecord: vi.fn(),
+  submitAllows: vi.fn(() => true), submitRecord: vi.fn(), submitRefund: vi.fn(),
   uploadCheck: vi.fn(() => true), tokenCheck: vi.fn(() => true),
 }));
 vi.mock("@/lib/reports/service", () => ({
@@ -34,7 +34,7 @@ vi.mock("@/lib/config", async (orig) => ({
 vi.mock("@/lib/auth/rate-limiter", async (orig) => ({
   ...(await orig<typeof import("@/lib/auth/rate-limiter")>()),
   reportDraftLimiter: { allows: mocks.draftAllows, record: mocks.draftRecord },
-  reportSubmitLimiter: { allows: mocks.submitAllows, record: mocks.submitRecord },
+  reportSubmitLimiter: { allows: mocks.submitAllows, record: mocks.submitRecord, refund: mocks.submitRefund },
   reportUploadLimiter: { check: mocks.uploadCheck },
   publicTokenLimiter: { check: mocks.tokenCheck },
 }));
@@ -48,6 +48,7 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
+import { REPORT_MESSAGES } from "@/lib/reports/rules";
 import { ReportFileError } from "@/lib/reports/storage";
 import {
   removeReportFileAction, saveReporterAction, startReportAction, submitReportAction, uploadReportFileAction,
@@ -55,6 +56,9 @@ import {
 
 const CLAIM = "A".repeat(43);
 const fd = (o: Record<string, string | Blob>) => { const f = new FormData(); for (const [k, v] of Object.entries(o)) f.set(k, v); return f; };
+// Las dos caras del DNI ya subidas: es la precondición del paso 3, así que un
+// borrador sin ellas no llega a guardar sus datos.
+const DNI_FILES = [{ kind: "dni_front" }, { kind: "dni_back" }];
 const draft = (over: Record<string, unknown> = {}) => ({
   id: 14, status: "draft", kind: "claim", memberId: null, files: [], ...over,
 });
@@ -89,6 +93,10 @@ describe("startReportAction", () => {
     expect(mocks.draftRecord).not.toHaveBeenCalled();
     expect(mocks.startDraft).not.toHaveBeenCalled();
   });
+  it("una iniciativa no anónima viaja como initiative + anonymous:false", async () => {
+    await startReportAction({}, fd({ kind: "iniciativa", anonymous: "no", "cf-turnstile-response": "t" }));
+    expect(mocks.startDraft).toHaveBeenCalledWith({ kind: "initiative", anonymous: false, memberId: null, reporter: null, ip: "9.9.9.9", userAgent: "ua" });
+  });
   it("un tipo fuera del enum se rechaza con el mensaje del schema", async () => {
     const r = await startReportAction({}, fd({ kind: "queja", anonymous: "no", "cf-turnstile-response": "t" }));
     expect(r.error).toBe("Elegí qué querés reportar.");
@@ -97,6 +105,7 @@ describe("startReportAction", () => {
 
 describe("saveReporterAction", () => {
   it("guarda sobre el borrador de la llave, con el email en minúsculas", async () => {
+    mocks.findByClaim.mockResolvedValue(draft({ files: DNI_FILES }));
     const r = await saveReporterAction({}, fd({ claim: CLAIM, name: "Ana López", dni: "30123456", phone: "2974000000", email: "ANA@Example.com" }));
     expect(r).toEqual({ saved: true });
     expect(mocks.saveReporter).toHaveBeenCalledWith({ reportId: 14, name: "Ana López", dni: "30123456", phone: "2974000000", email: "ana@example.com" });
@@ -112,6 +121,12 @@ describe("saveReporterAction", () => {
   it("el DNI se valida con el mismo regex de ASOCIATE", async () => {
     const r = await saveReporterAction({}, fd({ claim: CLAIM, name: "Ana López", dni: "12.345.678", phone: "2974000000", email: "a@b.com" }));
     expect(r.error).toContain("DNI");
+  });
+  it("sin las dos caras del DNI en la base no guarda nada", async () => {
+    mocks.findByClaim.mockResolvedValue(draft({ files: [{ kind: "dni_front" }] }));
+    const r = await saveReporterAction({}, fd({ claim: CLAIM, name: "Ana López", dni: "30123456", phone: "2974000000", email: "a@b.com" }));
+    expect(r.error).toBe(REPORT_MESSAGES.dni);
+    expect(mocks.saveReporter).not.toHaveBeenCalled();
   });
 });
 
@@ -179,6 +194,8 @@ describe("submitReportAction", () => {
     expect(entry.action).toBe("report_submitted");
     expect(JSON.stringify(entry)).not.toContain("Cerro Catedral");
     expect(JSON.stringify(entry)).not.toContain("Un pozo");
+    // Una escritura exitosa NO devuelve el cupo, ni aunque falle el acuse.
+    expect(mocks.submitRefund).not.toHaveBeenCalled();
   });
   it("sin consentimiento o sin cupo no escribe", async () => {
     expect((await submitReportAction({}, fd({ ...body, consent: "" }))).error).toContain("consentimiento");
@@ -194,6 +211,8 @@ describe("submitReportAction", () => {
     const r = await submitReportAction({}, fd(body));
     expect(r.error).toContain("DNI");
     expect(mocks.sendReceived).not.toHaveBeenCalled();
+    // Un rechazo no manda correos, y el cupo raciona correos: se devuelve.
+    expect(mocks.submitRefund).toHaveBeenCalledWith("9.9.9.9");
   });
   it("un SMTP caído en el acuse no convierte el envío en error", async () => {
     mocks.sendReceived.mockRejectedValueOnce(new Error("x"));

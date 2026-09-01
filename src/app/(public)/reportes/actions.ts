@@ -117,6 +117,12 @@ export async function saveReporterAction(_prev: ReporterState, formData: FormDat
   if (!parsed.ok) return { error: parsed.error };
   const found = await draftFromClaim(parsed.data.claim, publicTokenLimiter);
   if (!found.ok) return { error: found.error };
+  // Las dos caras del DNI se exigen ACÁ y no sólo en el cliente (spec §5.1 paso
+  // 3): el paso se envía por POST y un formulario armado a mano no pasa por el
+  // botón deshabilitado. `submit` vuelve a mirarlo, pero entonces el vecino ya
+  // cargó todo lo demás; el mensaje es el mismo para que no diverjan.
+  const faces = new Set(found.report.files.map((f) => f.kind));
+  if (!faces.has("dni_front") || !faces.has("dni_back")) return { error: REPORT_MESSAGES.dni };
   const result = await reports.saveReporter({
     reportId: found.report.id,
     name: parsed.data.name,
@@ -140,6 +146,12 @@ export async function uploadReportFileAction(_prev: UploadState, formData: FormD
   const found = await draftFromClaim(String(formData.get("claim") ?? ""), reportUploadLimiter);
   if (!found.ok) return { error: found.error };
 
+  // El tope de fotos lo cuenta el store al guardar, así que dos subidas
+  // simultáneas sobre el MISMO borrador pueden ver las dos `count === 1` y
+  // dejar una tercera foto. Es a propósito que no haya mutex por llave: el caso
+  // es recuperable —`submit` rechaza con `REPORT_MESSAGES.photos` y
+  // `removeReportFileAction` deja al vecino quitar una— y un mutex con llave en
+  // el camino caliente de la subida no se paga con ese borde.
   try {
     const saved = await reportFileStore.save({
       reportId: found.report.id,
@@ -191,7 +203,13 @@ export async function submitReportAction(_prev: SubmitState, formData: FormData)
     scplTicket: d.scplTicket ?? null,
     consent: d.consent === "on",
   });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) {
+    // Un rechazo por regla de negocio no manda ningún correo, y el cupo de 5/h
+    // raciona correos: se devuelve el intento. Una escritura EXITOSA no se
+    // devuelve nunca, ni siquiera si falla el acuse — el reporte existe.
+    reportSubmitLimiter.refund(ip);
+    return { error: result.error };
+  }
 
   // Todo lo que sigue es best-effort y DESPUÉS de la escritura: el reporte ya
   // entró y la pantalla lo dice. Un SMTP caído no puede convertirlo en error.
