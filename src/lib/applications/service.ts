@@ -1,18 +1,16 @@
 // Ciclo de vida de la Solicitud de alta web. Mismo patrón que members/service:
 // factory con un Prisma "pick", transacciones con callback, singleton al final.
 import { randomBytes } from "node:crypto";
-import type { Application, ApplicationStatus, MemberCategory, PrismaClient } from "@/generated/prisma/client";
+import type { Application, MemberCategory, PrismaClient } from "@/generated/prisma/client";
+import { LIVE_APPLICATION_STATUSES } from "@/lib/applications/statuses";
 import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { prisma } from "@/lib/prisma";
 import { hashToken } from "@/lib/tokens";
 
-// Estados en los que la solicitud "existe" para el vecino y para la unicidad
-// por DNI. rejected/expired/completed no bloquean una solicitud nueva
-// (completed no llega a molestar: ahí el DNI ya es socio vigente y lo frena
-// la elegibilidad).
-export const LIVE_APPLICATION_STATUSES: ApplicationStatus[] = [
-  "started", "pending_payment", "approved_pending_minute", "pending_board",
-];
+// El conjunto vive en `statuses.ts` (módulo PURO, sin Prisma) y se re-exporta
+// acá para no tocar ninguno de sus call-sites: importarlo desde este archivo
+// arrastra `@/lib/prisma`, que tira al evaluarse si falta DATABASE_URL.
+export { LIVE_APPLICATION_STATUSES };
 
 export class DuplicateLiveApplicationError extends Error {
   constructor() {

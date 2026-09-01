@@ -248,6 +248,42 @@ export const resumeResendTargetLimiter = createRateLimiter({
   windowMs: APPLICATION_WINDOW_MS,
 })
 
+export const ASOCIATE_EMAIL_LIMIT = PASSWORD_RESET_EMAIL_LIMIT
+
+/** ASOCIATE, por dirección DECLARADA: el correo que el wizard manda hacia
+ *  afuera. Mismo argumento que `passwordResetEmailLimiter` —"el techo por IP no
+ *  protege a una casilla concreta si el atacante rota de origen"— y por eso
+ *  mismo presupuesto y misma ventana que aquél: el daño que raciona es el mismo
+ *  (inundar el buzón de un tercero desde un formulario anónimo), así que los dos
+ *  números tienen que moverse juntos.
+ *
+ *  Por qué no alcanzaban los tres techos que ya había. Los dos por IP
+ *  (`applicationCreateLimiter`, `resumeResendLimiter`) racionan el origen, no al
+ *  destinatario. Y el de DNI (`resumeResendTargetLimiter`) protege menos de lo
+ *  que parece acá: en el ALTA la dirección la elige quien completa el
+ *  formulario y nadie la verifica antes de mandarle el correo, así que el DNI
+ *  —también elegido por él— no identifica a la víctima. El único dato que la
+ *  identifica es la casilla, y este es su techo.
+ *
+ *  UNO SOLO para los dos correos del wizard (la verificación al crear y el
+ *  reenvío del enlace de retome): es un presupuesto por CASILLA, no por
+ *  formulario. Con uno por camino, la misma dirección recibiría el doble.
+ *
+ *  La clave es la dirección NORMALIZADA (minúsculas y sin espacios: `parseForm`
+ *  recorta y las actions bajan a minúsculas antes de consultar), si no alternar
+ *  mayúsculas alcanzaría para saltarse el techo.
+ *
+ *  Se registra SIEMPRE, termine o no en creación: si sólo contáramos los
+ *  intentos que llegan a escribir, el que se pasa del techo contestaría distinto
+ *  según lo que el padrón sepa del DNI, que es justo lo que la anti-enumeración
+ *  de la spec M3 §4 no puede revelar. Por eso el bloqueo devuelve el MISMO texto
+ *  genérico que el techo por IP: un mensaje propio ("esa casilla ya recibió
+ *  demasiados avisos") sería un oráculo que dice que la dirección es conocida. */
+export const asociateEmailLimiter = createRateLimiter({
+  limit: ASOCIATE_EMAIL_LIMIT,
+  windowMs: APPLICATION_WINDOW_MS,
+})
+
 export const MEMBER_PAY_LIMIT = 5
 
 /** "Pagar ahora" del panel de socio, por memberId: cada clic crea una
