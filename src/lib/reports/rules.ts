@@ -55,13 +55,20 @@ function validCoords(lat: number | null, lng: number | null): boolean {
 export function validateSubmission(input: SubmissionInput): SubmissionVerdict {
   const fail = (error: string): SubmissionVerdict => ({ ok: false, error });
 
+  // La normalización vive ACÁ y no en el parseo del POST: el wizard puede dejar
+  // el `""` de un `<select>` sin elegir cuando cambia la categoría, y una
+  // categoría sin tipos no puede rechazarlo con un mensaje que la pantalla no
+  // tiene cómo satisfacer (no muestra tipos). Un solo lugar para los dos
+  // call-sites, la lección de `coverageFloor`.
+  const subtype = input.subtype?.trim() || null;
+
   if (input.kind === "claim") {
     const category = findClaimCategory(input.category);
     if (!category) return fail(REPORT_MESSAGES.category);
-    if (category.subtypes.length > 0 && !findSubtype(category.slug, input.subtype)) {
+    if (category.subtypes.length > 0 && !findSubtype(category.slug, subtype)) {
       return fail(REPORT_MESSAGES.subtype);
     }
-    if (category.subtypes.length === 0 && input.subtype !== null) return fail(REPORT_MESSAGES.subtype);
+    if (category.subtypes.length === 0 && subtype !== null) return fail(REPORT_MESSAGES.subtype);
   } else if (!findInitiativeCategory(input.category)) {
     return fail(REPORT_MESSAGES.category);
   }

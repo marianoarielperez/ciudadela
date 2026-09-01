@@ -44,6 +44,17 @@ describe("validateSubmission", () => {
     expect(validateSubmission({ ...base, category: "other", subtype: null })).toEqual({ ok: true });
   });
 
+  it("una categoría sin tipos tampoco acepta un tipo colgado", () => {
+    expect(validateSubmission({ ...base, category: "other", subtype: "pothole" })).toEqual({
+      ok: false, error: REPORT_MESSAGES.subtype,
+    });
+  });
+
+  it("el '' de un select sin elegir vale como 'sin tipo', no como tipo inválido", () => {
+    expect(validateSubmission({ ...base, category: "other", subtype: "" })).toEqual({ ok: true });
+    expect(validateSubmission({ ...base, subtype: "" })).toEqual({ ok: false, error: REPORT_MESSAGES.subtype });
+  });
+
   it("la descripción es obligatoria y tiene tope", () => {
     expect(validateSubmission({ ...base, description: "   " })).toEqual({ ok: false, error: REPORT_MESSAGES.description });
     expect(validateSubmission({ ...base, description: "x".repeat(2001) })).toEqual({ ok: false, error: REPORT_MESSAGES.descriptionLong });
@@ -58,6 +69,12 @@ describe("validateSubmission", () => {
   it("un par de coordenadas a medias o fuera de rango se rechaza", () => {
     expect(validateSubmission({ ...base, lat: -45.79, lng: null })).toEqual({ ok: false, error: REPORT_MESSAGES.location });
     expect(validateSubmission({ ...base, lat: 91, lng: -67 })).toEqual({ ok: false, error: REPORT_MESSAGES.location });
+  });
+
+  it("el medio par se rechaza también donde la ubicación es opcional", () => {
+    expect(validateSubmission({ ...base, category: "other", subtype: null, lat: -45.79, lng: null })).toEqual({
+      ok: false, error: REPORT_MESSAGES.location,
+    });
   });
 
   it("el vecino necesita identidad completa y las dos caras del DNI; el socio no", () => {
