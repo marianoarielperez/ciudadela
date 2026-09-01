@@ -39,6 +39,8 @@ describe("BARRIO_BOUNDARY", () => {
     expect(BARRIO_BOUNDS.west).toBeLessThan(BARRIO_BOUNDS.east);
     expect(BARRIO_CENTER[0]).toBeGreaterThan(BARRIO_BOUNDS.south);
     expect(BARRIO_CENTER[0]).toBeLessThan(BARRIO_BOUNDS.north);
+    expect(BARRIO_CENTER[1]).toBeGreaterThan(BARRIO_BOUNDS.west);
+    expect(BARRIO_CENTER[1]).toBeLessThan(BARRIO_BOUNDS.east);
   });
 });
 
@@ -51,6 +53,15 @@ describe("isInsideBoundary", () => {
   });
   it("un punto justo fuera de la caja está afuera", () => {
     expect(isInsideBoundary(BARRIO_BOUNDS.north + 0.001, BARRIO_CENTER[1])).toBe(false);
+  });
+  it("una esquina de la caja está adentro de la caja pero afuera del polígono", () => {
+    // Los dos casos de arriba cortan en el chequeo de la caja envolvente y nunca
+    // llegan al ray casting. Las esquinas NE, NO y SE de la caja sí entran al
+    // polígono como candidatas y quedan afuera: es lo único que ejercita el
+    // algoritmo en su rama negativa.
+    expect(isInsideBoundary(BARRIO_BOUNDS.north, BARRIO_BOUNDS.east)).toBe(false);
+    expect(isInsideBoundary(BARRIO_BOUNDS.north, BARRIO_BOUNDS.west)).toBe(false);
+    expect(isInsideBoundary(BARRIO_BOUNDS.south, BARRIO_BOUNDS.east)).toBe(false);
   });
 });
 
@@ -68,5 +79,14 @@ describe("boundaryToSvgPath", () => {
     expect(Math.max(...ys)).toBeLessThanOrEqual(116);
     // Un vértice por punto del anillo sin el cierre repetido.
     expect(xs.length).toBe(BARRIO_BOUNDARY.length - 1);
+    // La proporción dibujada es la del barrio proyectado con la corrección por el
+    // coseno de la latitud media: sin ella el barrio sale ~30% más ancho.
+    const expectedRatio =
+      (BARRIO_BOUNDS.north - BARRIO_BOUNDS.south) /
+      ((BARRIO_BOUNDS.east - BARRIO_BOUNDS.west) * Math.cos((BARRIO_CENTER[0] * Math.PI) / 180));
+    expect((Math.max(...ys) - Math.min(...ys)) / (Math.max(...xs) - Math.min(...xs))).toBeCloseTo(
+      expectedRatio,
+      2,
+    );
   });
 });
