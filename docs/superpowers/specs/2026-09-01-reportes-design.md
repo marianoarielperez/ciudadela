@@ -404,8 +404,14 @@ Digest (`digest.ts`, cuatro puntos): `reportsReceived`, `reportsReceivedClaims`,
 1 iniciativa) · 7 sin presentar". Cuenta como novedad sólo `reportsReceived > 0`: la cola sin
 novedades no dispara un correo solo.
 
-Purga: el route handler del digest llama `purgeReportRetention` **después** de mandar el resumen y
-suma `{ dniPurged, draftsPurged }` al detalle de la `CronRun`. Borra imágenes `dni_*` de reportes
+Purga: el route handler del digest llama `reportRetention.purge()` **antes** de juntar las novedades y
+**todos los días, también los tranquilos** (decisión de la Parte 1: si corriera después del `hasNews`,
+un día sin novedades saltearía la retención, que es una obligación legal y no puede depender de que
+haya algo que contar). El resultado `{ dniPurged, draftsPurged, errors }` viaja como `retention` en el
+JSON de la respuesta y, cuando hay corrida, en el `summary` de la `CronRun`; un día tranquilo sigue sin
+escribir `CronRun`, y el rastro de una purga con trabajo es el asiento `report_retention_purge` que
+escribe la propia purga. El lote está acotado (`PURGE_BATCH = 200` por corrida; la purga es idempotente
+y drena en noches sucesivas). Borra imágenes `dni_*` de reportes
 con `filedAt`/`dismissedAt` ≤ hoy − 360 días y `dniPurgedAt: null` (estampa `dniPurgedAt`), y
 borra filas + carpeta de borradores con `createdAt` ≤ ahora − 48 h. Un fallo de disco en un
 reporte no corta la corrida: se cuenta y se sigue. Auditoría `report_retention_purge` con conteos.
