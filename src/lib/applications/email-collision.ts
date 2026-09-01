@@ -1,7 +1,15 @@
 // ¿La casilla que declaró una solicitud de alta ya está EN USO en otra parte
-// del sistema? Es un AVISO para el operador, nunca un bloqueo: un matrimonio
-// que comparte buzón es un caso legítimo y documentado (docs/04), así que la
-// pantalla informa y la Comisión decide.
+// del sistema? Tiene DOS lectores, y no dicen lo mismo:
+//
+//   - El PANEL avisa y no bloquea nunca: un matrimonio que comparte buzón es un
+//     caso legítimo y documentado (docs/04), así que la pantalla informa y la
+//     Comisión decide.
+//   - El WIZARD público corta el envío, pero sólo con las tres causales de
+//     `BLOCKING_COLLISION_KINDS` (decisión del operador, 01/09/2026): la ficha
+//     sin cuenta —el buzón compartido— lo sigue dejando pasar.
+//
+// Las dos lecturas salen de las MISMAS funciones para que no puedan divergir en
+// qué llaman colisión.
 //
 // Por qué hace falta: hoy el operador asienta un alta en acta sin ninguna señal
 // de que el email declarado sea el de una cuenta de gestión o el de la ficha de
@@ -37,6 +45,33 @@ export type EmailCollision =
   | { kind: "application"; applicationId: number };
 
 export type EmailCollisionMap = Map<string, EmailCollision[]>;
+
+/** Las causales que además de AVISAR en el panel BLOQUEAN el envío del wizard
+ *  público (decisión del operador, 01/09/2026). Son las tres que implican que
+ *  esa casilla ya es la puerta de entrada de alguien al sistema:
+ *
+ *  - `admin_account` / `account`: una solicitud sobre esa dirección termina en
+ *    una invitación de socio, o sea en un cambio de contraseña de OTRA persona.
+ *  - `application`: dos trámites vivos disputándose el mismo buzón — el enlace
+ *    de retome, la verificación y el aviso de resolución le llegan a los dos.
+ *
+ *  `member` NO está, a propósito: la ficha sin cuenta es el matrimonio que
+ *  comparte buzón, que es legítimo y documentado (docs/04). Ese caso lo sigue
+ *  cubriendo el aviso del panel, que es lo que este módulo hacía hasta ayer.
+ *
+ *  Vive acá y no en la action para que la pantalla que avisa y el camino que
+ *  bloquea no puedan divergir en qué llaman colisión. Misma lección que
+ *  `coverageFloor`. */
+export const BLOCKING_COLLISION_KINDS: ReadonlySet<EmailCollision["kind"]> = new Set([
+  "admin_account", "account", "application",
+] as const);
+
+/** ¿Esta colisión corta un alta pública? Se lee en `createApplicationAction`
+ *  sobre lo que devuelve `collisionsFor`, o sea DESPUÉS de descontar lo propio
+ *  (la cuenta del ex socio que reingresa cuelga de su ficha y no cuenta). */
+export function isBlockingCollision(c: EmailCollision): boolean {
+  return BLOCKING_COLLISION_KINDS.has(c.kind);
+}
 
 /** La MISMA normalización que `sameAddress` (`@/lib/members/write`) y que lo
  *  que `syncAccountEmail` termina escribiendo en la cuenta: minúsculas y sin

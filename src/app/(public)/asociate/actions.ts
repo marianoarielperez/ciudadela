@@ -14,6 +14,7 @@ import {
 } from "@/lib/auth/rate-limiter";
 import { dniCheckVerdict } from "@/lib/applications/dni-check";
 import { MAX_ANNEXES, requiredDocsComplete } from "@/lib/applications/documents-rules";
+import { collisionsFor, findEmailCollisions, isBlockingCollision } from "@/lib/applications/email-collision";
 import { checkEligibility } from "@/lib/applications/eligibility";
 import { loadEligibilityInputs } from "@/lib/applications/eligibility-inputs";
 import { applicationService, DuplicateLiveApplicationError } from "@/lib/applications/service";
@@ -96,6 +97,14 @@ function reregistrationClosed(deadline: Date | null): string {
 const LEGAL_MISSING =
   "No podemos recibir tu solicitud en este momento: todavía no están publicados los textos que tenés que aceptar (términos y condiciones y consentimiento de datos). Probá más tarde o acercate a la sede vecinal.";
 const NO_CAPTCHA = "No pudimos verificar que sos una persona. Recargá la página y probá de nuevo.";
+// La casilla declarada ya es de una CUENTA del portal o de otra SOLICITUD viva
+// (decisión del operador, 01/09/2026). UN solo texto para las tres causales: no
+// se dice cuál, y mucho menos que la dirección sea la de una cuenta de gestión.
+// El vecino que se topa con esto de verdad —el buzón familiar que su pareja ya
+// usa para entrar al portal— tiene dos salidas que el mensaje nombra: otra
+// dirección, o la sede.
+const EMAIL_IN_USE =
+  "Ese email ya está en uso en el sistema. Usá otra dirección; si creés que es un error, acercate a la sede vecinal.";
 const BAD_BIRTH_DATE = "La fecha de nacimiento no es válida.";
 const IN_PROGRESS = "Ya tenés una solicitud en trámite. Te podemos reenviar por email el enlace para retomarla.";
 // Respuesta única del reenvío: la misma exista o no la solicitud.
@@ -315,6 +324,36 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
         retryAtIso: eligibility.code === "rejected_wait" ? eligibility.retryAt.toISOString() : undefined,
       },
     };
+  }
+
+  // La casilla en USO corta el alta (decisión del operador, 01/09/2026). Hasta
+  // ayer esto era sólo un AVISO en la cola del panel; sigue siéndolo para la
+  // ficha sin cuenta —el buzón compartido de docs/04— y pasa a ser un bloqueo
+  // para las tres causales de `BLOCKING_COLLISION_KINDS`.
+  //
+  // POR QUÉ acá y no antes: va DESPUÉS de la elegibilidad a propósito. El que
+  // vuelve a intentar con su mismo DNI tiene una solicitud viva con su misma
+  // casilla, así que las dos reglas disparan; la respuesta correcta es
+  // "te reenviamos el enlace" y no "usá otra dirección", que lo dejaría sin
+  // salida. Y va después del `record` de los dos cupos: el mensaje es
+  // EXPLÍCITO —dice que esa dirección existe en el sistema—, o sea un oráculo,
+  // y lo único que lo raciona es el techo por casilla ya cobrado arriba.
+  //
+  // `eligibility.memberId` es el reingreso: la cuenta del portal que cuelga de
+  // SU PROPIA ficha no es una colisión (la misma exclusión que usa la cola del
+  // panel). El `0` del id de solicitud es "todavía no hay ninguna": los ids son
+  // autoincrementales positivos, así que no descuenta a nadie.
+  const ownCollisions = collisionsFor(
+    await findEmailCollisions(prisma, [email]),
+    email,
+    0,
+    eligibility.memberId,
+  );
+  if (ownCollisions.some(isBlockingCollision)) {
+    // Sin la dirección en el log (Ley 25.326) y sin los ids de lo que colisionó:
+    // el hecho alcanza para saber que la regla está actuando.
+    console.warn("[asociate] alta frenada: la casilla declarada ya está en uso");
+    return { error: EMAIL_IN_USE };
   }
 
   // `wantsDebit` sólo tiene sentido para el adherente; activo y colaborador van

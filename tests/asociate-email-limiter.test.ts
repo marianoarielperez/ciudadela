@@ -25,7 +25,12 @@ const mocks = vi.hoisted(() => {
   return {
     DuplicateLiveApplicationError,
     prisma: {
-      member: { findUnique: vi.fn() },
+      // `findMany` (en las tres tablas) es lo que consulta `findEmailCollisions`,
+      // el bloqueo por casilla en uso. Acá va siempre vacío: lo que este archivo
+      // mide es el PRESUPUESTO del limitador, no esa regla.
+      member: { findUnique: vi.fn(), findMany: vi.fn() },
+      user: { findMany: vi.fn() },
+      application: { findMany: vi.fn() },
       configuration: { findUnique: vi.fn() },
       reregistrationProcess: { findUnique: vi.fn() },
     },
@@ -143,6 +148,9 @@ beforeEach(() => {
   );
   mocks.prisma.reregistrationProcess.findUnique.mockResolvedValue(null);
   mocks.prisma.member.findUnique.mockResolvedValue(null);
+  mocks.prisma.user.findMany.mockResolvedValue([]);
+  mocks.prisma.member.findMany.mockResolvedValue([]);
+  mocks.prisma.application.findMany.mockResolvedValue([]);
   mocks.service.findLiveByDni.mockResolvedValue(null);
   mocks.service.lastRejectionAt.mockResolvedValue(null);
   mocks.service.create.mockResolvedValue({ id: 7, resumeToken: "RESUME-RAW" });
