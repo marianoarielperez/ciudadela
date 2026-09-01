@@ -212,6 +212,23 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // M7 (Reportes): la entrada global apaga la geolocalización para todo el
+      // sitio, y el picker de ubicación del wizard la necesita ("Usar mi
+      // ubicación"). Se reabre SÓLO para las dos rutas del wizard —la pública y
+      // la del socio— y sólo para el propio origen. `headers()` pisa por CLAVE
+      // en orden de declaración: por eso estas dos van DESPUÉS de la global.
+      {
+        source: "/reportes/:path*",
+        headers: [
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
+        ],
+      },
+      {
+        source: "/mi/solicitudes/reportes/:path*",
+        headers: [
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
+        ],
+      },
     ];
   },
   experimental: {

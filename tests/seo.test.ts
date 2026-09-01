@@ -53,6 +53,9 @@ describe("sitemap.xml", () => {
       "https://sigev.redaccion.ar/noticias",
       "https://sigev.redaccion.ar/actividades",
       "https://sigev.redaccion.ar/ubicacion",
+      // M7: la portada de Reportes es pública y va al índice. `/reportes/nuevo`
+      // NO: esa URL lleva la llave del reporte adentro y la cierra robots.txt.
+      "https://sigev.redaccion.ar/reportes",
     ]);
     for (const u of urls) expect(u).not.toMatch(/\/(admin|mi|api|ingresar|verificar|acceso)/);
   });
