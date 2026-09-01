@@ -38,6 +38,11 @@ const mocks = vi.hoisted(() => {
     createLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
     resendLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
     resendTargetLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn() },
+    // El techo por casilla declarada. Acá va con cupo infinito: lo que este
+    // archivo fija es el ORDEN de las guardas, y su presupuesto y su
+    // normalización se miden en tests/asociate-email-limiter.test.ts contra el
+    // limitador de verdad.
+    emailLimiter: { allows: vi.fn(), record: vi.fn(), refund: vi.fn(), check: vi.fn() },
     afterCallbacks: [] as Array<() => unknown>,
     // Filas de `configuration` que ve la action. Es un mapa y no un valor fijo
     // porque la creación lee TRES claves (el interruptor y los dos textos
@@ -59,6 +64,7 @@ vi.mock("@/lib/auth/rate-limiter", () => ({
   applicationCreateLimiter: mocks.createLimiter,
   resumeResendLimiter: mocks.resendLimiter,
   resumeResendTargetLimiter: mocks.resendTargetLimiter,
+  asociateEmailLimiter: mocks.emailLimiter,
 }));
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-real-ip": "1.2.3.4", "user-agent": "vitest" }),
@@ -122,6 +128,8 @@ beforeEach(() => {
   mocks.createLimiter.allows.mockReturnValue(true);
   mocks.resendLimiter.allows.mockReturnValue(true);
   mocks.resendTargetLimiter.allows.mockReturnValue(true);
+  mocks.emailLimiter.allows.mockReturnValue(true);
+  mocks.emailLimiter.check.mockReturnValue(true);
   mocks.verifyTurnstile.mockResolvedValue(true);
   // `asociate_activo` prendido (guarda 0, docs/05 §2) y los dos textos legales
   // publicados (guarda 0 bis): sin ellos no hay nada que aceptar.

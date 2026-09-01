@@ -10,7 +10,7 @@ import type { Application } from "@/generated/prisma/client";
 import { audit } from "@/lib/audit";
 import {
   applicationCreateLimiter, applicationStatusLimiter, asociateDniCheckLimiter,
-  publicTokenLimiter, resumeResendLimiter, resumeResendTargetLimiter,
+  asociateEmailLimiter, publicTokenLimiter, resumeResendLimiter, resumeResendTargetLimiter,
 } from "@/lib/auth/rate-limiter";
 import { dniCheckVerdict } from "@/lib/applications/dni-check";
 import { MAX_ANNEXES, requiredDocsComplete } from "@/lib/applications/documents-rules";
@@ -243,6 +243,22 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
     return { error: "Los dos emails no coinciden: revisá el tipeo." };
   }
 
+  // El techo por CASILLA (`asociateEmailLimiter`), consultado acá y registrado
+  // abajo junto con el de IP: mismo patrón de reserva que el resto del archivo
+  // —consultar todos los cupos y recién después registrarlos—, y por el mismo
+  // motivo va después del formato (un typo no puede gastarle a nadie sus
+  // intentos). La clave ya viene normalizada: `parseForm` recorta y la línea de
+  // arriba baja a minúsculas.
+  //
+  // Lo que raciona: esta action le manda la verificación a una dirección que
+  // NADIE verificó que sea de quien completa el formulario. El techo por IP no
+  // alcanza si el atacante rota de origen, y el del DNI tampoco: acá los dos
+  // datos los elige él (ver el comentario del limitador).
+  //
+  // El texto del bloqueo es el genérico de siempre, a propósito: uno propio
+  // diría que esa casilla es conocida por el sistema.
+  if (!asociateEmailLimiter.allows(email)) return { error: TOO_MANY };
+
   const livesInBarrio = data.livesInBarrio === "si";
   if (livesInBarrio && !data.streetId) return { error: "Elegí tu calle del listado del barrio." };
   if (!livesInBarrio && (!data.streetText || !data.neighborhood)) {
@@ -271,6 +287,10 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   // Desde acá se toca el padrón, así que el intento se cobra: el cupo es lo
   // único, junto con el captcha, que impide usar este formulario para barrerlo.
   applicationCreateLimiter.record(ip);
+  // Se registra ACÁ y no al final: el intento se cobra aunque la creación
+  // termine rechazada por elegibilidad o falle. Contar sólo las que llegan a
+  // escribir haría que el techo mismo revele qué sabe el padrón de ese DNI.
+  asociateEmailLimiter.record(email);
 
   // Elegibilidad por DNI (spec §4): corre DESPUÉS de Turnstile + rate limit,
   // que son lo único que impide usar este formulario para barrer el padrón.
@@ -457,6 +477,31 @@ async function deliverResumeLink(dni: string, ip: string): Promise<void> {
   try {
     live = await applicationService.findLiveByDni(dni);
     if (!live) return;
+
+    // El techo por CASILLA, con la dirección de la solicitud VIVA: la que va a
+    // recibir el correo. Es el mismo presupuesto que gasta la creación —uno por
+    // casilla, no uno por formulario—, así que los dos correos del wizard no
+    // pueden sumarse contra el mismo buzón.
+    //
+    // Pasado el cupo se vuelve EN SILENCIO, exactamente como el DNI sin
+    // solicitud viva de la línea de arriba: estamos después de haber contestado
+    // `RESEND_DONE`, y cualquier diferencia visible desde afuera convertiría el
+    // formulario en un verificador de solicitudes por DNI. Se consulta acá y no
+    // en la action porque la dirección sólo se conoce después de buscar, y esa
+    // búsqueda no puede correr antes de responder (frente 2 de la
+    // anti-enumeración). El techo por IP y el techo por DNI ya se cobraron
+    // antes, así que el intento no sale gratis.
+    //
+    // `check` y no `allows`+`record`: no hay un segundo cupo que consultar acá,
+    // y el intento se cobra igual que en el catch de abajo —martillar contra
+    // una casilla no puede ser gratis—. Normalizada, como en la creación: la
+    // dirección viene de la base, pero el presupuesto es el mismo.
+    if (!asociateEmailLimiter.check(live.email.trim().toLowerCase())) {
+      // Sin la dirección en el log (Ley 25.326): la solicitud ya está
+      // identificada por su id.
+      console.warn("[asociate] reenvío del enlace de retome frenado por cupo de la casilla", live.id);
+      return;
+    }
 
     // Enviar PRIMERO y persistir después. El crudo sólo existe al generarlo (la
     // base guarda el hash), así que rotar antes del envío significa que un SMTP
