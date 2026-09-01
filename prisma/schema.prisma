@@ -43,6 +43,8 @@ model User {
   presentationsValidated Presentation[]
   feeExemptionsCreated   FeeExemption[]
   institutionalDocs      InstitutionalDocument[]
+  reportsFiled           Report[]                @relation("ReportFiledBy")
+  reportsDismissed       Report[]                @relation("ReportDismissedBy")
 
   @@map("users")
 }
@@ -209,6 +211,16 @@ enum NotificationType {
   presentation_observed
   presentation_rejected
   generic
+  // M7 (Reportes): acuse al que reporta, aviso al presentar o tratar, y la
+  // alerta inmediata a la Comisión. Tipos propios y no `generic` por el mismo
+  // motivo que los de M6: poder contarlos y buscarlos aparte.
+  //
+  // Van DESPUÉS de `generic`, o sea al final absoluto, y no antes del comodín:
+  // un ENUM se guarda como índice, así que intercalarlos le correría el
+  // significado a cada fila que ya dice `generic`.
+  report_received
+  report_filed
+  report_board_alert
 }
 
 enum NotificationVia {
@@ -272,6 +284,7 @@ model Member {
   memberRequests       MemberRequest[]
   presentations        Presentation[]
   feeExemptions        FeeExemption[]
+  reports              Report[]
 
   @@index([fullName])
   @@index([status, category])
@@ -334,6 +347,7 @@ model Minute {
   processesClosed      ReregistrationProcess[] @relation("ProcessCloseMinute")
   feeExemptions        FeeExemption[]          @relation("FeeExemptionMinute")
   feeExemptionsRevoked FeeExemption[]          @relation("FeeExemptionRevokeMinute")
+  reportsFiled         Report[]                @relation("ReportFiledMinute")
 
   @@unique([type, number])
   @@map("minutes")
@@ -396,6 +410,7 @@ model Street {
   members        Member[]
   applications   Application[]
   presentations  Presentation[]
+  reports        Report[]
 
   @@index([normalizedName])
   @@index([loadOrder])
@@ -424,6 +439,10 @@ model Notification {
   // bloquear el borrado de un cartel ya colgado por su cuenta.
   boardNoticeId  Int?               @map("board_notice_id")
   boardNotice    BoardNotice?       @relation(fields: [boardNoticeId], references: [id], onDelete: SetNull)
+  // M7: aviso dirigido a un REPORTE (el acuse a un vecino que no es socio, o la
+  // alerta a la Comisión sobre ese reporte). `SetNull` como `applicationId`.
+  reportId       Int?               @map("report_id")
+  report         Report?            @relation(fields: [reportId], references: [id], onDelete: SetNull)
   type           NotificationType
   via            NotificationVia
   status         NotificationStatus
@@ -1201,4 +1220,121 @@ model InstitutionalDocument {
 
   @@index([type, year])
   @@map("institutional_documents")
+}
+
+// ── Módulo 7: Reportes (reclamos e iniciativas, Art. 2 inc. g y Art. 6.2) ──
+enum ReportKind {
+  claim
+  initiative
+}
+
+// `draft` es el borrador que nace al terminar el paso 1 del wizard (spec §5.1):
+// existe para que las fotos y el DNI tengan dueño mientras el vecino completa
+// el resto. Un borrador nunca enviado se purga a las 48 h (retention.ts).
+// `filed` se LEE "presentado" para un reclamo y "tratada" para una iniciativa.
+enum ReportStatus {
+  draft
+  received
+  filed
+  dismissed
+}
+
+enum ReportFileKind {
+  photo
+  dni_front
+  dni_back
+}
+
+enum ReportAgency {
+  mcr
+  scpl
+  council
+  province
+  camuzzi
+  other
+}
+
+// Módulo 7 — Reportes: reclamos (Art. 2 inc. g, de VECINOS, socios o no) e
+// iniciativas (Art. 6.2, evaluadas por la CD). Es un REGISTRO de lo que el
+// vecino plantea y de lo que la asociación hizo con eso; no es un sistema de
+// tickets ni promete resolución (docs/01). Spec 2026-09-01-reportes-design.md.
+//
+// La identidad es una FOTO al momento de reportar (para el socio se copia de su
+// ficha al crear el borrador): el PDF dice quién reportó ese día. `anonymous`
+// es "reservado ante el organismo": la asociación siempre conoce la identidad;
+// el PDF y la presentación la omiten.
+//
+// Tablas propias y no `Document` polimórfico (decisión de arquitectura, spec
+// §2): la purga de los DNI a los 360 días y el ancho/alto para el PDF piden
+// columnas que `documents` no tiene, y "documento personal validable" no es lo
+// mismo que "foto de un bache".
+model Report {
+  id               Int            @id @default(autoincrement())
+  kind             ReportKind
+  status           ReportStatus   @default(draft)
+  anonymous        Boolean        @default(false)
+  memberId         Int?           @map("member_id")
+  member           Member?        @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  reporterName     String?        @map("reporter_name") @db.VarChar(160)
+  reporterDni      String?        @map("reporter_dni") @db.VarChar(12)
+  reporterPhone    String?        @map("reporter_phone") @db.VarChar(40)
+  reporterEmail    String?        @map("reporter_email") @db.VarChar(191)
+  consentAt        DateTime?      @map("consent_at")
+  category         String?        @db.VarChar(40)
+  subtype          String?        @db.VarChar(60)
+  description      String?        @db.VarChar(2000)
+  lat              Decimal?       @db.Decimal(9, 6)
+  lng              Decimal?       @db.Decimal(9, 6)
+  outsideBoundary  Boolean        @default(false) @map("outside_boundary")
+  streetId         Int?           @map("street_id")
+  street           Street?        @relation(fields: [streetId], references: [id], onDelete: SetNull)
+  streetName       String?        @map("street_name") @db.VarChar(120)
+  addressDetail    String?        @map("address_detail") @db.VarChar(160)
+  scplTicket       String?        @map("scpl_ticket") @db.VarChar(40)
+  // sha256 de la llave del borrador (spec §5.1). Sólo el hash; el crudo viaja
+  // una vez, en la URL del wizard.
+  claimTokenHash   String?        @unique @map("claim_token_hash") @db.Char(64)
+  submittedAt      DateTime?      @map("submitted_at")
+  filedAt          DateTime?      @map("filed_at")
+  filedById        Int?           @map("filed_by_id")
+  filedBy          User?          @relation("ReportFiledBy", fields: [filedById], references: [id], onDelete: SetNull)
+  filedAgency      ReportAgency?  @map("filed_agency")
+  filedAgencyOther String?        @map("filed_agency_other") @db.VarChar(80)
+  filedReference   String?        @map("filed_reference") @db.VarChar(80)
+  filedMinuteId    Int?           @map("filed_minute_id")
+  filedMinute      Minute?        @relation("ReportFiledMinute", fields: [filedMinuteId], references: [id], onDelete: SetNull)
+  dismissedAt      DateTime?      @map("dismissed_at")
+  dismissedById    Int?           @map("dismissed_by_id")
+  dismissedBy      User?          @relation("ReportDismissedBy", fields: [dismissedById], references: [id], onDelete: SetNull)
+  dismissReason    String?        @map("dismiss_reason") @db.VarChar(300)
+  dniPurgedAt      DateTime?      @map("dni_purged_at")
+  ip               String?        @db.VarChar(45)
+  userAgent        String?        @map("user_agent") @db.VarChar(255)
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  files            ReportFile[]
+  notifications    Notification[]
+
+  @@index([status, kind])
+  @@index([memberId, status])
+  @@index([submittedAt])
+  @@map("reports")
+}
+
+// Un archivo de un reporte, YA re-codificado por sharp (siempre JPEG, sin EXIF:
+// docs/08). `path` es relativa a UPLOADS_DIR: `reports/{reportId}/{uuid}.jpg`.
+model ReportFile {
+  id        Int            @id @default(autoincrement())
+  reportId  Int            @map("report_id")
+  report    Report         @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  kind      ReportFileKind
+  path      String         @db.VarChar(255)
+  mime      String         @db.VarChar(100)
+  size      Int
+  width     Int
+  height    Int
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@index([reportId, kind])
+  @@map("report_files")
 }
