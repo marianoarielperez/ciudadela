@@ -16,6 +16,7 @@ export function ChoiceCard({
   checked,
   onSelect,
   title,
+  icon,
   aside,
   children,
 }: {
@@ -24,6 +25,9 @@ export function ChoiceCard({
   checked: boolean;
   onSelect: () => void;
   title: string;
+  /** Chip decorativo a la izquierda del título. El dato es el título: el ícono
+   *  va `aria-hidden` y la tarjeta se lee igual sin él. */
+  icon?: React.ReactNode;
   aside?: React.ReactNode;
   children?: React.ReactNode;
 }) {
@@ -45,6 +49,14 @@ export function ChoiceCard({
         onChange={onSelect}
         className="mt-0.5 size-5 shrink-0 accent-primary"
       />
+      {icon && (
+        <span
+          aria-hidden
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+        >
+          {icon}
+        </span>
+      )}
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <span className="text-base font-semibold">{title}</span>
@@ -110,6 +122,10 @@ type NavButtonsProps = {
   /** El paso 6 no "envía": va a Mercado Pago. El rótulo de espera tiene que
    *  decir lo que está pasando, si no el vecino cree que ya mandó la solicitud. */
   pendingLabel?: string;
+  /** Id del texto que explica QUÉ hace el avance (una nota al pie del paso).
+   *  Va como `aria-describedby` del botón, no como `aria-label`: el rótulo
+   *  sigue siendo el rótulo. */
+  nextDescribedBy?: string;
 } & NavNextProps;
 
 export function NavButtons(props: NavButtonsProps) {
@@ -120,6 +136,7 @@ export function NavButtons(props: NavButtonsProps) {
     nextDisabled,
     pending,
     pendingLabel = "Enviando…",
+    nextDescribedBy,
   } = props;
   return (
     <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -140,6 +157,7 @@ export function NavButtons(props: NavButtonsProps) {
       <Button
         type={props.submit ? "submit" : "button"}
         onClick={props.submit ? undefined : props.onNext}
+        aria-describedby={nextDescribedBy}
         disabled={nextDisabled || pending}
         className={cn(CONTROL_HEIGHT, "font-semibold sm:w-auto sm:px-8")}
       >
