@@ -8,6 +8,7 @@ import { useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { REPORT_MESSAGES } from "@/lib/reports/rules";
 import { cn } from "@/lib/utils";
 import { Field } from "../asociate/wizard-ui";
 import { FileSlot } from "./file-slot";
@@ -137,7 +138,10 @@ export function StepIdentity({
           {error}
         </FormMessage>
       )}
-      {!dniReady && <FormMessage kind="neutral">Para continuar hacen falta las dos caras del DNI.</FormMessage>}
+      {/* El MISMO texto con el que el server rechaza el paso (`saveReporter`):
+          la pantalla y el rechazo no pueden decir cosas distintas del mismo
+          requisito (patrón `GRANT_GUARD_MESSAGES`). */}
+      {!dniReady && <FormMessage kind="neutral">{REPORT_MESSAGES.dni}</FormMessage>}
 
       {/* La botonera se arma acá y no con `NavButtons` por dos motivos: el
           avance envía el form de DATOS por `form=` (no el que lo envuelve, que

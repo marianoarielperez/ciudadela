@@ -16,10 +16,12 @@
 // exige captcha, la del socio exige sesión.
 import { FileText, Landmark, MapPinned, Send, UserRound, type LucideIcon } from "lucide-react";
 import { useActionState, useEffect, useRef, useState } from "react";
+import { FormMessage } from "@/components/admin/form-message";
 import type { ReportKindSlug } from "@/lib/reports/catalog";
+import { REPORT_MESSAGES } from "@/lib/reports/rules";
 import { ProcessRail, type ProcessPhase } from "../asociate/process-rail";
 import { saveReporterAction, submitReportAction } from "./actions";
-import { ReportDone } from "./report-done";
+import { ReportDone, type DoneStatus } from "./report-done";
 import { StepIdentity } from "./step-identity";
 import { StepReport } from "./step-report";
 import { StepStart } from "./step-start";
@@ -70,21 +72,21 @@ const PHASES: Record<ReportKindSlug, ProcessPhase[]> = {
         <>
           La Comisión
           <br />
-          lo evalúa
+          la evalúa
         </>
       ),
-      srText: "lo evalúa la Comisión Directiva",
+      srText: "la evalúa la Comisión Directiva",
     },
     {
       icon: Send,
       label: (
         <>
-          Tratado por
+          Tratada por
           <br />
           la Comisión
         </>
       ),
-      srText: "y lo trata en su reunión",
+      srText: "y la trata en su reunión",
     },
   ],
 };
@@ -110,7 +112,9 @@ export function ReportWizard({
   mode: ReportMode;
   streets: StreetOption[];
   consentText: string | null;
-  siteKey: string;
+  /** Sólo el modo público monta Turnstile: en /mi la sesión es la barrera y la
+   *  página no tiene por qué inventar una clave para pasarla. */
+  siteKey?: string;
   /** Con qué tipo llega desde la landing (`?tipo=`). Sólo propone: el paso 1
    *  sigue siendo una elección. */
   initialKind?: ReportKindSlug;
@@ -198,6 +202,16 @@ export function ReportWizard({
     headingRef.current?.focus();
   }, [step]);
 
+  // Enviar no cambia de paso: cambia de PANTALLA, y el botón que tenía el foco
+  // se desmonta con el wizard entero, así que el foco se cae al body. El mismo
+  // `headingRef` lo recibe el encabezado de `ReportDone`; el `queueMicrotask`
+  // es el de `asociate-wizard` (dismissBlocked / retryDni): se espera al
+  // re-render que monta el encabezado nuevo.
+  const submitted = submitState.done !== undefined;
+  useEffect(() => {
+    if (submitted) queueMicrotask(() => headingRef.current?.focus());
+  }, [submitted]);
+
   function patch(values: Partial<ReportDraft>) {
     setDraft((d) => ({ ...d, ...values }));
   }
@@ -215,17 +229,32 @@ export function ReportWizard({
   const kind: ReportKindSlug = draft.kind === "" ? "claim" : draft.kind;
 
   // Enviado: no hay nada que completar, así que la pantalla terminal reemplaza
-  // al wizard entero, stepper incluido (como el bloqueo de ASOCIATE).
-  const doneNumber =
-    submitState.done?.number ?? (initial && initial.snapshot.status !== "draft" ? initial.snapshot.number : null);
+  // al wizard entero, stepper incluido (como el bloqueo de ASOCIATE). El estado
+  // viaja ENTERO y no como `filed: boolean`: un reporte desestimado no está en
+  // camino, y la pantalla lo dice (spec §5.3).
+  const snapshot = initial?.snapshot;
+  const sentStatus: DoneStatus | null =
+    snapshot === undefined || snapshot.status === "draft" ? null : snapshot.status;
+  const doneStatus: DoneStatus = submitState.done ? "received" : (sentStatus ?? "received");
+  const doneNumber = submitState.done?.number ?? (sentStatus === null ? null : (snapshot?.number ?? null));
   if (doneNumber !== null) {
     return (
       <ReportDone
         number={doneNumber}
         kind={kind}
         mode={mode}
-        filed={initial?.snapshot.status === "filed"}
+        status={doneStatus}
+        headingRef={headingRef}
       />
+    );
+  }
+  // Ya enviado pero sin N° (no debería pasar: el N° es el id). Sin esto el
+  // vecino caería en el paso 3 sobre un reporte que ninguna action deja tocar.
+  if (sentStatus !== null) {
+    return (
+      <FormMessage kind="warning" box>
+        {REPORT_MESSAGES.notDraft}
+      </FormMessage>
     );
   }
 

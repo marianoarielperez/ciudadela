@@ -23,7 +23,9 @@ export function StepStart({
   mode: ReportMode;
   draft: ReportDraft;
   patch: (values: Partial<ReportDraft>) => void;
-  siteKey: string;
+  /** Sólo se usa en el modo público: el del socio no monta Turnstile y su
+   *  página no tiene por qué pasar una clave. */
+  siteKey?: string;
   /** Sólo para pedirle un token nuevo a Turnstile en cada respuesta. */
   actionState: StartState;
   formAction: (formData: FormData) => void;
@@ -90,7 +92,7 @@ export function StepStart({
       </fieldset>
 
       {/* El socio ya viene con sesión: el captcha es para el vecino anónimo. */}
-      {mode === "public" && <TurnstileWidget siteKey={siteKey} resetKey={actionState} />}
+      {mode === "public" && <TurnstileWidget siteKey={siteKey ?? ""} resetKey={actionState} />}
       {error && (
         <FormMessage kind="error" box>
           {error}
