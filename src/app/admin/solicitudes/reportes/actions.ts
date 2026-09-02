@@ -132,6 +132,12 @@ export async function fileReportAction(_prev: State, formData: FormData): Promis
     select: { id: true, kind: true, status: true },
   });
   if (!report) return { error: REPORT_MESSAGES.notPending };
+  // La guarda barata y frecuente ANTES de crear un acta: una pestaña vieja o un
+  // doble envío llegan acá con el reporte ya resuelto, y sin este corte el
+  // segundo POST crearía (y después descartaría) un acta nueva, o chocaría con
+  // el unique (tipo, número) y le contaría al operador un problema de numeración
+  // que no existe. El servicio revalida igual con su `updateMany` por estado.
+  if (report.status !== "received") return { error: REPORT_MESSAGES.notPending };
   // Un reclamo se presenta ANTE alguien: sin organismo el asiento no dice nada.
   // Una iniciativa la trata la Comisión, así que ahí el organismo es opcional.
   if (report.kind === "claim" && !d.agency) return { error: REPORT_MESSAGES.agencyOther };

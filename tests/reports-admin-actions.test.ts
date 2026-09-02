@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   dismiss: vi.fn(),
   sendFiled: vi.fn(async () => {}),
   findUnique: vi.fn(),
-  audit: vi.fn(async (_entry: unknown) => {}),
+  audit: vi.fn(async () => {}),
   revalidatePath: vi.fn(),
   resolveMinuteId: vi.fn(async () => 33),
   discardUnusedMinute: vi.fn(async () => {}),
@@ -35,6 +35,7 @@ vi.mock("@/lib/members/minute-form", async (orig) => ({
 }));
 
 import { dismissReportAction, fileReportAction } from "@/app/admin/solicitudes/reportes/actions";
+import { REPORT_MESSAGES } from "@/lib/reports/rules";
 
 const fd = (o: Record<string, string>) => {
   const f = new FormData();
@@ -106,6 +107,17 @@ describe("fileReportAction", () => {
     expect(r).toEqual({ done: true });
     expect(mocks.file).toHaveBeenCalledWith(expect.objectContaining({ reportId: 3, agency: null, minuteId: 33 }));
     expect(mocks.audit.mock.calls[0][0]).toMatchObject({ detail: { agency: null, minuteId: 33 } });
+  });
+
+  // La guarda barata antes del acta: un reporte ya resuelto (pestaña vieja,
+  // doble envío) no llega a `resolveMinuteId` ni al servicio.
+  it("un reporte que ya no está recibido se corta antes de tocar el libro de actas", async () => {
+    mocks.findUnique.mockResolvedValue({ id: 3, kind: "initiative", status: "filed" });
+    const r = await fileReportAction({}, fd({ reportId: "3", filedAt: TODAY, minuteMode: "new", minuteType: "board", minuteNumber: "12", minuteDate: TODAY }));
+    expect(r.error).toBe(REPORT_MESSAGES.notPending);
+    expect(mocks.resolveMinuteId).not.toHaveBeenCalled();
+    expect(mocks.file).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it("una iniciativa sin acta no toca el libro de actas", async () => {
