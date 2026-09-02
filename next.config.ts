@@ -230,6 +230,41 @@ const nextConfig: NextConfig = {
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
         ],
       },
+      // M7 (Reportes): los archivos de un reporte —las fotos y las dos caras del
+      // DNI—. Mismo problema que las cuatro entradas de CSP de más arriba: el
+      // handler emite su CSP dura en el `Response` y la entrada global la pisa
+      // con `setHeader`, que REEMPLAZA, así que sin estas dos entradas al
+      // navegador le llega la CSP del sitio y el archivo deja de correr en un
+      // origen opaco. El valor sale de `REPORT_FILE_CSP`
+      // (`src/lib/reports/file-response.ts`) y `report-file-routes.test.ts`
+      // verifica que los tres lugares no se desincronicen.
+      //
+      // Estos archivos van en un `<img>` y NUNCA en un `<iframe>`, así que acá
+      // no se reabre el framing: `frame-ancestors 'none'` y, deliberadamente,
+      // sin `X-Frame-Options` propio — el `DENY` global es el que corresponde y
+      // reponer sólo la CSP no lo toca (`headers()` pisa por CLAVE).
+      //
+      // Van dos entradas explícitas y no un comodín por el mismo motivo que las
+      // de documentos institucionales: las rutas no comparten prefijo y un
+      // `source` con comodín abarcaría rutas que todavía no existen.
+      {
+        source: "/api/admin/reportes/:id/archivos/:fileId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        source: "/api/mi/reportes/:id/archivos/:fileId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
     ];
   },
   experimental: {
