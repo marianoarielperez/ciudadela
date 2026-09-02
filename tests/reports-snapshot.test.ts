@@ -15,10 +15,19 @@ function report(over: Partial<ReportWithFiles> = {}): ReportWithFiles {
     reporterDni: null,
     reporterPhone: null,
     reporterEmail: null,
+    // Campos que el wizard NO tiene que ver. Están en el fixture con valores
+    // reconocibles para que una fuga aparezca en el JSON y no como `undefined`.
+    description: "DESCRIPCION-SECRETA",
+    ip: "203.0.113.7",
+    userAgent: "UA-SECRETO",
+    claimTokenHash: "HASH-SECRETO",
+    dismissReason: "MOTIVO-SECRETO",
     files: [],
     ...over,
   } as ReportWithFiles;
 }
+
+const SECRETS = ["DESCRIPCION-SECRETA", "203.0.113.7", "UA-SECRETO", "HASH-SECRETO", "MOTIVO-SECRETO"];
 
 const REPORTER = {
   reporterName: "Ana Pérez",
@@ -70,5 +79,10 @@ describe("snapshotOf", () => {
       { id: 2, kind: "photo" },
     ]);
     expect(JSON.stringify(s)).not.toContain("reports/7");
+  });
+
+  it("no filtra descripción, ip, user agent, hash de la llave ni motivo de desestimación", () => {
+    const json = JSON.stringify(snapshotOf(report({ status: "dismissed", ...REPORTER })));
+    for (const secret of SECRETS) expect(json).not.toContain(secret);
   });
 });

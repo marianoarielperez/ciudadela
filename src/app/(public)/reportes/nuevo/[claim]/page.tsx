@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getLegalTexts } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
@@ -10,7 +11,7 @@ import { LINK_TARGET } from "../../wizard-shared";
 // La llave viene en la URL: nada de esto se puede cachear ni prerenderizar.
 export const dynamic = "force-dynamic";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Tu reporte — Vecinal Ciudadela",
   // La URL LLEVA la llave adentro: indexada, quedaría publicada. Mismo criterio
   // que /asociate/retomar, /verificar y /acceso (y el prefijo /reportes/nuevo

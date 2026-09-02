@@ -24,6 +24,14 @@ const EMAIL_HINT = {
   initiative: "Acá te mandamos el acuse y el aviso cuando la Comisión la trate.",
 } as const;
 
+// A dónde NO viaja el DNI: una iniciativa nunca sale de la Asociación, así que
+// "el organismo" sólo existe en el camino del reclamo.
+const DNI_SCOPE = {
+  "": "no sale de la Asociación.",
+  claim: "no viaja al organismo.",
+  initiative: "no sale de la Asociación.",
+} as const;
+
 export function StepIdentity({
   claim,
   kind,
@@ -120,7 +128,7 @@ export function StepIdentity({
         <p className="text-sm font-medium">Tu DNI</p>
         <p className="mt-1 text-sm text-muted-foreground">
           Las dos caras, con el documento apoyado y bien iluminado. Es para que el reporte sea de una
-          persona real del barrio; no viaja al organismo.
+          persona real del barrio; {DNI_SCOPE[kind]}
         </p>
         <ul className="mt-3 space-y-3">
           <FileSlot
