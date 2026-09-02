@@ -116,3 +116,11 @@ export const FOCUS_RING = "outline-hidden focus-visible:ring-3 focus-visible:rin
 // línea, muy por debajo de los 44 px del criterio del shell.
 export const LINK_TARGET =
   "inline-flex min-h-11 items-center px-2 text-sm text-primary underline underline-offset-2";
+
+/** La rama "otro barrio" con la llave `colaborador_habilitado` apagada (spec
+ *  2026-09-02). Vive acá porque lo dicen DOS puntas con el mismo texto: la
+ *  tarjeta deshabilitada del paso 2 y el rechazo de `createApplicationAction`
+ *  a un POST armado a mano. Un módulo sin "use client", importable desde la
+ *  action y desde el componente. */
+export const COLLABORATOR_CLOSED_MESSAGE =
+  "Por ahora, la asociación en línea es sólo para quienes viven en el Barrio Ciudadela.";

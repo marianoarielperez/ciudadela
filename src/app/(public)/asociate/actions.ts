@@ -18,7 +18,9 @@ import { collisionsFor, findEmailCollisions, isBlockingCollision } from "@/lib/a
 import { checkEligibility } from "@/lib/applications/eligibility";
 import { loadEligibilityInputs } from "@/lib/applications/eligibility-inputs";
 import { applicationService, DuplicateLiveApplicationError } from "@/lib/applications/service";
-import { categoryAllowedForResidence, civilTodayAr, isAdult, WEB_CATEGORIES } from "@/lib/applications/wizard";
+import {
+  categoryAllowedForResidence, categoryOfferedOnWeb, civilTodayAr, isAdult, WEB_CATEGORIES,
+} from "@/lib/applications/wizard";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { parseCivilDate } from "@/lib/dates";
 import { documentStore, MAX_DOCUMENT_BYTES } from "@/lib/documents/storage";
@@ -39,6 +41,7 @@ import { tokens } from "@/lib/tokens";
 import { feeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
 import { verifyTurnstile } from "@/lib/turnstile";
+import { COLLABORATOR_CLOSED_MESSAGE } from "./wizard-shared";
 
 // Sin `export`: en un módulo "use server" todo lo exportado tiene que ser una
 // función async (lo exportado es un endpoint). Los formularios cliente declaran
@@ -280,10 +283,20 @@ export async function createApplicationAction(_prev: CreateState, formData: Form
   if (!livesInBarrio && (!data.streetText || !data.neighborhood)) {
     return { error: "Ingresá tu calle y tu barrio." };
   }
-  // Revalidación de REG-01 en el server: el paso 3 del wizard ya filtra las
-  // opciones, pero un POST armado a mano no pasa por ese filtro.
-  if (!categoryAllowedForResidence(data.requestedCategory, livesInBarrio)) {
-    return { error: "La categoría elegida no corresponde a tu lugar de residencia. Volvé al paso 3." };
+  // Revalidación de REG-01 en el server MÁS la llave `colaborador_habilitado`
+  // (spec 2026-09-02): el paso 2 deshabilita la tarjeta y el paso 3 filtra las
+  // opciones, pero un POST armado a mano no pasa por ninguno de los dos.
+  // Lectura DIRECTA con `configReader`, sin la caché de las páginas: es una
+  // guarda, y un `true` viejo dejaría crear solicitudes de colaborador después
+  // de apagar la llave. El mensaje se elige por CAUSA: si REG-01 ya lo rechaza
+  // es un desajuste de residencia, y la llave no tiene nada que decir.
+  const collaboratorEnabled = await configReader.getBool(CONFIG_KEYS.collaboratorEnabled);
+  if (!categoryOfferedOnWeb(data.requestedCategory, livesInBarrio, collaboratorEnabled)) {
+    return {
+      error: categoryAllowedForResidence(data.requestedCategory, livesInBarrio)
+        ? COLLABORATOR_CLOSED_MESSAGE
+        : "La categoría elegida no corresponde a tu lugar de residencia. Volvé al paso 3.",
+    };
   }
 
   // El día civil argentino, no el UTC del server (ver `civilTodayAr`).

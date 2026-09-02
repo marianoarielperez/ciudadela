@@ -137,10 +137,13 @@ beforeEach(() => {
   mocks.emailLimiter.allows.mockReturnValue(true);
   mocks.emailLimiter.check.mockReturnValue(true);
   mocks.verifyTurnstile.mockResolvedValue(true);
-  // `asociate_activo` prendido (guarda 0, docs/05 §2) y los dos textos legales
-  // publicados (guarda 0 bis): sin ellos no hay nada que aceptar.
+  // `asociate_activo` prendido (guarda 0, docs/05 §2), los dos textos legales
+  // publicados (guarda 0 bis) y la llave `colaborador_habilitado` prendida
+  // (spec 2026-09-02): el camino feliz de colaborador la necesita, y los tests
+  // de la llave la apagan o la borran a mano.
   mocks.configRows = {
     asociate_activo: true,
+    colaborador_habilitado: true,
     terms_text: "Términos de prueba",
     privacy_consent_text: "Consentimiento de prueba",
   };
@@ -424,6 +427,36 @@ describe("createApplicationAction", () => {
   });
 
   it("la categoría se revalida contra la residencia (POST armado a mano)", async () => {
+    const result = await createApplicationAction({}, form({ ...VALID, requestedCategory: "collaborator" }));
+    expect(result.error).toMatch(/no corresponde a tu lugar de residencia/i);
+    expect(mocks.service.create).not.toHaveBeenCalled();
+  });
+
+  // ── La llave `colaborador_habilitado` (spec 2026-09-02) ─────────────────────
+  //
+  // La categoría colaborador es del estatuto reformado y el sitio se lanza
+  // antes de que la IGJ lo oficialice. El paso 2 deshabilita la tarjeta, pero
+  // un POST armado a mano no pasa por la pantalla: la action decide sola, y
+  // lee la llave DIRECTO (un `true` cacheado dejaría entrar colaboradores
+  // después de apagarla).
+  it("llave ausente en configuration: la rama de otro barrio no crea nada y dice por qué", async () => {
+    delete mocks.configRows.colaborador_habilitado;
+    const result = await createApplicationAction({}, form({
+      ...VALID, livesInBarrio: "no", streetId: "", streetText: "Rivadavia",
+      neighborhood: "Centro", requestedCategory: "collaborator", wantsDebit: "no",
+    }));
+    expect(result.error).toBe(
+      "Por ahora, la asociación en línea es sólo para quienes viven en el Barrio Ciudadela.",
+    );
+    expect(result.created).toBeUndefined();
+    expect(mocks.service.create).not.toHaveBeenCalled();
+  });
+
+  it("llave apagada: pedir colaborador viviendo en Ciudadela cae por REG-01, no por la llave", async () => {
+    // El mensaje se elige por CAUSA: acá lo que falla es la residencia, y
+    // decirle "sólo para quienes viven en el barrio" a alguien que vive en el
+    // barrio sería un mensaje falso.
+    mocks.configRows.colaborador_habilitado = false;
     const result = await createApplicationAction({}, form({ ...VALID, requestedCategory: "collaborator" }));
     expect(result.error).toMatch(/no corresponde a tu lugar de residencia/i);
     expect(mocks.service.create).not.toHaveBeenCalled();
