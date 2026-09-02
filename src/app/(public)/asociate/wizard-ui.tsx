@@ -33,9 +33,14 @@ export function ChoiceCard({
   children?: React.ReactNode;
   /** Visible pero no elegible (spec 2026-09-02): el radio NATIVO va `disabled`
    *  —no dispara `onChange`, así que el llamador no necesita otra guarda— y la
-   *  tarjeta se atenúa. El `children` dice por qué. Prop opcional y aditiva:
-   *  el paso 3 de ASOCIATE, los dos pasos de REPORTES y /mi/solicitudes también
-   *  importan esta tarjeta y sin la prop nada cambia. */
+   *  tarjeta se atenúa por su SUPERFICIE (borde punteado + fondo apagado) y por
+   *  sus controles decorativos (el radio y el chip del ícono). El título y el
+   *  `children` quedan a opacidad PLENA a propósito (hallazgo de la revisión,
+   *  spec 2026-09-02): el `children` es la única explicación que recibe el
+   *  vecino de por qué no puede seguir, y atenuarlo lo dejaba en 2,3:1 en modo
+   *  claro, muy por debajo del 4,5:1 de WCAG AA. Es contenido, no adorno.
+   *  Prop opcional y aditiva: el paso 3 de ASOCIATE, los dos pasos de REPORTES
+   *  y /mi/solicitudes también importan esta tarjeta y sin la prop nada cambia. */
   disabled?: boolean;
 }) {
   return (
@@ -45,8 +50,11 @@ export function ChoiceCard({
         // El foco vive en el radio nativo, que está adentro: sin `has-` el
         // recorrido con Tab no marcaría la tarjeta, que es lo que se ve.
         "has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
+        // La tarjeta deshabilitada se atenúa por superficie, NUNCA con una
+        // opacidad sobre todo el `<label>`: adentro va el motivo, y bajarle la
+        // opacidad al texto lo saca de AA.
         disabled
-          ? "cursor-not-allowed border-border opacity-60"
+          ? "cursor-not-allowed border-dashed border-border bg-muted/40"
           : checked
             ? "cursor-pointer border-primary bg-primary/5"
             : "cursor-pointer border-border hover:bg-muted/50",
@@ -59,12 +67,17 @@ export function ChoiceCard({
         checked={checked}
         disabled={disabled}
         onChange={onSelect}
-        className="mt-0.5 size-5 shrink-0 accent-primary"
+        className="mt-0.5 size-5 shrink-0 accent-primary disabled:opacity-50"
       />
       {icon && (
         <span
           aria-hidden
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary",
+            // El chip es decorativo (`aria-hidden`): atenuarlo no le saca
+            // información a nadie. El texto de al lado sí, y por eso no se toca.
+            disabled && "opacity-50",
+          )}
         >
           {icon}
         </span>

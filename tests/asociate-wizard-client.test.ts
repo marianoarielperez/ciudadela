@@ -230,6 +230,17 @@ describe("la llave colaborador_habilitado en el paso 2", () => {
     expect(wizardUi).toContain("disabled={disabled}");
   });
 
+  // El motivo de la tarjeta deshabilitada es CONTENIDO: es lo único que le dice
+  // al vecino por qué no puede seguir. Una opacidad sobre el `<label>` entero lo
+  // dejaba en 2,3:1 (claro) y 3,0:1 (oscuro), debajo del 4,5:1 de WCAG AA
+  // (hallazgo de la revisión, spec 2026-09-02). La atenuación va por la
+  // SUPERFICIE de la tarjeta y por el radio, que es un control, no un texto.
+  it("la tarjeta deshabilitada no atenúa su texto: se apaga el radio, no el motivo", () => {
+    expect(wizardUi).not.toContain("opacity-60");
+    expect(wizardUi).toContain("disabled:opacity-50");
+    expect(wizardUi).toContain("cursor-not-allowed border-dashed border-border bg-muted/40");
+  });
+
   it("el wizard exige la prop y se la pasa al paso 2", () => {
     expect(wizard).toContain("collaboratorEnabled: boolean;");
     expect(wizard).toContain("collaboratorEnabled={collaboratorEnabled}");
