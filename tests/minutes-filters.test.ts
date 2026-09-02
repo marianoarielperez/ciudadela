@@ -78,11 +78,23 @@ describe("groupByYear", () => {
 });
 
 describe("references", () => {
-  it("counts the seven non-overlapping relations", () => {
+  it("counts the eight non-overlapping relations", () => {
     expect(referenceCount({
       movements: 2, applications: 1, feeValues: 1, booksOpened: 0, booksClosed: 1,
-      processesCalled: 0, processesClosed: 1,
-    })).toBe(6);
+      processesCalled: 0, processesClosed: 1, reportsFiled: 2,
+    })).toBe(8);
+  });
+
+  // Una iniciativa TRATADA por la Comisión no escribe ningún movimiento, así
+  // que el acta que la respalda no tiene sombra en ninguna otra relación: sin
+  // `reportsFiled` la tarjeta del acta decía "Sin asientos" teniendo uno.
+  it("a minute that only backs a report is not 'Sin asientos'", () => {
+    const only = {
+      movements: 0, applications: 0, feeValues: 0, booksOpened: 0, booksClosed: 0,
+      processesCalled: 0, processesClosed: 0, reportsFiled: 1,
+    };
+    expect(referenceCount(only)).toBe(1);
+    expect(referenceCountLabel(referenceCount(only))).toBe("1 asiento");
   });
 
   it("labels in es-AR", () => {

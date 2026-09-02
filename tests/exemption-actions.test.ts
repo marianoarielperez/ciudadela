@@ -48,7 +48,7 @@ const prismaMock = vi.hoisted(() => ({
     create: vi.fn(async () => ({ id: 77 })),
     delete: vi.fn(async () => ({ id: 77 })),
   },
-  // Los seis referentes que consulta `discardUnusedMinute` antes de borrar.
+  // Los siete referentes que consulta `discardUnusedMinute` antes de borrar.
   movement: { count: vi.fn(async () => 0) },
   book: { count: vi.fn(async () => 0) },
   application: { count: vi.fn(async () => 0) },
@@ -61,6 +61,8 @@ const prismaMock = vi.hoisted(() => ({
     // módulo se mockea spreando el original): por defecto no hay ninguna vigente.
     findFirst: vi.fn(async () => null as null | { id: number; toPeriod: string }),
   },
+  // El séptimo (M7): un acta que respalda el tratamiento de una iniciativa.
+  report: { count: vi.fn(async () => 0) },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));

@@ -1302,7 +1302,12 @@ model Report {
   filedAgencyOther String?        @map("filed_agency_other") @db.VarChar(80)
   filedReference   String?        @map("filed_reference") @db.VarChar(80)
   filedMinuteId    Int?           @map("filed_minute_id")
-  filedMinute      Minute?        @relation("ReportFiledMinute", fields: [filedMinuteId], references: [id], onDelete: SetNull)
+  // `Restrict` y no `SetNull`: el acta es el RESPALDO INSTITUCIONAL de que la
+  // Comisión trató la iniciativa (Art. 6.2), igual que en `FeeExemption`. Con
+  // SetNull, borrar el acta le sacaba al reporte su constancia en silencio —el
+  // mismo agujero que ya tenían `Application` y `FeeValue`—; con Restrict la
+  // base rechaza el borrado y `discardUnusedMinute` la cuenta como referente.
+  filedMinute      Minute?        @relation("ReportFiledMinute", fields: [filedMinuteId], references: [id], onDelete: Restrict)
   dismissedAt      DateTime?      @map("dismissed_at")
   dismissedById    Int?           @map("dismissed_by_id")
   dismissedBy      User?          @relation("ReportDismissedBy", fields: [dismissedById], references: [id], onDelete: SetNull)

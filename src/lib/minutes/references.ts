@@ -16,6 +16,12 @@
 // la secretaría dos renglones por vecino. `discardUnusedMinute` sí las chequea
 // todas aparte, pero ese es un resguardo de integridad, no un conteo para
 // mostrar.
+//
+// `reportsFiled` (M7) sí se cuenta entero y sin filtrar: una iniciativa
+// TRATADA por la Comisión (Art. 6.2) no escribe ningún `Movement` —el que
+// reporta puede no ser socio, así que no hay ficha donde asentarlo— y su acta
+// no tiene sombra en ninguna otra relación. Sin esta línea, el acta que sólo
+// respalda el tratamiento de una iniciativa decía "Sin asientos".
 export const REFERENCE_COUNT_SELECT = {
   movements: true,
   applications: { where: { status: "rejected" as const } },
@@ -24,6 +30,7 @@ export const REFERENCE_COUNT_SELECT = {
   booksClosed: true,
   processesCalled: true,
   processesClosed: true,
+  reportsFiled: true,
 } as const;
 
 export type ReferenceCounts = Record<keyof typeof REFERENCE_COUNT_SELECT, number>;
@@ -31,7 +38,7 @@ export type ReferenceCounts = Record<keyof typeof REFERENCE_COUNT_SELECT, number
 export function referenceCount(c: ReferenceCounts): number {
   return (
     c.movements + c.applications + c.feeValues + c.booksOpened + c.booksClosed +
-    c.processesCalled + c.processesClosed
+    c.processesCalled + c.processesClosed + c.reportsFiled
   );
 }
 
