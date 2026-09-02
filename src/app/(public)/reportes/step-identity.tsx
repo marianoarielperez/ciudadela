@@ -66,30 +66,54 @@ export function StepIdentity({
 
   // Lo que se eleva o se trata "con identidad reservada" depende del tipo:
   // un reclamo va al organismo, una iniciativa la trata la Comisión.
+  const reserved = draft.anonymous === "si";
   const reservedNote =
     kind === "initiative"
-      ? "Elegiste que tu identidad quede reservada: tus datos y tu DNI los ve solo la Comisión, para verificar que sos vecino. Tu iniciativa se trata con identidad reservada."
-      : "Elegiste que tu identidad quede reservada: tus datos y tu DNI los ve solo la Comisión, para verificar que sos vecino. Tu reporte se eleva con identidad reservada.";
+      ? "Tus datos y tu DNI los ve solo la Comisión, para verificar que sos vecino. Tu iniciativa se trata sin tu nombre."
+      : "Tus datos y tu DNI los ve solo la Comisión, para verificar que sos vecino. Tu reporte se eleva sin tu nombre.";
 
   return (
     <div className="space-y-6">
       {/* Por qué se piden los datos, ANTES de pedirlos: el vecino que eligió
           reserva en el paso 1 y acá ve "DNI" tiene que leer, en el mismo
           lugar, que la reserva sigue en pie y para qué se usa lo que carga. */}
+      {/* Banda de énfasis (opción A, 02/09): una sola caja que cambia de título
+          según lo que eligió. Con reserva, la promesa ES el título y el "por
+          qué" pasa a segundo renglón; sin reserva, el "por qué" es el título. */}
       <aside
         aria-labelledby="why-data"
-        className="flex gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4"
+        className={cn(
+          "flex gap-3 rounded-r-xl border-l-4 p-4",
+          reserved ? "border-l-primary bg-primary/10" : "border-l-primary/40 bg-primary/5",
+        )}
       >
-        <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
-        <div className="space-y-1 text-sm">
-          <p id="why-data" className="font-medium">
-            Por qué te pedimos tus datos
-          </p>
-          <p className="text-muted-foreground">
-            Para que cada reporte sea de un vecino real del barrio y evitar reportes falsos o
-            repetidos.
-          </p>
-          {draft.anonymous === "si" && <p className="text-muted-foreground">{reservedNote}</p>}
+        <ShieldCheck
+          aria-hidden="true"
+          className={cn("shrink-0 text-primary", reserved ? "mt-0.5 size-6" : "mt-0.5 size-5")}
+        />
+        <div className="space-y-1.5 text-sm">
+          {reserved ? (
+            <>
+              <p id="why-data" className="text-base font-semibold text-primary">
+                Tu identidad queda reservada
+              </p>
+              <p className="text-foreground">{reservedNote}</p>
+              <p className="text-muted-foreground">
+                Te los pedimos para que cada reporte sea de un vecino real del barrio y evitar
+                reportes falsos o repetidos.
+              </p>
+            </>
+          ) : (
+            <>
+              <p id="why-data" className="font-medium">
+                Por qué te pedimos tus datos
+              </p>
+              <p className="text-muted-foreground">
+                Para que cada reporte sea de un vecino real del barrio y evitar reportes falsos o
+                repetidos.
+              </p>
+            </>
+          )}
         </div>
       </aside>
 
