@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  categoryAllowedForResidence, civilTodayAr, isAdult, WEB_CATEGORIES,
+  categoryAllowedForResidence, categoryOfferedOnWeb, civilTodayAr, isAdult, WEB_CATEGORIES,
 } from "@/lib/applications/wizard";
 
 describe("isAdult", () => {
@@ -56,5 +56,28 @@ describe("categoryAllowedForResidence (REG-01 + Art. 5 bis)", () => {
       expect(categoryAllowedForResidence(cat, true)).toBe(false);
       expect(categoryAllowedForResidence(cat, false)).toBe(false);
     }
+  });
+});
+
+describe("categoryOfferedOnWeb (REG-01 + llave colaborador_habilitado, spec 2026-09-02)", () => {
+  const ALL = ["active", "adherent", "collaborator", "cadet", "honorary", "lifetime"] as const;
+
+  it("con la llave prendida coincide exactamente con categoryAllowedForResidence", () => {
+    for (const cat of ALL) {
+      for (const lives of [true, false]) {
+        expect(categoryOfferedOnWeb(cat, lives, true)).toBe(categoryAllowedForResidence(cat, lives));
+      }
+    }
+  });
+
+  it("con la llave apagada, otro barrio no admite ninguna categoría", () => {
+    for (const cat of ALL) expect(categoryOfferedOnWeb(cat, false, false)).toBe(false);
+  });
+
+  it("con la llave apagada, Ciudadela sigue igual: active y adherent sí, el resto no", () => {
+    expect(categoryOfferedOnWeb("active", true, false)).toBe(true);
+    expect(categoryOfferedOnWeb("adherent", true, false)).toBe(true);
+    expect(categoryOfferedOnWeb("collaborator", true, false)).toBe(false);
+    expect(categoryOfferedOnWeb("cadet", true, false)).toBe(false);
   });
 });

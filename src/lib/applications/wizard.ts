@@ -46,3 +46,22 @@ export function categoryAllowedForResidence(
   if (livesInBarrio) return category === "active" || category === "adherent";
   return category === "collaborator";
 }
+
+/** Lo que la WEB ofrece: REG-01 más la llave `colaborador_habilitado` (spec
+ *  2026-09-02). La categoría colaborador es del estatuto reformado y el sitio
+ *  se lanza antes de que la IGJ lo oficialice, así que con la llave apagada
+ *  "otro barrio" no admite ninguna categoría.
+ *
+ *  `categoryAllowedForResidence` queda INTACTA a propósito: es la regla
+ *  estatutaria, y el panel la usa para AVISAR de un desajuste de residencia
+ *  sin gating (la recategorización de una solicitud es de la Comisión, que
+ *  sabe qué estatuto rige). Sólo la creación pública pasa por acá. El tercer
+ *  parámetro no tiene default: cada llamador decide qué llave leyó. */
+export function categoryOfferedOnWeb(
+  category: MemberCategory,
+  livesInBarrio: boolean,
+  collaboratorEnabled: boolean,
+): boolean {
+  if (!categoryAllowedForResidence(category, livesInBarrio)) return false;
+  return category !== "collaborator" || collaboratorEnabled;
+}
