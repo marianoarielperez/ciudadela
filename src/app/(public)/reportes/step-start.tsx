@@ -23,14 +23,12 @@ const IDENTITY_COPY = {
   claim: {
     legend: "¿Cómo querés figurar en la presentación?",
     named: "Tu nombre acompaña el reporte cuando la asociación lo presenta.",
-    reserved:
-      "La Asociación siempre sabe quién reporta; lo reservado es la presentación ante el municipio, la SCPL u otro organismo.",
+    reserved: "Tu reporte se eleva al organismo sin tu nombre.",
   },
   initiative: {
     legend: "¿Cómo querés figurar ante la Comisión?",
     named: "Tu nombre acompaña la iniciativa cuando la Comisión la trata.",
-    reserved:
-      "La Asociación siempre sabe quién reporta; tu nombre queda en la Comisión Directiva y no se publica.",
+    reserved: "La Comisión trata tu iniciativa sin publicar tu nombre.",
   },
 } as const;
 

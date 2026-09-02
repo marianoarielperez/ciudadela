@@ -3,6 +3,7 @@
 // formulario de datos y las dos ranuras son TRES forms distintos, cada uno con
 // su action: mezclarlos es el bug de las 11/12 subidas (ver la cabecera de
 // `file-slot.tsx`).
+import { ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
@@ -63,8 +64,35 @@ export function StepIdentity({
   const back = files.find((f) => f.kind === "dni_back") ?? null;
   const dniReady = front !== null && back !== null;
 
+  // Lo que se eleva o se trata "con identidad reservada" depende del tipo:
+  // un reclamo va al organismo, una iniciativa la trata la Comisión.
+  const reservedNote =
+    kind === "initiative"
+      ? "Elegiste que tu identidad quede reservada: tus datos y tu DNI los ve solo la Comisión, para verificar que sos vecino. Tu iniciativa se trata con identidad reservada."
+      : "Elegiste que tu identidad quede reservada: tus datos y tu DNI los ve solo la Comisión, para verificar que sos vecino. Tu reporte se eleva con identidad reservada.";
+
   return (
     <div className="space-y-6">
+      {/* Por qué se piden los datos, ANTES de pedirlos: el vecino que eligió
+          reserva en el paso 1 y acá ve "DNI" tiene que leer, en el mismo
+          lugar, que la reserva sigue en pie y para qué se usa lo que carga. */}
+      <aside
+        aria-labelledby="why-data"
+        className="flex gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4"
+      >
+        <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
+        <div className="space-y-1 text-sm">
+          <p id="why-data" className="font-medium">
+            Por qué te pedimos tus datos
+          </p>
+          <p className="text-muted-foreground">
+            Para que cada reporte sea de un vecino real del barrio y evitar reportes falsos o
+            repetidos.
+          </p>
+          {draft.anonymous === "si" && <p className="text-muted-foreground">{reservedNote}</p>}
+        </div>
+      </aside>
+
       <form id="reporter-form" action={formAction} className="space-y-5">
         <input type="hidden" name="claim" value={claim} />
         <Field id="name" label="Nombre y apellido">
