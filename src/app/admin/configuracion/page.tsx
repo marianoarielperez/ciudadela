@@ -44,6 +44,7 @@ export default async function ConfigPage(props: {
   const sp = await props.searchParams;
   const [
     asociateActivo,
+    collaboratorEnabled,
     contactPhone,
     contactEmail,
     termsText,
@@ -53,6 +54,7 @@ export default async function ConfigPage(props: {
     digestRecipients,
   ] = await Promise.all([
     configReader.getBool(CONFIG_KEYS.asociateActivo),
+    configReader.getBool(CONFIG_KEYS.collaboratorEnabled),
     configReader.getString(CONFIG_KEYS.contactPhone),
     configReader.getString(CONFIG_KEYS.contactEmail),
     configReader.getString(CONFIG_KEYS.termsText),
@@ -204,6 +206,7 @@ export default async function ConfigPage(props: {
       <StatusStrip
         current={current}
         asociateActivo={asociateActivo}
+        collaboratorEnabled={collaboratorEnabled}
         coverage={coverageEntries}
         digestCount={digestCount}
       />
@@ -214,6 +217,7 @@ export default async function ConfigPage(props: {
           initial={initialConfigTab({ cuota: sp.cuota, feriado: sp.feriado })}
           configInitial={{
             asociateActivo,
+            collaboratorEnabled,
             contactPhone: contactPhone ?? "",
             contactEmail: contactEmail ?? "",
             termsText: termsText ?? "",

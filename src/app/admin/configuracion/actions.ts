@@ -1,10 +1,10 @@
 "use server";
 // Pantalla de Configuración: los parámetros que el panel expone al sitio
-// público. Hoy son ocho —el flag, los dos contactos, los dos textos legales del
-// wizard ASOCIATE, los dos ids de plan de Mercado Pago y los destinatarios del
-// resumen diario a la Comisión (4C)— y el que importa es
-// `asociate_activo`: es la llave que
-// abre y cierra el alta de socios de cara al vecino (docs/05:129).
+// público. Hoy son nueve —el flag, la llave de la categoría colaborador (spec
+// 2026-09-02), los dos contactos, los dos textos legales del wizard ASOCIATE,
+// los dos ids de plan de Mercado Pago y los destinatarios del resumen diario a
+// la Comisión (4C)— y el que importa es `asociate_activo`: es la llave que abre
+// y cierra el alta de socios de cara al vecino (docs/05:129).
 //
 // Por eso ESTA pantalla no la comparte el admin común. Es la primera consumidora
 // real de `requireSuperadmin`, y vale acá el mismo recordatorio que abre
@@ -54,6 +54,10 @@ const schema = z.object({
   // El checkbox: el navegador manda "on" o no manda nada. Cualquier otro valor
   // es un POST a mano.
   asociateActivo: z.literal("on", { error: "Valor inválido para el botón ASOCIATE." }).optional(),
+  // La llave de la categoría colaborador (spec 2026-09-02): mismo checkbox
+  // nativo con piel de switch que el interruptor de ASOCIATE, misma semántica
+  // ("on" o nada; cualquier otro valor es un POST a mano).
+  collaboratorEnabled: z.literal("on", { error: "Valor inválido para la llave de colaborador." }).optional(),
   contactPhone: z
     .string("Teléfono de contacto inválido.")
     .max(40, "El teléfono no puede superar los 40 caracteres.")
@@ -114,6 +118,7 @@ export async function updateConfigAction(
   // el lector ya trata al vacío como ausente.
   const entries: Array<[string, boolean | string]> = [
     [CONFIG_KEYS.asociateActivo, parsed.data.asociateActivo === "on"],
+    [CONFIG_KEYS.collaboratorEnabled, parsed.data.collaboratorEnabled === "on"],
     [CONFIG_KEYS.contactPhone, parsed.data.contactPhone ?? ""],
     [CONFIG_KEYS.contactEmail, parsed.data.contactEmail ?? ""],
     [CONFIG_KEYS.termsText, parsed.data.termsText ?? ""],

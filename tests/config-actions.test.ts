@@ -49,11 +49,12 @@ const form = (entries: Record<string, string>) => {
   return fd;
 };
 
-// Lo que el formulario manda cuando el superadmin prende el botón y carga los
-// dos contactos, los dos textos legales, los dos ids de plan de MP y los
-// destinatarios del resumen diario a la Comisión.
+// Lo que el formulario manda cuando el superadmin prende el botón y la llave de
+// colaborador y carga los dos contactos, los dos textos legales, los dos ids de
+// plan de MP y los destinatarios del resumen diario a la Comisión.
 const filled = {
   asociateActivo: "on",
+  collaboratorEnabled: "on",
   contactPhone: "297 4 123456",
   contactEmail: "vecinal@ejemplo.com",
   termsText: "Términos y condiciones\n\n1. Primera cláusula.",
@@ -70,6 +71,7 @@ const KEYS = Object.keys(filled).length;
 // de "no cambió nada". El checkbox se guarda como boolean, el resto como string.
 const storedFilled: Record<string, unknown> = {
   [CONFIG_KEYS.asociateActivo]: true,
+  [CONFIG_KEYS.collaboratorEnabled]: true,
   [CONFIG_KEYS.contactPhone]: filled.contactPhone,
   [CONFIG_KEYS.contactEmail]: filled.contactEmail,
   [CONFIG_KEYS.termsText]: filled.termsText,
@@ -101,6 +103,11 @@ describe("updateConfigAction", () => {
       where: { key: CONFIG_KEYS.asociateActivo },
       update: { value: true, updatedBy: 3 },
       create: { key: CONFIG_KEYS.asociateActivo, value: true, updatedBy: 3 },
+    });
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith({
+      where: { key: CONFIG_KEYS.collaboratorEnabled },
+      update: { value: true, updatedBy: 3 },
+      create: { key: CONFIG_KEYS.collaboratorEnabled, value: true, updatedBy: 3 },
     });
     expect(prismaMock.configuration.upsert).toHaveBeenCalledWith({
       where: { key: CONFIG_KEYS.contactPhone },
@@ -222,6 +229,31 @@ describe("updateConfigAction", () => {
         detail: { from: true, to: false },
       }),
     );
+  });
+
+  // La misma trampa del checkbox, para la llave de colaborador (spec
+  // 2026-09-02): destildarla tiene que APAGAR la categoría, no "no tocarla".
+  it("destildar la llave de colaborador guarda false, no la ausencia del campo", async () => {
+    stored({ [CONFIG_KEYS.collaboratorEnabled]: true });
+    await updateConfigAction({}, form({ asociateActivo: "on", contactPhone: "", contactEmail: "" }));
+    expect(prismaMock.configuration.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: CONFIG_KEYS.collaboratorEnabled },
+        update: { value: false, updatedBy: 3 },
+      }),
+    );
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: CONFIG_KEYS.collaboratorEnabled,
+        detail: { from: true, to: false },
+      }),
+    );
+  });
+
+  it("rechaza un valor raro en la llave de colaborador en castellano", async () => {
+    const result = await updateConfigAction({}, form({ ...filled, collaboratorEnabled: "yes" }));
+    expect(result.error).toBe("Valor inválido para la llave de colaborador.");
+    expect(prismaMock.configuration.upsert).not.toHaveBeenCalled();
   });
 
   // Vaciar el campo guarda "" y NO un null de JSON: `configReader.getString` ya

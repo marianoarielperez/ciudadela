@@ -1,13 +1,13 @@
 import Link from "next/link";
 import type { ComponentType, ReactNode } from "react";
-import { CalendarOff, Globe, Mail, Wallet } from "lucide-react";
+import { CalendarOff, Globe, Handshake, Mail, Wallet } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatARS, formatDateAR } from "@/lib/format";
 import type { CurrentFeeValue } from "@/lib/treasury/fee-values";
 
-// La tira de estado: cuatro lecturas en vivo del sistema, cada una clickeable
+// La tira de estado: cinco lecturas en vivo del sistema, cada una clickeable
 // hacia su pestaña. Todo sale de datos que la página YA consulta; acá no hay
 // ninguna query. El patrón de card es el del tablero /admin: chip tintado,
 // link semántico estirado con pseudo-elemento y anillo de foco inset (la Card
@@ -25,9 +25,10 @@ type Item = {
   warning: boolean;
 };
 
-export function StatusStrip({ current, asociateActivo, coverage, digestCount }: {
+export function StatusStrip({ current, asociateActivo, collaboratorEnabled, coverage, digestCount }: {
   current: CurrentFeeValue | null;
   asociateActivo: boolean;
+  collaboratorEnabled: boolean;
   coverage: Array<[number, number]>;
   digestCount: number;
 }) {
@@ -60,6 +61,16 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
       warning: !asociateActivo,
     },
     {
+      href: "?tab=sitio",
+      icon: Handshake,
+      label: "Socio colaborador",
+      value: collaboratorEnabled ? "Habilitado" : "Deshabilitado",
+      // Nunca en warning: apagada es el estado esperado hasta que la IGJ
+      // oficialice el estatuto reformado (spec 2026-09-02), y ninguna pantalla
+      // nace en rojo.
+      warning: false,
+    },
+    {
       href: "?tab=feriados",
       icon: CalendarOff,
       label: "Feriados cargados",
@@ -78,7 +89,7 @@ export function StatusStrip({ current, asociateActivo, coverage, digestCount }: 
     },
   ];
   return (
-    <ul className="grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-4">
+    <ul className="grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {items.map((item) => (
         <li key={item.label}>
           <Card size="sm" className="relative h-full transition-shadow hover:shadow-md">

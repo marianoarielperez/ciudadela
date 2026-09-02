@@ -24,6 +24,7 @@ import { PanelHeader } from "@/components/admin/panel-header";
 
 export type ConfigFormInitial = {
   asociateActivo: boolean;
+  collaboratorEnabled: boolean;
   contactPhone: string;
   contactEmail: string;
   termsText: string;
@@ -36,7 +37,7 @@ export type ConfigFormInitial = {
 // Qué claves viven en qué pestaña, para que la barra diga DÓNDE quedaron los
 // cambios sin guardar. Mismo orden que las pestañas.
 const GROUPS: Array<{ label: string; keys: Array<keyof ConfigFormInitial & string> }> = [
-  { label: "Sitio público", keys: ["asociateActivo", "contactPhone", "contactEmail"] },
+  { label: "Sitio público", keys: ["asociateActivo", "collaboratorEnabled", "contactPhone", "contactEmail"] },
   { label: "ASOCIATE", keys: ["termsText", "privacyConsentText", "mpPlanActiveId", "mpPlanSharedId"] },
   { label: "Avisos", keys: ["digestRecipients"] },
 ];
@@ -46,18 +47,24 @@ function listNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
 }
 
-function AsociateSwitch({ checked, onChange }: {
+// Un checkbox NATIVO con piel de switch (ver el comentario de cabecera sobre
+// el reset de React 19). Genérico desde la llave de colaborador (spec
+// 2026-09-02): el `name` es la clave del formulario y del `useSyncedForm`.
+function ConfigSwitch({ name, checked, onChange, label, hint }: {
+  name: string;
   checked: boolean;
   onChange: (on: boolean) => void;
+  label: string;
+  hint: string;
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor="asociateActivo" className="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium select-none">
+      <label htmlFor={name} className="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium select-none">
         <input
-          id="asociateActivo"
+          id={name}
           type="checkbox"
           role="switch"
-          name="asociateActivo"
+          name={name}
           value="on"
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}
@@ -67,12 +74,9 @@ function AsociateSwitch({ checked, onChange }: {
           aria-hidden
           className="relative inline-flex h-6 w-10 shrink-0 rounded-full bg-muted ring-1 ring-inset ring-border transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-background after:shadow-sm after:transition-transform peer-checked:bg-primary peer-checked:after:translate-x-4 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary"
         />
-        Botón ASOCIATE habilitado en el sitio público
+        {label}
       </label>
-      <p className="text-xs text-muted-foreground">
-        Apagado, el sitio muestra el aviso de asociaciones suspendidas. Se prende recién con el
-        wizard del Módulo 3 funcionando.
-      </p>
+      <p className="text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }
@@ -81,6 +85,7 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
   const [state, formAction, pending] = useActionState(updateConfigAction, {});
   const initialValues = {
     asociateActivo: initial.asociateActivo ? "on" : "",
+    collaboratorEnabled: initial.collaboratorEnabled ? "on" : "",
     contactPhone: initial.contactPhone,
     contactEmail: initial.contactEmail,
     termsText: initial.termsText,
@@ -91,7 +96,7 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
   };
   const { values, setValue, formRef, field } = useSyncedForm(initialValues);
   // El sucio se deriva de TODAS las claves y no de GROUPS: GROUPS sólo le pone
-  // nombre a las pestañas, así que una novena clave que alguien olvide agregar
+  // nombre a las pestañas, así que una décima clave que alguien olvide agregar
   // ahí igual levanta la barra — si no, quedaría sin botón para guardarse.
   // Y compara TRIMEADO de los dos lados porque `parseForm` trima antes de
   // validar: el servidor guarda `value.trim()`, así que un pegado con espacios
@@ -112,9 +117,19 @@ export function ConfigForm({ initial }: { initial: ConfigFormInitial }) {
         />
         <Card>
           <CardContent className="space-y-4">
-            <AsociateSwitch
+            <ConfigSwitch
+              name="asociateActivo"
               checked={values.asociateActivo === "on"}
               onChange={(on) => setValue("asociateActivo", on ? "on" : "")}
+              label="Botón ASOCIATE habilitado en el sitio público"
+              hint="Apagado, el sitio muestra el aviso de asociaciones suspendidas. Se prende recién con el wizard del Módulo 3 funcionando."
+            />
+            <ConfigSwitch
+              name="collaboratorEnabled"
+              checked={values.collaboratorEnabled === "on"}
+              onChange={(on) => setValue("collaboratorEnabled", on ? "on" : "")}
+              label="Categoría socio colaborador habilitada (Art. 5 bis)"
+              hint="Apagada, ASOCIATE sólo admite a quienes viven en el barrio y el socio no puede pedir el pase a colaborador. Prendela cuando la IGJ oficialice el estatuto reformado."
             />
             <TextField
               label="Teléfono de contacto"
