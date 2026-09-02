@@ -194,6 +194,16 @@ describe("la ficha del reporte", () => {
     expect(html).toContain("Imágenes del DNI borradas el 02/09/2027");
   });
 
+  // Descripción y ubicación van en una fila desde xl SÓLO cuando hay punto en
+  // el mapa: sin punto, la descripción ocupa el ancho y no queda una tarjeta
+  // casi vacía al costado (pedido del operador, 02/09/2026).
+  it("con punto, descripción y ubicación se parten en dos columnas desde xl; sin punto, no", async () => {
+    h.findUnique.mockResolvedValue({ ...BASE, lat: -45.797, lng: -67.494 });
+    expect(render(await ReporteDetallePage(params("14")))).toContain("xl:grid-cols-2");
+    h.findUnique.mockResolvedValue({ ...BASE, lat: null, lng: null });
+    expect(render(await ReporteDetallePage(params("14")))).not.toContain("xl:grid-cols-2");
+  });
+
   it("fotos y DNI apuntan a la ruta autenticada, con alt distinto", async () => {
     h.findUnique.mockResolvedValue({
       ...BASE,

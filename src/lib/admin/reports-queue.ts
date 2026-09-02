@@ -139,6 +139,11 @@ export function hasReportFilters(f: ReportFilters): boolean {
   return f.kind !== null || f.category !== null || f.q !== null || f.year !== null;
 }
 
+/** "Sin filtros", en un solo lugar: la lista y el mapa arman su "Limpiar" con
+ *  esto, y sumar un filtro nuevo es tocar el tipo y esta constante, no dos
+ *  páginas. */
+export const NO_REPORT_FILTERS: ReportFilters = { kind: null, category: null, q: null, year: null };
+
 /** El querystring de los filtros, con el `?` incluido o vacío. Existe aparte
  *  del href porque la vista de MAPA es otra ruta con los mismos filtros: sin
  *  esto, el link se armaba con `reportFiltersHref(...).replace(REPORTS_BASE, "")`,

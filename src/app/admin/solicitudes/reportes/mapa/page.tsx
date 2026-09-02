@@ -37,6 +37,7 @@ import { availableYears, countByView, reportWhere } from "@/lib/admin/reports-qu
 import {
   hasReportFilters, parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref,
   reportFiltersQuery, REPORTS_BASE, reportView,
+  NO_REPORT_FILTERS,
 } from "@/lib/admin/reports-queue";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
@@ -55,7 +56,6 @@ const MAPA_BASE = `${REPORTS_BASE}/mapa`;
  *  los reportes sin ubicación. */
 const MAX_POINTS = 500;
 
-const NO_FILTERS = { kind: null, category: null, q: null, year: null } as const;
 
 /** El `where` se compone con `AND` y no con spread: `reportWhere` YA usa `OR`
  *  cuando hay texto de búsqueda, así que `{ ...base, OR: [...] }` le pisaría la
@@ -131,7 +131,7 @@ export default async function ReportesMapaPage(props: {
   const listHref = reportFiltersHref(filters, view);
   // Limpiar filtros NO saca del mapa: la pantalla que el operador eligió es
   // ésta. Lo comparten la barra de filtros y el vacío por filtros.
-  const clearHref = `${MAPA_BASE}${reportFiltersQuery(NO_FILTERS, view)}`;
+  const clearHref = `${MAPA_BASE}${reportFiltersQuery(NO_REPORT_FILTERS, view)}`;
   const chipHref = (key: (typeof REPORT_VIEWS)[number]["key"]) =>
     `${MAPA_BASE}${reportFiltersQuery(filters, key)}`;
 

@@ -40,6 +40,7 @@ import {
 import {
   hasReportFilters, parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref,
   reportFiltersQuery, reportKindParam, REPORTS_BASE, reportView,
+  NO_REPORT_FILTERS,
 } from "@/lib/admin/reports-queue";
 import { reportKindBadgeVariant, reportStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -64,7 +65,6 @@ const RAIL: Record<ReportStatus, string> = {
   dismissed: "border-l-border",
 };
 
-const NO_FILTERS = { kind: null, category: null, q: null, year: null } as const;
 
 export default async function ReportesPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -103,7 +103,7 @@ export default async function ReportesPage(props: {
   });
 
   const hasFilters = hasReportFilters(filters);
-  const clearHref = reportFiltersHref(NO_FILTERS, view);
+  const clearHref = reportFiltersHref(NO_REPORT_FILTERS, view);
   const mapHref = `${REPORTS_BASE}/mapa${reportFiltersQuery(filters, view)}`;
 
   return (

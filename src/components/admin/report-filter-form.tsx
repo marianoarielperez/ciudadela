@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { SELECT_CLASS } from "@/lib/admin/field-styles";
 import {
   hasReportFilters, reportKindParam, type ReportFilters, type ReportViewKey,
+  DEFAULT_REPORT_VIEW,
 } from "@/lib/admin/reports-queue";
 import { CLAIM_CATEGORIES, INITIATIVE_CATEGORIES } from "@/lib/reports/catalog";
 import { cn } from "@/lib/utils";
@@ -66,7 +67,7 @@ export function ReportFilterForm({
        atrás salen solos. La vista viaja en un hidden para que filtrar no
        devuelva al operador a "Sin presentar". */
     <form className="flex flex-wrap items-end gap-2" method="get" action={action}>
-      {view !== "pendientes" && <input type="hidden" name="estado" value={view} />}
+      {view !== DEFAULT_REPORT_VIEW && <input type="hidden" name="estado" value={view} />}
       {/* Un GET manda SÓLO sus propios campos: sin este hidden, apretar
           "Filtrar" en el mapa le borraría al operador un `q` que la pantalla sí
           está aplicando (el `where` es el mismo que el de la lista) y que los
