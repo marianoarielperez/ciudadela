@@ -129,13 +129,16 @@ describe("las variantes Radix se DERIVAN de las mismas constantes", () => {
     expect(SECTION_TAB_RADIX_TRIGGER).toContain("dark:data-active:bg-card");
     expect(SECTION_TAB_RADIX_TRIGGER).toContain("dark:data-active:border-border");
     expect(SECTION_TAB_RADIX_TRIGGER).toContain("flex-none");
+    expect(SECTION_TAB_RADIX_TRIGGER).toContain("rounded-b-none");
+    expect(SECTION_TAB_RADIX_TRIGGER).toContain("after:hidden");
     expect(SECTION_TAB_RADIX_TRIGGER).toContain(SECTION_TAB);
   });
 
   it("la lista Radix pisa el h-8, el p-[3px] y el rounded-lg de la variante compartida", () => {
-    for (const token of ["group-data-horizontal/tabs:h-auto", "p-0", "rounded-none", "border-b", "w-full", "items-end", "justify-start"]) {
+    for (const token of ["group-data-horizontal/tabs:h-auto", "p-0 px-0.5", "rounded-none", "border-b", "w-full", "min-w-max", "items-end", "justify-start"]) {
       expect(SECTION_TABS_RADIX_LIST).toContain(token);
     }
+    expect(SECTION_TABS_RADIX_LIST).not.toContain("overflow");
     expect(SECTION_TABS_RADIX_LIST).not.toContain("pb-2");
   });
 });
@@ -214,12 +217,17 @@ export const SECTION_TAB_ICON = "size-4 shrink-0";
 // `h-auto` pisa el `h-8` de la variante compartida (los targets de 44px no
 // entran en 32px). Ya no hay `pb-2`: el subrayado que `line` dibujaba 5px por
 // debajo del trigger no se activa en `section`.
+// El overflow va en el ENVOLTORIO (SECTION_TABS_NAV_ADMIN), nunca en la lista:
+// sobre la lista recortaría el solape de -mb-px y forzaría una barra vertical.
 export const SECTION_TABS_RADIX_LIST =
-  "group-data-horizontal/tabs:h-auto w-full items-end justify-start overflow-x-auto rounded-none border-b p-0 px-0.5";
+  "group-data-horizontal/tabs:h-auto w-full min-w-max items-end justify-start rounded-none border-b p-0 px-0.5";
 
 export const SECTION_TAB_RADIX_TRIGGER = [
   SECTION_TAB,
-  "flex-none justify-start py-0 font-normal",
+  // rounded-b-none: el rounded-md de la base no lo pisa rounded-t-md.
+  // after:hidden: la base dibuja un subrayado 5px por debajo (opacity 0) que
+  // igual ocupa caja y desborda el envoltorio.
+  "flex-none justify-start rounded-b-none py-0 font-normal after:hidden",
   withPrefix("data-[state=inactive]:", SECTION_TAB_INACTIVE),
   withPrefix("data-active:", SECTION_TAB_ACTIVE),
   // La base pinta la activa en oscuro con `dark:data-active:border-input` y
@@ -609,7 +617,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Test: `tests/section-tabs.test.ts` (extender)
 
 **Interfaces:**
-- Consumes: `SECTION_TABS_RADIX_LIST`, `SECTION_TAB_RADIX_TRIGGER`, `SECTION_TAB_ICON` de `@/lib/ui/section-tabs`; `variant="section"` de `TabsList`.
+- Consumes: `SECTION_TABS_NAV_ADMIN`, `SECTION_TABS_RADIX_LIST`, `SECTION_TAB_RADIX_TRIGGER`, `SECTION_TAB_ICON` de `@/lib/ui/section-tabs`; `variant="section"` de `TabsList`.
+- **Envoltorio obligatorio (hallazgo de la revisión de la Tarea 1):** la `TabsList` va DENTRO de `<div className={SECTION_TABS_NAV_ADMIN}>`, igual que las barras por URL. El overflow vive en ese div; la lista no scrollea (si scrolleara, recortaría el solape de `-mb-px` y forzaría una barra vertical). Radix no exige que `TabsList` sea hija directa de `Tabs`: el contexto la encuentra igual.
 - Produces: nada nuevo; las props no cambian.
 
 - [ ] **Step 1: Extender el test (falla)**
@@ -648,14 +657,17 @@ describe("SaludTabs (Radix)", () => {
     );
   }
 
-  it("la lista es variant=section, con el riel y sin el pb-2 del subrayado viejo", async () => {
+  it("la lista es variant=section, dentro del envoltorio, con el riel y sin el pb-2 del subrayado viejo", async () => {
     const html = await render();
     expect(html).toContain('data-variant="section"');
     expect(html).toContain('aria-label="Secciones de salud"');
     expect(html).not.toContain("pb-2");
+    // El overflow va en el envoltorio, nunca en la lista.
+    expect(html).toContain(`<div class="${SECTION_TABS_NAV_ADMIN}">`);
     const list = html.match(/<div [^>]*role="tablist"[^>]*>/)?.[0] ?? "";
     expect(list).toContain("border-b");
     expect(list).toContain("items-end");
+    expect(list).not.toContain("overflow");
   });
 
   it("los cuatro triggers llevan la solapa derivada, con targets de 44px", async () => {
@@ -666,6 +678,7 @@ describe("SaludTabs (Radix)", () => {
       expect(t).toContain("min-h-11");
       expect(t).toContain("data-active:bg-card");
       expect(t).toContain("data-[state=inactive]:hover:bg-muted");
+      expect(t).toContain("after:hidden");
       expect(t).not.toContain("after:bg-primary");
     }
     expect(html.match(/data-state="active"/g)?.length).toBeGreaterThanOrEqual(1);
@@ -691,23 +704,28 @@ Reemplazar el import de `ui/tabs` y el JSX de la lista (líneas 13 y 38-47). Man
 
 ```tsx
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
+import { SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 ```
 
 ```tsx
       {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
-          apaga las reglas de estado de `line`, que pesan más que `data-active:`. */}
-      <TabsList
-        variant="section"
-        aria-label="Secciones de la ficha"
-        className={SECTION_TABS_RADIX_LIST}
-      >
-        {tabs.map((t) => (
-          <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
-            {t.label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList
+          variant="section"
+          aria-label="Secciones de la ficha"
+          className={SECTION_TABS_RADIX_LIST}
+        >
+          {tabs.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </div>
 ```
 
 (`aria-label` es el único extra no visual del plan: era la única lista sin etiqueta.)
@@ -717,27 +735,32 @@ import { SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } from "@/lib/ui/sec
 Agregar el import y reemplazar el comentario + `TabsList` + `TabsTrigger` (líneas 57-79):
 
 ```tsx
-import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
+import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 ```
 
 ```tsx
       {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
-          apaga las reglas de estado de `line`, que pesan más que `data-active:`. */}
-      <TabsList
-        variant="section"
-        aria-label="Secciones de configuración"
-        className={SECTION_TABS_RADIX_LIST}
-      >
-        {CONFIG_TABS.map((t) => {
-          const Icon = ICONS[t.icon];
-          return (
-            <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
-              <Icon className={SECTION_TAB_ICON} aria-hidden />
-              {t.label}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList
+          variant="section"
+          aria-label="Secciones de configuración"
+          className={SECTION_TABS_RADIX_LIST}
+        >
+          {CONFIG_TABS.map((t) => {
+            const Icon = ICONS[t.icon];
+            return (
+              <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
+                {t.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
 ```
 
 - [ ] **Step 5: `salud-tabs.tsx`**
@@ -745,32 +768,37 @@ import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } 
 Agregar el import y reemplazar el comentario + `TabsList` + `TabsTrigger` (líneas 64-94). El contador rojo y su `sr-only` quedan tal cual:
 
 ```tsx
-import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
+import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 ```
 
 ```tsx
       {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
-          apaga las reglas de estado de `line`, que pesan más que `data-active:`. */}
-      <TabsList variant="section" aria-label="Secciones de salud" className={SECTION_TABS_RADIX_LIST}>
-        {SALUD_TABS.map((t) => {
-          const Icon = ICONS[t.icon];
-          const count = actCounts[t.value] ?? 0;
-          return (
-            <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
-              <Icon className={SECTION_TAB_ICON} aria-hidden />
-              {t.label}
-              {count > 0 && (
-                <>
-                  <span aria-hidden className="font-mono text-xs font-semibold tabular-nums text-destructive">
-                    {count}
-                  </span>
-                  <span className="sr-only">, {count} para atender</span>
-                </>
-              )}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList variant="section" aria-label="Secciones de salud" className={SECTION_TABS_RADIX_LIST}>
+          {SALUD_TABS.map((t) => {
+            const Icon = ICONS[t.icon];
+            const count = actCounts[t.value] ?? 0;
+            return (
+              <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
+                {t.label}
+                {count > 0 && (
+                  <>
+                    <span aria-hidden className="font-mono text-xs font-semibold tabular-nums text-destructive">
+                      {count}
+                    </span>
+                    <span className="sr-only">, {count} para atender</span>
+                  </>
+                )}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
 ```
 
 - [ ] **Step 6: `documentos-tabs.tsx`**
@@ -778,23 +806,28 @@ import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } 
 Agregar el import y reemplazar el comentario + `TabsList` + `TabsTrigger` (líneas 53-74):
 
 ```tsx
-import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
+import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 ```
 
 ```tsx
       {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
-          apaga las reglas de estado de `line`, que pesan más que `data-active:`. */}
-      <TabsList variant="section" aria-label="Tipos de documento" className={SECTION_TABS_RADIX_LIST}>
-        {DOCUMENTOS_TABS.map((t) => {
-          const Icon = ICONS[t.icon];
-          return (
-            <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
-              <Icon className={SECTION_TAB_ICON} aria-hidden />
-              {t.label}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList variant="section" aria-label="Tipos de documento" className={SECTION_TABS_RADIX_LIST}>
+          {DOCUMENTOS_TABS.map((t) => {
+            const Icon = ICONS[t.icon];
+            return (
+              <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
+                {t.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
 ```
 
 - [ ] **Step 7: Correr el archivo y verificar que pasa**
