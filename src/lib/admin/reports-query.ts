@@ -17,6 +17,11 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 
 import { REPORT_VIEWS, reportView, type ReportFilters, type ReportViewKey } from "./reports-queue";
 
+/** El techo de `Report.id`: la columna es un `Int` de Prisma, o sea un INT con
+ *  signo de MariaDB. Un valor por encima no es "ningún reporte": es un literal
+ *  que la base rechaza. */
+const INT_MAX = 2147483647;
+
 export function reportWhere(view: ReportViewKey, f: ReportFilters): Prisma.ReportWhereInput {
   // Los estados salen SIEMPRE de la vista: `draft` no está en ninguna, así que
   // un borrador que el vecino nunca envió no puede colarse ni en "Todos".
@@ -34,11 +39,15 @@ export function reportWhere(view: ReportViewKey, f: ReportFilters): Prisma.Repor
     ];
     // Un texto todo dígitos es (también) el N° del reporte: el operador que
     // tipea "14" está buscando el reporte 14, y de paso sigue viendo el que
-    // menciona "14" en la descripción. `> 0` y entero porque el id lo es;
-    // `Number("14e3")` o `Number(" 14")` no llegan acá con forma de número
-    // entero positivo por casualidad, así que se valida y no se confía.
+    // menciona "14" en la descripción. Tres condiciones, y las tres importan:
+    // entero y `> 0` porque el id lo es, y `<= 2147483647` porque la columna es
+    // un INT con signo de MariaDB — un `q` de 19 dígitos pasa `Number.isInteger`
+    // (es un float redondo, no un entero exacto) y llega a la base como un
+    // literal fuera de rango. OJO: `Number("14e3")` da 14000 y SÍ es un entero
+    // positivo, así que esta guarda no lo descarta; lo descarta el tope de 80
+    // caracteres y nada más, y ese caso es inofensivo (busca el reporte 14000).
     const n = Number(f.q);
-    if (Number.isInteger(n) && n > 0) or.push({ id: n });
+    if (Number.isInteger(n) && n > 0 && n <= INT_MAX) or.push({ id: n });
     where.OR = or;
   }
   return where;
@@ -78,6 +87,41 @@ export const REPORT_LIST_SELECT = {
   scplTicket: true,
   lat: true,
   lng: true,
-  files: { where: { kind: "photo" as const }, select: { id: true }, orderBy: { id: "asc" as const } },
+  // Sólo las fotos, y de cada una su id y su tipo. El `where` es la guarda que
+  // vale —la cara del DNI no sale de la base— y el `kind` es la que se ve:
+  // `reportPhotos` vuelve a filtrar en el llamador, así que borrar el `where`
+  // por descuido deja la lista igual en vez de publicar un DNI en una miniatura.
+  files: {
+    where: { kind: "photo" as const },
+    select: { id: true, kind: true },
+    orderBy: { id: "asc" as const },
+  },
   member: { select: { memberships: { select: { memberNumber: true, book: { select: { status: true } } } } } },
 } satisfies Prisma.ReportSelect;
+
+/** Cuántas miniaturas entran en una tarjeta (spec §6.3). */
+export const REPORT_THUMBS = 2;
+
+/** Las fotos de una tarjeta, y NADA más: la cara del DNI no se muestra en una
+ *  lista de trabajo. De acá salen el contador ("3 fotos") y la tira de
+ *  miniaturas, así que no pueden decir cosas distintas. */
+export function reportPhotos<T extends { kind: string }>(files: readonly T[]): T[] {
+  return files.filter((f) => f.kind === "photo");
+}
+
+/** Qué dice la línea de ubicación de la tarjeta. La calle cuando está; si no,
+ *  el hecho de que haya un punto en el mapa —un reporte cargado desde el mapa
+ *  del wizard no tiene calle y decía "Sin ubicación" teniendo coordenadas—; y
+ *  recién ahí, nada. Puro: `lat`/`lng` llegan como `Decimal | null` de Prisma y
+ *  acá sólo se pregunta si existen. */
+export function reportPlaceLabel(r: {
+  streetName: string | null;
+  addressDetail: string | null;
+  lat: unknown;
+  lng: unknown;
+}): string {
+  const street = [r.streetName, r.addressDetail].filter(Boolean).join(" ").trim();
+  if (street) return street;
+  if (r.lat != null && r.lng != null) return "Punto en el mapa";
+  return "Sin ubicación";
+}

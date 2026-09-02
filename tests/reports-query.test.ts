@@ -11,7 +11,9 @@
 // import, el test se caería acá y no en producción.
 import { describe, expect, it, vi } from "vitest";
 
-import { countByView, REPORT_LIST_SELECT, reportWhere } from "@/lib/admin/reports-query";
+import {
+  countByView, REPORT_LIST_SELECT, REPORT_THUMBS, reportPhotos, reportPlaceLabel, reportWhere,
+} from "@/lib/admin/reports-query";
 import { REPORT_VIEWS, type ReportFilters } from "@/lib/admin/reports-queue";
 
 const filters = (over: Partial<ReportFilters> = {}): ReportFilters => ({
@@ -41,6 +43,18 @@ describe("reportWhere", () => {
       expect.objectContaining({ id: expect.anything() }),
     );
     expect(reportWhere("todos", filters({ q: "0" })).OR).toHaveLength(3);
+  });
+
+  it("un número más grande que un INT no se busca como N°", () => {
+    // `Report.id` es un INT con signo: 19 dígitos pasan `Number.isInteger`
+    // (es un float redondo) y llegarían a MariaDB como un literal fuera de
+    // rango. El texto sigue buscándose, que es lo que el operador tipeó.
+    const w = reportWhere("todos", filters({ q: "1234567890123456789" }));
+    expect(w.OR).toHaveLength(3);
+    expect(w.OR).not.toContainEqual(expect.objectContaining({ id: expect.anything() }));
+    // Y el borde de arriba sí entra.
+    expect(reportWhere("todos", filters({ q: "2147483647" })).OR).toContainEqual({ id: 2147483647 });
+    expect(reportWhere("todos", filters({ q: "2147483648" })).OR).toHaveLength(3);
   });
 
   it("sin filtros de texto no hay OR (un `where` con OR vacío no filtra nada)", () => {
@@ -126,11 +140,58 @@ describe("REPORT_LIST_SELECT", () => {
     for (const field of ["description", "reporterName", "reporterDni", "reporterPhone", "reporterEmail", "ip"]) {
       expect(REPORT_LIST_SELECT).not.toHaveProperty(field);
     }
-    // Sólo las fotos, y sólo sus ids (la tarjeta muestra cuántas hay).
+    // Sólo las fotos, y de cada una su id y su tipo: el `where` es la guarda
+    // que impide que la cara del DNI salga de la base y el `kind` es el que
+    // deja a `reportPhotos` volver a filtrar en la tarjeta.
     expect(REPORT_LIST_SELECT.files).toEqual({
       where: { kind: "photo" },
-      select: { id: true },
+      select: { id: true, kind: true },
       orderBy: { id: "asc" },
     });
+  });
+});
+
+describe("reportPhotos", () => {
+  it("una miniatura NUNCA puede ser la cara de un DNI", () => {
+    const files = [
+      { id: 1, kind: "photo" },
+      { id: 2, kind: "dni_front" },
+      { id: 3, kind: "photo" },
+      { id: 4, kind: "dni_back" },
+      { id: 5, kind: "photo" },
+    ];
+    expect(reportPhotos(files).map((f) => f.id)).toEqual([1, 3, 5]);
+    // La tira de la tarjeta corta en dos (spec §6.3) y el badge sigue diciendo
+    // el total: 3 fotos, 2 miniaturas.
+    expect(reportPhotos(files).slice(0, REPORT_THUMBS).map((f) => f.id)).toEqual([1, 3]);
+  });
+});
+
+describe("reportPlaceLabel", () => {
+  const place = (over: Partial<Parameters<typeof reportPlaceLabel>[0]>) =>
+    reportPlaceLabel({ streetName: null, addressDetail: null, lat: null, lng: null, ...over });
+
+  it("la calle manda cuando está", () => {
+    expect(place({ streetName: "Pizarro", addressDetail: "al 1200" })).toBe("Pizarro al 1200");
+    expect(place({ streetName: "Pizarro" })).toBe("Pizarro");
+    // Y la calle gana aunque además haya punto: el vecino escribió una
+    // dirección y ésa es la que el operador busca en la vereda.
+    expect(place({ streetName: "Pizarro", lat: -45.86, lng: -67.49 })).toBe("Pizarro");
+  });
+
+  it("sin calle pero con punto dice que hay un punto en el mapa", () => {
+    // El caso vivo: el reporte N° 2 se cargó desde el mapa del wizard, no tiene
+    // calle, y la tarjeta decía "Sin ubicación" teniendo coordenadas.
+    expect(place({ lat: 0, lng: 0 })).toBe("Punto en el mapa");
+    expect(place({ lat: -45.86, lng: -67.49 })).toBe("Punto en el mapa");
+    // Media coordenada no es un punto.
+    expect(place({ lat: -45.86 })).toBe("Sin ubicación");
+    expect(place({ lng: -67.49 })).toBe("Sin ubicación");
+  });
+
+  it("sin nada dice que no hay ubicación", () => {
+    expect(place({})).toBe("Sin ubicación");
+    // Una calle vacía no es una calle (el `join` de dos nulos da "").
+    expect(place({ streetName: "", addressDetail: "" })).toBe("Sin ubicación");
   });
 });

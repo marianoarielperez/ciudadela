@@ -34,7 +34,9 @@ import { Input } from "@/components/ui/input";
 import { SELECT_CLASS } from "@/lib/admin/field-styles";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { pageHref, paginate, parsePage } from "@/lib/admin/pagination";
-import { countByView, REPORT_LIST_SELECT, reportWhere } from "@/lib/admin/reports-query";
+import {
+  countByView, REPORT_LIST_SELECT, REPORT_THUMBS, reportPhotos, reportPlaceLabel, reportWhere,
+} from "@/lib/admin/reports-query";
 import {
   parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref, reportFiltersQuery,
   reportKindParam, REPORTS_BASE, reportView,
@@ -83,10 +85,12 @@ export default async function ReportesPage(props: {
   const view = parseReportView(sp.estado);
   const filters = parseReportFilters(sp);
   const where = reportWhere(view, filters);
-  const [counts, total] = await Promise.all([
-    countByView(prisma, filters),
-    prisma.report.count({ where }),
-  ]);
+  // El total de la paginación es el contador de ESTA vista, no una quinta
+  // consulta con el mismo `where`: `countByView` ya lo contó. Con dos `count`
+  // separados, la línea "1–50 de N" podía discrepar del chip por una fila que
+  // entró entre una consulta y la otra.
+  const counts = await countByView(prisma, filters);
+  const total = counts[view];
   const { page, pageCount, skip, take } = paginate(total, parsePage(sp), PAGE_SIZE);
   const rows = total === 0 ? [] : await prisma.report.findMany({
     where,
@@ -216,7 +220,8 @@ export default async function ReportesPage(props: {
               const what = r.kind === "claim" && r.subtype
                 ? `${categoryLabel("claim", r.category)} › ${subtypeLabel(r.category, r.subtype)}`
                 : categoryLabel(r.kind, r.category);
-              const place = [r.streetName, r.addressDetail].filter(Boolean).join(" ");
+              const place = reportPlaceLabel(r);
+              const photos = reportPhotos(r.files);
               return (
                 <li key={r.id}>
                   <Card className={cn("border-l-4", RAIL[r.status])}>
@@ -228,6 +233,11 @@ export default async function ReportesPage(props: {
                             <ReportKindIcon kind={r.kind} /> {KIND_LABELS[r.kind]}
                           </Badge>
                         </span>
+                        {/* El asunto entra en el <h2> sólo para el lector de
+                            pantalla: navegando por encabezados, "N° 14 ·
+                            Reclamo" no dice de qué es el reporte, y meterlo a
+                            la vista duplicaría el link que ya está abajo. */}
+                        <span className="sr-only"> · {what}</span>
                         <Badge variant={reportStatusBadgeVariant(r.status)}>
                           {statusLabel(r.kind, r.status)}
                         </Badge>
@@ -262,10 +272,40 @@ export default async function ReportesPage(props: {
                         {r.scplTicket && (
                           <Badge variant="outline" title="Número de reclamo ante la SCPL">SCPL {r.scplTicket}</Badge>
                         )}
-                        {r.files.length > 0 && (
-                          <Badge variant="outline">{r.files.length} {r.files.length === 1 ? "foto" : "fotos"}</Badge>
+                        {photos.length > 0 && (
+                          <Badge variant="outline">{photos.length} {photos.length === 1 ? "foto" : "fotos"}</Badge>
                         )}
                       </p>
+                      {/* Tira de hasta dos miniaturas (spec §6.3). Se sirven por
+                          la ruta AUTENTICADA `/api/admin/reportes/[id]/archivos/
+                          [fileId]`, que entrega JPEG inline con su CSP: no hay
+                          una sola foto de un vecino bajo `public/`. `alt=""`
+                          porque son decorativas —la cuenta accesible es el badge
+                          "N fotos" de arriba, que ya la dice con palabras— y un
+                          `alt` con el asunto le repetiría el título al lector de
+                          pantalla dos veces por tarjeta. `<img>` y no
+                          `next/image`: ese componente cachearía y republicaría
+                          como asset público un archivo que la ruta entrega con
+                          `no-store` (docs/08, mismo motivo que los dos visores
+                          de documentos del panel). */}
+                      {photos.length > 0 && (
+                        <ul className="flex flex-wrap gap-1.5">
+                          {photos.slice(0, REPORT_THUMBS).map((f) => (
+                            <li key={f.id}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={`/api/admin/reportes/${r.id}/archivos/${f.id}`}
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                                width={64}
+                                height={64}
+                                className="size-16 rounded-md border border-border bg-muted object-cover"
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </CardContent>
                   </Card>
                 </li>
