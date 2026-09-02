@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   dismiss: vi.fn(),
   sendFiled: vi.fn(async () => {}),
   findUnique: vi.fn(),
-  audit: vi.fn(async () => {}),
+  audit: vi.fn<(entry: unknown) => Promise<void>>(async () => {}),
   revalidatePath: vi.fn(),
   resolveMinuteId: vi.fn(async () => 33),
   discardUnusedMinute: vi.fn(async () => {}),
