@@ -15,7 +15,10 @@
 // HONRA el `where` que recibe. Mismo criterio que `applications/query.ts`.
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 
-import { REPORT_VIEWS, reportView, type ReportFilters, type ReportViewKey } from "./reports-queue";
+import {
+  civilYearOf, civilYearStartUtc, REPORT_VIEWS, reportView,
+  type ReportFilters, type ReportViewKey,
+} from "./reports-queue";
 
 /** El techo de `Report.id`: la columna es un `Int` de Prisma, o sea un INT con
  *  signo de MariaDB. Un valor por encima no es "ningún reporte": es un literal
@@ -28,6 +31,19 @@ export function reportWhere(view: ReportViewKey, f: ReportFilters): Prisma.Repor
   const where: Prisma.ReportWhereInput = { status: { in: reportView(view).statuses } };
   if (f.kind) where.kind = f.kind;
   if (f.category) where.category = f.category;
+  if (f.year) {
+    // El año es el CIVIL ARGENTINO, no el que dice el UTC guardado: un reporte
+    // enviado el 31/12 a las 23:00 hora argentina es de ESE año aunque en UTC
+    // ya sea el 1/1 del siguiente (UTC-3 sin DST). Por eso los bordes son las
+    // 03:00 UTC del 1/1 —la medianoche civil de acá— y no las 00:00 UTC. Con el
+    // corte en UTC crudo, los últimos tres días de cada diciembre se le
+    // adjudicarían al año siguiente, que es justo cuando el operador arma el
+    // informe anual.
+    //
+    // `gte`/`lt` y no `gte`/`lte`: el 1/1 del año siguiente a las 00:00 en punto
+    // pertenece al año siguiente, y con `lte` estaría en los dos.
+    where.submittedAt = { gte: civilYearStartUtc(f.year), lt: civilYearStartUtc(f.year + 1) };
+  }
   if (f.q) {
     // Los tres campos de texto que el operador busca (spec §5.3). `contains` a
     // secas: en MariaDB la collation ya es case-insensitive, y el `mode` de
@@ -64,6 +80,40 @@ export async function countByView(
     REPORT_VIEWS.map(async (v) => [v.key, await db.report.count({ where: reportWhere(v.key, f) })] as const),
   );
   return Object.fromEntries(entries) as Record<ReportViewKey, number>;
+}
+
+/** Los años que ofrece el desplegable: del actual (civil argentino) hacia atrás
+ *  hasta el del PRIMER envío. Un `aggregate` con `_min` y no un `groupBy` por
+ *  año ni un `distinct`: lo que hace falta es un piso, y el piso es una sola
+ *  fila leída por índice — un `groupBy` traería un año por fila enviada para
+ *  después descartarlos casi todos, y encima habría que agruparlos por el
+ *  calendario de acá y no por el UTC de la columna.
+ *
+ *  Los años SIN reportes quedan igual en la lista: un desplegable con huecos
+ *  ("2026, 2024") le hace creer al operador que 2025 no existe, cuando lo que
+ *  pasa es que ese año no entró nada — y eso lo dice mejor la lista vacía.
+ *
+ *  Prisma se INYECTA, como en el resto del módulo: el test es puro y corre sin
+ *  `DATABASE_URL`. */
+export async function availableYears(
+  db: Pick<PrismaClient, "report">,
+  now: Date = new Date(),
+): Promise<number[]> {
+  const current = civilYearOf(now);
+  // `submittedAt: { not: null }` es la misma frontera que `REPORT_VIEWS`: un
+  // borrador que el vecino nunca envió no aporta un año al desplegable.
+  const agg = await db.report.aggregate({
+    where: { submittedAt: { not: null } },
+    _min: { submittedAt: true },
+  });
+  const first = agg._min.submittedAt ? civilYearOf(agg._min.submittedAt) : current;
+  // El piso nunca puede ser posterior al año en curso: con una fecha futura
+  // cargada a mano, el `for` no daría ninguna vuelta y el desplegable quedaría
+  // con "Todos los años" y nada más. Al menos el año actual siempre se ofrece.
+  const floor = Math.min(first, current);
+  const years: number[] = [];
+  for (let y = current; y >= floor; y--) years.push(y);
+  return years;
 }
 
 /** Lo que la tarjeta de la lista muestra, y nada más. En particular NO trae

@@ -10,20 +10,30 @@
 //    punto y no "Sin ubicación".
 // 3. El total de la paginación sale del contador de la vista: CUATRO `count` y
 //    no cinco.
+// 4. La barra de filtros es el componente COMPARTIDO con el mapa
+//    (`ReportFilterForm`), y el año elegido llega a la consulta, al desplegable
+//    y a los links de página.
+//
+// El reloj se congela: el desplegable de años va del año en curso hacia atrás
+// (`availableYears`) y el rango que `parseReportFilters` acepta también se mueve
+// solo. Sin esto, el archivo se pondría en rojo el 1° de enero.
 //
 // La base se mockea con un doble que HONRA el `where` que recibe (lección del
 // M6): el `count` de cada chip filtra por los estados que le pasan, así que el
 // número de la línea "1–N de N" es el de esa vista y no un total inventado.
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   count: vi.fn(),
   findMany: vi.fn(),
+  aggregate: vi.fn(),
 }));
 vi.mock("@/lib/auth/require-admin", () => ({ requireAdmin: h.requireAdmin }));
-vi.mock("@/lib/prisma", () => ({ prisma: { report: { count: h.count, findMany: h.findMany } } }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { report: { count: h.count, findMany: h.findMany, aggregate: h.aggregate } },
+}));
 
 import ReportesPage from "@/app/admin/solicitudes/reportes/page";
 
@@ -44,19 +54,50 @@ const BASE: Omit<Row, "id"> = {
   outsideBoundary: false, scplTicket: null, lat: null, lng: null, files: [], member: null,
 };
 
-/** El doble aplica el `where`: los estados de la vista y nada más (estos tests
- *  no pasan filtros). Con un fake que devolviera siempre todo, el "1–N de N"
- *  daría bien por casualidad. */
+type Where = { status: { in: string[] }; submittedAt?: { gte?: Date; lt?: Date } };
+
+/** El doble aplica el `where`: los estados de la vista y el rango del año. Con
+ *  un fake que devolviera siempre todo, el "1–N de N" daría bien por
+ *  casualidad; y con uno que ignorara `submittedAt` en silencio, el filtro de
+ *  año se probaría solo por su marcado (lección del M6). */
 function seed(rows: Row[]) {
-  const match = (r: Row, where: { status: { in: string[] } }) => where.status.in.includes(r.status);
+  const match = (r: Row, where: Where) => {
+    if (!where.status.in.includes(r.status)) return false;
+    if (where.submittedAt) {
+      if (r.submittedAt === null) return false;
+      const { gte, lt } = where.submittedAt;
+      if (gte !== undefined && r.submittedAt.getTime() < gte.getTime()) return false;
+      if (lt !== undefined && r.submittedAt.getTime() >= lt.getTime()) return false;
+    }
+    return true;
+  };
   h.count.mockImplementation(async ({ where }) => rows.filter((r) => match(r, where)).length);
   h.findMany.mockImplementation(async ({ where }) => rows.filter((r) => match(r, where)));
+  // `availableYears` pide el mínimo de los enviados: el desplegable de años
+  // sale de acá y no de una lista inventada por la pantalla.
+  h.aggregate.mockImplementation(async () => {
+    const times = rows.map((r) => r.submittedAt).filter((d): d is Date => d !== null).map((d) => d.getTime());
+    return { _min: { submittedAt: times.length ? new Date(Math.min(...times)) : null } };
+  });
 }
+
+const HOY = new Date(Date.UTC(2026, 8, 2, 15)); // 02/09/2026, 12:00 en Comodoro
+
+beforeAll(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(HOY);
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
   h.requireAdmin.mockResolvedValue({ ok: true, actorId: 1 });
 });
+
+/** Un instante ARGENTINO como el UTC que guarda la base (UTC-3, sin DST). */
+const arg = (y: number, m: number, d: number, hh = 12) => new Date(Date.UTC(y, m - 1, d, hh + 3));
 
 const render = async (sp: Record<string, string> = {}) =>
   renderToStaticMarkup(
@@ -145,5 +186,67 @@ describe("/admin/solicitudes/reportes", () => {
     // Dentro del <h2>, antes de que se cierre: el link del cuerpo viene después.
     const head = html.slice(0, html.indexOf("</h2>"));
     expect(head).toContain("Agua potable › Falta de agua");
+  });
+});
+
+describe("la barra de filtros de la cola", () => {
+  it("ofrece los años que tienen reportes, del actual hacia atrás", async () => {
+    seed([
+      { ...BASE, id: 1, submittedAt: arg(2026, 3, 10) },
+      { ...BASE, id: 2, submittedAt: arg(2024, 11, 5) },
+    ]);
+    const html = await render();
+    expect(html).toContain('name="anio"');
+    expect(html).toContain("Todos los años");
+    // Del año en curso al del primer envío, SIN huecos: 2025 no tiene reportes
+    // pero está, porque un desplegable con huecos le hace creer al operador que
+    // ese año no existe.
+    for (const y of [2026, 2025, 2024]) expect(html).toContain(`value="${y}"`);
+    expect(html).not.toContain('value="2023"');
+    // Sin año elegido, el marcado queda en "Todos los años" y no aparece
+    // "Limpiar" (no hay ningún filtro puesto).
+    expect(html).toContain('<option value="" selected="">Todos los años</option>');
+    for (const y of [2026, 2025, 2024]) expect(html).not.toContain(`value="${y}" selected`);
+    expect(html).not.toContain(">Limpiar<");
+  });
+
+  it("el año elegido queda seleccionado, recorta la lista y ofrece limpiar", async () => {
+    seed([
+      { ...BASE, id: 1, submittedAt: arg(2026, 3, 10) },
+      { ...BASE, id: 2, submittedAt: arg(2025, 7, 1) },
+      { ...BASE, id: 3, submittedAt: arg(2025, 12, 31, 23) }, // 23:00 de acá: sigue siendo 2025
+    ]);
+    const html = await render({ anio: "2025" });
+    expect(html).toContain('value="2025" selected');
+    // Dos de los tres: el del 31/12 a las 23:00 argentinas es de 2025 aunque en
+    // UTC ya diga 1/1/2026.
+    expect(html).toContain("1–2 de 2");
+    expect(html).toContain(">Limpiar<");
+    // Y los cuatro chips se contaron con el mismo rango.
+    for (const c of h.count.mock.calls) expect(c[0].where).toHaveProperty("submittedAt");
+  });
+
+  it("el año viaja en los links de página junto con el resto de los filtros", async () => {
+    // 51 reportes para que haya una página 2 (el tope es 50).
+    seed(Array.from({ length: 51 }, (_, i) => ({ ...BASE, id: i + 1, submittedAt: arg(2026, 3, 10) })));
+    const html = await render({ anio: "2026", tipo: "reclamo", categoria: "water" });
+    expect(html).toContain(
+      'href="/admin/solicitudes/reportes?anio=2026&amp;tipo=reclamo&amp;categoria=water&amp;page=2"',
+    );
+  });
+
+  it("un año pedido por URL que no está en el catálogo igual aparece marcado", async () => {
+    // `?anio=2001` tipeado a mano, o un año que se quedó sin reportes. Sin la
+    // opción, el navegador cae en "Todos los años" y la barra dice que no hay
+    // filtro mientras la lista sigue filtrada: cero reportes y ningún control
+    // que lo explique.
+    seed([{ ...BASE, id: 1, submittedAt: arg(2026, 3, 10) }]);
+    const html = await render({ anio: "2001" });
+    expect(html).toContain('value="2001" selected');
+    expect(html).toContain("Ningún reporte coincide con esos filtros.");
+    // Y uno fuera de rango no se cuela ni como opción ni como filtro.
+    const fuera = await render({ anio: "1999" });
+    expect(fuera).not.toContain('value="1999"');
+    expect(fuera).not.toContain(">Limpiar<");
   });
 });

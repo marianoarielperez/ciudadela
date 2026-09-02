@@ -10,7 +10,10 @@
 // 2. Un reporte sin coordenadas se CUENTA y se dice ("N sin ubicación"), pero
 //    no se dibuja.
 // 3. Los chips y el botón "Lista" llevan los filtros vigentes: la ida y la
-//    vuelta lista ↔ mapa no pierde `estado/tipo/categoria/q`.
+//    vuelta lista ↔ mapa no pierde `estado/anio/tipo/categoria/q`.
+//    Y desde el 02/09/2026 el mapa además OFRECE esos filtros, con el
+//    componente compartido con la lista: sin campo de texto (un `contains` no
+//    dibuja un pin distinto), pero sin perder el `q` que llegó por URL.
 // 4. El `where` de la ubicación se compone con `AND`: `reportWhere` ya usa `OR`
 //    cuando hay texto de búsqueda, y un spread se lo comería.
 //
@@ -24,7 +27,7 @@
 // El componente del mapa se stubea: arrastraría Leaflet a un test de node, y lo
 // que acá se verifica es el árbol del Server Component y el payload que le pasa.
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Row = {
   id: number;
@@ -33,6 +36,7 @@ type Row = {
   category: string;
   lat: number | null;
   lng: number | null;
+  submittedAt: Date | null;
   description: string;
   streetName: string | null;
   reporterName: string | null;
@@ -42,10 +46,13 @@ const h = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   count: vi.fn(),
   findMany: vi.fn(),
+  aggregate: vi.fn(),
   captured: [] as unknown[][],
 }));
 vi.mock("@/lib/auth/require-admin", () => ({ requireAdmin: h.requireAdmin }));
-vi.mock("@/lib/prisma", () => ({ prisma: { report: { count: h.count, findMany: h.findMany } } }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { report: { count: h.count, findMany: h.findMany, aggregate: h.aggregate } },
+}));
 vi.mock("@/app/admin/solicitudes/reportes/mapa/reports-map-loader", () => ({
   default: ({ points }: { points: unknown[] }) => {
     h.captured.push(points);
@@ -76,6 +83,11 @@ function matches(row: Row, where: unknown): boolean {
         if (!(c.in as unknown[]).includes(value)) return false;
       } else if ("not" in c) {
         if (c.not === null ? value == null : value === c.not) return false;
+      } else if ("gte" in c || "lt" in c) {
+        // El rango del filtro de año, tal como lo emite `reportWhere`.
+        if (!(value instanceof Date)) return false;
+        if ("gte" in c && value.getTime() < (c.gte as Date).getTime()) return false;
+        if ("lt" in c && value.getTime() >= (c.lt as Date).getTime()) return false;
       } else if ("contains" in c) {
         const needle = String(c.contains).toLowerCase();
         if (typeof value !== "string" || !value.toLowerCase().includes(needle)) return false;
@@ -90,6 +102,10 @@ function matches(row: Row, where: unknown): boolean {
 }
 
 function seed(rows: Row[]) {
+  h.aggregate.mockImplementation(async () => {
+    const times = rows.map((r) => r.submittedAt).filter((d): d is Date => d != null).map((d) => d.getTime());
+    return { _min: { submittedAt: times.length ? new Date(Math.min(...times)) : null } };
+  });
   h.count.mockImplementation(async ({ where }: { where: unknown }) =>
     rows.filter((r) => matches(r, where)).length);
   h.findMany.mockImplementation(async ({ where, take }: { where: unknown; take?: number }) =>
@@ -105,16 +121,32 @@ const BASE: Omit<Row, "id"> = {
   category: "water",
   lat: -45.7966,
   lng: -67.5,
+  // 10/03/2026 en hora argentina (UTC-3): el filtro de año lo lee así.
+  submittedAt: new Date(Date.UTC(2026, 2, 10, 15)),
   description: "PIERDE_AGUA_EN_LA_VEREDA",
   streetName: "Pizarro",
   reporterName: "JUANA_PEREZ",
 };
+
+// El reloj se congela: el desplegable de años va del año en curso hacia atrás.
+const HOY = new Date(Date.UTC(2026, 8, 2, 15)); // 02/09/2026, 12:00 en Comodoro
+
+beforeAll(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(HOY);
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
   h.captured.length = 0;
   h.requireAdmin.mockResolvedValue({ ok: true, actorId: 1 });
 });
+
+/** Un instante ARGENTINO como el UTC que guarda la base (UTC-3, sin DST). */
+const arg = (y: number, m: number, d: number, hh = 12) => new Date(Date.UTC(y, m - 1, d, hh + 3));
 
 const render = async (sp: Record<string, string> = {}) =>
   renderToStaticMarkup(
@@ -207,18 +239,18 @@ describe("/admin/solicitudes/reportes/mapa", () => {
 
   it("los chips y el botón Lista llevan los filtros vigentes", async () => {
     seed([{ ...BASE, id: 1 }]);
-    const html = await render({ estado: "todos", tipo: "reclamo", categoria: "water", q: "pizarro" });
-    // El chip de otra vista se queda en el MAPA y conserva tipo/categoría/texto.
+    const html = await render({ estado: "todos", anio: "2026", tipo: "reclamo", categoria: "water", q: "pizarro" });
+    // El chip de otra vista se queda en el MAPA y conserva año/tipo/categoría/texto.
     expect(html).toContain(
-      'href="/admin/solicitudes/reportes/mapa?estado=presentados&amp;tipo=reclamo&amp;categoria=water&amp;q=pizarro"',
+      'href="/admin/solicitudes/reportes/mapa?estado=presentados&amp;anio=2026&amp;tipo=reclamo&amp;categoria=water&amp;q=pizarro"',
     );
     // La vista por defecto no escribe `estado` (lo omite `reportFiltersQuery`).
     expect(html).toContain(
-      'href="/admin/solicitudes/reportes/mapa?tipo=reclamo&amp;categoria=water&amp;q=pizarro"',
+      'href="/admin/solicitudes/reportes/mapa?anio=2026&amp;tipo=reclamo&amp;categoria=water&amp;q=pizarro"',
     );
     // Y la vuelta a la lista conserva la vista y los filtros.
     expect(html).toContain(
-      'href="/admin/solicitudes/reportes?estado=todos&amp;tipo=reclamo&amp;categoria=water&amp;q=pizarro"',
+      'href="/admin/solicitudes/reportes?estado=todos&amp;anio=2026&amp;tipo=reclamo&amp;categoria=water&amp;q=pizarro"',
     );
   });
 
@@ -251,5 +283,60 @@ describe("/admin/solicitudes/reportes/mapa", () => {
     seed([]);
     const html = await render({ estado: "desestimados" });
     expect(html).toContain("Ningún reporte fue desestimado.");
+  });
+});
+
+describe("la barra de filtros del mapa", () => {
+  it("es la misma de la lista, apunta al mapa y no tiene campo de texto", async () => {
+    seed([{ ...BASE, id: 1, submittedAt: arg(2026, 3, 10) }, { ...BASE, id: 2, submittedAt: arg(2024, 11, 5) }]);
+    const html = await render();
+    // Filtrar NO saca del mapa: el `action` es esta ruta.
+    expect(html).toContain('action="/admin/solicitudes/reportes/mapa"');
+    expect(html).toContain('name="anio"');
+    expect(html).toContain('name="tipo"');
+    expect(html).toContain('name="categoria"');
+    expect(html).toContain(">Filtrar</button>");
+    // Los años son los de `availableYears`, no los de los pines.
+    for (const y of [2026, 2025, 2024]) expect(html).toContain(`value="${y}"`);
+    // Sin campo de búsqueda: un `contains` sobre la descripción no dibuja un
+    // pin distinto.
+    expect(html).not.toContain('aria-label="Buscar"');
+    expect(html).not.toContain('name="q"');
+  });
+
+  it("el año elegido queda seleccionado y recorta los pines", async () => {
+    seed([
+      { ...BASE, id: 1, submittedAt: arg(2026, 3, 10) },
+      { ...BASE, id: 2, submittedAt: arg(2025, 7, 1) },
+      // 31/12/2025 a las 23:00 de acá: es de 2025 aunque en UTC ya diga 2026.
+      { ...BASE, id: 3, submittedAt: arg(2025, 12, 31, 23) },
+    ]);
+    const html = await render({ anio: "2025" });
+    expect(html).toContain('value="2025" selected');
+    expect(lastPoints().map((p) => p.id).sort()).toEqual([2, 3]);
+    expect(html).toContain("2 reportes en el mapa");
+    expect(html).toContain(">Limpiar<");
+  });
+
+  it("el `q` que llegó de la lista viaja en un hidden y no se pierde al filtrar", async () => {
+    // Un GET manda SÓLO sus propios campos: sin el hidden, apretar "Filtrar"
+    // acá le borraría al operador un filtro que la pantalla SÍ está aplicando
+    // (y que los chips y el botón "Lista" conservan).
+    seed([
+      { ...BASE, id: 1, streetName: "Pizarro" },
+      { ...BASE, id: 2, streetName: "Rivadavia" },
+    ]);
+    const html = await render({ q: "pizarro" });
+    expect(html).toContain('<input type="hidden" name="q" value="pizarro"/>');
+    expect(lastPoints().map((p) => p.id)).toEqual([1]);
+    // Y sin `q` no queda un hidden vacío que reescriba la URL.
+    const limpio = await render();
+    expect(limpio).not.toContain('name="q"');
+  });
+
+  it("la vista viaja en un hidden: filtrar no devuelve a Sin presentar", async () => {
+    seed([{ ...BASE, id: 1, status: "filed" }]);
+    const html = await render({ estado: "presentados" });
+    expect(html).toContain('<input type="hidden" name="estado" value="presentados"/>');
   });
 });

@@ -12,7 +12,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  countByView, REPORT_LIST_SELECT, REPORT_THUMBS, reportPhotos, reportPlaceLabel, reportWhere,
+  availableYears, countByView, REPORT_LIST_SELECT, REPORT_THUMBS, reportPhotos, reportPlaceLabel,
+  reportWhere,
 } from "@/lib/admin/reports-query";
 import { REPORT_VIEWS, type ReportFilters } from "@/lib/admin/reports-queue";
 
@@ -20,8 +21,15 @@ const filters = (over: Partial<ReportFilters> = {}): ReportFilters => ({
   kind: null,
   category: null,
   q: null,
+  year: null,
   ...over,
 });
+
+/** Un instante ARGENTINO como el UTC que guarda la base: las 22:00 del 31/12
+ *  de acá son las 01:00 UTC del 1/1 siguiente. Escribirlo así —y no como un
+ *  `Date.UTC` a ojo— es lo que hace legibles los bordes del filtro de año. */
+const arg = (y: number, m: number, d: number, hh = 12, mm = 0) =>
+  new Date(Date.UTC(y, m - 1, d, hh + 3, mm));
 
 describe("reportWhere", () => {
   it("vista + filtros", () => {
@@ -64,13 +72,14 @@ describe("reportWhere", () => {
 
 // Filas de mentira con lo que el `where` mira. El doble las filtra APLICANDO el
 // `where` recibido, cláusula por cláusula.
-type Row = { id: number; status: string; kind: string; category: string; description: string; streetName: string; reporterName: string };
+type Row = { id: number; status: string; kind: string; category: string; description: string; streetName: string; reporterName: string; submittedAt: Date | null };
 const ROWS: Row[] = [
-  { id: 1, status: "received", kind: "claim", category: "water", description: "no hay agua", streetName: "Pizarro", reporterName: "Ana" },
-  { id: 2, status: "received", kind: "initiative", category: "social", description: "una plaza", streetName: "Rivadavia", reporterName: "Beto" },
-  { id: 3, status: "filed", kind: "initiative", category: "social", description: "un taller", streetName: "Pizarro", reporterName: "Cora" },
-  { id: 4, status: "dismissed", kind: "initiative", category: "sports", description: "una cancha", streetName: "Mitre", reporterName: "Dora" },
-  { id: 5, status: "draft", kind: "initiative", category: "social", description: "sin enviar", streetName: "Mitre", reporterName: "Eva" },
+  { id: 1, status: "received", kind: "claim", category: "water", description: "no hay agua", streetName: "Pizarro", reporterName: "Ana", submittedAt: arg(2026, 3, 10) },
+  { id: 2, status: "received", kind: "initiative", category: "social", description: "una plaza", streetName: "Rivadavia", reporterName: "Beto", submittedAt: arg(2026, 5, 4) },
+  { id: 3, status: "filed", kind: "initiative", category: "social", description: "un taller", streetName: "Pizarro", reporterName: "Cora", submittedAt: arg(2025, 7, 1) },
+  { id: 4, status: "dismissed", kind: "initiative", category: "sports", description: "una cancha", streetName: "Mitre", reporterName: "Dora", submittedAt: arg(2024, 2, 20) },
+  // El borrador no fue enviado: no tiene fecha y no lo lista ninguna vista.
+  { id: 5, status: "draft", kind: "initiative", category: "social", description: "sin enviar", streetName: "Mitre", reporterName: "Eva", submittedAt: null },
 ];
 
 type TextFilter = { contains: string };
@@ -78,13 +87,33 @@ type Where = {
   status: { in: string[] };
   kind?: string;
   category?: string;
+  submittedAt?: { gte?: Date; lt?: Date };
   OR?: Array<Partial<Record<"description" | "streetName" | "reporterName", TextFilter>> & { id?: number }>;
 };
 
+/** El doble APLICA el `where`, y TIRA ante una cláusula que no conoce (misma
+ *  regla que el de `reports-map-screen.test.ts`): un fake que ignora en silencio
+ *  lo que no entiende deja pasar cualquier condición nueva de `reportWhere` con
+ *  todos los tests en verde, que es exactamente el modo en que el M6 se comió
+ *  un `processId` sin probar. */
+const KNOWN = new Set(["status", "kind", "category", "submittedAt", "OR"]);
+
 function matches(row: Row, where: Where): boolean {
+  for (const key of Object.keys(where)) {
+    if (!KNOWN.has(key)) throw new Error(`cláusula no soportada por el doble: ${key}`);
+  }
   if (!where.status.in.includes(row.status)) return false;
   if (where.kind !== undefined && where.kind !== row.kind) return false;
   if (where.category !== undefined && where.category !== row.category) return false;
+  if (where.submittedAt) {
+    // `gte`/`lt` tal como los emite `reportWhere`: incluido el piso, excluido
+    // el techo. Comparar por `getTime()` y no por identidad de `Date`.
+    const at = row.submittedAt;
+    if (at === null) return false;
+    const { gte, lt } = where.submittedAt;
+    if (gte !== undefined && at.getTime() < gte.getTime()) return false;
+    if (lt !== undefined && at.getTime() >= lt.getTime()) return false;
+  }
   if (where.OR) {
     const hit = where.OR.some((clause) => {
       if (clause.id !== undefined) return clause.id === row.id;
@@ -96,10 +125,18 @@ function matches(row: Row, where: Where): boolean {
   return true;
 }
 
-const fakeDb = () => {
-  const count = vi.fn(async ({ where }: { where: Where }) => ROWS.filter((r) => matches(r, where)).length);
-  const findMany = vi.fn(async ({ where }: { where: Where }) => ROWS.filter((r) => matches(r, where)));
-  return { db: { report: { count, findMany } } as never, count, findMany };
+const fakeDb = (rows: Row[] = ROWS) => {
+  const count = vi.fn(async ({ where }: { where: Where }) => rows.filter((r) => matches(r, where)).length);
+  const findMany = vi.fn(async ({ where }: { where: Where }) => rows.filter((r) => matches(r, where)));
+  // El `aggregate` también HONRA su `where`: `availableYears` pide el mínimo de
+  // los ENVIADOS, y un doble que devolviera el mínimo de todas las filas dejaría
+  // esa cláusula sin probar (y el borrador sin fecha rompería el `_min`).
+  const aggregate = vi.fn(async ({ where }: { where: { submittedAt?: { not: null } } }) => {
+    const sent = where.submittedAt?.not === null ? rows.filter((r) => r.submittedAt !== null) : rows;
+    const times = sent.map((r) => r.submittedAt).filter((d): d is Date => d !== null).map((d) => d.getTime());
+    return { _min: { submittedAt: times.length ? new Date(Math.min(...times)) : null } };
+  });
+  return { db: { report: { count, findMany, aggregate } } as never, count, findMany, aggregate };
 };
 
 describe("countByView", () => {
@@ -193,5 +230,106 @@ describe("reportPlaceLabel", () => {
     expect(place({})).toBe("Sin ubicación");
     // Una calle vacía no es una calle (el `join` de dos nulos da "").
     expect(place({ streetName: "", addressDetail: "" })).toBe("Sin ubicación");
+  });
+});
+
+describe("filtro de año", () => {
+  it("el rango es el AÑO CIVIL ARGENTINO, no el del UTC guardado", () => {
+    const w = reportWhere("todos", filters({ year: 2025 }));
+    // Medianoche civil argentina del 1/1 = 03:00 UTC del 1/1 (UTC-3 sin DST).
+    expect(w.submittedAt).toEqual({
+      gte: new Date(Date.UTC(2025, 0, 1, 3)),
+      lt: new Date(Date.UTC(2026, 0, 1, 3)),
+    });
+    // Sin año no hay cláusula de fecha: un `submittedAt: {}` dejaría fuera a
+    // los borradores por otro camino y sería una segunda definición de vista.
+    expect(reportWhere("todos", filters())).not.toHaveProperty("submittedAt");
+  });
+
+  it("el 31/12 a las 23:30 de acá es de ESE año, y el 1/1 a las 00:30 del siguiente", async () => {
+    // Los dos bordes, escritos en hora argentina. En UTC el primero ya dice
+    // 1/1/2026 02:30: con el corte en `Date.UTC(y, 0, 1)` este reporte —hecho
+    // la noche del 31 de diciembre— desaparecería del informe de 2025 y
+    // aparecería en el de 2026.
+    const rows: Row[] = [
+      { ...ROWS[0], id: 100, submittedAt: arg(2025, 12, 31, 23, 30) },
+      { ...ROWS[0], id: 101, submittedAt: arg(2026, 1, 1, 0, 30) },
+      // El primer y el último instante exactos del año: el piso entra (`gte`) y
+      // el techo no (`lt`).
+      { ...ROWS[0], id: 102, submittedAt: arg(2025, 1, 1, 0, 0) },
+      { ...ROWS[0], id: 103, submittedAt: arg(2026, 1, 1, 0, 0) },
+    ];
+    const { db, findMany } = fakeDb(rows);
+    const list = async (year: number) =>
+      (await findMany({ where: reportWhere("todos", filters({ year })) as Where })).map((r) => r.id);
+    expect(await list(2025)).toEqual([100, 102]);
+    expect(await list(2026)).toEqual([101, 103]);
+    // Y los chips cuentan con ese MISMO rango: el número y la lista no pueden
+    // discrepar por un borde de horario.
+    expect((await countByView(db, filters({ year: 2025 }))).todos).toBe(2);
+  });
+
+  it("el año recorta la lista y los cuatro chips a la vez", async () => {
+    const { db, count } = fakeDb();
+    // ROWS: dos de 2026 (received), uno de 2025 (filed) y uno de 2024
+    // (dismissed); el borrador no lo cuenta ninguna vista.
+    expect(await countByView(db, filters({ year: 2026 }))).toEqual({
+      pendientes: 2, presentados: 0, desestimados: 0, todos: 2,
+    });
+    expect(await countByView(db, filters({ year: 2025 }))).toEqual({
+      pendientes: 0, presentados: 1, desestimados: 0, todos: 1,
+    });
+    expect(await countByView(db, filters({ year: 2023 }))).toEqual({
+      pendientes: 0, presentados: 0, desestimados: 0, todos: 0,
+    });
+    for (const c of count.mock.calls) expect(c[0].where).toHaveProperty("submittedAt");
+  });
+
+  it("el año se combina con el resto de los filtros y no los reemplaza", async () => {
+    const { db } = fakeDb();
+    // 2026 tiene un reclamo (id 1) y una iniciativa (id 2).
+    expect((await countByView(db, filters({ year: 2026, kind: "claim" }))).todos).toBe(1);
+    expect((await countByView(db, filters({ year: 2026, q: "Pizarro" }))).todos).toBe(1);
+    // Y la iniciativa de 2025 no entra en 2026 aunque el texto matchee.
+    expect((await countByView(db, filters({ year: 2026, q: "taller" }))).todos).toBe(0);
+  });
+});
+
+describe("availableYears", () => {
+  it("del año en curso hacia atrás hasta el primer envío, sin huecos", async () => {
+    const { db, aggregate } = fakeDb();
+    // El primero de ROWS es de febrero de 2024; el "ahora" es 2026.
+    expect(await availableYears(db, arg(2026, 9, 2))).toEqual([2026, 2025, 2024]);
+    // 2023 no está en ROWS y tampoco tiene por qué estar en la lista, pero los
+    // años intermedios SÍ: un desplegable con huecos ("2026, 2024") le hace
+    // creer al operador que 2025 no existe.
+    expect(aggregate.mock.calls[0][0]).toEqual({
+      where: { submittedAt: { not: null } },
+      _min: { submittedAt: true },
+    });
+  });
+
+  it("sin ningún reporte enviado ofrece el año en curso y nada más", async () => {
+    // Sólo el borrador: no fue enviado, no tiene fecha y no aporta un año.
+    const { db } = fakeDb([ROWS[4]]);
+    expect(await availableYears(db, arg(2026, 9, 2))).toEqual([2026]);
+    const empty = fakeDb([]);
+    expect(await availableYears(empty.db, arg(2026, 9, 2))).toEqual([2026]);
+  });
+
+  it("el año en curso es el CIVIL argentino", async () => {
+    const { db } = fakeDb([{ ...ROWS[0], submittedAt: arg(2026, 3, 10) }]);
+    // 1/1/2027 00:30 UTC son las 21:30 del 31/12/2026 en Comodoro: el
+    // desplegable todavía encabeza con 2026. Con el año leído del UTC, la
+    // noche del 31 el operador vería un 2027 que acá todavía no empezó.
+    expect(await availableYears(db, new Date(Date.UTC(2027, 0, 1, 0, 30)))).toEqual([2026]);
+    expect(await availableYears(db, new Date(Date.UTC(2027, 0, 1, 3)))).toEqual([2027, 2026]);
+  });
+
+  it("una fecha futura cargada a mano no deja el desplegable vacío", async () => {
+    // El piso se acota al año en curso: si no, el `for` no daría una vuelta y
+    // el <select> quedaría con "Todos los años" y nada más.
+    const { db } = fakeDb([{ ...ROWS[0], submittedAt: arg(2030, 1, 5) }]);
+    expect(await availableYears(db, arg(2026, 9, 2))).toEqual([2026]);
   });
 });
