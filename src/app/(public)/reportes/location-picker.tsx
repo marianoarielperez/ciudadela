@@ -172,7 +172,7 @@ export default function LocationPicker({
   }
 
   return (
-    <div className="space-y-2">
+    <div>
       <div className="relative h-[22rem] overflow-hidden rounded-2xl ring-1 ring-foreground/10">
         <div
           ref={containerRef}
@@ -180,7 +180,10 @@ export default function LocationPicker({
           // role="group" y no "img": los controles de zoom viven ADENTRO de
           // este div y "img" volvería presentacionales a los descendientes.
           role="group"
-          aria-label="Mapa del barrio Ciudadela para marcar dónde está el problema. Tocá el mapa para colocar el punto y arrastralo para ajustarlo."
+          // El rótulo nombra también la ALTERNATIVA: quien navega con teclado o
+          // lector de pantalla tiene que enterarse acá —no descubriéndolo al
+          // llegar— de que el lugar se puede indicar sin el mapa.
+          aria-label="Mapa del barrio Ciudadela para marcar dónde está el problema. Tocá el mapa para colocar el punto y arrastralo para ajustarlo. Si preferís no usar el mapa, indicá el lugar en los campos Calle y Altura o referencia, más abajo."
         />
         {/* z-[1000]: los panes de Leaflet llegan hasta z 700 y sus controles a
             1000; el botón convive con ellos. bottom-left queda libre (la
@@ -195,7 +198,16 @@ export default function LocationPicker({
           {locating ? "Buscando…" : "Usar mi ubicación"}
         </button>
       </div>
-      {geoError && <p className="text-xs text-warning">{geoError}</p>}
+      {/* `role="status"`: el fallo de la geolocalización es la respuesta a un
+          botón que se acaba de apretar. Sin anuncio, quien no ve la pantalla
+          aprieta "Usar mi ubicación" y no se entera de nada.
+          El párrafo se monta SIEMPRE —vacío no ocupa nada (`empty:mt-0` sobre
+          una caja de altura cero)— porque una región viva que aparece junto con
+          su texto no se anuncia de manera confiable: lo que los lectores de
+          pantalla siguen es el texto que entra en una región que ya existía. */}
+      <p role="status" className="mt-2 text-xs text-warning empty:mt-0">
+        {geoError}
+      </p>
     </div>
   );
 }

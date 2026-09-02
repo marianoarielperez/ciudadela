@@ -109,7 +109,12 @@ export function FileSlot({
   }
 
   const done = existing !== null;
-  const error = uploadState.error ?? removeState.error;
+  // `fileGone` NO se muestra: es la ausencia confirmada por el server, que unas
+  // líneas más arriba se trata como quitado y deja la ranura vacía. Pintarlo en
+  // rojo contradiría lo que la pantalla acaba de hacer bien — el vecino pidió
+  // sacar el archivo y el archivo no está.
+  const removeError = removeState.error === REPORT_MESSAGES.fileGone ? undefined : removeState.error;
+  const error = uploadState.error ?? removeError;
 
   return (
     <li
