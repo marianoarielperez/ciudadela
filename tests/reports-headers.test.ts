@@ -2,6 +2,8 @@
 // CSP/setHeader). Se fija: la geolocalización queda apagada para el sitio y se
 // enciende (`self`) SÓLO en las rutas del wizard de Reportes; robots cierra el
 // prefijo de la llave; el sitemap lista /reportes.
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import config from "../next.config";
 import robots from "@/app/robots";
@@ -40,5 +42,20 @@ describe("robots", () => {
     const disallow = (r.rules as { disallow: string[] }).disallow;
     expect(disallow).toContain("/reportes/nuevo");
     expect(disallow).not.toContain("/reportes");
+  });
+});
+
+// Las entradas de `next.config.ts` y de `robots.ts` apuntan a rutas: si las
+// páginas se renombran o se borran, esas entradas quedan cubriendo una URL que
+// ya no existe y nadie se entera. Se fija que existan en disco.
+describe("las páginas del wizard público existen", () => {
+  it("/reportes/nuevo y /reportes/nuevo/[claim] tienen su page.tsx", () => {
+    const root = path.resolve(import.meta.dirname, "..", "src", "app", "(public)", "reportes");
+    for (const file of [
+      path.join(root, "nuevo", "page.tsx"),
+      path.join(root, "nuevo", "[claim]", "page.tsx"),
+    ]) {
+      expect(existsSync(file), file).toBe(true);
+    }
   });
 });
