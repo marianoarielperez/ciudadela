@@ -2,6 +2,7 @@ import { SolicitudesTabs } from "@/components/admin/solicitudes-tabs";
 import { SOLICITUDES_TABS_BASE } from "@/lib/admin/solicitudes-tabs";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
+import { reports } from "@/lib/reports/service";
 
 // El marco de Solicitudes: SÓLO las pestañas por URL, calcado de
 // `tesoreria/layout.tsx`. El encabezado (`PageHeader`, con su <h1>) NO va
@@ -30,7 +31,7 @@ export default async function SolicitudesLayout({ children }: { children: React.
   const actor = await requireAdmin();
   if (!actor.ok) return <>{children}</>;
 
-  const [altasCount, sociosCount] = await Promise.all([
+  const [altasCount, sociosCount, reportesCount] = await Promise.all([
     // Las tres bandejas vivas de Altas (RECORDABLE_STATUSES más
     // `pending_payment`, que todavía no se puede asentar pero sigue siendo
     // trabajo pendiente de la cola).
@@ -38,11 +39,19 @@ export default async function SolicitudesLayout({ children }: { children: React.
       where: { status: { in: ["pending_payment", "approved_pending_minute", "pending_board"] } },
     }),
     prisma.memberRequest.count({ where: { status: "pending" } }),
+    // La cola del M7: `received`, lo que todavía no se presentó ni se
+    // desestimó. Sale del servicio y no de un `count` suelto acá para que la
+    // pestaña y el tablero no puedan divergir del resto del módulo.
+    reports.pendingCount(),
   ]);
-  const tabs = SOLICITUDES_TABS_BASE.map((tab) => ({
-    ...tab,
-    count: tab.href === "/admin/solicitudes" ? altasCount : sociosCount,
-  }));
+  // Un mapa por href y no un ternario: con tres pestañas el ternario le daba
+  // el número de "De socios" a Reportes por descarte.
+  const counts: Record<string, number> = {
+    "/admin/solicitudes": altasCount,
+    "/admin/solicitudes/socios": sociosCount,
+    "/admin/solicitudes/reportes": reportesCount,
+  };
+  const tabs = SOLICITUDES_TABS_BASE.map((tab) => ({ ...tab, count: counts[tab.href] ?? 0 }));
 
   return (
     <div className="space-y-4">

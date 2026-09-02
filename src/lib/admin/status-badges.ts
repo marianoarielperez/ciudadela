@@ -2,8 +2,8 @@
 // divergieron: un suspendido se veía "secondary" en el padrón y "outline" en su
 // propia ficha. El del padrón era el más expresivo: queda como canónico.
 import type {
-  ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, PresentationStatus, ReportStatus,
-  UnmatchedStatus,
+  ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, PresentationStatus, ReportKind,
+  ReportStatus, UnmatchedStatus,
 } from "@/generated/prisma/client";
 import type { CronState, PendingReceiptState } from "@/lib/admin/health";
 import type { BackupState } from "@/lib/admin/health-backup";
@@ -175,5 +175,13 @@ export function reportStatusBadgeVariant(status: ReportStatus): BadgeVariant {
   if (status === "received") return "default";
   if (status === "filed") return "success";
   if (status === "dismissed") return "secondary";
-  return "outline"; // draft
+  return "outline"; // draft: no se lista, pero el mapa es total
+}
+
+// El TIPO de reporte, que en la cola convive en la misma fila con la pastilla
+// de estado: los dos van SIN relleno fuerte para que el celeste/verde del
+// estado siga siendo lo único que salta a la vista. Reclamo con borde fino,
+// iniciativa con relleno gris — se distinguen por peso, no sólo por texto.
+export function reportKindBadgeVariant(kind: ReportKind): BadgeVariant {
+  return kind === "claim" ? "outline" : "secondary";
 }
