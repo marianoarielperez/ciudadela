@@ -166,8 +166,12 @@ export default async function ReportesMapaPage(props: {
         </p>
       </PageHeader>
 
+      {/* Los chips son los MISMOS de la lista —mismo `countByView`, mismo
+          `where`— para que el operador vea un solo juego de números al ir y
+          volver; por eso cuentan también a los que no tienen punto y el rótulo
+          lo dice: acá el chip no promete pines, promete reportes de esa vista. */}
       <FilterChips
-        label="Estado de los reportes"
+        label="Estado de los reportes (el contador incluye los que no tienen ubicación)"
         active={view}
         chips={REPORT_VIEWS.map((v) => ({
           key: v.key,

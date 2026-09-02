@@ -22,6 +22,7 @@
 // punteros. La lista de los reportes dibujados la renderiza la página, en el
 // servidor, debajo del mapa (`sr-only`), y el rótulo de acá la nombra para que
 // quien no ve la pantalla se entere antes de entrar.
+import type { ReportStatus } from "@/generated/prisma/client";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
@@ -54,7 +55,12 @@ export type MapPoint = {
   href: string;
 };
 
-const COLOR: Record<MapPoint["status"], string> = {
+// Tipado sobre el enum ENTERO y no sobre `MapPoint["status"]`: hoy ninguna
+// vista incluye borradores, pero si mañana una los trajera, un `COLOR[status]`
+// sin entrada pintaría `fill="undefined"` —un pin negro o invisible— sin error.
+// Con el enum completo, sumar un estado es un error de compilación acá.
+const COLOR: Record<ReportStatus, string> = {
+  draft: "#6b7280", // no se dibuja nunca (ninguna vista trae borradores); cierra el tipo
   received: "#0079BC", // --primary (modo claro)
   filed: "#15803D", // --success (modo claro)
   dismissed: "#6b7280", // gris neutro: cerrado, sin trabajo pendiente
