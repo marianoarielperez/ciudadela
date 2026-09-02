@@ -265,6 +265,20 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // Y el PDF del reporte, que es la tercera ruta con `REPORT_FILE_CSP`
+        // (spec §8: "tres entradas específicas"). Mismo valor y mismo motivo:
+        // el handler lo emite y la entrada global lo pisaría con `setHeader`.
+        // El operador lo abre `inline` en una pestaña —nadie lo framea—, así
+        // que acá tampoco se reabre el framing: rige el `DENY` global.
+        source: "/api/admin/reportes/:id/pdf",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
     ];
   },
   experimental: {

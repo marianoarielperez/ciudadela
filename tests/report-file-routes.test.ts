@@ -9,7 +9,8 @@
 // contra un conjunto de filas de prueba. Es la única forma de que borrar una
 // cláusula del filtro real ponga un test en rojo — un fake que sintetiza la
 // respuesta deja esa cláusula sin ejercitar y pasa igual (lección del M6).
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -29,7 +30,7 @@ vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Map([["x-real-ip
 
 import { GET as adminGet } from "@/app/api/admin/reportes/[id]/archivos/[fileId]/route";
 import { GET as memberGet } from "@/app/api/mi/reportes/[id]/archivos/[fileId]/route";
-import { REPORT_FILE_CSP } from "@/lib/reports/file-response";
+import { REPORT_FILE_CSP, reportFileName } from "@/lib/reports/file-response";
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 
@@ -219,8 +220,28 @@ describe("archivo de un reporte — socio", () => {
 // decide `headers()` de `next.config.ts`, porque Next copia esas cabeceras con
 // `setHeader` (REEMPLAZA). Es exactamente el error que ya se cometió con los
 // documentos institucionales: el test en verde y la CSP global llegando igual.
-describe("next.config.ts repone la CSP de las dos rutas", () => {
+describe("next.config.ts repone la CSP de las tres rutas", () => {
   type Entry = { source: string; headers: Array<{ key: string; value: string }> };
+
+  // Las TRES rutas del módulo que sirven un archivo: las dos de imágenes y el
+  // PDF a pedido (spec §8). El `source` de la config NO se escribe a mano: se
+  // DERIVA del `route.ts` que existe en el disco (mismo helper que
+  // `institutional-documents-routes.test.ts`). Si alguien mueve o renombra la
+  // carpeta de una ruta, la derivación cambia, la entrada deja de encontrarse y
+  // este test se cae — que es exactamente el día en que la CSP volvería a
+  // perderse en silencio.
+  const ROUTE_FILES = [
+    "src/app/api/admin/reportes/[id]/archivos/[fileId]/route.ts",
+    "src/app/api/mi/reportes/[id]/archivos/[fileId]/route.ts",
+    "src/app/api/admin/reportes/[id]/pdf/route.ts",
+  ];
+  const sourceOf = (routeFile: string) =>
+    "/" +
+    routeFile
+      .replace(/^src\/app\//, "")
+      .replace(/\/route\.ts$/, "")
+      .replace(/\[(\w+)\]/g, ":$1");
+  const SOURCES = ROUTE_FILES.map(sourceOf);
 
   async function entries(): Promise<Entry[]> {
     // `next.config.ts` exporta una función que recibe la fase: con una fase que
@@ -229,12 +250,20 @@ describe("next.config.ts repone la CSP de las dos rutas", () => {
     return (await config("phase-development-server").headers!()) as Entry[];
   }
 
-  it("las dos entradas existen, con el MISMO valor que exporta el módulo", async () => {
-    const all = await entries();
-    for (const source of [
+  it("los tres `route.ts` de los que se derivan los `source` existen", () => {
+    for (const routeFile of ROUTE_FILES) {
+      expect(existsSync(path.join(import.meta.dirname, "..", routeFile)), routeFile).toBe(true);
+    }
+    expect(SOURCES).toEqual([
       "/api/admin/reportes/:id/archivos/:fileId",
       "/api/mi/reportes/:id/archivos/:fileId",
-    ]) {
+      "/api/admin/reportes/:id/pdf",
+    ]);
+  });
+
+  it("las tres entradas existen, con el MISMO valor que exporta el módulo", async () => {
+    const all = await entries();
+    for (const source of SOURCES) {
       const entry = all.find((e) => e.source === source);
       expect(entry, source).toBeDefined();
       expect(entry!.headers.find((h) => h.key === "Content-Security-Policy")?.value).toBe(
@@ -247,10 +276,7 @@ describe("next.config.ts repone la CSP de las dos rutas", () => {
     const all = await entries();
     const global = all.find((e) => e.source === "/(.*)")!;
     expect(global).toBeDefined();
-    for (const source of [
-      "/api/admin/reportes/:id/archivos/:fileId",
-      "/api/mi/reportes/:id/archivos/:fileId",
-    ]) {
+    for (const source of SOURCES) {
       const entry = all.find((e) => e.source === source)!;
       expect(all.indexOf(entry), source).toBeGreaterThan(all.indexOf(global));
     }
@@ -258,10 +284,7 @@ describe("next.config.ts repone la CSP de las dos rutas", () => {
 
   it("no reabre el framing: sin X-Frame-Options propio, rige el DENY global", async () => {
     const all = await entries();
-    for (const source of [
-      "/api/admin/reportes/:id/archivos/:fileId",
-      "/api/mi/reportes/:id/archivos/:fileId",
-    ]) {
+    for (const source of SOURCES) {
       const entry = all.find((e) => e.source === source)!;
       expect(entry.headers.some((h) => h.key === "X-Frame-Options"), source).toBe(false);
       expect(REPORT_FILE_CSP).toContain("frame-ancestors 'none'");
@@ -290,5 +313,13 @@ describe("file-response.ts se mantiene puro", () => {
     // Y el archivo sigue siendo el que importa: si se vaciara o se renombrara
     // el helper, las cuatro aserciones de arriba pasarían contra la nada.
     expect(code).toMatch(/export function reportFileResponse/);
+  });
+
+  it("`reportFileName` sanea el `kind`: nada raro entra al Content-Disposition", () => {
+    // Hoy el `kind` sale de un enum de Prisma, pero llega tipado como `string`
+    // y se interpola dentro de una cabecera: una comilla o un salto de línea la
+    // partirían.
+    expect(reportFileName(14, "dni_front", 9)).toBe("reporte-14-dni_front-9.jpg");
+    expect(reportFileName(14, 'x"\r\nX-Evil: 1', 9)).toBe("reporte-14-xXEvil-9.jpg");
   });
 });

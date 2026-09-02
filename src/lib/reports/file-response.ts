@@ -16,6 +16,10 @@
  *  'none'` y, deliberadamente, sin `X-Frame-Options` propio — el `DENY` de la
  *  entrada global de `next.config.ts` es el que corresponde y tiene que quedar.
  *
+ *  La comparte el PDF del reporte (`/api/admin/reportes/[id]/pdf`), que tampoco
+ *  carga nada ni se framea: son las TRES rutas del módulo que sirven un archivo
+ *  y las tres quieren exactamente esta CSP (spec §8).
+ *
  *  OJO: emitirla en el handler NO alcanza para que llegue al navegador. Next
  *  copia las cabeceras de `headers()` de `next.config.ts` con `setHeader`, que
  *  REEMPLAZA, así que la CSP global del sitio pisa a ésta salvo que haya una
@@ -42,9 +46,15 @@ export const REPORT_FILE_MIME = "image/jpeg";
 
 /** Nombre sugerido para el "Guardar como": ids y tipo, nada del vecino. Nunca
  *  se deriva de `file.path` —que trae un uuid y la carpeta de UPLOADS_DIR— ni
- *  de nada que haya tocado el cliente. */
+ *  de nada que haya tocado el cliente.
+ *
+ *  El `kind` se sanea igual: hoy sale de un enum de Prisma (`photo`,
+ *  `dni_front`, `dni_back`) y no puede traer nada raro, pero llega tipado como
+ *  `string` y este valor se interpola DENTRO de un `Content-Disposition`. Una
+ *  comilla o un salto de línea ahí parten la cabecera; el filtro cuesta una
+ *  línea y no depende de que el enum siga siendo lo que es. */
 export function reportFileName(reportId: number, kind: string, fileId: number): string {
-  return `reporte-${reportId}-${kind}-${fileId}.jpg`;
+  return `reporte-${reportId}-${kind.replace(/[^a-z_]/gi, "")}-${fileId}.jpg`;
 }
 
 /** Respuesta HTTP de un archivo de reporte. Cabeceras defensivas calcadas de la
