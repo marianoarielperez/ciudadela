@@ -4,14 +4,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireMember: vi.fn(), startDraft: vi.fn(), findUnique: vi.fn(),
-  check: vi.fn(() => true),
+  // El limitador se dobla con sus DOS mitades y no con `check`: lo que este
+  // test sostiene es que el cupo se MIRA antes de todo y se GASTA al final.
+  allows: vi.fn(() => true), record: vi.fn(),
 }));
 vi.mock("@/lib/auth/require-member", () => ({ requireMember: mocks.requireMember }));
 vi.mock("@/lib/reports/service", () => ({ reports: { startDraft: mocks.startDraft } }));
 vi.mock("@/lib/prisma", () => ({ prisma: { member: { findUnique: mocks.findUnique } } }));
 vi.mock("@/lib/auth/rate-limiter", async (orig) => ({
   ...(await orig<typeof import("@/lib/auth/rate-limiter")>()),
-  reportMemberLimiter: { check: mocks.check },
+  reportMemberLimiter: { allows: mocks.allows, record: mocks.record },
 }));
 vi.mock("@/lib/turnstile", () => ({ verifyTurnstile: vi.fn(() => { throw new Error("el socio no pasa por Turnstile"); }) }));
 // Misma invariante que las actions públicas: el wizard estampa la llave con
@@ -31,7 +33,7 @@ beforeEach(() => {
   mocks.requireMember.mockResolvedValue({ ok: true, userId: 9, memberId: 14, fullName: "Ana López", suspension: null });
   mocks.findUnique.mockResolvedValue({ fullName: "Ana López", dni: "30123456", phone: "2974", email: "ana@example.com" });
   mocks.startDraft.mockResolvedValue({ id: 5, claim: "C".repeat(43) });
-  mocks.check.mockReturnValue(true);
+  mocks.allows.mockReturnValue(true);
 });
 
 describe("startMemberReportAction", () => {
@@ -49,15 +51,26 @@ describe("startMemberReportAction", () => {
     mocks.requireMember.mockResolvedValue({ ok: false, reason: "withdrawn", error: "baja" });
     expect((await startMemberReportAction({}, fd({ kind: "reclamo", anonymous: "si" }))).error).toBe("baja");
     mocks.requireMember.mockResolvedValue({ ok: true, userId: 9, memberId: 14, fullName: "x", suspension: null });
-    mocks.check.mockReturnValue(false);
+    mocks.allows.mockReturnValue(false);
     expect((await startMemberReportAction({}, fd({ kind: "reclamo", anonymous: "si" }))).error).toContain("Demasiados");
     expect(mocks.startDraft).not.toHaveBeenCalled();
   });
   // El cupo se pide por memberId y no por IP: la pantalla está autenticada y
   // hay una identidad mejor que la conexión (rate-limiter.ts).
-  it("el cupo se cuenta por socio", async () => {
+  it("el cupo se cuenta por socio, y se gasta UNA vez cuando el borrador se crea", async () => {
     await startMemberReportAction({}, fd({ kind: "reclamo", anonymous: "si" }));
-    expect(mocks.check).toHaveBeenCalledWith("14");
+    expect(mocks.allows).toHaveBeenCalledWith("14");
+    expect(mocks.record).toHaveBeenCalledTimes(1);
+    expect(mocks.record).toHaveBeenCalledWith("14");
+  });
+
+  // La ficha se busca por el id del ACTOR y por nada que venga del formulario:
+  // el socio no puede pedir la identidad de otro.
+  it("la ficha se busca por el id del actor", async () => {
+    await startMemberReportAction({}, fd({ kind: "reclamo", anonymous: "si", memberId: "99" }));
+    expect(mocks.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 14 } }),
+    );
   });
   // La ficha sin teléfono ni email no puede colar `null` en el borrador: las
   // columnas son opcionales en `Member` y obligatorias en el reporte.
@@ -68,15 +81,22 @@ describe("startMemberReportAction", () => {
       name: "Ana López", dni: "", phone: "", email: "",
     });
   });
-  it("sin ficha viva no hay borrador", async () => {
+  // Las dos caras de la misma regla: un intento que NO llega a crear nada no
+  // puede consumir una de las cinco del día. Con el `check` de antes —mirar y
+  // gastar en la misma llamada—, cinco envíos con el `kind` roto le quemaban
+  // el cupo al socio sin que existiera un solo reporte.
+  it("sin ficha viva no hay borrador y no se gasta el cupo", async () => {
     mocks.findUnique.mockResolvedValue(null);
     const r = await startMemberReportAction({}, fd({ kind: "reclamo", anonymous: "no" }));
     expect(r.error).toContain("ficha");
     expect(mocks.startDraft).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
   });
-  it("un tipo que no está en el catálogo se rechaza sin gastar el servicio", async () => {
+  it("un tipo que no está en el catálogo se rechaza sin gastar el servicio ni el cupo", async () => {
     const r = await startMemberReportAction({}, fd({ kind: "otra_cosa", anonymous: "no" }));
     expect(r.error).toBeTruthy();
     expect(mocks.startDraft).not.toHaveBeenCalled();
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
   });
 });

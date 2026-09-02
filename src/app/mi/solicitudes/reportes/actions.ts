@@ -36,10 +36,14 @@ export async function startMemberReportAction(
   const actor = await requireMember({ allowSuspended: true });
   if (!actor.ok) return { error: actor.error };
   // El cupo va por `memberId` y no por IP: la pantalla está autenticada, así
-  // que hay una identidad mejor que la conexión (rate-limiter.ts). Se pide
-  // ANTES del zod, como en las actions públicas: un formulario roto en bucle no
-  // puede ser gratis.
-  if (!reportMemberLimiter.check(String(actor.memberId))) return { error: RATE_MSG };
+  // que hay una identidad mejor que la conexión (rate-limiter.ts). Y se parte
+  // en `allows` + `record` como en `startReportAction`: MIRAR el cupo antes de
+  // todo (un bucle no puede ser gratis) pero GASTARLO recién cuando el intento
+  // iba a crear un borrador. Con `check` a secas, cinco envíos con un `kind`
+  // roto —o cinco con la ficha caída— le quemaban al socio las cinco del día
+  // sin que existiera un solo reporte.
+  const quotaKey = String(actor.memberId);
+  if (!reportMemberLimiter.allows(quotaKey)) return { error: RATE_MSG };
   const parsed = parseForm(startSchema, formData);
   if (!parsed.ok) return { error: parsed.error };
 
@@ -48,6 +52,7 @@ export async function startMemberReportAction(
     select: { fullName: true, dni: true, phone: true, email: true },
   });
   if (!member) return { error: NO_MEMBER };
+  reportMemberLimiter.record(quotaKey);
   const h = await headers();
   // Las tres columnas opcionales de la ficha viajan como cadena vacía y no como
   // `null`: `saveReporter` guarda lo que le llega y el wizard del socio no tiene

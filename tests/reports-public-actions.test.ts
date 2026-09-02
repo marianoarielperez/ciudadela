@@ -197,6 +197,16 @@ describe("submitReportAction", () => {
     // Una escritura exitosa NO devuelve el cupo, ni aunque falle el acuse.
     expect(mocks.submitRefund).not.toHaveBeenCalled();
   });
+  // El id del reporte sale SIEMPRE de la llave: ninguna action lo lee del
+  // formulario, así que un `reportId` puesto a mano en el POST no apunta a nada.
+  // Es la invariante de §10 ("ninguna recibe un id por el formulario") y sin
+  // este caso nadie la sostiene desde afuera.
+  it("un reportId puesto en el formulario se ignora: el id sale de la llave", async () => {
+    mocks.findByClaim.mockResolvedValue(draft({ id: 14 }));
+    await submitReportAction({}, fd({ ...body, reportId: "99" }));
+    expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({ reportId: 14 }));
+    expect(mocks.findByClaim).toHaveBeenCalledWith(CLAIM);
+  });
   it("sin consentimiento o sin cupo no escribe", async () => {
     expect((await submitReportAction({}, fd({ ...body, consent: "" }))).error).toContain("consentimiento");
     // Un formulario que ni siquiera valida NO cobra el intento (mismo criterio
