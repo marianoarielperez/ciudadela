@@ -4,7 +4,6 @@ import { Lightbulb, MessageSquareWarning } from "lucide-react";
 import { currentYearAR } from "@/lib/dates";
 import { reports } from "@/lib/reports/service";
 import { SITE, siteBaseUrl } from "@/lib/site";
-import { cn } from "@/lib/utils";
 import { BarrioSilhouette } from "./barrio-silhouette";
 
 export const metadata: Metadata = {
@@ -46,16 +45,19 @@ export default async function ReportesPage() {
               <dd className="font-mono text-2xl font-bold tabular-nums text-primary">{stats.received}</dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground">Presentados ante organismos</dt>
+              <dt className="text-xs text-muted-foreground">Presentados en {year}</dt>
               <dd className="font-mono text-2xl font-bold tabular-nums text-primary">{stats.filed}</dd>
             </div>
           </dl>
         </div>
-        <BarrioSilhouette className="text-primary" title="Silueta del barrio Ciudadela" />
+        <BarrioSilhouette
+          className="order-first mx-auto max-w-[240px] text-primary md:order-none md:max-w-none"
+          title="Silueta del barrio Ciudadela"
+        />
       </div>
 
       <div className="mt-10 grid gap-4 sm:grid-cols-2">
-        <Link href="/reportes/nuevo?tipo=reclamo" className={cn(DOOR)}>
+        <Link href="/reportes/nuevo?tipo=reclamo" className={DOOR}>
           <span className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <MessageSquareWarning aria-hidden className="size-5" />
           </span>
@@ -63,9 +65,9 @@ export default async function ReportesPage() {
           <span className="text-sm text-muted-foreground">
             Un problema en la vía pública: agua, cloacas, luz, residuos, calles, árboles o transporte.
           </span>
-          <span aria-hidden className="text-sm font-medium text-primary group-hover:underline">Empezar →</span>
+          <span aria-hidden className="text-sm font-medium text-primary group-hover:underline group-focus-visible:underline">Empezar →</span>
         </Link>
-        <Link href="/reportes/nuevo?tipo=iniciativa" className={cn(DOOR)}>
+        <Link href="/reportes/nuevo?tipo=iniciativa" className={DOOR}>
           <span className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Lightbulb aria-hidden className="size-5" />
           </span>
@@ -73,7 +75,7 @@ export default async function ReportesPage() {
           <span className="text-sm text-muted-foreground">
             Una propuesta social, cultural, deportiva, de obras o de seguridad para el barrio.
           </span>
-          <span aria-hidden className="text-sm font-medium text-primary group-hover:underline">Empezar →</span>
+          <span aria-hidden className="text-sm font-medium text-primary group-hover:underline group-focus-visible:underline">Empezar →</span>
         </Link>
       </div>
 
