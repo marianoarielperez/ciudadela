@@ -72,6 +72,8 @@ export function StepReport({
   pending,
   error,
   onBack,
+  exitHref,
+  exitLabel,
 }: {
   claim: string;
   kind: "claim" | "initiative";
@@ -86,6 +88,12 @@ export function StepReport({
   pending: boolean;
   error?: string;
   onBack?: () => void;
+  /** Adónde —y con qué palabras— sale quien NO tiene paso anterior (el socio,
+   *  que no pasa por "Tus datos"). La landing pública por defecto; en /mi es su
+   *  propia lista, que es de donde vino. Los dos los decide el marco, como el
+   *  enlace de `ReportDone`. */
+  exitHref: string;
+  exitLabel: string;
 }) {
   const [inFlight, setInFlight] = useState(0);
   // El ref cuelga del ENVOLTORIO, no del `<form>`: el consentimiento se postea
@@ -335,8 +343,11 @@ export function StepReport({
             Volver
           </Button>
         ) : (
-          <Link href="/" className={cn(LINK_TARGET, "order-last justify-center sm:order-first")}>
-            Volver al inicio
+          <Link
+            href={exitHref}
+            className={cn(LINK_TARGET, "order-last justify-center sm:order-first")}
+          >
+            {exitLabel}
           </Link>
         )}
         <Button

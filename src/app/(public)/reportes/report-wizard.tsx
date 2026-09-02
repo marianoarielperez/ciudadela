@@ -143,6 +143,10 @@ type ReportWizardProps = {
   /** El paso 1 del vecino (`startReportAction`) o el del socio
    *  (`startMemberReportAction`): el marco es el mismo. */
   startAction: (prev: StartState, formData: FormData) => Promise<StartState>;
+  /** Adónde sale el paso 3 cuando NO hay paso anterior al que volver (el socio
+   *  no pasa por "Tus datos"). Por defecto sale del modo, igual que el enlace
+   *  de `ReportDone`: la landing pública o la lista de /mi. */
+  exitHref?: string;
 };
 
 export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
@@ -154,6 +158,11 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
   const mode: ReportMode = props.mode;
   const steps: StepKey[] = mode === "public" ? ["start", "identity", "report"] : ["start", "report"];
   const retomePath = mode === "public" ? "/reportes/nuevo" : "/mi/solicitudes/reportes/nuevo";
+  // El socio llegó desde su lista y ahí vuelve; el vecino, a la home. Sale del
+  // MODO y no de un literal en el paso 3 (que además terminaba mandando al
+  // socio fuera de su panel), con la puerta abierta a que una página lo cambie.
+  const exitHref = props.exitHref ?? (mode === "public" ? "/" : "/mi/solicitudes/reportes");
+  const exitLabel = mode === "public" ? "Volver al inicio" : "Volver a mis reportes";
 
   // Todo lo que el retome sabe se siembra ACÁ, en el inicializador: el picker
   // de ubicación sólo honra su `value` al montar, así que un efecto posterior
@@ -364,6 +373,8 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
             pending={submitting}
             error={submitState.error}
             onBack={mode === "public" ? () => setBackTo("identity") : undefined}
+            exitHref={exitHref}
+            exitLabel={exitLabel}
           />
         )}
       </div>

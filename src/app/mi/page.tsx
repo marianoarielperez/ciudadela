@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ClipboardCheck, Library, RefreshCw, User, Wallet } from "lucide-react";
+import { ClipboardCheck, FileText, Library, RefreshCw, User, Wallet } from "lucide-react";
 
 import { MemberCard } from "@/components/mi/member-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -259,9 +259,10 @@ export default async function MiHomePage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <QuickLink href="/mi/datos" icon={User} label="Mis datos" description="Tu ficha del padrón" />
         <QuickLink href="/mi/documentos" icon={Library} label="Documentos" description="Estatuto, memorias y balances" />
+        <QuickLink href="/mi/solicitudes" icon={FileText} label="Solicitudes y reportes" description="Trámites y reclamos del barrio" />
       </div>
     </div>
   );
