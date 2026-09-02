@@ -13,6 +13,8 @@ import { formatDateTimeAR } from "@/lib/format";
 import {
   REQUEST_STATUS_BADGE_VARIANT, REQUEST_STATUS_LABELS, REQUEST_TYPE_LABELS,
 } from "@/lib/members/labels";
+import { requestableCategories } from "@/lib/members/member-requests/rules";
+import { collaboratorEnabled as readCollaboratorEnabled } from "@/lib/members/service";
 import { prisma } from "@/lib/prisma";
 import { CancelRequestForm, CategoryRequestForm, WithdrawalRequestForm } from "./request-forms";
 
@@ -24,7 +26,7 @@ export default async function MiSolicitudesPage() {
   if (!actor.ok) return null; // el layout ya explica por qué
   const canAct = actor.suspension === null;
 
-  const [member, requests] = await Promise.all([
+  const [member, requests, collaboratorOn] = await Promise.all([
     prisma.member.findUniqueOrThrow({
       where: { id: actor.memberId },
       select: { category: true },
@@ -34,6 +36,7 @@ export default async function MiSolicitudesPage() {
       orderBy: { id: "desc" },
       take: 20,
     }),
+    readCollaboratorEnabled(prisma),
   ]);
 
   return (
@@ -104,6 +107,7 @@ export default async function MiSolicitudesPage() {
           <CategoryRequestForm
             currentCategory={member.category}
             hasPending={requests.some((r) => r.type === "category_change" && r.status === "pending")}
+            requestable={requestableCategories(collaboratorOn)}
           />
         </div>
       )}

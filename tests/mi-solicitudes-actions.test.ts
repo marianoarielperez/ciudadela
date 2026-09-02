@@ -132,6 +132,16 @@ describe("createCategoryRequestAction", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("collaborator passes the schema: whether the switch allows it is the service's call", async () => {
+    // The schema validates SHAPE against ALL_REQUESTABLE_CATEGORIES; the
+    // colaborador_habilitado switch is read by the service (spec 2026-09-02),
+    // so the action must forward the category and surface the service's text.
+    create.mockResolvedValueOnce({ ok: false, error: "Por ahora no se puede pedir el pase a socio colaborador." });
+    const r = await createCategoryRequestAction({}, fd({ requestedCategory: "collaborator" }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ requestedCategory: "collaborator" }));
+    expect(r.error).toBe("Por ahora no se puede pedir el pase a socio colaborador.");
+  });
+
   it("surfaces the service's error verbatim", async () => {
     create.mockResolvedValueOnce({ ok: false, error: "Hay elecciones en curso." });
     const r = await createCategoryRequestAction({}, fd({ requestedCategory: "active" }));

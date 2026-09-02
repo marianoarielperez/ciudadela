@@ -33,6 +33,15 @@ export async function electionsOngoing(db: Pick<PrismaClient, "configuration">):
   return row?.value === true;
 }
 
+/** La llave `colaborador_habilitado` (spec 2026-09-02): la categoría es del
+ *  estatuto reformado y se ofrece sólo cuando la IGJ lo oficialice. Misma
+ *  lectura directa —sin la caché de las páginas públicas— y mismo criterio de
+ *  `true` estricto que `electionsOngoing`: es una guarda, no display. */
+export async function collaboratorEnabled(db: Pick<PrismaClient, "configuration">): Promise<boolean> {
+  const row = await db.configuration.findUnique({ where: { key: CONFIG_KEYS.collaboratorEnabled } });
+  return row?.value === true;
+}
+
 // El schema NO garantiza que haya exactamente un libro abierto (no hay índice
 // parcial en MySQL). Con cero libros abiertos no se puede numerar un alta; con
 // dos, tomar el primero elegiría en silencio en qué libro asienta el socio.

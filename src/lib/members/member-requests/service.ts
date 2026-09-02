@@ -12,12 +12,18 @@ import type { MemberCategory, MemberRequestType, PrismaClient } from "@/generate
 import { createKeyedMutex } from "@/lib/keyed-mutex";
 import { CATEGORY_LABELS } from "@/lib/members/labels";
 import { canCreateRequest, renderWithdrawalText } from "@/lib/members/member-requests/rules";
-import { electionsOngoing as checkElectionsOngoing } from "@/lib/members/service";
+import {
+  collaboratorEnabled as checkCollaboratorEnabled,
+  electionsOngoing as checkElectionsOngoing,
+} from "@/lib/members/service";
 import { prisma } from "@/lib/prisma";
 
 type Deps = {
   db: Pick<PrismaClient, "$transaction" | "memberRequest" | "member" | "fee" | "movement">;
   electionsOngoing: () => Promise<boolean>;
+  /** La llave `colaborador_habilitado` (spec 2026-09-02), inyectada como
+   *  `electionsOngoing`: bandera global de `Configuration`, no dato del socio. */
+  collaboratorEnabled: () => Promise<boolean>;
   now?: () => Date;
 };
 
@@ -56,11 +62,14 @@ export function makeMemberRequests(deps: Deps) {
       requestedCategory?: MemberCategory | null;
       message?: string | null;
     }): Promise<CreateResult> {
-      // No necesita la foto de la transacción: es una bandera global de
-      // `Configuration`, no un dato del socio, mismo criterio que
-      // `changeCategory` en `members/service.ts` (se lee antes de abrir la
+      // No necesitan la foto de la transacción: son banderas globales de
+      // `Configuration`, no datos del socio, mismo criterio que
+      // `changeCategory` en `members/service.ts` (se leen antes de abrir la
       // transacción, no adentro).
-      const electionsAreOngoing = await deps.electionsOngoing();
+      const [electionsAreOngoing, collaboratorIsEnabled] = await Promise.all([
+        deps.electionsOngoing(),
+        deps.collaboratorEnabled(),
+      ]);
       return requestMutex.run(`request:${input.memberId}`, () =>
         db.$transaction(async (tx) => {
           const member = await tx.member.findUnique({
@@ -91,6 +100,7 @@ export function makeMemberRequests(deps: Deps) {
             requestedCategory,
             electionsOngoing: electionsAreOngoing,
             pendingFees,
+            collaboratorEnabled: collaboratorIsEnabled,
             hasPendingOfType,
           });
           if (!check.ok) return { ok: false as const, error: check.error };
@@ -217,4 +227,5 @@ export type MemberRequestsService = ReturnType<typeof makeMemberRequests>;
 export const memberRequests = makeMemberRequests({
   db: prisma,
   electionsOngoing: () => checkElectionsOngoing(prisma),
+  collaboratorEnabled: () => checkCollaboratorEnabled(prisma),
 });

@@ -14,7 +14,7 @@ import { audit } from "@/lib/audit";
 import { memberEditLimiter } from "@/lib/auth/rate-limiter";
 import { requireMember } from "@/lib/auth/require-member";
 import { parseForm } from "@/lib/forms";
-import { REQUESTABLE_CATEGORIES } from "@/lib/members/member-requests/rules";
+import { ALL_REQUESTABLE_CATEGORIES } from "@/lib/members/member-requests/rules";
 import { memberRequests } from "@/lib/members/member-requests/service";
 
 export type RequestState = { error?: string; done?: boolean; message?: string };
@@ -71,12 +71,13 @@ export async function createWithdrawalRequestAction(
   };
 }
 
-// REQUESTABLE_CATEGORIES es la única fuente de qué categorías puede pedir un
-// socio para sí (rules.ts): el enum del formulario se arma desde ahí para que
-// no puedan divergir. El cast es al tipo tupla que z.enum exige para inferir
-// literales — el array en sí sigue viniendo de rules.ts.
+// ALL_REQUESTABLE_CATEGORIES es la FORMA que acepta el schema (rules.ts): el
+// enum se arma desde ahí para que no puedan divergir. Si colaborador se puede
+// pedir HOY lo decide el servicio con la llave `colaborador_habilitado` (spec
+// 2026-09-02), y su mensaje llega tal cual. El cast es al tipo tupla que z.enum
+// exige para inferir literales — el array en sí sigue viniendo de rules.ts.
 const categorySchema = z.object({
-  requestedCategory: z.enum(REQUESTABLE_CATEGORIES as [MemberCategory, ...MemberCategory[]], {
+  requestedCategory: z.enum(ALL_REQUESTABLE_CATEGORIES as [MemberCategory, ...MemberCategory[]], {
     error: "Elegí la categoría nueva.",
   }),
   message: messageSchema,

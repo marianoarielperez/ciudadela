@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-vi.mock("@/lib/members/service", () => ({ electionsOngoing: vi.fn(async () => false) }));
+vi.mock("@/lib/members/service", () => ({
+  electionsOngoing: vi.fn(async () => false),
+  collaboratorEnabled: vi.fn(async () => false),
+}));
 import { makeMemberRequests } from "@/lib/members/member-requests/service";
 
 const NOW = new Date("2026-09-01T12:00:00Z");
@@ -13,7 +16,7 @@ type Member = {
   memberships: Array<{ memberNumber: number; book: { status: string } }>;
 };
 
-function fakeDb(opts: { member: Member; electionsOngoing?: boolean }) {
+function fakeDb(opts: { member: Member; electionsOngoing?: boolean; collaboratorEnabled?: boolean }) {
   const state = {
     requests: [] as Array<Record<string, unknown> & { id: number }>,
     fees: [] as Array<{ memberId: number; status: string }>,
@@ -76,8 +79,11 @@ function fakeDb(opts: { member: Member; electionsOngoing?: boolean }) {
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
   };
   const electionsOngoing = vi.fn(async () => opts.electionsOngoing ?? false);
-  const service = makeMemberRequests({ db: db as never, electionsOngoing, now: () => NOW });
-  return { service, db, tx, state, electionsOngoing };
+  // Apagada por defecto: es el estado del lanzamiento (spec 2026-09-02) y lo
+  // que un test que pide "active" o "adherent" no necesita tocar.
+  const collaboratorEnabled = vi.fn(async () => opts.collaboratorEnabled ?? false);
+  const service = makeMemberRequests({ db: db as never, electionsOngoing, collaboratorEnabled, now: () => NOW });
+  return { service, db, tx, state, electionsOngoing, collaboratorEnabled };
 }
 
 function activeMember(over: Partial<Member> = {}): Member {
@@ -110,6 +116,23 @@ describe("memberRequests.create", () => {
       memberId: 14, type: "category_change", requestedCategory: "active", status: "pending",
     });
     expect(state.requests[0].text).toBe("Solicita el cambio de categoría de Adherente a Activo.");
+  });
+
+  it("con la llave colaborador_habilitado apagada, el pase a colaborador se rechaza con su mensaje", async () => {
+    const { service, state, collaboratorEnabled } = fakeDb({ member: activeMember() });
+    const r = await service.create({ memberId: 14, type: "category_change", requestedCategory: "collaborator" });
+    expect(r).toEqual({ ok: false, error: "Por ahora no se puede pedir el pase a socio colaborador." });
+    expect(state.requests).toHaveLength(0);
+    // La llave se LEE (no se asume): un servicio que no la consultara pasaría
+    // este test sólo porque el default del fake es "apagada".
+    expect(collaboratorEnabled).toHaveBeenCalledTimes(1);
+  });
+
+  it("con la llave prendida, el pase a colaborador se crea con su texto", async () => {
+    const { service, state } = fakeDb({ member: activeMember(), collaboratorEnabled: true });
+    const r = await service.create({ memberId: 14, type: "category_change", requestedCategory: "collaborator" });
+    expect(r).toEqual({ ok: true, requestId: 1 });
+    expect(state.requests[0].text).toBe("Solicita el cambio de categoría de Adherente a Colaborador.");
   });
 
   it("una pendiente por tipo: la segunda solicitud del MISMO tipo falla", async () => {

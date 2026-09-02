@@ -10,8 +10,21 @@ import type { RuleResult } from "@/lib/members/rules";
 
 // Categorías que un socio puede pedir para sí mismo. `cadet` (menor sin cuota
 // propia), `honorary` y `lifetime` las otorga la Comisión por acta, nunca a
-// pedido: quedan fuera aunque figuren en `MemberCategory`.
-export const REQUESTABLE_CATEGORIES: readonly MemberCategory[] = ["active", "adherent", "collaborator"];
+// pedido: quedan fuera aunque figuren en `MemberCategory`. Esta lista es la
+// FORMA que acepta el schema de la action; qué se ofrece de verdad lo decide
+// `requestableCategories`, porque `collaborator` es del estatuto reformado y
+// sólo se pide con la llave `colaborador_habilitado` prendida (spec 2026-09-02).
+export const ALL_REQUESTABLE_CATEGORIES: readonly MemberCategory[] = ["active", "adherent", "collaborator"];
+
+/** Las categorías que la pantalla ofrece y la regla acepta, decididas en UN
+ *  solo lugar: con la llave apagada, colaborador no está. Lo que
+ *  /mi/solicitudes no muestra es exactamente lo que `canCreateRequest`
+ *  rechaza. */
+export function requestableCategories(collaboratorEnabled: boolean): readonly MemberCategory[] {
+  return collaboratorEnabled
+    ? ALL_REQUESTABLE_CATEGORIES
+    : ALL_REQUESTABLE_CATEGORIES.filter((c) => c !== "collaborator");
+}
 
 export function canCreateRequest(input: {
   type: MemberRequestType;
@@ -19,9 +32,12 @@ export function canCreateRequest(input: {
   requestedCategory: MemberCategory | null; // solo category_change
   electionsOngoing: boolean; // solo category_change
   pendingFees: number; // solo category_change (REG-07)
+  collaboratorEnabled: boolean; // solo category_change (spec 2026-09-02)
   hasPendingOfType: boolean;
 }): RuleResult {
-  const { type, member, requestedCategory, electionsOngoing, pendingFees, hasPendingOfType } = input;
+  const {
+    type, member, requestedCategory, electionsOngoing, pendingFees, collaboratorEnabled, hasPendingOfType,
+  } = input;
 
   // El suspendido no opera (REG-20) y el cesante (status "withdrawn") ni
   // siquiera llega a esta pantalla — el panel de socio no se abre sin sesión
@@ -40,11 +56,17 @@ export function canCreateRequest(input: {
   }
 
   if (type === "category_change") {
-    if (requestedCategory === null || !REQUESTABLE_CATEGORIES.includes(requestedCategory)) {
+    if (requestedCategory === null || !ALL_REQUESTABLE_CATEGORIES.includes(requestedCategory)) {
       return { ok: false, error: "Elegí la categoría nueva." };
     }
     if (requestedCategory === member.category) {
       return { ok: false, error: "Esa ya es tu categoría." };
+    }
+    // La llave `colaborador_habilitado` (spec 2026-09-02): la MISMA función que
+    // arma las tarjetas de /mi/solicitudes. Va después de "ya es tu categoría"
+    // para que un colaborador existente reciba el mensaje que le corresponde.
+    if (!requestableCategories(collaboratorEnabled).includes(requestedCategory)) {
+      return { ok: false, error: "Por ahora no se puede pedir el pase a socio colaborador." };
     }
     // Mismo texto que `canChangeCategory` del lado del operador (Art. 5° ter):
     // el bloqueo por elecciones es una única regla, contada dos veces.

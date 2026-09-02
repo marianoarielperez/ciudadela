@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { canCreateRequest, renderWithdrawalText } from "@/lib/members/member-requests/rules";
+import {
+  canCreateRequest, renderWithdrawalText, requestableCategories,
+} from "@/lib/members/member-requests/rules";
 
 describe("canCreateRequest", () => {
   it("allows a vigente member to request a withdrawal", () => {
@@ -9,6 +11,7 @@ describe("canCreateRequest", () => {
       requestedCategory: null,
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(true);
@@ -21,6 +24,7 @@ describe("canCreateRequest", () => {
       requestedCategory: null,
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(false);
@@ -34,6 +38,7 @@ describe("canCreateRequest", () => {
       requestedCategory: null,
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: true,
     });
     expect(result.ok).toBe(false);
@@ -47,6 +52,7 @@ describe("canCreateRequest", () => {
       requestedCategory: "active",
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(true);
@@ -59,6 +65,7 @@ describe("canCreateRequest", () => {
       requestedCategory: null,
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(false);
@@ -72,10 +79,55 @@ describe("canCreateRequest", () => {
       requestedCategory: "cadet",
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("Elegí la categoría nueva.");
+  });
+
+  // The collaborator category belongs to the reformed statute, which the IGJ
+  // has not approved yet (spec 2026-09-02): the switch decides whether it can
+  // be requested, and the same function feeds the /mi/solicitudes cards.
+  it("blocks requesting collaborator while colaborador_habilitado is off", () => {
+    const result = canCreateRequest({
+      type: "category_change",
+      member: { status: "active", category: "adherent" },
+      requestedCategory: "collaborator",
+      electionsOngoing: false,
+      pendingFees: 0,
+      collaboratorEnabled: false,
+      hasPendingOfType: false,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("Por ahora no se puede pedir el pase a socio colaborador.");
+  });
+
+  it("allows requesting collaborator once the switch is on", () => {
+    const result = canCreateRequest({
+      type: "category_change",
+      member: { status: "active", category: "adherent" },
+      requestedCategory: "collaborator",
+      electionsOngoing: false,
+      pendingFees: 0,
+      collaboratorEnabled: true,
+      hasPendingOfType: false,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("a collaborator member asking for collaborator gets 'already your category', not the switch message", () => {
+    const result = canCreateRequest({
+      type: "category_change",
+      member: { status: "active", category: "collaborator" },
+      requestedCategory: "collaborator",
+      electionsOngoing: false,
+      pendingFees: 0,
+      collaboratorEnabled: false,
+      hasPendingOfType: false,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("Esa ya es tu categoría.");
   });
 
   it("blocks requesting the same category the member already has", () => {
@@ -85,6 +137,7 @@ describe("canCreateRequest", () => {
       requestedCategory: "adherent",
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(false);
@@ -98,6 +151,7 @@ describe("canCreateRequest", () => {
       requestedCategory: "active",
       electionsOngoing: true,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(false);
@@ -111,6 +165,7 @@ describe("canCreateRequest", () => {
       requestedCategory: "active",
       electionsOngoing: false,
       pendingFees: 2,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(false);
@@ -127,6 +182,7 @@ describe("canCreateRequest", () => {
       requestedCategory: "active",
       electionsOngoing: false,
       pendingFees: 0,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(true);
@@ -139,9 +195,17 @@ describe("canCreateRequest", () => {
       requestedCategory: null,
       electionsOngoing: false,
       pendingFees: 5,
+      collaboratorEnabled: true,
       hasPendingOfType: false,
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("requestableCategories", () => {
+  it("drops only collaborator while the switch is off", () => {
+    expect(requestableCategories(false)).toEqual(["active", "adherent"]);
+    expect(requestableCategories(true)).toEqual(["active", "adherent", "collaborator"]);
   });
 });
 

@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { MemberCategory } from "@/generated/prisma/client";
 import { CATEGORY_LABELS } from "@/lib/members/labels";
-import { REQUESTABLE_CATEGORIES } from "@/lib/members/member-requests/rules";
 import {
   cancelRequestAction,
   createCategoryRequestAction,
@@ -73,15 +72,20 @@ export function WithdrawalRequestForm({ hasPending }: { hasPending: boolean }) {
 export function CategoryRequestForm({
   currentCategory,
   hasPending,
+  requestable,
 }: {
   currentCategory: MemberCategory;
   hasPending: boolean;
+  /** Lo que la página armó con `requestableCategories(llave)`: con
+   *  `colaborador_habilitado` apagada no viene colaborador (spec 2026-09-02).
+   *  Display; la guarda real está en el servicio. */
+  requestable: readonly MemberCategory[];
 }) {
   const [state, formAction, pending] = useActionState<RequestState, FormData>(
     createCategoryRequestAction,
     {},
   );
-  const options = REQUESTABLE_CATEGORIES.filter((c) => c !== currentCategory);
+  const options = requestable.filter((c) => c !== currentCategory);
   const [selected, setSelected] = useState<MemberCategory | "">("");
   return (
     <Card>
