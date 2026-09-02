@@ -31,6 +31,11 @@ const tabsListVariants = cva(
       variant: {
         default: "bg-muted",
         line: "gap-1 bg-transparent",
+        // Pestañas de sección "Carpeta" (src/lib/ui/section-tabs.ts). Misma
+        // lista que `line`; la diferencia está en el TRIGGER: sus reglas de
+        // estado activo apuntan a `group-data-[variant=line|default]`, y con
+        // `section` ninguna se dispara, así que las clases del módulo mandan.
+        section: "gap-1 bg-transparent",
       },
     },
     defaultVariants: {
