@@ -8,6 +8,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { MapPin } from "lucide-react";
 import { PIN_ANCHOR, PIN_SIZE, PIN_SVG } from "@/components/map/brand-pin";
+import { BARRIO_BOUNDARY, BARRIO_BOUNDS } from "@/lib/reports/boundary";
 import { SITE } from "@/lib/site";
 import {
   IGN_ATTRIBUTION,
@@ -71,6 +72,24 @@ export default function SedeMap() {
     // Decorativo a propósito: la información (dirección, botón) vive en la
     // tarjeta HTML de la página, nunca solo dentro del canvas del mapa.
     L.marker(CENTER, { icon, interactive: false, keyboard: false }).addTo(map);
+
+    // El contorno del barrio (pedido del operador, 02/09): el mismo polígono
+    // que el picker del wizard, el mapa del panel y el PDF. `interactive:
+    // false` para que no capture clics ni cambie el cursor: es referencia,
+    // no un objetivo. Y el encuadre inicial pasa a ser el BARRIO entero, con
+    // la sede adentro —así el contorno tiene sentido a primera vista—; el
+    // botón "Centrar en la sede" sigue volviendo al zoom de siempre.
+    L.polygon(
+      BARRIO_BOUNDARY.map(([lat, lng]) => [lat, lng] as [number, number]),
+      { color: "#0079BC", weight: 2, fillOpacity: 0.03, interactive: false },
+    ).addTo(map);
+    map.fitBounds(
+      L.latLngBounds(
+        [BARRIO_BOUNDS.south, BARRIO_BOUNDS.west],
+        [BARRIO_BOUNDS.north, BARRIO_BOUNDS.east],
+      ),
+      { padding: [16, 16] },
+    );
 
     const ignLayer = L.tileLayer(IGN_TILE_URL, {
       ...IGN_TILE_OPTIONS,

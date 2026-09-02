@@ -4,7 +4,6 @@ import { Lightbulb, MessageSquareWarning } from "lucide-react";
 import { currentYearAR } from "@/lib/dates";
 import { reports } from "@/lib/reports/service";
 import { SITE, siteBaseUrl } from "@/lib/site";
-import { BarrioSilhouette } from "./barrio-silhouette";
 
 export const metadata: Metadata = {
   title: "Reportes — Vecinal Ciudadela",
@@ -27,8 +26,10 @@ export default async function ReportesPage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-10">
-      <div className="grid items-center gap-8 md:grid-cols-[1fr_260px]">
-        <div>
+      {/* Una sola columna (pedido del operador, 02/09): el párrafo conserva el
+          ancho de lectura de `max-w-prose`; la silueta que iba al costado se
+          retiró (el contorno del barrio sigue en /ubicacion, el wizard y el PDF). */}
+      <div>
           <p className="font-mono text-xs font-semibold tracking-[0.14em] text-primary uppercase">
             Art. 2 inc. g del estatuto
           </p>
@@ -49,11 +50,6 @@ export default async function ReportesPage() {
               <dd className="font-mono text-2xl font-bold tabular-nums text-primary">{stats.filed}</dd>
             </div>
           </dl>
-        </div>
-        <BarrioSilhouette
-          className="order-first mx-auto max-w-[240px] text-primary md:order-none md:max-w-none"
-          title="Silueta del barrio Ciudadela"
-        />
       </div>
 
       <div className="mt-10 grid gap-4 sm:grid-cols-2">
