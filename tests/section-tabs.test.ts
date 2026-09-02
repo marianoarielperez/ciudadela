@@ -70,6 +70,8 @@ describe("las variantes Radix se DERIVAN de las mismas constantes", () => {
     expect(SECTION_TAB_RADIX_TRIGGER).toContain("dark:data-active:bg-card");
     expect(SECTION_TAB_RADIX_TRIGGER).toContain("dark:data-active:border-border");
     expect(SECTION_TAB_RADIX_TRIGGER).toContain("flex-none");
+    expect(SECTION_TAB_RADIX_TRIGGER).toContain("rounded-b-none");
+    expect(SECTION_TAB_RADIX_TRIGGER).toContain("after:hidden");
     expect(SECTION_TAB_RADIX_TRIGGER).toContain(SECTION_TAB);
   });
 
@@ -77,6 +79,9 @@ describe("las variantes Radix se DERIVAN de las mismas constantes", () => {
     for (const token of ["group-data-horizontal/tabs:h-auto", "p-0", "rounded-none", "border-b", "w-full", "items-end", "justify-start"]) {
       expect(SECTION_TABS_RADIX_LIST).toContain(token);
     }
+    expect(SECTION_TABS_RADIX_LIST).toContain("p-0 px-0.5");
+    expect(SECTION_TABS_RADIX_LIST).toContain("min-w-max");
+    expect(SECTION_TABS_RADIX_LIST).not.toContain("overflow");
     expect(SECTION_TABS_RADIX_LIST).not.toContain("pb-2");
   });
 });

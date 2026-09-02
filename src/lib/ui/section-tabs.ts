@@ -1,6 +1,7 @@
 // Pestañas de SECCIÓN "Carpeta" (spec 2026-09-02-pestanas-de-seccion-design).
-// ÚNICA fuente de las clases de las nueve barras: cinco por URL (Tesorería,
-// Socios, Solicitudes admin, /mi/solicitudes) y cuatro Radix (ficha del socio,
+// ÚNICA fuente de las clases de las ocho barras: cuatro por URL (Tesorería,
+// Socios, Solicitudes admin, /mi/solicitudes; la quinta barra por URL es la nav
+// del shell de /mi, que NO usa este módulo) y cuatro Radix (ficha del socio,
 // Configuración, Salud, Documentos). Sin React, sin Prisma: sólo strings.
 //
 // Tres niveles visuales, cada uno con su forma, para que una pestaña de sección
@@ -60,13 +61,27 @@ export const SECTION_TAB_ICON = "size-4 shrink-0";
 // que estos overrides, así que tailwind-merge sí los reemplaza.
 // `h-auto` pisa el `h-8` de la variante compartida (los targets de 44px no
 // entran en 32px). Ya no hay `pb-2`: el subrayado que `line` dibujaba 5px por
-// debajo del trigger no se activa en `section`.
+// debajo del trigger se apaga en el propio trigger (`after:hidden`), así que no
+// hay espacio que reservarle.
+// La lista NO lleva overflow: el desplazamiento horizontal va SIEMPRE en el
+// envoltorio (`SECTION_TABS_NAV_ADMIN`), nunca acá, por dos razones — un
+// overflow en la lista recorta el `-mb-px` con que la solapa activa pisa el
+// riel (y deja de "abrirse" hacia el contenido), y `overflow-x:auto` implica
+// `overflow-y:auto` (CSS Overflow), así que además aparece una barra vertical.
+// `min-w-max` es lo que impide que las pestañas se compriman dentro de ese
+// envoltorio. Ojo al orden: `px-0.5` va DESPUÉS de `p-0` o gana el `p-[3px]`
+// de la base.
 export const SECTION_TABS_RADIX_LIST =
-  "group-data-horizontal/tabs:h-auto w-full items-end justify-start overflow-x-auto rounded-none border-b p-0 px-0.5";
+  "group-data-horizontal/tabs:h-auto w-full min-w-max items-end justify-start rounded-none border-b p-0 px-0.5";
 
 export const SECTION_TAB_RADIX_TRIGGER = [
   SECTION_TAB,
-  "flex-none justify-start py-0 font-normal",
+  // `rounded-b-none`: la base trae `rounded-md` y tailwind-merge NO lo saca con
+  // un `rounded-t-md` posterior, así que las esquinas de abajo quedaban curvas y
+  // el riel se veía por el hueco. `after:hidden`: la base dibuja un subrayado
+  // 5px por debajo del trigger (opacidad 0, pero ocupa caja y desborda el
+  // envoltorio).
+  "flex-none justify-start rounded-b-none py-0 font-normal after:hidden",
   withPrefix("data-[state=inactive]:", SECTION_TAB_INACTIVE),
   withPrefix("data-active:", SECTION_TAB_ACTIVE),
   // La base pinta la activa en oscuro con `dark:data-active:border-input` y
