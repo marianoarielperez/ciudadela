@@ -73,7 +73,8 @@ function findFirstAgainst(rows: Row[]) {
         (w.report?.memberId === undefined || r.owner === w.report.memberId),
     );
     if (!row) return null;
-    const { owner: _owner, ...file } = row;
+    const { owner, ...file } = row;
+    void owner;
     return file;
   };
 }

@@ -177,6 +177,23 @@ describe("la ficha del reporte", () => {
 
   // Las dos caras del DNI y las fotos salen SIEMPRE de la ruta autenticada: no
   // hay una sola imagen de un vecino servida desde `public/`.
+  // Las tres cosas del encabezado que un retoque descuidado dejaría caer sin
+  // que nadie lo note: el PDF es un <a> nativo (nunca <Link>), la reserva de
+  // identidad se dice dos veces (badge y aviso junto a los datos), y la purga
+  // del DNI se explica con su fecha en vez de mostrar dos ranuras vacías.
+  it("un reporte reservado y con DNI purgado: PDF como <a>, marca de reserva y aviso de purga", async () => {
+    h.findUnique.mockResolvedValue({
+      ...BASE,
+      anonymous: true,
+      dniPurgedAt: new Date(Date.UTC(2027, 8, 2, 15)),
+    });
+    const html = render(await ReporteDetallePage(params("14")));
+    expect(html).toContain('href="/api/admin/reportes/14/pdf"');
+    expect(html).toContain("Reservado");
+    expect(html).toContain("el PDF no la incluye");
+    expect(html).toContain("Imágenes del DNI borradas el 02/09/2027");
+  });
+
   it("fotos y DNI apuntan a la ruta autenticada, con alt distinto", async () => {
     h.findUnique.mockResolvedValue({
       ...BASE,

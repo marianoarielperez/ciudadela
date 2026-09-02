@@ -1236,7 +1236,7 @@ nuevo.
   tests, no en vivo.)*
 - [x] 5. El mapa admin muestra los pines por estado y el límite del barrio; un reporte
   fuera del polígono lleva su marca en la lista. *(La marca "Fuera del barrio" en la
-  cola está verificada; el mapa cierra con la última tarea de la Parte 3.)*
+  cola está verificada; el mapa se verificó en Chrome: pin verde del N° 2 dentro del contorno y leyenda "1 en el mapa · 1 sin ubicación".)*
 - [x] 6. Una foto con GPS en EXIF queda guardada sin metadatos. *(Test con sharp real:
   genera la imagen, la procesa y verifica el JPEG de salida y la ausencia de EXIF.)*
 - [x] 7. El cron del digest borra los DNI vencidos y los borradores viejos y lo reporta.
@@ -1252,7 +1252,7 @@ nuevo.
 ### Archivos existentes que se tocaron
 
 Derivado de `git diff --name-status main..HEAD -- src prisma tests next.config.ts`:
-**118 archivos, 84 nuevos y 34 modificados**. Los modificados, todos aditivos:
+**122 archivos, 88 nuevos y 34 modificados**. Los modificados, todos aditivos:
 
 - **Esquema y configuración**: `prisma/schema.prisma`; `next.config.ts` (dos entradas de
   `Permissions-Policy` para las rutas del wizard y tres de `Content-Security-Policy`

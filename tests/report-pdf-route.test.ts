@@ -19,13 +19,13 @@ type PdfAssets = { photos: Buffer[]; map: Buffer | null };
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   findUnique: vi.fn(),
-  read: vi.fn(async (_file: { path: string }) => Buffer.from("x")),
+  read: vi.fn(async () => Buffer.from("x")),
   // Tipado con los parámetros reales del generador: es lo que deja aseverar
   // sobre `mock.calls[0]` sin castear (y lo que rompe si la firma cambia).
   render: vi.fn(
-    async (_d: PdfData, _assets: PdfAssets) => new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+    async () => new Uint8Array([0x25, 0x50, 0x44, 0x46]),
   ),
-  map: vi.fn(async (_opts: { lat: number; lng: number }) => null as Buffer | null),
+  map: vi.fn(async () => null as Buffer | null),
   audit: vi.fn(async () => {}),
 }));
 
@@ -166,6 +166,9 @@ describe("GET /api/admin/reportes/[id]/pdf", () => {
       dismissed: null,
     });
     expect(data.reporter.memberNumber).toBeNull();
+    // El número del socio es el del libro ABIERTO: sin ese `where` un socio
+    // migrado imprimiría su número del Libro 1 en el PDF.
+    expect(JSON.stringify(mocks.findUnique.mock.calls[0][0])).toContain('"where":{"book":{"status":"open"}}');
   });
 
   it("una foto que no está en disco no frena el PDF: sale con una menos", async () => {

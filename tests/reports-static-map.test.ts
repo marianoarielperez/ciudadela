@@ -64,7 +64,7 @@ const tile = async () =>
 
 describe("renderStaticMap", () => {
   it("compone 3×3 tiles del IGN, recorta a 600×400 y dibuja el pin", async () => {
-    const fetchFn = vi.fn(async (_url: string) => new Response(new Uint8Array(await tile()), { status: 200 }));
+    const fetchFn = vi.fn<(url: string) => Promise<Response>>(async () => new Response(new Uint8Array(await tile()), { status: 200 }));
     const png = await renderStaticMap({
       lat: SEDE_LAT,
       lng: SEDE_LNG,
@@ -138,7 +138,7 @@ describe("renderStaticMap", () => {
   });
 
   it("un recorte más grande que el mosaico se acota en vez de romper sharp", async () => {
-    const fetchFn = vi.fn(async (_url: string) => new Response(new Uint8Array(await tile()), { status: 200 }));
+    const fetchFn = vi.fn<(url: string) => Promise<Response>>(async () => new Response(new Uint8Array(await tile()), { status: 200 }));
     const png = await renderStaticMap({
       lat: SEDE_LAT,
       lng: SEDE_LNG,

@@ -261,8 +261,8 @@ export default async function ReporteDetallePage({ params }: { params: Promise<{
                 )}
               </p>
               <p className="text-muted-foreground">
-                DNI <span className="font-mono">{r.reporterDni ?? "—"}</span> · {r.reporterPhone ?? "—"} ·{" "}
-                {r.reporterEmail ?? "—"}
+                DNI <span className="font-mono">{r.reporterDni || "—"}</span> · {r.reporterPhone || "—"} ·{" "}
+                {r.reporterEmail || "—"}
               </p>
               {r.anonymous && (
                 <FormMessage kind="neutral" box>
