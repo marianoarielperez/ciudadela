@@ -106,10 +106,16 @@ const SECTION_TAB_FILES = [
   "src/app/admin/documentos/documentos-tabs.tsx",
 ];
 
+// Las cuatro Radix visten el trigger derivado; las cuatro por URL, la solapa a
+// secas. Importar del módulo no alcanza: un archivo puede importar sólo el
+// envoltorio y seguir pintando la pestaña a mano.
+const RADIX = /(member|config|salud|documentos)-tabs\.tsx$/;
+
 describe("de fuente", () => {
   it.each(SECTION_TAB_FILES)("%s importa del módulo y no conserva el subrayado suelto", (file) => {
     const src = readFileSync(file, "utf8");
     expect(src).toContain('from "@/lib/ui/section-tabs"');
+    expect(src).toContain(RADIX.test(file) ? "SECTION_TAB_RADIX_TRIGGER" : "SECTION_TAB_ACTIVE");
     expect(src).not.toContain("border-b-2");
     expect(src).not.toContain("after:bg-primary");
     expect(src).not.toContain('variant="line"');
@@ -124,6 +130,10 @@ describe("de fuente", () => {
 });
 
 // ---- (3) Render: una barra por URL --------------------------------------------
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const nav = vi.hoisted(() => ({ pathname: "/admin/solicitudes/socios" }));
 vi.mock("next/navigation", () => ({
   usePathname: () => nav.pathname,
@@ -197,8 +207,9 @@ describe("SaludTabs (Radix)", () => {
     expect(html).toContain('data-variant="section"');
     expect(html).toContain('aria-label="Secciones de salud"');
     expect(html).not.toContain("pb-2");
-    // El overflow va en el envoltorio, nunca en la lista.
-    expect(html).toContain(`<div class="${SECTION_TABS_NAV_ADMIN}">`);
+    // El overflow va en el envoltorio, nunca en la lista: y la lista tiene que
+    // ser su PRIMER hijo, o el scroll horizontal no es el de las pestañas.
+    expect(html).toMatch(new RegExp(`<div class="${escapeRegExp(SECTION_TABS_NAV_ADMIN)}"><div [^>]*role="tablist"`));
     const list = html.match(/<div [^>]*role="tablist"[^>]*>/)?.[0] ?? "";
     expect(list).toContain("border-b");
     expect(list).toContain("items-end");

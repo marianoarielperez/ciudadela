@@ -86,6 +86,15 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **Estado vacío**: `EmptyState` (`size="list"` reemplaza la tabla entera y ofrece la acción
   que lo resuelve; `size="card"` es una línea). **Nunca renderizar un `thead` sin filas.**
 - **Badges de estado**: `src/lib/admin/status-badges.ts`, no ternarios por pantalla.
+- **Pestañas de sección: solapa "Carpeta" desde `src/lib/ui/section-tabs.ts`**
+  (02/09/2026). Tres niveles con tres formas: la nav del shell de `/mi` es
+  subrayado (`mi-tabs.tsx`, NO usa el módulo), las pestañas de sección son
+  solapas (las 4 por URL y las 4 Radix, con `TabsList variant="section"`) y los
+  filtros de vista son segmentos (`FilterChips`). Una barra nueva importa las
+  constantes del módulo; `tests/section-tabs.test.ts` lo fija de fuente. Ojo
+  Radix: `data-active` de shadcn es un `:where()` de especificidad cero y las
+  reglas de `variant="line"` pesan más, así que un override por `className`
+  sobre `line` pierde siempre — por eso existe la variante `section`.
 - **Roles**: la nav y las tarjetas filtran por los roles del TOKEN — es display, y puede
   quedar hasta 8 h desactualizado tras una degradación. **La autorización real va siempre
   en la ruta y en cada server action** (`requireAdmin` / `requireSuperadmin`, que resuelven

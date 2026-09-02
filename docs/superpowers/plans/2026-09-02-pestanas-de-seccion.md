@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Que las nueve barras de pestañas de sección del sistema (cinco por URL, cuatro Radix) compartan un mismo dibujo de solapa "Carpeta", más visible y distinto de la nav del shell y de los segmentos de vista, cambiando sólo `className`.
+**Goal:** Que las ocho barras de pestañas de sección del sistema (cuatro por URL, cuatro Radix) compartan un mismo dibujo de solapa "Carpeta", más visible y distinto de la nav del shell y de los segmentos de vista, cambiando sólo `className`.
 
 **Architecture:** Un módulo puro `src/lib/ui/section-tabs.ts` es la única fuente de las clases; los ocho componentes que cambian sólo reemplazan sus strings de `className` (y `variant="line"` por `variant="section"` en los cuatro Radix). Una variante `section` nueva en `tabsListVariants` (`src/components/ui/tabs.tsx`) evita que las reglas de estado de la variante `line` —que pesan más que `data-active:` porque shadcn define `data-active` con `:where()`— pisen los overrides. Un test de fuente fija que los ocho importen del módulo y que `mi-tabs.tsx` (la nav del shell) NO lo haga.
 
@@ -58,7 +58,7 @@ Crear `tests/section-tabs.test.ts`:
 
 ```ts
 // Pestañas de sección "Carpeta" (spec 2026-09-02-pestanas-de-seccion-design):
-// el módulo puro que es la ÚNICA fuente de las clases de las nueve barras.
+// el módulo puro que es la ÚNICA fuente de las clases de las ocho barras.
 //
 // Tres partes, que las tareas 2 y 3 del plan extienden: (1) el módulo y la
 // derivación de las variantes Radix; (2) de fuente: qué archivos importan del
@@ -155,8 +155,9 @@ Crear `src/lib/ui/section-tabs.ts`:
 
 ```ts
 // Pestañas de SECCIÓN "Carpeta" (spec 2026-09-02-pestanas-de-seccion-design).
-// ÚNICA fuente de las clases de las nueve barras: cinco por URL (Tesorería,
-// Socios, Solicitudes admin, /mi/solicitudes) y cuatro Radix (ficha del socio,
+// ÚNICA fuente de las clases de las ocho barras: cuatro por URL (Tesorería,
+// Socios, Solicitudes admin, /mi/solicitudes; la quinta barra por URL es la nav
+// del shell de /mi, que NO usa este módulo) y cuatro Radix (ficha del socio,
 // Configuración, Salud, Documentos). Sin React, sin Prisma: sólo strings.
 //
 // Tres niveles visuales, cada uno con su forma, para que una pestaña de sección

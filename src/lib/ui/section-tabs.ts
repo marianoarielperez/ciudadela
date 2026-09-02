@@ -79,8 +79,9 @@ export const SECTION_TAB_RADIX_TRIGGER = [
   // `rounded-b-none`: la base trae `rounded-md` y tailwind-merge NO lo saca con
   // un `rounded-t-md` posterior, así que las esquinas de abajo quedaban curvas y
   // el riel se veía por el hueco. `after:hidden`: la base dibuja un subrayado
-  // 5px por debajo del trigger (opacidad 0, pero ocupa caja y desborda el
-  // envoltorio).
+  // 5px por debajo del trigger (opacidad 0 y `after:absolute`, así que no ocupa
+  // caja, pero un descendiente absoluto igual extiende el área desplazable del
+  // envoltorio y le forzaba una barra vertical).
   "flex-none justify-start rounded-b-none py-0 font-normal after:hidden",
   withPrefix("data-[state=inactive]:", SECTION_TAB_INACTIVE),
   withPrefix("data-active:", SECTION_TAB_ACTIVE),

@@ -1,9 +1,10 @@
 "use client";
 // Barra de sub-pestañas de Solicitudes en el panel de socio. Calca
 // `SolicitudesTabs` del admin (links y no botones: deep-link, botón atrás y
-// `aria-current` gratis) con los targets de 48px de `MiTabs`: acá se navega con
-// el pulgar. El `-my-1 py-1` evita que `overflow-x-auto` recorte el anillo de
-// foco (la trampa documentada en `treasury-tabs.tsx`).
+// `aria-current` gratis) con los targets de 44 px del canon del shell
+// (`min-h-11`, en `SECTION_TAB`): acá se navega con el pulgar. El `-my-1 py-1`
+// evita que `overflow-x-auto` recorte el anillo de foco (la trampa documentada
+// en `src/lib/ui/section-tabs.ts`).
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
