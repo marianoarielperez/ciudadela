@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getActiveReregistration, getAsociateActive, getLegalTexts } from "@/lib/config";
+import {
+  getActiveReregistration,
+  getAsociateActive,
+  getCollaboratorEnabled,
+  getLegalTexts,
+} from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { SITE } from "@/lib/site";
 import { feeAmountsForWizard, feeValueReader } from "@/lib/treasury/fee-values";
@@ -111,13 +116,18 @@ export default async function AsociatePage() {
   // catastral —"1906" encuentra "Hernandez , Jose"— y ordena los empates por
   // ese número. `normalizedName` no hace falta: esa misma función normaliza el
   // nombre en el cliente con una clave de búsqueda más laxa que la persistida.
-  const [legal, fees, streets] = await Promise.all([
+  const [legal, fees, streets, collaboratorEnabled] = await Promise.all([
     getLegalTexts(),
     feeValueReader.current().then(feeAmountsForWizard),
     prisma.street.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, loadOrder: true },
     }),
+    // La llave `colaborador_habilitado` (spec 2026-09-02): cacheada por tag como
+    // el interruptor de ASOCIATE, porque esta página también es cacheada
+    // (`revalidate = 3600` + `updateTag(CACHE_TAGS.config)` al guardar). La
+    // GUARDA vive en `createApplicationAction` y lee directo.
+    getCollaboratorEnabled(),
   ]);
 
   return (
@@ -126,6 +136,7 @@ export default async function AsociatePage() {
         streets={streets}
         legal={legal}
         fees={fees}
+        collaboratorEnabled={collaboratorEnabled}
         siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? ""}
       />
     </main>

@@ -137,6 +137,10 @@ export function AsociateWizard(props: {
   legal: LegalTexts;
   fees: FeeAmounts | null;
   siteKey: string;
+  /** La llave `colaborador_habilitado` (spec 2026-09-02), leída cacheada por la
+   *  página. Obligatoria a propósito —también en el retome, donde el paso 2 no
+   *  se ve— para que ninguna página nueva la olvide. */
+  collaboratorEnabled: boolean;
   /** Rehidratación desde /asociate/retomar/[token]: la solicitud ya existe y lo
    *  que decide la pantalla es su ESTADO, no el borrador. */
   initial?: {
@@ -145,7 +149,7 @@ export function AsociateWizard(props: {
     application?: ApplicationSnapshot;
   };
 }) {
-  const { streets, legal, fees, siteKey, initial } = props;
+  const { streets, legal, fees, siteKey, collaboratorEnabled, initial } = props;
 
   // El retome cae directo en el paso que corresponde: con la documentación ya
   // completa, en el 6. La regla es la MISMA función pura que usa el server para
@@ -435,6 +439,7 @@ export function AsociateWizard(props: {
         {step === 2 && (
           <StepResidence
             streets={streets}
+            collaboratorEnabled={collaboratorEnabled}
             draft={draft}
             patch={patch}
             error={localError}

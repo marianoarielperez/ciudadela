@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { applicationService } from "@/lib/applications/service";
-import { getLegalTexts } from "@/lib/config";
+import { getCollaboratorEnabled, getLegalTexts } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { feeAmountsForWizard, feeValueReader } from "@/lib/treasury/fee-values";
 import { AsociateWizard } from "../../asociate-wizard";
@@ -45,13 +45,17 @@ export default async function RetomarPage({ params }: { params: Promise<{ token:
     );
   }
 
-  const [docs, legal, fees] = await Promise.all([
+  const [docs, legal, fees, collaboratorEnabled] = await Promise.all([
     prisma.document.findMany({
       where: { ownerType: "application", ownerId: app.id },
       select: { type: true },
     }),
     getLegalTexts(),
     feeValueReader.current().then(feeAmountsForWizard),
+    // El retome entra en el paso 5 y no muestra el paso 2, pero la prop del
+    // wizard es obligatoria (spec 2026-09-02): se pasa el valor real, no un
+    // literal, para que esta página no mienta si el wizard cambia.
+    getCollaboratorEnabled(),
   ]);
 
   return (
@@ -63,6 +67,7 @@ export default async function RetomarPage({ params }: { params: Promise<{ token:
         streets={[]}
         legal={legal}
         fees={fees}
+        collaboratorEnabled={collaboratorEnabled}
         siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? ""}
         initial={{
           resumeToken: token,

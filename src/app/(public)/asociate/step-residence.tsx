@@ -5,11 +5,18 @@ import { FormMessage } from "@/components/admin/form-message";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { StreetPicker } from "./street-picker";
-import { CONTROL_HEIGHT, streetLabel, type AsociateDraft, type StreetOption } from "./wizard-shared";
+import {
+  CONTROL_HEIGHT,
+  COLLABORATOR_CLOSED_MESSAGE,
+  streetLabel,
+  type AsociateDraft,
+  type StreetOption,
+} from "./wizard-shared";
 import { ChoiceCard, Field, NavButtons } from "./wizard-ui";
 
 export function StepResidence({
   streets,
+  collaboratorEnabled,
   draft,
   patch,
   error,
@@ -17,6 +24,11 @@ export function StepResidence({
   onNext,
 }: {
   streets: StreetOption[];
+  /** La llave `colaborador_habilitado` (spec 2026-09-02). Apagada, "En otro
+   *  barrio" se muestra deshabilitada con el motivo: la categoría colaborador es
+   *  del estatuto reformado y el sitio se lanza antes de la IGJ. La guarda real
+   *  está en `createApplicationAction`; esto es display. */
+  collaboratorEnabled: boolean;
   draft: AsociateDraft;
   patch: (values: Partial<AsociateDraft>) => void;
   error: string | null;
@@ -78,8 +90,11 @@ export function StepResidence({
             checked={draft.livesInBarrio === "no"}
             onSelect={() => chooseBranch("no")}
             title="En otro barrio"
+            disabled={!collaboratorEnabled}
           >
-            Podés solicitar el ingreso como socio colaborador.
+            {collaboratorEnabled
+              ? "Podés solicitar el ingreso como socio colaborador."
+              : COLLABORATOR_CLOSED_MESSAGE}
           </ChoiceCard>
         </div>
       </fieldset>

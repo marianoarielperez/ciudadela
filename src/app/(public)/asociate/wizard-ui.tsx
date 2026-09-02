@@ -19,6 +19,7 @@ export function ChoiceCard({
   icon,
   aside,
   children,
+  disabled = false,
 }: {
   name: string;
   value: string;
@@ -30,15 +31,25 @@ export function ChoiceCard({
   icon?: React.ReactNode;
   aside?: React.ReactNode;
   children?: React.ReactNode;
+  /** Visible pero no elegible (spec 2026-09-02): el radio NATIVO va `disabled`
+   *  —no dispara `onChange`, así que el llamador no necesita otra guarda— y la
+   *  tarjeta se atenúa. El `children` dice por qué. Prop opcional y aditiva:
+   *  el paso 3 de ASOCIATE, los dos pasos de REPORTES y /mi/solicitudes también
+   *  importan esta tarjeta y sin la prop nada cambia. */
+  disabled?: boolean;
 }) {
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition-colors",
+        "flex items-start gap-3 rounded-xl border-2 p-4 transition-colors",
         // El foco vive en el radio nativo, que está adentro: sin `has-` el
         // recorrido con Tab no marcaría la tarjeta, que es lo que se ve.
         "has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
-        checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
+        disabled
+          ? "cursor-not-allowed border-border opacity-60"
+          : checked
+            ? "cursor-pointer border-primary bg-primary/5"
+            : "cursor-pointer border-border hover:bg-muted/50",
       )}
     >
       <input
@@ -46,6 +57,7 @@ export function ChoiceCard({
         name={name}
         value={value}
         checked={checked}
+        disabled={disabled}
         onChange={onSelect}
         className="mt-0.5 size-5 shrink-0 accent-primary"
       />

@@ -204,3 +204,47 @@ describe("el wizard de 6 pasos", () => {
     expect(stepPersonal).toContain('<input type="hidden" name="dni" value={draft.dni} />');
   });
 });
+
+// ── La llave `colaborador_habilitado` en el paso 2 (spec 2026-09-02) ──────────
+//
+// Sin jsdom se fija la ESTRUCTURA que hace imposible el bug: la tarjeta "En
+// otro barrio" recibe el `disabled` derivado de la prop, explica por qué con la
+// MISMA constante que devuelve el server, y `ChoiceCard` deshabilita el radio
+// NATIVO —un radio disabled no dispara `onChange`, así que `chooseBranch("no")`
+// es inalcanzable sin tocar la validación—. El comportamiento con clics se
+// verifica en el navegador en la Tarea 8.
+describe("la llave colaborador_habilitado en el paso 2", () => {
+  const stepResidence = code(src("app", "(public)", "asociate", "step-residence.tsx"));
+  const wizardUi = code(src("app", "(public)", "asociate", "wizard-ui.tsx"));
+  const shared = code(src("app", "(public)", "asociate", "wizard-shared.ts"));
+  const asociatePage = code(src("app", "(public)", "asociate", "page.tsx"));
+  const retomePage = code(src("app", "(public)", "asociate", "retomar", "[token]", "page.tsx"));
+
+  it("la tarjeta de otro barrio se deshabilita con la prop y explica con la constante compartida", () => {
+    expect(stepResidence).toContain("disabled={!collaboratorEnabled}");
+    expect(stepResidence).toContain("COLLABORATOR_CLOSED_MESSAGE");
+  });
+
+  it("ChoiceCard deshabilita el radio nativo", () => {
+    expect(wizardUi).toContain("disabled?: boolean;");
+    expect(wizardUi).toContain("disabled={disabled}");
+  });
+
+  it("el wizard exige la prop y se la pasa al paso 2", () => {
+    expect(wizard).toContain("collaboratorEnabled: boolean;");
+    expect(wizard).toContain("collaboratorEnabled={collaboratorEnabled}");
+  });
+
+  it("las dos páginas leen la llave cacheada y se la pasan al wizard", () => {
+    for (const page of [asociatePage, retomePage]) {
+      expect(page).toContain("getCollaboratorEnabled()");
+      expect(page).toContain("collaboratorEnabled={collaboratorEnabled}");
+    }
+  });
+
+  it("la constante dice lo mismo que el server", () => {
+    expect(shared).toContain(
+      "Por ahora, la asociación en línea es sólo para quienes viven en el Barrio Ciudadela.",
+    );
+  });
+});
