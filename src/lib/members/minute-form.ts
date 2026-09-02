@@ -97,7 +97,7 @@ export function createsNewMinute(sel: MinuteSelection): boolean {
 // entre la creación y el descarte otro admin pudo haberla elegido para su propia
 // acción, y en ese caso el acta ya es parte del libro y no se toca.
 //
-// Son SEIS los referentes de `Minute`, y la lista tiene que crecer con el
+// Son SIETE los referentes de `Minute`, y la lista tiene que crecer con el
 // schema: cada relación nueva que apunte a `minutes` se agrega acá.
 //
 // Los tres que no son movimientos ni libros son fáciles de pasar por alto,
@@ -126,14 +126,21 @@ export function createsNewMinute(sel: MinuteSelection): boolean {
 // encima del error real de su acción, que es lo mismo que pasa con el acta de
 // convocatoria del M6.
 //
+// El séptimo —`Report.filedMinuteId` (M7)— es de esa misma clase desde la
+// migración `report_minute_restrict`: el acta con la que la Comisión trató una
+// INICIATIVA (Art. 6.2) es su único respaldo institucional, y una iniciativa no
+// escribe ningún `Movement` (quien reporta puede no ser socio), así que sin este
+// chequeo el acta "parece" sin usar exactamente como la del rechazo.
+//
 // Una consulta por referente y en orden de probabilidad, cortando en la primera
 // que dé positivo: el camino frecuente —el acta recién creada que efectivamente
-// no usa nadie— paga las seis, y son seis `COUNT` por índice sobre un camino
+// no usa nadie— paga las siete, y son siete `COUNT` por índice sobre un camino
 // de compensación que ya viene de un error.
 export async function discardUnusedMinute(
   db: Pick<
     PrismaClient,
-    "minute" | "movement" | "book" | "application" | "reregistrationProcess" | "feeValue" | "feeExemption"
+    | "minute" | "movement" | "book" | "application" | "reregistrationProcess" | "feeValue"
+    | "feeExemption" | "report"
   >,
   minuteId: number,
 ): Promise<void> {
@@ -153,6 +160,7 @@ export async function discardUnusedMinute(
       where: { OR: [{ minuteId }, { revokeMinuteId: minuteId }] },
     });
     if (exemptions) return;
+    if (await db.report.count({ where: { filedMinuteId: minuteId } })) return;
     await db.minute.delete({ where: { id: minuteId } });
   } catch (err) {
     // El error real que ve el usuario es el de la acción que falló; que el

@@ -170,6 +170,8 @@ describe("discardUnusedMinute", () => {
     feeExemptions?: number;
     /** Exenciones que la usan como acta de la ANULACIÓN. */
     feeExemptionRevokes?: number;
+    /** Reportes (M7) presentados/tratados con esta acta. */
+    reports?: number;
   };
 
   function makeDb(counts: Counts, minuteId = 42) {
@@ -200,6 +202,12 @@ describe("discardUnusedMinute", () => {
           return (asksGrant ? counts.feeExemptions ?? 0 : 0)
             + (asksRevoke ? counts.feeExemptionRevokes ?? 0 : 0);
         },
+      },
+      // Mismo criterio que los otros fakes: honra el `where`. Una guarda que
+      // contara reportes sin filtrar por `filedMinuteId` pasaría igual.
+      report: {
+        count: async ({ where }: { where: { filedMinuteId: number } }) =>
+          where.filedMinuteId === minuteId ? counts.reports ?? 0 : 0,
       },
       minute: {
         delete: async ({ where }: { where: { id: number } }) => {
@@ -282,11 +290,24 @@ describe("discardUnusedMinute", () => {
     expect(deleted).toEqual([]);
   });
 
+  // `Report.filedMinuteId` es `Restrict` desde `report_minute_restrict`, como
+  // las dos FKs de `FeeExemption`: la base rechazaría el borrado, pero el
+  // operador terminaría con un acta fantasma MÁS un error técnico encima del
+  // error real de su acción. Y una iniciativa tratada no deja movimiento —quien
+  // reporta puede no ser socio—, así que sin este chequeo el acta "parece" sin
+  // usar exactamente como la del rechazo de una solicitud.
+  it("keeps a minute that a report was filed under", async () => {
+    const { db, deleted } = makeDb({ movements: 0, books: 0, reports: 1 });
+    await discardUnusedMinute(db as never, 42);
+    expect(deleted).toEqual([]);
+  });
+
   it("never throws: the caller already has a real error to report", async () => {
     const db = {
       movement: { count: async () => { throw new Error("db down"); } },
       book: { count: async () => 0 },
       application: { count: async () => 0 },
+      report: { count: async () => 0 },
       minute: { delete: async () => ({ id: 1 }) },
     };
     await expect(discardUnusedMinute(db as never, 42)).resolves.toBeUndefined();

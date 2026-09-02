@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>limites-barrio.kml</name>
+	<Schema name="limites_barrios" id="limites_barrios">
+		<SimpleField type="float" name="fid">
+		</SimpleField>
+		<SimpleField type="float" name="id">
+		</SimpleField>
+		<SimpleField type="string" name="nombre">
+		</SimpleField>
+		<SimpleField type="float" name="zona">
+		</SimpleField>
+		<SimpleField type="float" name="circ">
+		</SimpleField>
+		<SimpleField type="float" name="sector">
+		</SimpleField>
+	</Schema>
+	<Placemark id="limites_barrios.26">
+		<name>Ciudadela</name>
+		<Style>
+			<LineStyle>
+				<color>ff0000ff</color>
+			</LineStyle>
+			<PolyStyle>
+				<fill>0</fill>
+			</PolyStyle>
+		</Style>
+		<ExtendedData>
+			<SchemaData schemaUrl="#limites_barrios">
+				<SimpleData name="fid">26</SimpleData>
+				<SimpleData name="id">26</SimpleData>
+				<SimpleData name="nombre">Ciudadela</SimpleData>
+				<SimpleData name="zona">14</SimpleData>
+				<SimpleData name="circ">5</SimpleData>
+				<SimpleData name="sector">2</SimpleData>
+			</SchemaData>
+		</ExtendedData>
+		<MultiGeometry>
+			<Polygon>
+				<outerBoundaryIs>
+					<LinearRing>
+						<coordinates>
+							-67.5203381725855,-45.7966490548311,0 -67.5203280279532,-45.7966335782021,0 -67.5188696590574,-45.7928430848157,0 -67.51334411454209,-45.7940202415481,0 -67.5089586426202,-45.794915604367,0 -67.5066823686993,-45.7953025975264,0 -67.4990625336321,-45.7949679125177,0 -67.49232330385411,-45.7947383310676,0 -67.4911369235349,-45.796607286277,0 -67.4908421414154,-45.7969768316563,0 -67.4904607117541,-45.7973467462658,0 -67.491202922399,-45.7984235741003,0 -67.49389473238961,-45.7988017803042,0 -67.4989238432735,-45.7987891434985,0 -67.4990030629226,-45.8004740087592,0 -67.4998220744812,-45.8008571551678,0 -67.50169155484549,-45.8000257329911,0 -67.5080535847346,-45.7985520854542,0 -67.5139613348763,-45.79863034344049,0 -67.5203381725855,-45.7966490548311,0 
+						</coordinates>
+					</LinearRing>
+				</outerBoundaryIs>
+			</Polygon>
+		</MultiGeometry>
+		<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.7.1155"></atom:link>
+	</Placemark>
+</Document>
+</kml>

@@ -34,10 +34,10 @@ import { MinuteEditForm } from "@/app/admin/actas/[id]/editar/minute-edit-form";
 const render = renderToStaticMarkup;
 
 // _count superset: la versión vieja lee `movements`; la rediseñada lee las
-// siete relaciones. Un fixture con todas sirve a las dos.
+// ocho relaciones. Un fixture con todas sirve a las dos.
 const COUNTS = {
   movements: 2, applications: 0, feeValues: 0, booksOpened: 0, booksClosed: 0,
-  processesCalled: 0, processesClosed: 0,
+  processesCalled: 0, processesClosed: 0, reportsFiled: 0,
 };
 const LIST = [
   { id: 16, type: "board", number: 124, date: new Date(Date.UTC(2026, 7, 15, 12)),
@@ -56,7 +56,7 @@ const DETAIL = {
     { id: 2, type: "admission", memberId: 9, member: { fullName: "Ana Paz" } },
   ],
   applications: [], feeValues: [], booksOpened: [], booksClosed: [],
-  processesCalled: [], processesClosed: [],
+  processesCalled: [], processesClosed: [], reportsFiled: [],
   _count: { ...COUNTS },
 };
 
@@ -171,6 +171,24 @@ describe("detalle rediseñado", () => {
     expect(html).toContain('href="/admin/socios/libros/1"');
     expect(html).not.toContain("Movimientos de socios");
     expect(html).not.toContain("Solicitudes rechazadas");
+  });
+
+  // Una iniciativa TRATADA no escribe ningún movimiento, así que su acta no
+  // aparece en ninguna otra sección: sin la de Reportes, `referenceCount` decía
+  // "1 asiento" arriba y la grilla quedaba vacía abajo.
+  it("lista las iniciativas tratadas con esta acta", async () => {
+    prismaMock.minute.findUnique.mockResolvedValue({
+      ...DETAIL,
+      movements: [],
+      reportsFiled: [{ id: 14, kind: "initiative", category: "sports" }],
+      _count: { ...COUNTS, movements: 0, reportsFiled: 1 },
+    });
+    const html = render(await ActaPage(props));
+    expect(html).toContain("Reportes");
+    expect(html).toContain('href="/admin/solicitudes/reportes/14"');
+    expect(html).toContain("Iniciativa N° 14");
+    expect(html).toContain("Deportiva");
+    expect(html).not.toContain("todavía no respalda ningún asiento");
   });
 
   it("sin ninguna referencia lo dice sin fingir tabla", async () => {

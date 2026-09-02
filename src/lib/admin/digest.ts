@@ -69,6 +69,13 @@ export type DigestData = {
   notificationsFailed: number;
   cronFailures: Array<{ job: string; runs: number }>;
   webhookErrors: number;
+  /** M7: reportes que el vecino ENVIÓ ayer, y la cola de los que siguen sin
+   *  presentar al momento del resumen. `reportsReceived` es la suma de los dos
+   *  tipos: es el único de los cuatro que cuenta como novedad (ver `hasNews`). */
+  reportsReceived: number;
+  reportsClaims: number;
+  reportsInitiatives: number;
+  reportsPending: number;
 };
 
 /** Qué cuenta como novedad. Si algún día se agrega un renglón al resumen, se
@@ -77,7 +84,12 @@ export type DigestData = {
 export function hasNews(d: DigestData): boolean {
   return (
     d.paymentsCount > 0 || d.applications > 0 || d.inboxNew > 0 ||
-    d.notificationsFailed > 0 || d.cronFailures.length > 0 || d.webhookErrors > 0
+    d.notificationsFailed > 0 || d.cronFailures.length > 0 || d.webhookErrors > 0 ||
+    // Sólo lo que ENTRÓ ayer. La cola (`reportsPending`) NO cuenta como
+    // novedad: siete reportes viejos sin presentar mandarían el mismo correo
+    // todas las mañanas hasta que alguien los cierre, que es justo la clase de
+    // aviso que enseña a ignorar el resumen.
+    d.reportsReceived > 0
   );
 }
 
@@ -91,7 +103,7 @@ export type DigestSendSummary = {
 };
 
 type Deps = {
-  db: Pick<PrismaClient, "payment" | "application" | "mpUnmatchedPayment" | "notification" | "cronRun" | "webhookEvent">;
+  db: Pick<PrismaClient, "payment" | "application" | "mpUnmatchedPayment" | "notification" | "cronRun" | "webhookEvent" | "report">;
   mailer: Pick<typeof mailer, "sendToMember">;
   config: { getString(key: string): Promise<string | null> };
   now?: () => Date;
@@ -104,7 +116,10 @@ export function makeDigestCron(deps: Deps) {
     async collect(): Promise<DigestData> {
       const { from, to, label } = previousCivilDayRangeUtc(now());
       const range = { gte: from, lt: to };
-      const [payments, applications, inboxNew, notificationsFailed, cronFailures, webhookErrors] = await Promise.all([
+      const [
+        payments, applications, inboxNew, notificationsFailed, cronFailures, webhookErrors,
+        reportsClaims, reportsInitiatives, reportsPending,
+      ] = await Promise.all([
         // Por `createdAt` y no por `paidAt`: el resumen cuenta lo que el sistema
         // REGISTRÓ ayer. Un débito de MP acreditado hace tres días que la
         // conciliación recuperó anoche es una novedad de anoche.
@@ -131,6 +146,14 @@ export function makeDigestCron(deps: Deps) {
           take: MAX_CRON_JOBS,
         }),
         deps.db.webhookEvent.count({ where: { receivedAt: range, error: { not: null } } }),
+        // M7: reportes ENVIADOS ayer (por `submittedAt`, que es cuando el vecino
+        // lo mandó), por tipo, y la cola de sin presentar al momento. Los tres
+        // estados posteriores al envío entran: un reporte que llegó ayer y el
+        // operador ya presentó o desestimó a la tarde sigue siendo novedad de
+        // ayer. El borrador nunca enviado no tiene `submittedAt` y no cuenta.
+        deps.db.report.count({ where: { kind: "claim", status: { in: ["received", "filed", "dismissed"] }, submittedAt: range } }),
+        deps.db.report.count({ where: { kind: "initiative", status: { in: ["received", "filed", "dismissed"] }, submittedAt: range } }),
+        deps.db.report.count({ where: { status: "received" } }),
       ]);
       const groups: DigestPaymentGroup[] = payments.map((p) => ({
         type: p.type,
@@ -146,6 +169,8 @@ export function makeDigestCron(deps: Deps) {
         applications, inboxNew, notificationsFailed,
         cronFailures: cronFailures.map((c) => ({ job: c.job, runs: c._count.job })),
         webhookErrors,
+        reportsReceived: reportsClaims + reportsInitiatives,
+        reportsClaims, reportsInitiatives, reportsPending,
       };
     },
 

@@ -201,3 +201,14 @@ Proceso completo en `05-flujos-funcionales.md`. Reglas duras:
   escribir nada.
 - REG-36. Cada libro registra: número de libro, acta/fecha de apertura, acta/fecha
   de cierre. El libro cerrado queda en modo solo-lectura y consultable.
+
+## Reportes de vecinos
+
+- REG-37. Reportes (Art. 2 inc. g; Art. 6 Derechos 2). La asociación recibe reclamos
+  de cualquier vecino del barrio e iniciativas de socios y vecinos, y las canaliza
+  ante el organismo que corresponda o las trata en Comisión. El sistema registra el
+  reporte, la identidad de quien lo hace (siempre conocida por la asociación; puede
+  quedar reservada ante el organismo a pedido), y el hecho de haberlo presentado
+  (organismo, fecha, expediente) o desestimado (motivo). No promete resolución ni
+  plazos. Las imágenes del DNI de un no socio se conservan 360 días después del
+  cierre y se borran; nombre y DNI en texto se conservan con el reporte.

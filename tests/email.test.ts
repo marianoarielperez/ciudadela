@@ -242,11 +242,15 @@ describe("templates", () => {
     expect(m.text).toContain("septiembre");
   });
 
+  // M7: los cuatro contadores de Reportes en cero, para los casos que no los
+  // ejercitan. El renglón sólo aparece con `reportsReceived > 0`.
+  const noReports = { reportsReceived: 0, reportsClaims: 0, reportsInitiatives: 0, reportsPending: 0 };
+
   it("el resumen sólo lista los renglones que tienen algo", () => {
     const m = boardDigestEmail({
       label: "14/09/2026", payments: [{ type: "cash", count: 2, total: 9000 }],
       paymentsCount: 2, paymentsTotal: 9000, applications: 0, inboxNew: 1,
-      notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+      notificationsFailed: 0, cronFailures: [], webhookErrors: 0, ...noReports,
     });
     expect(m.subject).toContain("14/09/2026");
     expect(m.text).toContain("9.000");
@@ -264,7 +268,7 @@ describe("templates", () => {
       label: "14/09/2026",
       payments: [{ type: "debit", count: 1, total: 6000 }, { type: "link", count: 1, total: 6000 }],
       paymentsCount: 2, paymentsTotal: 12000, applications: 0, inboxNew: 0,
-      notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+      notificationsFailed: 0, cronFailures: [], webhookErrors: 0, ...noReports,
     });
     expect(m.text).toContain("Débito automático");
     expect(m.text).toContain("Link de pago");
@@ -275,7 +279,7 @@ describe("templates", () => {
     const m = boardDigestEmail({
       label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
       applications: 0, inboxNew: 0, notificationsFailed: 2,
-      cronFailures: [{ job: "reconcile", runs: 4 }, { job: "reminder", runs: 1 }], webhookErrors: 3,
+      cronFailures: [{ job: "reconcile", runs: 4 }, { job: "reminder", runs: 1 }], webhookErrors: 3, ...noReports,
     });
     expect(m.text).toContain("Avisos por email que no salieron: 2");
     expect(m.text).toContain("Notificaciones de Mercado Pago con error: 3");
@@ -295,7 +299,7 @@ describe("templates", () => {
     const m = boardDigestEmail({
       label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
       applications: 0, inboxNew: 0, notificationsFailed: 0,
-      cronFailures: [{ job: "reconcile", runs: 6 }], webhookErrors: 0,
+      cronFailures: [{ job: "reconcile", runs: 6 }], webhookErrors: 0, ...noReports,
     });
     expect(m.text).toContain("Tareas automáticas con problemas: reconcile (6 corridas)");
     // Una sola vez el nombre del job: el renglón no repite.
@@ -306,7 +310,7 @@ describe("templates", () => {
     const m = boardDigestEmail({
       label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
       applications: 0, inboxNew: 0, notificationsFailed: 0,
-      cronFailures: [{ job: "accrual", runs: 1 }], webhookErrors: 0,
+      cronFailures: [{ job: "accrual", runs: 1 }], webhookErrors: 0, ...noReports,
     });
     expect(m.text).toContain("Tareas automáticas con problemas: accrual (1 corrida)");
     expect(m.text).not.toContain("1 corridas");
@@ -319,10 +323,36 @@ describe("templates", () => {
     const m = boardDigestEmail({
       label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
       applications: 0, inboxNew: 2, notificationsFailed: 0,
-      cronFailures: [], webhookErrors: 0,
+      cronFailures: [], webhookErrors: 0, ...noReports,
     });
     expect(m.text).toContain("Cobros que entraron sin conciliar: 2");
     expect(m.text).not.toContain("quedaron");
+  });
+
+  // El renglón lo dispara lo que ENTRÓ ayer; la cola va de contexto adentro del
+  // mismo renglón, nunca sola: `hasNews` no la cuenta como novedad, así que un
+  // resumen que dijera sólo "7 sin presentar" no se manda nunca.
+  it("el renglón de Reportes desglosa por tipo, con singular, y lleva la cola de contexto", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
+      applications: 0, inboxNew: 0, notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+      reportsReceived: 3, reportsClaims: 2, reportsInitiatives: 1, reportsPending: 7,
+    });
+    for (const body of [m.text, m.html]) {
+      expect(body).toContain("Reportes recibidos: 3 (2 reclamos, 1 iniciativa) · 7 sin presentar");
+    }
+    // Agregados: ni nombres ni direcciones, como el resto del resumen.
+    expect(m.text).not.toContain("@");
+  });
+
+  it("la cola sin presentar no arma renglón por sí sola", () => {
+    const m = boardDigestEmail({
+      label: "14/09/2026", payments: [], paymentsCount: 0, paymentsTotal: 0,
+      applications: 1, inboxNew: 0, notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+      reportsReceived: 0, reportsClaims: 0, reportsInitiatives: 0, reportsPending: 7,
+    });
+    expect(m.text).not.toContain("Reportes");
+    expect(m.text).not.toContain("sin presentar");
   });
 
   it("el aviso de rechazo no reclama nada y no muestra el código de MP", () => {

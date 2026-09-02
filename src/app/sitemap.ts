@@ -21,6 +21,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: abs("/noticias"), changeFrequency: "weekly", priority: 0.8 },
     { url: abs("/actividades"), changeFrequency: "monthly", priority: 0.7 },
     { url: abs("/ubicacion"), changeFrequency: "yearly", priority: 0.5 },
+    { url: abs("/reportes"), changeFrequency: "monthly", priority: 0.7 },
   ];
   // Directo, sin unstable_cache: el sitemap se pide poco y conviene fresco.
   // La consulta ya devuelve únicamente publicadas con fecha (filtro en SQL).

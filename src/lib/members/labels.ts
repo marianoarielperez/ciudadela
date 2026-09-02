@@ -57,6 +57,9 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   presentation_received: "Presentación recibida", presentation_observed: "Presentación observada",
   presentation_rejected: "Presentación rechazada",
   generic: "Aviso",
+  report_received: "Reporte recibido",
+  report_filed: "Reporte presentado",
+  report_board_alert: "Aviso de reporte a la Comisión",
 };
 export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
   sent: "Enviada", delivered: "Entregada", bounced: "Rebotada",

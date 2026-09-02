@@ -14,10 +14,11 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 // - img-src data:: los blur placeholders de next/image viajan como data: URI
 //   dentro del `style` del wrapper (el hero de la home los usa). Sin esto la
 //   foto aparece de golpe, sin el degradé de carga.
-//   blob: no lo necesita nada hoy —no hay un solo URL.createObjectURL en
-//   `src/`— pero queda declarado para que el día que el editor previsualice
-//   la portada elegida antes de subirla no haya que descubrirlo por una
-//   imagen en blanco.
+//   blob: lo necesita la vista previa de las fotos del wizard de Reportes
+//   (`file-slot.tsx` hace `URL.createObjectURL` del archivo elegido para
+//   mostrarlo antes de subirlo). Estaba declarado desde antes de que existiera
+//   ese uso, que es justamente lo que evitó descubrirlo por una imagen en
+//   blanco; la directiva no cambia.
 // - font-src 'self': next/font hospeda las tipografías en /_next/static, no
 //   hay pedidos a Google Fonts.
 // - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen;
@@ -205,6 +206,72 @@ const nextConfig: NextConfig = {
       {
         // El mismo PDF desde el panel, para verificar lo subido.
         source: "/api/admin/documentos/:id",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
+      // M7 (Reportes): la entrada global apaga la geolocalización para todo el
+      // sitio, y el picker de ubicación del wizard la necesita ("Usar mi
+      // ubicación"). Se reabre SÓLO para las dos rutas del wizard —la pública y
+      // la del socio— y sólo para el propio origen. `headers()` pisa por CLAVE
+      // en orden de declaración: por eso estas dos van DESPUÉS de la global.
+      {
+        source: "/reportes/:path*",
+        headers: [
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
+        ],
+      },
+      {
+        source: "/mi/solicitudes/reportes/:path*",
+        headers: [
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
+        ],
+      },
+      // M7 (Reportes): los archivos de un reporte —las fotos y las dos caras del
+      // DNI—. Mismo problema que las cuatro entradas de CSP de más arriba: el
+      // handler emite su CSP dura en el `Response` y la entrada global la pisa
+      // con `setHeader`, que REEMPLAZA, así que sin estas dos entradas al
+      // navegador le llega la CSP del sitio y el archivo deja de correr en un
+      // origen opaco. El valor sale de `REPORT_FILE_CSP`
+      // (`src/lib/reports/file-response.ts`) y `report-file-routes.test.ts`
+      // verifica que los tres lugares no se desincronicen.
+      //
+      // Estos archivos van en un `<img>` y NUNCA en un `<iframe>`, así que acá
+      // no se reabre el framing: `frame-ancestors 'none'` y, deliberadamente,
+      // sin `X-Frame-Options` propio — el `DENY` global es el que corresponde y
+      // reponer sólo la CSP no lo toca (`headers()` pisa por CLAVE).
+      //
+      // Van dos entradas explícitas y no un comodín por el mismo motivo que las
+      // de documentos institucionales: las rutas no comparten prefijo y un
+      // `source` con comodín abarcaría rutas que todavía no existen.
+      {
+        source: "/api/admin/reportes/:id/archivos/:fileId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        source: "/api/mi/reportes/:id/archivos/:fileId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; sandbox; frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        // Y el PDF del reporte, que es la tercera ruta con `REPORT_FILE_CSP`
+        // (spec §8: "tres entradas específicas"). Mismo valor y mismo motivo:
+        // el handler lo emite y la entrada global lo pisaría con `setHeader`.
+        // El operador lo abre `inline` en una pestaña —nadie lo framea—, así
+        // que acá tampoco se reabre el framing: rige el `DENY` global.
+        source: "/api/admin/reportes/:id/pdf",
         headers: [
           {
             key: "Content-Security-Policy",

@@ -2,7 +2,8 @@
 // divergieron: un suspendido se veía "secondary" en el padrón y "outline" en su
 // propia ficha. El del padrón era el más expresivo: queda como canónico.
 import type {
-  ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, PresentationStatus, UnmatchedStatus,
+  ApplicationStatus, FeeStatus, MemberStatus, NewsStatus, PresentationStatus, ReportKind,
+  ReportStatus, UnmatchedStatus,
 } from "@/generated/prisma/client";
 import type { CronState, PendingReceiptState } from "@/lib/admin/health";
 import type { BackupState } from "@/lib/admin/health-backup";
@@ -162,4 +163,25 @@ export function userAccountBadgeVariant(state: UserAccountState): BadgeVariant {
   if (state === "disabled") return "secondary";
   if (state === "invitation_expired" || state === "no_access") return "default";
   return "outline"; // invited: todavía no ocurrió
+}
+
+// Un reporte (M7). `received` es celeste porque es lo vivo —la cola que la
+// Comisión tiene que canalizar—; `filed` es el desenlace bueno y va en verde
+// (mismo criterio que el documento vigente); `dismissed` apagado, que es una
+// decisión tomada y no una alarma. `draft` no llega a ninguna pantalla —ni la
+// lista del socio ni la bandeja admin lo incluyen— y por eso comparte el borde
+// fino del resto.
+export function reportStatusBadgeVariant(status: ReportStatus): BadgeVariant {
+  if (status === "received") return "default";
+  if (status === "filed") return "success";
+  if (status === "dismissed") return "secondary";
+  return "outline"; // draft: no se lista, pero el mapa es total
+}
+
+// El TIPO de reporte, que en la cola convive en la misma fila con la pastilla
+// de estado: los dos van SIN relleno fuerte para que el celeste/verde del
+// estado siga siendo lo único que salta a la vista. Reclamo con borde fino,
+// iniciativa con relleno gris — se distinguen por peso, no sólo por texto.
+export function reportKindBadgeVariant(kind: ReportKind): BadgeVariant {
+  return kind === "claim" ? "outline" : "secondary";
 }

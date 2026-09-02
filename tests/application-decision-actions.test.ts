@@ -24,6 +24,9 @@ const prismaMock = vi.hoisted(() => ({
   reregistrationProcess: { count: vi.fn(async () => 0) },
   feeValue: { count: vi.fn(async () => 0) },
   feeExemption: { count: vi.fn(async () => 0) },
+  // Séptimo referente de `discardUnusedMinute` (M7): un acta que respalda el
+  // tratamiento de una iniciativa no se descarta.
+  report: { count: vi.fn(async () => 0) },
   mpSubscription: { updateMany: vi.fn(), findUnique: vi.fn() },
   $transaction: vi.fn(),
 }));

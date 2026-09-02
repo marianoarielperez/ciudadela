@@ -453,6 +453,65 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   REEMPADRONATE y `/mi/solicitudes` —son compartidos, extendidos aditivamente—; lo que diverge
   a propósito desde el 01/09/2026 es el STEPPER: REEMPADRONATE conserva el suyo inline.
 
+## Patrones que estrenó el Módulo 7 (Reportes)
+
+- **Un borrador con llave, y el captcha SÓLO en el paso que lo crea.** El wizard
+  público arranca creando la fila `draft` y acuñando una llave de 32 bytes (se
+  persiste sólo el sha256); de ahí en más la llave es la credencial de subir, borrar,
+  guardar y enviar. Turnstile va únicamente en el paso 1 —que es el único que puede
+  crear filas desde afuera—, exactamente por la misma regla que ya valía para
+  `/acceso/[token]`: donde hay un token de un solo uso no hay nada que enumerar, y
+  poner captcha en cada paso sólo castiga al vecino que ya pasó la barrera. Corolario
+  que costó una ola de arreglos: el retome rehidrata por SSR, así que **ningún
+  formulario del paso 3 puede anidar otro** ni dejar que Enter envíe algo
+  irreversible.
+- **Toda imagen de un vecino pasa por sharp antes de tocar el disco, sin excepción.**
+  `report_files.mime` es una constante (`image/jpeg`) porque el store re-codifica:
+  no existe el archivo "tal cual llegó". No es una validación de formato —eso lo hacen
+  los magic bytes— sino de **contenido**: una foto sacada del celular en la esquina del
+  problema trae el GPS en el EXIF, y guardarla cruda publica el domicilio de quien
+  reclama a cualquiera que abra el archivo. Los DNIs de ASOCIATE y REEMPADRONATE
+  todavía se guardan tal cual: es deuda anotada en `docs/08`, no una diferencia de
+  criterio.
+- **`validateSubmission` es una sola función y la comparten el wizard y el servicio.**
+  Lo que la pantalla muestra deshabilitado es exactamente lo que la action rechaza
+  —ubicación obligatoria en un reclamo salvo "Otro reporte", identidad completa, las
+  dos caras del DNI—, y la revalidación del envío vuelve a leerla contra la BASE, no
+  contra lo que mandó el cliente. Misma lección que `coverageFloor` y que
+  `activeExemption`: con una copia por camino, alcanza con que alguien toque una para
+  que la pantalla y el envío diverjan en silencio.
+- **Las transiciones de estado son `updateMany` condicionales, y por eso no hay
+  mutex.** `draft → received`, `received → filed`, `received → dismissed` llevan el
+  estado de origen en el `where` (patrón `tokens.consume`): dos admins que aprietan a
+  la vez no producen dos asientos, el segundo cuenta cero. Y `count === 0` se responde
+  con **el mismo mensaje** para "ya está resuelto" y para "no existe": distinguirlos le
+  diría a un tercero si el reporte existe. Un mutex acá habría sido una cerradura de
+  proceso para una invariante que la base ya sostiene.
+- **La purga vive DENTRO del cron que ya corría, y corre antes de decidir si hay algo
+  que contar.** Retención de 360 días para las caras del DNI y 48 h para los borradores,
+  como primer paso del resumen diario y **todos los días, también los tranquilos**: si
+  corriera después del `hasNews`, un día sin novedades saltearía una obligación legal.
+  No se agregó una línea de crontab —agregar una es un paso manual en el VPS que se
+  olvida— y el lote está topeado (`PURGE_BATCH`), porque una purga que no termina es
+  una purga que no corre.
+- **Una CSP de route handler no llega sola: hay que reponerla en `next.config.ts`, y
+  el test que la sincroniza tiene que comparar contra la constante.** Las tres rutas de
+  archivos y PDF exportan su CSP como constante y `next.config.ts` la repite; un test
+  verifica que digan lo mismo Y que las entradas estén declaradas **después** de la
+  global, porque Next copia las cabeceras de `headers()` con `setHeader`, que
+  REEMPLAZA. Corolario operativo medido hoy: **tras un cambio de `next.config.ts` hay
+  que reiniciar el dev server antes de medir cabeceras** — una config vieja en el
+  proceso mostró la CSP global en la ruta del PDF y pareció un bug de código que no
+  existía.
+- **El copy por TIPO se revisa en todas las superficies, siempre.** Un reclamo se
+  **presenta ante un organismo**; una iniciativa la **trata la Comisión Directiva**
+  (Art. 6, Derechos 2), y prometerle un organismo a quien propuso una idea es prometer
+  algo que la asociación no va a hacer. Los planes lo traían mal y hubo que corregirlo
+  **cuatro veces** en pantallas distintas —paso 1, aviso de fuera del barrio,
+  confirmación, tarjeta de la lista—, además del par de etiquetas con género
+  (`dismissedLabel`). Cuando una pantalla nueva escribe una frase sobre un reporte, la
+  pregunta es qué dice esa frase en los dos tipos.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -568,6 +627,17 @@ de cobro, el panel del socio y los tres controles de la ficha—, verificación 
 con el operador (tres sesiones) y una ronda final de arreglos. El módulo no modificó
 **ni un archivo existente** de `src/lib/treasury/*` ni de `src/lib/mp/*`. Lo que falta
 es el merge y el despliegue.
+
+El **Módulo 7 (Reportes) está CERRADO** (02/09/2026) **en la rama `reports`, sin
+mergear y sin desplegar**: el núcleo del dominio (Parte 1), el wizard público y el del
+socio (Parte 2), y la bandeja del admin con la ficha, el PDF, el mapa y esta
+documentación (Parte 3). No modificó **ni un archivo existente** de
+`src/lib/treasury/*` ni de `src/lib/mp/*` (verificado con `git diff --stat`). Lo que
+falta es el merge, el push y el despliegue con **las DOS migraciones**
+(`20260901212840_add_reports` y `20260902112958_report_minute_restrict`, que
+`prisma migrate deploy` aplica juntas). Procedimiento propio: `docs/10` §4.9 — no hay
+variable de entorno nueva ni línea nueva de crontab, pero sí una verificación de
+cabeceras que sólo se puede hacer contra el servidor.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab

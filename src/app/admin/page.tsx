@@ -9,6 +9,7 @@ import { formatDashboardDate } from "@/lib/admin/dashboard-date";
 import { ADMIN_NAV } from "@/lib/admin/nav";
 import { isSuperadmin } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
+import { reports } from "@/lib/reports/service";
 
 export const metadata = { title: "Panel de administración — SIGeV" };
 
@@ -21,15 +22,16 @@ const ICON_BY_HREF = new Map(
 );
 
 export default async function AdminHomePage() {
-  const [session, altasCount, sociosCount] = await Promise.all([
+  const [session, altasCount, sociosCount, reportesCount] = await Promise.all([
     auth(),
-    // Mismas dos queries que `solicitudes/layout.tsx`: el tablero y las
-    // pestañas tienen que decir el mismo número. Ninguna de las dos es dato
+    // Mismas tres queries que `solicitudes/layout.tsx`: el tablero y las
+    // pestañas tienen que decir el mismo número. Ninguna de las tres es dato
     // personal (son sólo counts).
     prisma.application.count({
       where: { status: { in: ["pending_payment", "approved_pending_minute", "pending_board"] } },
     }),
     prisma.memberRequest.count({ where: { status: "pending" } }),
+    reports.pendingCount(),
   ]);
   // Solo para mostrar u ocultar la tarjeta (roles del token, hasta 8 h de atraso
   // tras una degradación); el control de acceso real vive en la propia ruta.
@@ -80,9 +82,9 @@ export default async function AdminHomePage() {
                           ya ve la lateral, y `dashboard-cards.ts` no se toca
                           (sus tests de sincronía con la nav siguen intactos) —
                           el desglose lo inyecta esta página. */}
-                      {card.href === "/admin/solicitudes" && (altasCount > 0 || sociosCount > 0) && (
+                      {card.href === "/admin/solicitudes" && (altasCount > 0 || sociosCount > 0 || reportesCount > 0) && (
                         <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                          {altasCount} {altasCount === 1 ? "alta" : "altas"} · {sociosCount} de socios pendientes
+                          {altasCount} {altasCount === 1 ? "alta" : "altas"} · {sociosCount} de socios pendientes · {reportesCount} {reportesCount === 1 ? "reporte" : "reportes"} sin presentar
                         </p>
                       )}
                     </CardHeader>

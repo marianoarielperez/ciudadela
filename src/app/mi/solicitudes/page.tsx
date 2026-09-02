@@ -38,14 +38,8 @@ export default async function MiSolicitudesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-bold">Solicitudes</h1>
-        <p className="text-sm text-muted-foreground">
-          Presentá tu baja por renuncia o un cambio de categoría, y seguí acá el estado de lo que
-          ya mandaste.
-        </p>
-      </div>
-
+      {/* El <h1> y el subtítulo los pone el layout de la sección (M7): esta
+          pantalla es una de las dos sub-pestañas y no escribe su encabezado. */}
       {requests.length === 0 ? (
         <EmptyState description="Todavía no presentaste ninguna solicitud." />
       ) : (

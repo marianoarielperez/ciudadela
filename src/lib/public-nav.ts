@@ -16,4 +16,5 @@ export const PUBLIC_NAV_LINKS = [
   ["/noticias", "Noticias"],
   ["/actividades", "Actividades"],
   ["/ubicacion", "Ubicación"],
+  ["/reportes", "Reportes"],
 ] as const;

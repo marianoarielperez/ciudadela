@@ -7,11 +7,12 @@
 // de socio (`/mi`), que muestran datos personales alcanzados por la Ley 25.326,
 // cubre las rutas cuya URL ES un secreto (`/verificar/<token>`,
 // `/acceso/<token>`, `/ingresar/restablecer/<token>`,
-// `/asociate/retomar/<token>`, `/reempadronate/retomar/<token>`): indexadas, el
-// token quedaría publicado. Cada entrada es un prefijo, así que `/ingresar`
-// alcanza para las tres pantallas que cuelgan de ahí — y los dos `retomar`
-// cierran sólo el retome, porque `/asociate` y `/reempadronate` en sí son
-// páginas públicas que queremos en el índice.
+// `/asociate/retomar/<token>`, `/reempadronate/retomar/<token>`,
+// `/reportes/nuevo/<llave>`): indexadas, el token quedaría publicado. Cada
+// entrada es un prefijo, así que `/ingresar` alcanza para las tres pantallas
+// que cuelgan de ahí — y los dos `retomar` (más `/reportes/nuevo`) cierran sólo
+// el tramo con llave, porque `/asociate`, `/reempadronate` y `/reportes` en sí
+// son páginas públicas que queremos en el índice.
 import type { MetadataRoute } from "next";
 import { siteBaseUrl } from "@/lib/site";
 
@@ -33,6 +34,7 @@ export default function robots(): MetadataRoute.Robots {
         "/acceso",
         "/asociate/retomar",
         "/reempadronate/retomar",
+        "/reportes/nuevo",
         "/redirigir",
       ],
     },

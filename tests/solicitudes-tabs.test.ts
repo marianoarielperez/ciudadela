@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { isSolicitudesTabActive, SOLICITUDES_TABS_BASE } from "@/lib/admin/solicitudes-tabs";
 
 describe("SOLICITUDES_TABS_BASE", () => {
-  it("Altas primero, De socios apuntando a la subruta que todavía no existe (tarea 8)", () => {
+  it("Altas primero, después De socios y Reportes (M7)", () => {
     expect(SOLICITUDES_TABS_BASE.map((t) => t.href)).toEqual([
-      "/admin/solicitudes", "/admin/solicitudes/socios",
+      "/admin/solicitudes", "/admin/solicitudes/socios", "/admin/solicitudes/reportes",
     ]);
   });
 });
@@ -46,5 +46,17 @@ describe("isSolicitudesTabActive", () => {
   it("no confunde con una ruta ajena", () => {
     expect(isSolicitudesTabActive("/admin/socios", ALTAS)).toBe(false);
     expect(isSolicitudesTabActive("/admin/socios", SOCIOS)).toBe(false);
+  });
+
+  // La tercera pestaña (M7) es hermana de "De socios", no una subruta de
+  // Altas: gana por prefijo sobre su propia rama y apaga a las otras dos.
+  const REPORTES = "/admin/solicitudes/reportes";
+  it("Reportes es hermana: gana por prefijo y apaga a Altas", () => {
+    expect(isSolicitudesTabActive(REPORTES, REPORTES)).toBe(true);
+    expect(isSolicitudesTabActive(`${REPORTES}/14`, REPORTES)).toBe(true);
+    expect(isSolicitudesTabActive(`${REPORTES}/mapa`, REPORTES)).toBe(true);
+    expect(isSolicitudesTabActive(REPORTES, ALTAS)).toBe(false);
+    expect(isSolicitudesTabActive(REPORTES, SOCIOS)).toBe(false);
+    expect(isSolicitudesTabActive("/admin/solicitudes/socios", REPORTES)).toBe(false);
   });
 });

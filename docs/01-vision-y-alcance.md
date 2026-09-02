@@ -5,13 +5,16 @@
 SIGeV es la plataforma web de la **Asociación Vecinal del Barrio Ciudadela**
 (asociación civil sin fines de lucro, Comodoro Rivadavia, Chubut, bajo contralor
 de la IGJ del Chubut). Reemplaza la gestión en papel del registro de asociados
-y digitaliza tres procesos:
+y digitaliza cuatro procesos:
 
 1. **Asociarse** desde la web, con adhesión al débito automático de Mercado Pago.
 2. **Re-empadronarse** (proceso de depuración de socios adherentes, Art. 9° bis
    y Art. 40 del estatuto reformado el 15/08/2026, pendiente de oficialización por IGJ).
 3. **Pagar y registrar cuotas sociales**: débitos automáticos conciliados solos,
    links de pago, y registro de efectivo por tesorería, con recibos PDF numerados.
+4. **Reportes** (Módulo 7): reclamos e iniciativas de vecinos —socios o no— que la
+   asociación recibe y canaliza ante el municipio, la SCPL u otro organismo
+   (Art. 2 inc. g, Art. 6.2).
 
 Además: sitio público institucional (hero, cartelera de noticias, ubicación, estatuto),
 panel de administración para la Comisión Directiva (CD) y panel de autogestión para socios.
@@ -62,6 +65,10 @@ reciben una invitación "creá tu contraseña" cuando se les registra un email.
 - **No** maneja votación electrónica ni el proceso electoral (solo exporta el padrón
   electoral para la Junta Electoral).
 - **No** almacena datos de tarjetas: todo pago pasa por Mercado Pago.
+- **No** es un sistema de tickets municipal: **Reportes es un registro** de lo que el
+  vecino plantea y de lo que la asociación hizo con eso; no promete resolución, no tiene
+  seguimiento ni SLA, no reemplaza el reclamo directo del vecino ante el organismo, y no
+  convierte un reclamo contra otro socio en un expediente disciplinario.
 
 ## Principios de diseño
 

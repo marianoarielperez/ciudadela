@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   collect: vi.fn(),
   send: vi.fn(),
   audit: vi.fn(async () => {}),
+  purge: vi.fn(async () => ({ dniPurged: 0, draftsPurged: 0, errors: 0 })),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { cronRun: { create: mocks.create, update: mocks.update } } }));
 vi.mock("@/lib/admin/digest", async (importOriginal) => {
@@ -16,6 +17,7 @@ vi.mock("@/lib/admin/digest", async (importOriginal) => {
   return { ...real, digestCron: { collect: mocks.collect, send: mocks.send } };
 });
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
+vi.mock("@/lib/reports/retention", () => ({ reportRetention: { purge: mocks.purge } }));
 import { POST } from "@/app/api/cron/digest/route";
 import type { DigestData } from "@/lib/admin/digest";
 
@@ -23,9 +25,11 @@ const quiet: DigestData = {
   from: new Date("2026-09-14T03:00:00Z"), to: new Date("2026-09-15T03:00:00Z"), label: "14/09/2026",
   payments: [], paymentsCount: 0, paymentsTotal: 0,
   applications: 0, inboxNew: 0, notificationsFailed: 0, cronFailures: [], webhookErrors: 0,
+  reportsReceived: 0, reportsClaims: 0, reportsInitiatives: 0, reportsPending: 0,
 };
 const busy: DigestData = { ...quiet, applications: 2, paymentsCount: 1, paymentsTotal: 6000 };
 const summary = { day: "14/09/2026", recipients: 2, sent: 2, allowlistBlocked: 0, failed: 0, errors: [] as string[] };
+const noPurge = { dniPurged: 0, draftsPurged: 0, errors: 0 };
 
 const req = (auth?: string) =>
   new Request("http://x/api/cron/digest", { method: "POST", headers: auth ? { authorization: auth } : {} });
@@ -42,11 +46,14 @@ describe("POST /api/cron/digest", () => {
     delete process.env.CRON_SECRET;
     expect((await POST(req("Bearer x"))).status).toBe(503);
     expect(mocks.collect).not.toHaveBeenCalled();
+    // La purga toca datos personales: va DESPUÉS de la guarda, nunca antes.
+    expect(mocks.purge).not.toHaveBeenCalled();
   });
 
   it("bearer incorrecto → 401", async () => {
     expect((await POST(req("Bearer nope"))).status).toBe(401);
     expect(mocks.collect).not.toHaveBeenCalled();
+    expect(mocks.purge).not.toHaveBeenCalled();
   });
 
   // EL caso de esta tarea: un día tranquilo no manda correo Y NO deja fila en
@@ -56,7 +63,10 @@ describe("POST /api/cron/digest", () => {
     mocks.collect.mockResolvedValue(quiet);
     const res = await POST(req("Bearer s3cret"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ skipped: "no_news", day: "14/09/2026" });
+    expect(await res.json()).toEqual({ skipped: "no_news", day: "14/09/2026", retention: noPurge });
+    // La purga corre igual: es retención de datos personales, no una novedad
+    // que contar. Un día tranquilo no puede dejar un DNI vencido en el disco.
+    expect(mocks.purge).toHaveBeenCalledTimes(1);
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
@@ -65,14 +75,16 @@ describe("POST /api/cron/digest", () => {
   it("con novedades → 200, CronRun abierto y cerrado, asiento digest_cron", async () => {
     const res = await POST(req("Bearer s3cret"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(summary);
+    expect(await res.json()).toEqual({ ...summary, retention: noPurge });
     expect(mocks.create).toHaveBeenCalledWith({ data: { job: "digest", startedAt: expect.any(Date) } });
     expect(mocks.update).toHaveBeenCalledWith({
       where: { id: BigInt(7) },
-      data: { finishedAt: expect.any(Date), ok: true, summary },
+      data: { finishedAt: expect.any(Date), ok: true, summary: { ...summary, retention: noPurge } },
     });
     expect(mocks.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "digest_cron", entity: "cron", entityId: "7", detail: summary }),
+      expect.objectContaining({
+        action: "digest_cron", entity: "cron", entityId: "7", detail: { ...summary, retention: noPurge },
+      }),
     );
   });
 
@@ -117,6 +129,15 @@ describe("POST /api/cron/digest", () => {
     expect(await res.json()).toEqual({ error: "cron_failed" });
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("la purga de retención corre siempre, y si se cae no tumba el resumen", async () => {
+    mocks.purge.mockRejectedValueOnce(new Error("disk"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await POST(req("Bearer s3cret"));
+    log.mockRestore();
+    expect(res.status).toBe(200);
+    expect((await res.json()).retention).toEqual({ dniPurged: 0, draftsPurged: 0, errors: 1 });
   });
 
   it("send() que se cae entero → 500 y el CronRun queda con error", async () => {

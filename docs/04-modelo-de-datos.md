@@ -465,6 +465,79 @@ Actividad sistemática semanal de un espacio de la sede ("Gimnasia mujeres",
 - Deuda anotada: no hay política de retención, y `error` podría llegar a embeber
   un fragmento de respuesta de MP con el email del pagador.
 
+### Reporte (`reports`) — Módulo 7
+
+Migración `20260901212840_add_reports`, **estrictamente aditiva** (dos tablas nuevas,
+una columna nullable en `notifications` y tres valores al final de un enum), más
+`20260902112958_report_minute_restrict`, que endurece una sola FK. Campos:
+
+- `id` — el número visible del reporte ("Reporte N° 14"). **No es una serie numerada**:
+  REG-33 es de recibos y esto es un autoincrement.
+- `kind` (`claim` | `initiative`) — reclamo o iniciativa. Decide el copy de todas las
+  pantallas y de los dos correos: un reclamo se **presenta ante un organismo**, una
+  iniciativa la **trata la Comisión** (Art. 6 Derechos 2).
+- `status` (`draft` | `received` | `filed` | `dismissed`), default `draft`. Un `draft`
+  no se lista en ninguna cola del panel: no es trabajo de nadie.
+- `anonymous` — **reservado ante el organismo**, no anónimo para la asociación: el PDF
+  y la presentación omiten nombre, DNI y contacto; la ficha del panel los muestra.
+- `member_id` (nullable, `SetNull`) — el socio autor cuando el reporte nació en `/mi`.
+  Un socio que reporta sin loguearse queda como vecino: no hay oráculo de "sos socio".
+- `reporter_name`, `reporter_dni`, `reporter_phone`, `reporter_email` — identidad como
+  **foto al momento de reportar**; para el socio se copian de la ficha al arrancar el
+  borrador. `consent_at` estampa el consentimiento del checkbox.
+- `category` (slug del catálogo), `subtype` (slug del tipo, sólo reclamos; `""` se
+  normaliza a `null`), `description` (2000).
+- `lat` / `lng` (`Decimal(9,6)`), `outside_boundary`, `street_id` (`SetNull`),
+  `street_name`, `address_detail`. La ubicación es **obligatoria en reclamos** salvo
+  la categoría "Otro reporte", y opcional en iniciativas. La **calle en texto es la
+  alternativa accesible** al par de coordenadas, no un adorno.
+- `scpl_ticket` — el N° de reclamo que la SCPL le da al vecino por WhatsApp. Lo
+  cargamos, no lo generamos.
+- `claim_token_hash` (Char(64) UNIQUE) — sólo el sha256 de la llave del borrador; la
+  llave cruda (32 bytes base64url) viaja por la URL y no se guarda nunca.
+- `submitted_at`, `filed_at`, `filed_by_id` (`SetNull`), `filed_agency`
+  (`mcr` | `scpl` | `council` | `province` | `camuzzi` | `other`), `filed_agency_other`,
+  `filed_reference` (expediente), `filed_minute_id`.
+- `dismissed_at`, `dismissed_by_id` (`SetNull`), `dismiss_reason` (5-300 caracteres).
+- `dni_purged_at` — sello de la purga de retención; `null` mientras las caras del DNI
+  siguen en disco.
+- `ip` (sólo de `X-Real-IP`), `user_agent`, `created_at`, `updated_at`.
+- Índices: `[status, kind]`, `[member_id, status]`, `[submitted_at]`.
+
+`filed_minute_id` es **`onDelete: Restrict`** (migración `report_minute_restrict`,
+decisión del operador del 01/09/2026): el acta que respalda el tratamiento de una
+iniciativa no se puede borrar mientras la cite un reporte. Los reportes se cuentan en
+`REFERENCE_COUNT_SELECT` y en `discardUnusedMinute` como un referente más, y la
+pantalla del acta los lista en su propio grupo — contar sin listar dejaba un acta
+diciendo "1 asiento" con la grilla vacía.
+
+Transiciones: `draft → received` (envío), `received → filed`, `received → dismissed`,
+siempre como **`updateMany` condicionales por estado** (patrón `tokens.consume`), sin
+mutex. `count === 0` es "ya resuelto o no existe", con el mismo mensaje para los dos
+casos: distinguirlos le diría a un tercero si el reporte existe.
+
+### Archivo de reporte (`report_files`)
+
+- `report_id` (`Cascade`), `kind` (`photo` | `dni_front` | `dni_back`), `path`
+  (relativa a `UPLOADS_DIR`: `reports/{reportId}/{uuid}.jpg`), `mime`, `size`,
+  `width`, `height`, `created_at`. Índice `[report_id, kind]`.
+- `mime` es **siempre `image/jpeg`**: toda imagen de vecino pasa por sharp antes de
+  tocar el disco (JPEG re-codificado, sin EXIF ni GPS, lado mayor acotado). No hay
+  formato "tal cual llegó".
+- Invariante de aplicación, no unique parcial (MariaDB no los tiene): `photo` acumula
+  hasta 2; `dni_front` y `dni_back` **reemplazan** al anterior (`deleteMany` + `unlink`
+  best-effort, como `documents/storage.ts`).
+- Se sirven sólo por ruta autenticada: `/api/admin/reportes/[id]/archivos/[fileId]`
+  (admin, con asiento `report_dni_view` **sólo** para las dos caras del DNI: una foto
+  de un bache no es un dato personal) y `/api/mi/reportes/[id]/archivos/[fileId]` (el
+  socio, lo suyo; ajeno → 404, nunca 403).
+
+Agregados a entidades existentes: `Notification.reportId` (nullable, `SetNull`, calco
+de `applicationId`) y tres valores **al final** de `NotificationType` —
+`report_received`, `report_filed`, `report_board_alert` —. Al final y no intercalados:
+un enum de MariaDB se guarda como índice, así que meter un valor en el medio corre el
+significado de cada fila ya escrita.
+
 ## Importación inicial (seed del Libro N° 1)
 
 Script `scripts/import-padron.ts` que lee `datos/padron_socios.xlsx`:

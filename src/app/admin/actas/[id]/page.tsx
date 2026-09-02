@@ -7,8 +7,11 @@
 // conceder, anular y asentar escriben también un Movement con la misma acta,
 // así que ya aparecen en "Movimientos". Acá sólo se listan las solicitudes
 // RECHAZADAS, que no dejan movimiento (ver el comentario de `references.ts`).
+// Los REPORTES (M7) sí la tienen: una iniciativa tratada por la Comisión no
+// escribe movimiento —quien reporta puede no ser socio— y su acta es todo el
+// respaldo que hay.
 import {
-  BookMarked, ClipboardCheck, FileDown, FileText, Inbox, Users, Wallet,
+  BookMarked, ClipboardCheck, FileDown, FileText, Inbox, Megaphone, Users, Wallet,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -23,6 +26,7 @@ import { formatARS, formatDateAR } from "@/lib/format";
 import { MOVEMENT_LABELS, minuteName } from "@/lib/members/labels";
 import { REFERENCE_COUNT_SELECT, referenceCount } from "@/lib/minutes/references";
 import { prisma } from "@/lib/prisma";
+import { categoryLabel, filedVerb, KIND_LABELS } from "@/lib/reports/catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +83,13 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
       booksClosed: { select: { id: true, number: true } },
       processesCalled: { select: { id: true, book: { select: { number: true } } } },
       processesClosed: { select: { id: true, book: { select: { number: true } } } },
+      // Las iniciativas TRATADAS con esta acta (M7, Art. 6.2). Se listan porque
+      // `referenceCount` ya las cuenta: sin la sección, un acta que sólo
+      // respalda el tratamiento de una iniciativa diría "1 asiento" arriba y no
+      // mostraría ninguno abajo. Sin `description` ni un solo dato de quien
+      // reportó: esto es un índice del libro de actas, no la ficha del reporte
+      // (Ley 25.326, mismo criterio que `REPORT_LIST_SELECT`).
+      reportsFiled: { orderBy: { id: "asc" }, select: { id: true, kind: true, category: true } },
     },
   });
   if (!minute) notFound();
@@ -189,6 +200,21 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
                   <Link className={INLINE_LINK} href={`/admin/socios/libros/${b.number}`}>
                     {b.text}
                   </Link>
+                </li>
+              ))}
+            </ReferenceGroup>
+          )}
+
+          {minute.reportsFiled.length > 0 && (
+            <ReferenceGroup icon={Megaphone} title="Reportes" count={minute.reportsFiled.length}>
+              {minute.reportsFiled.map((r) => (
+                <li key={r.id}>
+                  <Link className={INLINE_LINK} href={`/admin/solicitudes/reportes/${r.id}`}>
+                    {KIND_LABELS[r.kind]} N° {r.id}
+                  </Link>{" "}
+                  <span className="text-muted-foreground">
+                    — {categoryLabel(r.kind, r.category)}, {filedVerb(r.kind).toLowerCase()} con esta acta
+                  </span>
                 </li>
               ))}
             </ReferenceGroup>
