@@ -250,7 +250,7 @@ export function StepReport({
           <Field
             id="addressDetail"
             label="Altura o referencia"
-            hint="Por ejemplo: al 280, frente a la plaza, esquina Alem."
+            hint="Por ejemplo, 950, frente a la Plaza Martínez Requena."
           >
             <Input
               id="addressDetail"

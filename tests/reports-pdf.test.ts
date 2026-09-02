@@ -13,9 +13,10 @@
 //     iniciativa la trata la Comisión (Art. 6.2), y su estado terminal va en
 //     femenino.
 import { inflateSync } from "node:zlib";
+import { PDFDict, PDFDocument, PDFName } from "pdf-lib";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { identityLines, renderReportPdf, statusLine, type ReportPdfData } from "@/lib/reports/pdf";
+import { identityLines, renderReportPdf, type ReportPdfData } from "@/lib/reports/pdf";
 
 /** El texto que de verdad quedó ADENTRO del archivo. Mirar los bytes crudos no
  *  alcanza: pdf-lib comprime los streams con Flate y escribe cada `drawText`
@@ -116,51 +117,6 @@ describe("identityLines", () => {
   });
 });
 
-describe("statusLine", () => {
-  it("un reclamo se PRESENTA ante el organismo, con su expediente", () => {
-    expect(statusLine(base)).toBe("Presentado ante SCPL el 12/09/2026 · Expediente EXP 1.");
-  });
-
-  it("una iniciativa la TRATA la Comisión, y el acta va nombrada por tipo y número", () => {
-    const line = statusLine({
-      ...base,
-      kind: "initiative",
-      filed: {
-        agencyLabel: null,
-        at: new Date("2026-09-12T15:00:00Z"),
-        reference: null,
-        minuteName: "Comisión Directiva N° 124",
-      },
-    });
-    expect(line).toBe("Tratada por la Comisión Directiva el 12/09/2026 · Comisión Directiva N° 124.");
-  });
-
-  it("el estado terminal lleva el género del tipo", () => {
-    const dismissed = { at: new Date("2026-09-12T15:00:00Z"), reason: "Fuera del barrio" };
-    expect(statusLine({ ...base, status: "dismissed", filed: null, dismissed })).toContain(
-      "Desestimado el 12/09/2026",
-    );
-    expect(
-      statusLine({ ...base, kind: "initiative", status: "dismissed", filed: null, dismissed }),
-    ).toContain("Desestimada el 12/09/2026");
-  });
-
-  it("sin resolver, el pendiente también es del tipo", () => {
-    expect(statusLine({ ...base, status: "received", filed: null })).toBe(
-      "Recibido, pendiente de presentación.",
-    );
-    expect(statusLine({ ...base, kind: "initiative", status: "received", filed: null })).toBe(
-      "Recibida, pendiente de tratamiento.",
-    );
-  });
-
-  it("un `filed` que quedó sin fecha no inventa: cae al pendiente", () => {
-    expect(statusLine({ ...base, status: "filed", filed: null })).toBe(
-      "Recibido, pendiente de presentación.",
-    );
-  });
-});
-
 describe("renderReportPdf", () => {
   it("genera un PDF con fotos y mapa", async () => {
     const bytes = await renderReportPdf(base, {
@@ -169,6 +125,34 @@ describe("renderReportPdf", () => {
     });
     expect(Buffer.from(bytes.subarray(0, 5)).toString()).toBe("%PDF-");
     expect(bytes.length).toBeGreaterThan(3000);
+  });
+
+  // Pedido del operador (02/09): las fotos van SIEMPRE en la hoja 2, a una
+  // columna y dos filas, y el PDF no lleva "Estado" (es el papel que se eleva
+  // al organismo). Se cuentan las imágenes (XObjects) por hoja: la 1 tiene el
+  // logo y el mapa, la 2 las dos fotos.
+  it("las fotos van solas en la hoja 2, a lo ancho, y el papel no dice Estado", async () => {
+    const bytes = await renderReportPdf(base, {
+      photos: [await photo(), await photo()],
+      map: await mapPng(),
+    });
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBe(2);
+    const imagesOn = (i: number) => {
+      const xo = doc.getPage(i).node.Resources()?.lookup(PDFName.of("XObject"), PDFDict);
+      return xo ? xo.keys().length : 0;
+    };
+    expect(imagesOn(1)).toBe(2);
+    expect(imagesOn(0)).toBeLessThan(4);
+    const text = pdfText(bytes);
+    expect(text).toContain("FOTOS");
+    expect(text).not.toContain("ESTADO");
+    expect(text).not.toContain("Presentado ante");
+    // Con una sola foto también hay hoja 2, y una sola imagen en ella.
+    const one = await PDFDocument.load(await renderReportPdf(base, { photos: [await photo()], map: null }));
+    expect(one.getPageCount()).toBe(2);
+    const xo = one.getPage(1).node.Resources()?.lookup(PDFName.of("XObject"), PDFDict);
+    expect(xo ? xo.keys().length : 0).toBe(1);
   });
 
   it("sin mapa y con una foto corrupta sale igual", async () => {

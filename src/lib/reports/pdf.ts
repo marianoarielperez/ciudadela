@@ -24,8 +24,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from "pd
 
 import { formatDateAR, formatDateTimeAR } from "@/lib/format";
 import { SITE } from "@/lib/site";
-import { boundaryToSvgPath } from "./boundary";
-import { dismissedLabel, KIND_LABELS, type ReportKindSlug } from "./catalog";
+import { KIND_LABELS, type ReportKindSlug } from "./catalog";
 import { MAX_PHOTOS } from "./rules";
 
 export type ReportPdfData = {
@@ -132,29 +131,6 @@ export function identityLines(d: ReportPdfData): string[] {
   return [who.join(" · "), `DNI ${r.dni ?? "-"} · Tel. ${r.phone ?? "-"} · ${r.email ?? "-"}`];
 }
 
-/** Cómo se lee el estado, con el género y el verbo del TIPO: un reclamo se
- *  presenta ante un organismo, una iniciativa la trata la Comisión (Art. 6.2).
- *  Pura y exportada por el mismo motivo que `identityLines`: el texto del papel
- *  que va al municipio no se decide adentro del dibujo. */
-export function statusLine(d: ReportPdfData): string {
-  const claim = d.kind === "claim";
-  if (d.status === "filed" && d.filed) {
-    const extra = [
-      d.filed.minuteName,
-      d.filed.reference ? `${claim ? "Expediente" : "Referencia"} ${d.filed.reference}` : null,
-    ].filter(Boolean);
-    const head = claim
-      ? `Presentado ante ${d.filed.agencyLabel ?? "el organismo"} el ${formatDateAR(d.filed.at)}`
-      : `Tratada por la Comisión Directiva el ${formatDateAR(d.filed.at)}`;
-    return `${[head, ...extra].join(" · ")}.`;
-  }
-  if (d.status === "dismissed" && d.dismissed) {
-    const head = `${dismissedLabel(d.kind)} el ${formatDateAR(d.dismissed.at)}`;
-    return d.dismissed.reason ? `${head} · ${d.dismissed.reason}.` : `${head}.`;
-  }
-  return claim ? "Recibido, pendiente de presentación." : "Recibida, pendiente de tratamiento.";
-}
-
 let logoCache: Uint8Array | null = null;
 async function logoBytes(): Promise<Uint8Array | null> {
   if (logoCache) return logoCache;
@@ -249,15 +225,8 @@ export async function renderReportPdf(
     font,
     color: MUTED,
   });
-  // La silueta del barrio, la misma constante que dibuja la landing y que marca
-  // `outsideBoundary` al enviar.
-  page.drawSvgPath(boundaryToSvgPath(90, 56, 2), {
-    x: MARGIN + CONTENT_WIDTH - 90,
-    y,
-    borderColor: PRIMARY,
-    borderWidth: 1.2,
-    color: rgb(0.9, 0.95, 0.98),
-  });
+  // Sin silueta del barrio en el membrete (pedido del operador, 02/09): el
+  // contorno ya va en el mini-mapa, y el membrete es logo, nombre y dirección.
   y -= 62;
   page.drawLine({
     start: { x: MARGIN, y },
@@ -342,16 +311,20 @@ export async function renderReportPdf(
   y -= 8;
 
   // ── Fotos ─────────────────────────────────────────────────────────────────
+  // Las fotos van SIEMPRE en una hoja propia (la segunda), a una columna y dos
+  // filas (pedido del operador, 02/09): a lo ancho del contenido, cada una en
+  // una caja de media hoja, escalada para entrar entera (nunca recortada ni
+  // desbordada) y centrada en su caja. Con una sola foto, la segunda fila
+  // queda vacía: todos los PDF se ven iguales.
   const photos = assets.photos.slice(0, MAX_PHOTOS);
   if (photos.length > 0) {
-    const gap = 12;
-    const boxW = (CONTENT_WIDTH - gap) / 2;
-    const boxH = 180;
-    // Se reserva el bloque ENTERO antes de escribir el rótulo: si no, el rótulo
-    // queda huérfano al pie de una hoja y las fotos arrancan en la siguiente.
-    ensure(boxH + 30);
+    page = doc.addPage([A4[0], A4[1]]);
+    pages.push(page);
+    y = A4[1] - MARGIN;
     label("Fotos");
-    let x = MARGIN;
+    const gap = 12;
+    const boxW = CONTENT_WIDTH;
+    const boxH = (y - BOTTOM - gap) / 2;
     for (const bytes of photos) {
       const img = await embedImage(doc, bytes);
       if (img) {
@@ -359,28 +332,27 @@ export async function renderReportPdf(
         const w = img.width * scale;
         const h = img.height * scale;
         page.drawImage(img, {
-          x: x + (boxW - w) / 2,
+          x: MARGIN + (boxW - w) / 2,
           y: y - boxH + (boxH - h) / 2,
           width: w,
           height: h,
         });
       }
       page.drawRectangle({
-        x,
+        x: MARGIN,
         y: y - boxH,
         width: boxW,
         height: boxH,
         borderColor: FRAME,
         borderWidth: 0.5,
       });
-      x += boxW + gap;
+      y -= boxH + gap;
     }
-    y -= boxH + 12;
   }
 
-  // ── Estado ────────────────────────────────────────────────────────────────
-  label("Estado");
-  paragraph(statusLine(d), 10, bold);
+  // Sin bloque "Estado" (pedido del operador, 02/09): este PDF es el documento
+  // que se eleva al organismo, y al organismo no le interesa el estado interno
+  // del reporte ni el expediente que la asociación le asigna después.
 
   // ── Pie, en TODAS las hojas ───────────────────────────────────────────────
   pages.forEach((p, i) => {
