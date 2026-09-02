@@ -1,5 +1,5 @@
 "use client";
-// Pestañas de la ficha (Radix Tabs, variante línea) con `?tab=` en la URL para
+// Pestañas de la ficha (Radix Tabs, variante solapa) con `?tab=` en la URL para
 // que "Cuenta corriente" sea enlazable desde tesorería y el botón atrás funcione.
 //
 // Radix y no links como en Tesorería: allá cada pestaña es una ruta distinta y
@@ -11,6 +11,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 
 export function MemberTabs({ tabs, panels, initial }: {
   tabs: Array<{ value: string; label: string }>;
@@ -35,16 +36,24 @@ export function MemberTabs({ tabs, panels, initial }: {
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }}
     >
-      {/* `h-auto` pisa el `h-8` de la variante compartida: los targets de 44px
-          del panel no entran en 32px y quedarían recortados por el scroll
-          horizontal. El `pb-2` deja adentro del recuadro la línea de la pestaña
-          activa, que Radix dibuja 5px por debajo del trigger. */}
-      <TabsList
-        variant="line"
-        className="group-data-horizontal/tabs:h-auto w-full justify-start overflow-x-auto pb-2"
-      >
-        {tabs.map((t) => <TabsTrigger key={t.value} value={t.value} className="min-h-11 flex-none px-3">{t.label}</TabsTrigger>)}
-      </TabsList>
+      {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList
+          variant="section"
+          aria-label="Secciones de la ficha"
+          className={SECTION_TABS_RADIX_LIST}
+        >
+          {tabs.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </div>
       {tabs.map((t) => <TabsContent key={t.value} value={t.value} className="pt-4">{panels[t.value]}</TabsContent>)}
     </Tabs>
   );

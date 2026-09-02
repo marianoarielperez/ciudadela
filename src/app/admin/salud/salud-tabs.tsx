@@ -13,6 +13,7 @@ import { useEffect, type ComponentType, type ReactNode } from "react";
 import { Banknote, Clock, Mail, Server } from "lucide-react";
 
 import { SALUD_TABS, type SaludTab, type SaludTabId } from "@/lib/admin/salud-tabs";
+import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const ICONS: Record<SaludTab["icon"], ComponentType<{ className?: string }>> = {
@@ -61,37 +62,33 @@ export function SaludTabs({ actCounts, tareas, infraestructura, dinero, correo }
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }}
     >
-      {/* `h-auto` pisa el `h-8` de la variante (targets de 44px); `pb-2` deja
-          adentro la línea activa que Radix dibuja 5px bajo el trigger;
-          `border-b` es el riel canónico de las pestañas del panel. */}
-      <TabsList
-        variant="line"
-        aria-label="Secciones de salud"
-        className="group-data-horizontal/tabs:h-auto w-full justify-start overflow-x-auto border-b pb-2"
-      >
-        {SALUD_TABS.map((t) => {
-          const Icon = ICONS[t.icon];
-          const count = actCounts[t.value] ?? 0;
-          return (
-            <TabsTrigger
-              key={t.value}
-              value={t.value}
-              className="min-h-11 flex-none gap-1.5 px-3 after:bg-primary data-active:font-semibold"
-            >
-              <Icon className="size-4 shrink-0" aria-hidden />
-              {t.label}
-              {count > 0 && (
-                <>
-                  <span aria-hidden className="font-mono text-xs font-semibold tabular-nums text-destructive">
-                    {count}
-                  </span>
-                  <span className="sr-only">, {count} para atender</span>
-                </>
-              )}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+      {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList variant="section" aria-label="Secciones de salud" className={SECTION_TABS_RADIX_LIST}>
+          {SALUD_TABS.map((t) => {
+            const Icon = ICONS[t.icon];
+            const count = actCounts[t.value] ?? 0;
+            return (
+              <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
+                {t.label}
+                {count > 0 && (
+                  <>
+                    <span aria-hidden className="font-mono text-xs font-semibold tabular-nums text-destructive">
+                      {count}
+                    </span>
+                    <span className="sr-only">, {count} para atender</span>
+                  </>
+                )}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
       {SALUD_TABS.map((t) => (
         <TabsContent key={t.value} value={t.value} className="pt-4">
           {panels[t.value]}

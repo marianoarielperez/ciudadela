@@ -12,6 +12,7 @@ import {
   type DocumentosTab,
   type DocumentosTabId,
 } from "@/lib/admin/documentos-tabs";
+import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const ICONS: Record<DocumentosTab["icon"], ComponentType<{ className?: string }>> = {
@@ -50,28 +51,24 @@ export function DocumentosTabs({ initial, normas, memorias, balances, otros }: {
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }}
     >
-      {/* `h-auto` pisa el `h-8` de la variante compartida (los targets de 44px
-          no entran en 32px); `pb-2` deja adentro la línea activa que Radix
-          dibuja 5px por debajo del trigger; `border-b` es el riel. */}
-      <TabsList
-        variant="line"
-        aria-label="Tipos de documento"
-        className="group-data-horizontal/tabs:h-auto w-full justify-start overflow-x-auto border-b pb-2"
-      >
-        {DOCUMENTOS_TABS.map((t) => {
-          const Icon = ICONS[t.icon];
-          return (
-            <TabsTrigger
-              key={t.value}
-              value={t.value}
-              className="min-h-11 flex-none gap-1.5 px-3 after:bg-primary data-active:font-semibold"
-            >
-              <Icon className="size-4 shrink-0" aria-hidden />
-              {t.label}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+      {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList variant="section" aria-label="Tipos de documento" className={SECTION_TABS_RADIX_LIST}>
+          {DOCUMENTOS_TABS.map((t) => {
+            const Icon = ICONS[t.icon];
+            return (
+              <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
+                {t.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
       {DOCUMENTOS_TABS.map((t) => (
         <TabsContent key={t.value} value={t.value} className="pt-2">
           {panels[t.value]}

@@ -18,6 +18,7 @@ import type { ComponentType, ReactNode } from "react";
 import { CalendarOff, Globe, Mail, UserPlus, Wallet } from "lucide-react";
 
 import { CONFIG_TABS, type ConfigTab, type ConfigTabId } from "@/lib/admin/config-tabs";
+import { SECTION_TAB_ICON, SECTION_TAB_RADIX_TRIGGER, SECTION_TABS_NAV_ADMIN, SECTION_TABS_RADIX_LIST } from "@/lib/ui/section-tabs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfigForm, type ConfigFormInitial } from "./config-form";
 
@@ -54,29 +55,28 @@ export function ConfigTabs({ initial, configInitial, tesoreria, feriados }: {
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }}
     >
-      {/* `h-auto` pisa el `h-8` de la variante compartida (los targets de 44px
-          no entran en 32px); `pb-2` deja adentro la línea activa que Radix
-          dibuja 5px por debajo del trigger; `border-b` es el riel que las
-          pestañas por URL del panel dibujan con su ul. */}
-      <TabsList
-        variant="line"
-        aria-label="Secciones de configuración"
-        className="group-data-horizontal/tabs:h-auto w-full justify-start overflow-x-auto border-b pb-2"
-      >
-        {CONFIG_TABS.map((t) => {
-          const Icon = ICONS[t.icon];
-          return (
-            <TabsTrigger
-              key={t.value}
-              value={t.value}
-              className="min-h-11 flex-none gap-1.5 px-3 after:bg-primary data-active:font-semibold"
-            >
-              <Icon className="size-4 shrink-0" aria-hidden />
-              {t.label}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+      {/* Solapa "Carpeta" (src/lib/ui/section-tabs.ts). `variant="section"`
+          apaga las reglas de estado de `line`, que pesan más que `data-active:`.
+          El div de afuera es el que scrollea (mismo envoltorio que las barras
+          por URL): sobre la lista, el overflow recortaría el solape de la
+          solapa y forzaría una barra vertical. */}
+      <div className={SECTION_TABS_NAV_ADMIN}>
+        <TabsList
+          variant="section"
+          aria-label="Secciones de configuración"
+          className={SECTION_TABS_RADIX_LIST}
+        >
+          {CONFIG_TABS.map((t) => {
+            const Icon = ICONS[t.icon];
+            return (
+              <TabsTrigger key={t.value} value={t.value} className={SECTION_TAB_RADIX_TRIGGER}>
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
+                {t.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
       <TabsContent value="tesoreria" className="pt-2">{tesoreria}</TabsContent>
       <TabsContent value="feriados" className="pt-2">{feriados}</TabsContent>
       <ConfigForm initial={configInitial} />

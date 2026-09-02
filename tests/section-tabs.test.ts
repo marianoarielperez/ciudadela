@@ -91,7 +91,7 @@ describe("las variantes Radix se DERIVAN de las mismas constantes", () => {
 
 // ---- (2) De fuente: quién usa el módulo y quién NO -------------------------
 //
-// La lista se completa en la tarea 3 con los cuatro Radix. `mi-tabs.tsx` es la
+// La lista incluye las cuatro barras por URL y las cuatro Radix. `mi-tabs.tsx` es la
 // nav del shell y CONSERVA su subrayado: si alguien la migra "por prolijidad",
 // las sub-pestañas de /mi/solicitudes vuelven a confundirse con ella, que es
 // exactamente el problema que este módulo resuelve.
@@ -100,6 +100,10 @@ const SECTION_TAB_FILES = [
   "src/components/admin/socios-tabs.tsx",
   "src/components/admin/solicitudes-tabs.tsx",
   "src/components/mi/solicitudes-tabs.tsx",
+  "src/components/admin/member-tabs.tsx",
+  "src/app/admin/configuracion/config-tabs.tsx",
+  "src/app/admin/salud/salud-tabs.tsx",
+  "src/app/admin/documentos/documentos-tabs.tsx",
 ];
 
 describe("de fuente", () => {
@@ -169,5 +173,56 @@ describe("SolicitudesTabs (por URL)", () => {
     expect(html).toContain(SECTION_TABS_NAV_ADMIN);
     expect(html.match(/min-h-11/g)).toHaveLength(3);
     expect(html).toContain('aria-label="Secciones de solicitudes"');
+  });
+});
+
+// ---- (3b) Render: una barra Radix ---------------------------------------------
+describe("SaludTabs (Radix)", () => {
+  async function render(actCounts: Record<string, number> = {}) {
+    nav.pathname = "/admin/salud";
+    const { SaludTabs } = await import("@/app/admin/salud/salud-tabs");
+    return renderToStaticMarkup(
+      createElement(SaludTabs, {
+        actCounts,
+        tareas: "PANEL-TAREAS",
+        infraestructura: "PANEL-INFRA",
+        dinero: "PANEL-DINERO",
+        correo: "PANEL-CORREO",
+      }),
+    );
+  }
+
+  it("la lista es variant=section, dentro del envoltorio, con el riel y sin el pb-2 del subrayado viejo", async () => {
+    const html = await render();
+    expect(html).toContain('data-variant="section"');
+    expect(html).toContain('aria-label="Secciones de salud"');
+    expect(html).not.toContain("pb-2");
+    // El overflow va en el envoltorio, nunca en la lista.
+    expect(html).toContain(`<div class="${SECTION_TABS_NAV_ADMIN}">`);
+    const list = html.match(/<div [^>]*role="tablist"[^>]*>/)?.[0] ?? "";
+    expect(list).toContain("border-b");
+    expect(list).toContain("items-end");
+    expect(list).not.toContain("overflow");
+  });
+
+  it("los cuatro triggers llevan la solapa derivada, con targets de 44px", async () => {
+    const html = await render();
+    const triggers = html.match(/<button [^>]*role="tab"[^>]*>/g) ?? [];
+    expect(triggers).toHaveLength(4);
+    for (const t of triggers) {
+      expect(t).toContain("min-h-11");
+      expect(t).toContain("data-active:bg-card");
+      expect(t).toContain("data-[state=inactive]:hover:bg-muted");
+      expect(t).toContain("after:hidden");
+      expect(t).not.toContain("after:bg-primary");
+    }
+    expect(html.match(/data-state="active"/g)?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("la alerta roja de Salud sigue roja y con su sr-only, fuera del contador celeste", async () => {
+    const html = await render({ dinero: 1 });
+    expect(html).toContain("text-destructive");
+    expect(html).toContain(", 1 para atender");
+    expect(html).not.toContain("text-primary");
   });
 });
