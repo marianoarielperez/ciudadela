@@ -42,6 +42,7 @@ vi.mock("next/cache", () => ({ unstable_cache: (fn: unknown) => fn }));
 import {
   CONFIG_KEYS,
   getActiveReregistration,
+  getCollaboratorEnabled,
   getLegalTexts,
   makeConfigReader,
   parseRecipients,
@@ -97,6 +98,10 @@ describe("makeConfigReader", () => {
     expect(CONFIG_KEYS.privacyConsentText).toBe("privacy_consent_text");
     expect(CONFIG_KEYS.mpPlanActiveId).toBe("mp_plan_active_id");
     expect(CONFIG_KEYS.mpPlanSharedId).toBe("mp_plan_shared_id");
+  });
+
+  it("expone la llave de la categoría colaborador (lanzamiento antes de la IGJ, spec 2026-09-02)", () => {
+    expect(CONFIG_KEYS.collaboratorEnabled).toBe("colaborador_habilitado");
   });
 });
 
@@ -193,5 +198,22 @@ describe("parseRecipients", () => {
   });
   it("la clave está en el catálogo", () => {
     expect(CONFIG_KEYS.digestRecipients).toBe("digest_recipients");
+  });
+});
+
+describe("getCollaboratorEnabled", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(rows)) delete rows[key];
+  });
+
+  it("ausente en la base cuenta como apagada: el sitio nace sin colaboradores", async () => {
+    expect(await getCollaboratorEnabled()).toBe(false);
+  });
+
+  it("sólo el true estricto la prende", async () => {
+    rows[CONFIG_KEYS.collaboratorEnabled] = "true";
+    expect(await getCollaboratorEnabled()).toBe(false);
+    rows[CONFIG_KEYS.collaboratorEnabled] = true;
+    expect(await getCollaboratorEnabled()).toBe(true);
   });
 });

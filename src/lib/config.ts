@@ -47,6 +47,17 @@ export const getAsociateActive = unstable_cache(
   ["config-asociate"],
   { tags: [CACHE_TAGS.config] },
 );
+/** La llave `colaborador_habilitado` (spec 2026-09-02) para las páginas
+ *  públicas CACHEADAS de `/asociate`. Misma división que el interruptor de
+ *  ASOCIATE: esto es DISPLAY y se invalida por el tag `config`; las guardas
+ *  —`createApplicationAction` y el servicio de solicitudes del socio— leen
+ *  directo, porque un `true` viejo dejaría crear solicitudes de colaborador
+ *  después de apagar la llave. */
+export const getCollaboratorEnabled = unstable_cache(
+  () => configReader.getBool(CONFIG_KEYS.collaboratorEnabled),
+  ["config-collaborator"],
+  { tags: [CACHE_TAGS.config] },
+);
 /** Lo que el SITIO PÚBLICO CACHEADO necesita saber del re-empadronamiento: si
  *  hay un proceso abierto y hasta qué día corre el plazo que está corriendo.
  *  `null` = no hay proceso y todo funciona como siempre.

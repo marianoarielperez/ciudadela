@@ -31,4 +31,14 @@ export const CONFIG_KEYS = {
    *  Nombre en castellano por el precedente de `asociate_activo` y
    *  `elecciones_en_curso`: las claves de config son datos, no código. */
   reregistrationProcessId: "reempadronamiento_proceso_id",
+  /** Categoría socio colaborador (Art. 5 bis) ofrecida al público. Existe
+   *  porque el sitio se lanza ANTES de que la IGJ oficialice el estatuto
+   *  reformado, que es el que crea la categoría (spec 2026-09-02): apagada,
+   *  ASOCIATE no admite a quien vive fuera del barrio y el socio no puede
+   *  pedir el pase desde /mi/solicitudes. Ausente en la base cuenta como
+   *  apagada (`getBool`), así que en producción no se siembra nada. Se prende
+   *  a mano desde /admin/configuracion el día de la oficialización; no hay
+   *  fecha ni cuenta regresiva. Nombre en castellano por el precedente de
+   *  `asociate_activo`. */
+  collaboratorEnabled: "colaborador_habilitado",
 } as const;
