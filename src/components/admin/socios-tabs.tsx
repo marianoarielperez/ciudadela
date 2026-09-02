@@ -11,6 +11,14 @@ import { usePathname } from "next/navigation";
 import { BookMarked, History, Users } from "lucide-react";
 
 import { isSociosTabActive, type SociosTab } from "@/lib/admin/socios-tabs";
+import {
+  SECTION_TAB,
+  SECTION_TAB_ACTIVE,
+  SECTION_TAB_ICON,
+  SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST,
+  SECTION_TABS_NAV_ADMIN,
+} from "@/lib/ui/section-tabs";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<SociosTab["icon"], React.ComponentType<{ className?: string }>> = {
@@ -22,11 +30,8 @@ const ICONS: Record<SociosTab["icon"], React.ComponentType<{ className?: string 
 export function SociosTabs({ tabs }: { tabs: SociosTab[] }) {
   const pathname = usePathname();
   return (
-    <nav
-      aria-label="Secciones de socios"
-      className="-mx-4 -my-1 overflow-x-auto px-4 py-1 lg:mx-0 lg:px-0"
-    >
-      <ul className="flex min-w-max gap-1 border-b">
+    <nav aria-label="Secciones de socios" className={SECTION_TABS_NAV_ADMIN}>
+      <ul className={SECTION_TABS_LIST}>
         {tabs.map((tab) => {
           const active = isSociosTabActive(pathname, tab.href);
           const Icon = ICONS[tab.icon];
@@ -35,15 +40,9 @@ export function SociosTabs({ tabs }: { tabs: SociosTab[] }) {
               <Link
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
-                className={cn(
-                  "inline-flex min-h-11 items-center gap-1.5 border-b-2 px-3 text-sm outline-hidden transition-colors",
-                  "focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-primary font-semibold text-foreground"
-                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
-                )}
+                className={cn(SECTION_TAB, active ? SECTION_TAB_ACTIVE : SECTION_TAB_INACTIVE)}
               >
-                <Icon className="size-4 shrink-0" aria-hidden />
+                <Icon className={SECTION_TAB_ICON} aria-hidden />
                 {tab.label}
               </Link>
             </li>

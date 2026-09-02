@@ -8,16 +8,22 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { isSolicitudesTabActive, type SolicitudesTab } from "@/lib/admin/solicitudes-tabs";
+import {
+  SECTION_TAB,
+  SECTION_TAB_ACTIVE,
+  SECTION_TAB_COUNT,
+  SECTION_TAB_COUNT_ACTIVE,
+  SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST,
+  SECTION_TABS_NAV_ADMIN,
+} from "@/lib/ui/section-tabs";
 import { cn } from "@/lib/utils";
 
 export function SolicitudesTabs({ tabs }: { tabs: SolicitudesTab[] }) {
   const pathname = usePathname();
   return (
-    <nav
-      aria-label="Secciones de solicitudes"
-      className="-mx-4 -my-1 overflow-x-auto px-4 py-1 lg:mx-0 lg:px-0"
-    >
-      <ul className="flex min-w-max gap-1 border-b">
+    <nav aria-label="Secciones de solicitudes" className={SECTION_TABS_NAV_ADMIN}>
+      <ul className={SECTION_TABS_LIST}>
         {tabs.map((tab) => {
           const active = isSolicitudesTabActive(pathname, tab.href);
           return (
@@ -25,19 +31,12 @@ export function SolicitudesTabs({ tabs }: { tabs: SolicitudesTab[] }) {
               <Link
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
-                className={cn(
-                  "inline-flex min-h-11 items-center gap-1.5 border-b-2 px-3 text-sm outline-hidden transition-colors",
-                  "focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-primary font-semibold text-foreground"
-                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
-                )}
+                className={cn(SECTION_TAB, active ? SECTION_TAB_ACTIVE : SECTION_TAB_INACTIVE)}
               >
                 {tab.label}
                 {tab.count !== undefined && tab.count > 0 && (
-                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                    {tab.count}
-                  </span>
+                  // Un span aparte, a propósito: el link se anuncia "Altas", no "Altas 3".
+                  <span className={active ? SECTION_TAB_COUNT_ACTIVE : SECTION_TAB_COUNT}>{tab.count}</span>
                 )}
               </Link>
             </li>

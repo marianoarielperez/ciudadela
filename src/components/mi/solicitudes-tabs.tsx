@@ -8,13 +8,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { isMiSolicitudesTabActive, type MiSolicitudesTab } from "@/lib/mi/solicitudes-tabs";
+import {
+  SECTION_TAB,
+  SECTION_TAB_ACTIVE,
+  SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST,
+  SECTION_TABS_NAV,
+} from "@/lib/ui/section-tabs";
 import { cn } from "@/lib/utils";
 
 export function MiSolicitudesTabs({ tabs }: { tabs: MiSolicitudesTab[] }) {
   const pathname = usePathname();
   return (
-    <nav aria-label="Tipos de solicitud" className="-mx-4 -my-1 overflow-x-auto px-4 py-1">
-      <ul className="flex min-w-max gap-1 border-b">
+    <nav aria-label="Tipos de solicitud" className={SECTION_TABS_NAV}>
+      <ul className={SECTION_TABS_LIST}>
         {tabs.map((tab) => {
           const active = isMiSolicitudesTabActive(pathname, tab.href);
           return (
@@ -22,13 +29,7 @@ export function MiSolicitudesTabs({ tabs }: { tabs: MiSolicitudesTab[] }) {
               <Link
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
-                className={cn(
-                  "inline-flex min-h-12 items-center gap-1.5 border-b-2 px-3 text-sm outline-hidden transition-colors",
-                  "focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-primary font-semibold text-foreground"
-                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
-                )}
+                className={cn(SECTION_TAB, active ? SECTION_TAB_ACTIVE : SECTION_TAB_INACTIVE)}
               >
                 {tab.label}
               </Link>
