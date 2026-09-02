@@ -69,11 +69,15 @@ estatuto rige. **Fuera de alcance:** ver §9.
 
 ### 4.1 ASOCIATE
 
-- `categoryAllowedForResidence(category, livesInBarrio, collaboratorEnabled)`
-  (`src/lib/applications/wizard.ts`) gana un **tercer parámetro obligatorio**,
-  sin default: cada llamador decide. Ciudadela → `active | adherent`, sin cambio.
+- Una función pura NUEVA, `categoryOfferedOnWeb(category, livesInBarrio,
+  collaboratorEnabled)` (`src/lib/applications/wizard.ts`), compone REG-01 con
+  la llave: primero `categoryAllowedForResidence` y después, si la categoría es
+  colaborador, la llave. Tercer parámetro obligatorio, sin default: cada
+  llamador decide qué llave leyó. Ciudadela → `active | adherent`, sin cambio.
   Otro barrio → `collaborator` **sólo si `collaboratorEnabled`**; apagada, otro
-  barrio no admite ninguna categoría.
+  barrio no admite ninguna categoría. **`categoryAllowedForResidence` queda
+  intacta** (ver la enmienda de §11): la usan cuatro pantallas del panel para
+  avisar de un desajuste de residencia, y ninguna se gatea.
 - `createApplicationAction` lee la llave directo y llama la regla **una vez**.
   Si el veredicto es `false`, el mensaje se elige por causa: con otro barrio,
   `requestedCategory === "collaborator"` y la llave apagada, "Por ahora, la
@@ -243,3 +247,23 @@ mecanismo de fecha o cuenta regresiva de la IGJ (la llave se prende a mano).
 4. `/mi/documentos` ya no dice "Norma vigente".
 5. La suite completa en verde; `git diff --stat` sin archivos de
    `src/lib/treasury/*` ni `src/lib/mp/*`; sin migración nueva.
+6. Verificación y auditoría final (pedido explícito del operador): suite,
+   `tsc`, lint, build, auditoría del diff contra la lista de archivos del plan,
+   revisión de código y prueba en el navegador con la llave en los dos estados,
+   con informe escrito. Sin eso el módulo no se declara cerrado.
+
+---
+
+## 11. Enmiendas de implementación (02/09/2026, al escribir el plan)
+
+- **La regla pura es una función nueva, no un tercer parámetro.** Al escribir
+  el plan apareció que `categoryAllowedForResidence` tiene **seis** llamadores y
+  no dos: además de la creación pública y la recategorización de admin, la usan
+  la cola de solicitudes (`applications/query.ts`, con su test), la página de la
+  bandeja y `decision-forms.tsx`, que es un componente **cliente** y no puede
+  leer configuración. Un tercer parámetro obligatorio habría obligado a los
+  cinco del panel a pasar `true` a mano, o a un default que la spec quería
+  evitar. La solución que preserva la intención —una sola regla pura, testeada
+  por mutación, para todo lo público— es `categoryOfferedOnWeb`, que **compone**
+  REG-01 con la llave y deja `categoryAllowedForResidence` intacta como regla
+  estatutaria del panel. §4.1 quedó redactada así.
