@@ -1484,9 +1484,10 @@ Expected: build en verde, sin warnings nuevos sobre `/asociate`, `/asociate/reto
 
 ```bash
 git diff --stat main..HEAD
-git diff --stat main..HEAD -- src/lib/treasury src/lib/mp prisma
+git diff --stat main..HEAD -- src/lib/treasury src/lib/mp prisma src/app/admin/tesoreria src/app/api/webhooks src/app/api/cron src/lib/cron src/app/mi/debito src/app/mi/pagar src/app/api/mi src/app/api/admin/recibos src/lib/members/withdraw-with-debits.ts src/lib/members/debit-adhesion.ts src/lib/members/member-debit.ts
+git diff main..HEAD | grep "^+" | grep -v "^+++ " | grep -i -E "preapproval|mercadopago|mpPaymentId|registerPayment|makeMpGateway|allocate\(|receipt"
 ```
-Expected: la segunda línea VACÍA (ni tesorería, ni MP, ni migraciones). La primera lista SÓLO estos archivos, y ninguno más:
+Expected: la segunda línea VACÍA (ni tesorería, ni MP, ni migraciones, ni webhook, ni cron, ni recibos, ni débito del socio) y la tercera VACÍA (ninguna línea agregada nombra una pieza del circuito de pagos o suscripciones). Pedido explícito del operador (02/09/2026): no tocar ni romper nada de tesorería, Mercado Pago, pagos y suscripciones. La primera lista SÓLO estos archivos, y ninguno más:
 
 ```
 CLAUDE.md

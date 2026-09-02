@@ -114,10 +114,13 @@ estatuto rige. **Fuera de alcance:** ver §9.
 
 - `ChoiceCard` (`wizard-ui.tsx`) gana `disabled?: boolean`: el `<input
   type="radio">` va `disabled`, el `<label>` pierde `cursor-pointer` y el hover,
-  y se atenúa (`opacity-60`, `cursor-not-allowed`). El foco y el
-  `has-[:focus-visible]` no cambian para las tarjetas habilitadas. `ChoiceCard`
-  la importan también REEMPADRONATE y `/mi/solicitudes`: la prop es opcional y
-  aditiva, y sin ella nada cambia.
+  y se atenúa por la superficie y el control (`border-dashed bg-muted/40`,
+  `cursor-not-allowed`, radio e ícono al 50 %), **nunca por el texto**: la
+  línea que explica el motivo es el único aviso que recibe el vecino y se queda
+  a contraste pleno (enmienda de §11). El foco y el `has-[:focus-visible]` no
+  cambian para las tarjetas habilitadas. `ChoiceCard` la importan también el
+  paso 3 de ASOCIATE, los dos pasos de REPORTES y `/mi/solicitudes`: la prop es
+  opcional y aditiva, y sin ella nada cambia.
 - `AsociateWizard` recibe `collaboratorEnabled: boolean` (obligatoria) y se la
   pasa a `StepResidence`. `/asociate/page.tsx` y `/asociate/retomar/[token]/page.tsx`
   la leen con `getCollaboratorEnabled()`; en el retome no se ve (entra en el paso
@@ -267,3 +270,15 @@ mecanismo de fecha o cuenta regresiva de la IGJ (la llave se prende a mano).
   por mutación, para todo lo público— es `categoryOfferedOnWeb`, que **compone**
   REG-01 con la llave y deja `categoryAllowedForResidence` intacta como regla
   estatutaria del panel. §4.1 quedó redactada así.
+- **La tarjeta deshabilitada no atenúa el texto.** La primera implementación
+  aplicó `opacity-60` a la tarjeta entera, como decía §5.1, y la revisión midió
+  la línea del motivo en 2,3:1 sobre blanco (AA exige 4,5:1): el único aviso que
+  recibe el vecino quedaba ilegible. La atenuación pasó a la superficie y al
+  control (`border-dashed bg-muted/40`, radio e ícono al 50 %) y el texto se
+  queda a contraste pleno; un test de fuente fija que `opacity-60` no vuelva.
+  §5.1 quedó redactada así.
+- **Auditoría ampliada del diff (pedido del operador, 02/09/2026).** Además de
+  `src/lib/treasury`, `src/lib/mp` y `prisma`, la verificación final comprueba
+  que la rama no toca `admin/tesoreria`, los webhooks, los crons, los recibos,
+  `/mi/debito`, `/mi/pagar` ni los módulos de débito del socio, y que ninguna
+  línea agregada nombra piezas del circuito de pagos o suscripciones.
