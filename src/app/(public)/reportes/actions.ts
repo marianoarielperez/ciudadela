@@ -177,7 +177,7 @@ export async function removeReportFileAction(_prev: RemoveState, formData: FormD
   const found = await draftFromClaim(String(formData.get("claim") ?? ""), reportUploadLimiter);
   if (!found.ok) return { error: found.error };
   const removed = await reportFileStore.remove({ reportId: found.report.id, fileId });
-  return removed ? { removed: true } : { error: "Ese archivo ya no está." };
+  return removed ? { removed: true } : { error: REPORT_MESSAGES.fileGone };
 }
 
 export async function submitReportAction(_prev: SubmitState, formData: FormData): Promise<SubmitState> {

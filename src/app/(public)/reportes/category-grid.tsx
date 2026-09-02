@@ -10,10 +10,15 @@ export function CategoryGrid({
   kind,
   value,
   onChange,
+  name = "category",
 }: {
   kind: ReportKindSlug;
   value: string;
   onChange: (slug: string) => void;
+  /** El `name` del grupo de radios. Se puede cambiar para que dos mosaicos en
+   *  la misma página no compartan grupo (los radios nativos se agrupan por
+   *  nombre y el foco viajaría entre los dos). */
+  name?: string;
 }) {
   const options = kind === "claim" ? CLAIM_CATEGORIES : INITIATIVE_CATEGORIES;
   return (
@@ -35,7 +40,7 @@ export function CategoryGrid({
             >
               <input
                 type="radio"
-                name="category"
+                name={name}
                 value={c.slug}
                 checked={checked}
                 onChange={() => onChange(c.slug)}

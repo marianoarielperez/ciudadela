@@ -24,6 +24,10 @@ export const REPORT_MESSAGES = {
   dni: "Falta subir el frente y el dorso de tu DNI.",
   photos: `Podés adjuntar hasta ${MAX_PHOTOS} fotos.`,
   notDraft: "Este reporte ya fue enviado.",
+  // La ausencia CONFIRMADA por el server: la ranura del wizard la trata como
+  // quitado (el archivo ya no está, que es lo que el vecino pidió), así que el
+  // texto es único y se compara contra él. No duplicarlo en la action.
+  fileGone: "Ese archivo ya no está.",
   linkDead: "No encontramos tu reporte: el enlace puede estar incompleto o vencido. Empezá de nuevo desde Reportes.",
   notPending: "El reporte ya fue resuelto o no existe.",
   consent: "Tenés que aceptar el consentimiento de datos personales.",

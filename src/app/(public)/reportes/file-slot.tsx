@@ -14,6 +14,7 @@ import { useActionState, useEffect, useId, useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { REPORT_MESSAGES } from "@/lib/reports/rules";
 import { cn } from "@/lib/utils";
 import { removeReportFileAction, uploadReportFileAction } from "./actions";
 import {
@@ -77,24 +78,34 @@ export function FileSlot({
   );
   const [removeState, removeAction, removing] = useActionState<RemoveState, FormData>(
     async (_prev, fd) => {
-      const r = await removeReportFileAction({}, fd);
-      if (r.removed && existing) onRemoved(existing.id);
-      return r;
+      onBusy(1);
+      try {
+        const r = await removeReportFileAction({}, fd);
+        // La ausencia CONFIRMADA por el server cuenta como quitado: el archivo
+        // ya no está, que es exactamente lo que el vecino pidió. Si sólo se
+        // mirara `r.removed`, la lista del paso seguiría mostrando una fila que
+        // en la base no existe y la ranura quedaría trabada en "Listo".
+        if (existing && (r.removed || r.error === REPORT_MESSAGES.fileGone)) onRemoved(existing.id);
+        return r;
+      } finally {
+        onBusy(-1);
+      }
     },
     {},
   );
 
   // Ajuste en el render (no en efecto): React 19 vacía el <form> después de la
   // action, así que el archivo elegido ya no está, salga bien o mal. La
-  // respuesta se reconoce por IDENTIDAD, no por ser truthy.
+  // respuesta se reconoce por IDENTIDAD, no por ser truthy. La vista previa se
+  // limpia en TODA respuesta —también en el error—: el <input> ya quedó vacío,
+  // así que una miniatura sobreviviente muestra un archivo que ya no se puede
+  // subir. Revocar acá no hace falta: la limpieza del efecto `[preview]` revoca
+  // la URL anterior cuando `preview` cambia.
   const [seen, setSeen] = useState(uploadState);
   if (uploadState !== seen) {
     setSeen(uploadState);
     setHasFile(false);
-    if (uploadState.uploaded && preview) {
-      URL.revokeObjectURL(preview);
-      setPreview(null);
-    }
+    setPreview(null);
   }
 
   const done = existing !== null;
@@ -165,7 +176,6 @@ export function FileSlot({
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
               setHasFile(f !== null);
-              if (preview) URL.revokeObjectURL(preview);
               setPreview(f ? URL.createObjectURL(f) : null);
             }}
             className={cn(

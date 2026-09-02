@@ -22,6 +22,8 @@ import type { ReportIconName } from "@/lib/reports/catalog";
 
 // Tipado como `Record<ReportIconName, …>`: si el catálogo suma un ícono y acá
 // no se agrega, el build falla en vez de renderizar `undefined`.
+// OJO: `REPORT_ICONS` es una referencia de CLIENTE (este módulo es "use client").
+// Un Server Component renderiza `<ReportIcon>`, no lee el mapa.
 export const REPORT_ICONS: Record<ReportIconName, LucideIcon> = {
   droplets: Droplets,
   waves: Waves,
