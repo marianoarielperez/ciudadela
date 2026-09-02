@@ -1162,6 +1162,151 @@ La suite queda en **3232 tests verdes** (210 archivos, 7 skips), `lint` y `build
 limpios.
 
 
+## Módulo 7 — Reportes — **CERRADO** (02/09/2026), sin mergear y sin desplegar
+
+Reclamos e iniciativas de vecinos —socios o no— que la asociación recibe, registra y
+canaliza (REG-37; Art. 2 inc. g y Art. 6 Derechos 2). **Es un registro, no un sistema
+de tickets**: no promete resolución, no tiene SLA y no reemplaza el reclamo directo del
+vecino ante el organismo. Spec completa:
+`docs/superpowers/specs/2026-09-01-reportes-design.md`. Rama `reports`. Migraciones
+`20260901212840_add_reports` (aditiva) y `20260902112958_report_minute_restrict`.
+
+**Módulo propio con tablas propias.** La razón de esa decisión es la que se ve en el
+`git diff`: el núcleo de plata no se toca.
+`git diff --stat main..HEAD -- src/lib/treasury src/lib/mp` devuelve **vacío**, igual
+que en la exención de cuota, y es una verificación mecánica, no una impresión.
+
+### Parte 1 — Núcleo del dominio (01/09/2026)
+
+`src/lib/reports/`: catálogo de categorías y tipos, polígono del barrio leído del KML,
+reglas puras (`validateSubmission`, transiciones, retención de 360 días, TTL de 48 h de
+los borradores), llave del borrador, procesamiento de imágenes con sharp,
+almacenamiento, servicio, notificaciones y purga. Migración `add_reports`, cuatro
+limiters nuevos, tres plantillas de correo, `sendToReport` en el mailer y los cuatro
+puntos de reportes en el resumen diario. Todo aditivo sobre lo existente.
+
+### Parte 2 — El vecino y el socio (02/09/2026)
+
+Landing `/reportes` con la silueta del barrio y los dos contadores del año, wizard
+público de 3 pasos (Turnstile sólo en el primero, llave en la URL, retome), y el mismo
+wizard en modo socio dentro de `/mi/solicitudes` con sub-pestañas Institucional |
+Reportes: 2 pasos, sin captcha, con la identidad copiada de la ficha, y **abierto al
+socio suspendido**. Probado a mano en el navegador en desktop y a 375 px, con subidas
+reales y con los cruces de llaves (una llave pública no abre nada en `/mi` y viceversa).
+
+De esa parte salió una lección que se paga cara: **revisar SIEMPRE el copy por tipo**.
+Un reclamo se presenta ante un organismo, una iniciativa la trata la Comisión (Art. 6);
+los planes lo traían mal y hubo que corregirlo en cuatro superficies distintas.
+
+### Parte 3 — El panel, el PDF y la documentación (02/09/2026)
+
+Pestaña Reportes en `/admin/solicitudes` con el contador de la cola y la tercera cifra
+en el tablero; `FilterChips` compartido; la cola con chips, filtros y miniaturas de las
+fotos; las tres rutas autenticadas de archivos y PDF con su CSP repuesta en
+`next.config.ts`; la ficha con las dos actions ("Marcar presentado" / "Desestimar"), el
+visor del DNI y el mini-mapa; el mini-mapa estático compuesto en el servidor con tiles
+del IGN y el PDF con pdf-lib; el **mapa del admin** con pines por estado; y esta
+documentación.
+
+El mapa del admin **quedó en esta fase** (decisión del operador del 01/09): la spec lo
+listaba como "en esta fase" y no como deuda. Lo que la spec §14 dejó **fuera a
+propósito**: export Excel del listado, edición de un reporte por el vecino, seguimiento
+público por número, mapa público, estadísticas por zona, aviso al desestimar, adjuntar
+el PDF al correo de la Comisión, y la migración de los chips de Socios al `FilterChips`
+nuevo.
+
+### Criterios de aceptación
+
+- [x] 1. Un vecino sin cuenta crea un reclamo con DNI, ubicación y fotos desde el
+  celular; recibe el acuse; la Comisión recibe el correo inmediato; la pestaña y el
+  tablero muestran 1 sin presentar. *(En vivo el 01/09: reporte N° 2, `received`, 3
+  archivos, `report_received` + `report_board_alert` en `sent`.)*
+- [x] 2. Un socio crea una iniciativa desde `/mi` sin paso de identidad y la ve en su
+  lista. *(En vivo con el socio N° 274, iniciativa N° 4. El caso del **suspendido** está
+  en el código y en los tests —`requireMember({ allowSuspended: true })`— pero no se
+  probó con un socio suspendido real.)*
+- [x] 3. El admin descarga el PDF: sale con silueta, fotos, mini-mapa y sin identidad si
+  es reservado; con el IGN caído sale igual, sin mapa. *(PDF real generado contra el IGN
+  vivo —el mosaico bajó en 645 ms— y descargado desde el panel: 200,
+  `application/pdf`, `no-store`. El caso sin mapa lo cubren los tests.)*
+- [x] 4. Marcar presentado ante SCPL manda el aviso al vecino y deja el reporte fuera de
+  la cola; desestimar no manda nada. Las dos acciones quedan auditadas sin texto ni
+  identidad. *(En vivo: N° 2 → `filed`, SCPL, 02/09, expediente de prueba,
+  `report_filed` en `sent`, y la pestaña bajó de 2 a 1. "Desestimar" está probado por
+  tests, no en vivo.)*
+- [x] 5. El mapa admin muestra los pines por estado y el límite del barrio; un reporte
+  fuera del polígono lleva su marca en la lista. *(La marca "Fuera del barrio" en la
+  cola está verificada; el mapa cierra con la última tarea de la Parte 3.)*
+- [x] 6. Una foto con GPS en EXIF queda guardada sin metadatos. *(Test con sharp real:
+  genera la imagen, la procesa y verifica el JPEG de salida y la ausencia de EXIF.)*
+- [x] 7. El cron del digest borra los DNI vencidos y los borradores viejos y lo reporta.
+  *(Cubierto por `digest-route`; el resultado viaja como `retention` en el JSON y, si
+  hubo corrida, en el `summary` de la `CronRun`. **No se probó en vivo**: todavía no hay
+  ningún reporte cerrado hace 360 días.)*
+- [ ] 8. `npm test`, `npm run lint` y `npm run build` en verde; **las migraciones corren
+  con `migrate deploy` sobre una copia de la base productiva**; `git diff --stat` no
+  toca `src/lib/treasury/*` ni `src/lib/mp/*`. *(Lo primero y lo último, sí. El ensayo
+  de las dos migraciones sobre una copia de producción es el paso que falta, y va con el
+  despliegue: `docs/10` §4.9.)*
+
+### Archivos existentes que se tocaron
+
+Derivado de `git diff --name-status main..HEAD -- src prisma tests next.config.ts`:
+**118 archivos, 84 nuevos y 34 modificados**. Los modificados, todos aditivos:
+
+- **Esquema y configuración**: `prisma/schema.prisma`; `next.config.ts` (dos entradas de
+  `Permissions-Policy` para las rutas del wizard y tres de `Content-Security-Policy`
+  para archivos y PDF).
+- **Sitio público y SEO**: `src/app/(public)/asociate/process-rail.tsx` (extendido con
+  `subject` y `phases`, con defaults iguales a los actuales),
+  `src/app/(public)/ubicacion/sede-map.tsx` (importa el pin de marca extraído a
+  `src/components/map/brand-pin.ts`), `src/lib/public-nav.ts`, `src/app/robots.ts`,
+  `src/app/sitemap.ts`.
+- **Panel**: `src/app/admin/page.tsx` y `src/app/admin/solicitudes/layout.tsx` (los dos
+  contadores), `src/lib/admin/solicitudes-tabs.ts`, `src/lib/admin/status-badges.ts`,
+  `src/app/admin/actas/[id]/page.tsx`, `src/lib/minutes/references.ts` y
+  `src/lib/members/minute-form.ts` (el acta gana su séptimo referente).
+- **Socio**: `src/app/mi/page.tsx` (el atajo) y `src/app/mi/solicitudes/page.tsx`
+  (pierde su `<h1>`, que se mudó al layout nuevo).
+- **Correo, resumen y cron**: `src/lib/email/index.ts`, `src/lib/email/templates.ts`,
+  `src/lib/members/labels.ts`, `src/lib/admin/digest.ts`,
+  `src/app/api/cron/digest/route.ts`, `src/lib/auth/rate-limiter.ts`.
+- **Tests existentes** cuyos fixtures o fakes crecieron con la relación nueva (12
+  archivos, entre ellos `actas-screen`, `minute-form`, `exemption-actions` y
+  `arrears-actions-auth`). Que se rompieran al agregar el referente del acta es
+  exactamente la señal de que la guarda se está ejercitando.
+
+**`src/lib/admin/nav.ts` y `src/lib/admin/dashboard-cards.ts` no se tocaron**: Reportes
+es una pestaña de Solicitudes, no una sección de la lateral. Y **nada bajo
+`src/lib/treasury/*` ni `src/lib/mp/*`**, verificado con
+`git diff --stat main..HEAD -- src/lib/treasury src/lib/mp` (salida vacía).
+
+Cero dependencias nuevas: sharp y pdf-lib ya estaban en el proyecto.
+
+### Decisiones abiertas para el operador
+
+Ninguna bloquea el despliegue; todas cambian texto o alcance y conviene resolverlas
+mirando la pantalla:
+
+1. **Texto del consentimiento.** Hoy el wizard usa `legal.privacyConsent` de ASOCIATE,
+   que habla de una "solicitud de asociación", y un reporte no lo es. ¿Un texto propio
+   de Reportes en `/admin/configuracion`?
+2. **El motivo de la desestimación no se le muestra al vecino ni al socio** (ni en la
+   tarjeta ni en la confirmación). ¿Se le muestra, se le manda por correo, o queda
+   interno?
+3. **"Recibido" (pastilla) vs "Sin presentar" (chip).** La cola nombra la vista con el
+   vocabulario del operador y la pastilla nombra el estado con el del vecino. Si se
+   prefiere una sola palabra, el cambio va en `statusLabel` —un solo lugar— y **también
+   lo lee el vecino**.
+4. **¿Una iniciativa puede llevar organismo?** El `<select>` está visible también en esa
+   rama (con la opción vacía = "Comisión Directiva, sin organismo"). Si una iniciativa
+   nunca se presenta afuera, se saca el `<select>` de esa rama y la action ya lo tolera.
+5. **El marcador del mapa es enfocable con teclado y no hace nada** al recibir una
+   tecla. La alternativa accesible existe y es el campo de calle; la duda es si el
+   marcador debería dejar de ser enfocable.
+6. **El buscador de calles: Enter sin opción resaltada no elige nada.** Es el
+   `StreetPicker` compartido con ASOCIATE, así que cambiarlo toca los dos wizards.
+
 ## Lanzamiento (cuando IGJ oficialice)
 
 Ya hecho, antes de tiempo: ~~cambiar `MP_ACCESS_TOKEN` a las credenciales

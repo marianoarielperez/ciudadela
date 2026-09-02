@@ -641,3 +641,111 @@ que no puede divergir entre endpoints.
 La ventana efectiva del recordatorio es **de 3 a 7 días**: quien entra al sistema
 recién al sexto día y medio recibe el aviso y expira en la corrida siguiente, con
 menos de 24 h de margen. Es correcto (nunca expira antes de avisar), pero apretado.
+
+## 11. Reportes (wizard público, panel de socio y bandeja admin)
+
+Módulo 7. Dos tipos en un solo wizard: **Reclamo** (un problema en la vía pública)
+e **Iniciativa** (una propuesta). Los dos están abiertos a socios y a vecinos sin
+cuenta (Art. 2 inc. g). El copy cambia por tipo en todas las superficies: un reclamo
+se **presenta ante un organismo**, una iniciativa la **trata la Comisión Directiva**.
+
+### 11.1 Vecino (público, `/reportes`)
+
+1. **Landing `/reportes`** (ISR, 1 h). Silueta del barrio, dos contadores del año
+   civil argentino —"Recibidos" (todo lo enviado en el año) y "Presentados"
+   (`filed`)— y dos puertas: Reclamo / Iniciativa, que entran al wizard con `?tipo=`.
+   Sólo números: ningún reporte de otro vecino es público.
+2. **Paso 1 — Empezar.** Tipo (preseleccionado por `?tipo=`) y **reserva de
+   identidad** en la misma pantalla: "Con mi nombre" o "De forma reservada — la
+   Asociación siempre sabe quién reporta; lo reservado es la presentación ante el
+   organismo". Es el único paso con **Turnstile**. Al enviarlo nace el **borrador**
+   en la base y se acuña una **llave** de un solo uso; la URL pasa a
+   `/reportes/nuevo/<llave>` por `history.replaceState`. De ahí en más la llave es
+   la credencial: no hay captcha en los pasos siguientes.
+3. **Paso 2 — Tus datos.** Nombre y apellido, DNI, teléfono, email, y las **dos caras
+   del DNI, obligatorias**. Cada ranura es un formulario propio que sube el archivo
+   contra la llave; la imagen se re-codifica con sharp antes de tocar el disco.
+   "Continuar" no pasa si falta una de las dos caras.
+4. **Paso 3 — Tu reporte.** Mosaico de categorías (y tipo, en los reclamos); si el
+   tipo es de los que atiende la SCPL, un aviso con el WhatsApp del bot
+   (+54 9 2975 26-0760) y un campo opcional "N° de reclamo SCPL"; descripción; mapa
+   con el límite del barrio, pin arrastrable y "Usar mi ubicación", más calle del
+   catálogo y altura o referencia —la calle en texto es la **alternativa accesible**
+   al mapa—; hasta dos fotos opcionales; y el consentimiento de datos personales.
+   Un punto fuera del polígono avisa y **deja enviar igual**: la Comisión decide si
+   lo canaliza. La ubicación es obligatoria en un reclamo, salvo la categoría "Otro
+   reporte".
+5. **Envío.** El borrador pasa a `received`, y después del commit salen el **acuse al
+   vecino** y el **aviso inmediato a la Comisión** (con identidad completa, aunque el
+   reporte sea reservado: la asociación siempre sabe quién reporta). Si el acuse no
+   sale, el reporte igual quedó enviado.
+6. **Confirmación.** Línea de tiempo (Recibido → La Comisión le da curso → Presentado
+   ante el organismo / Tratada por la Comisión), el N° en monoespaciada y "Te avisamos
+   por email cuando lo presentemos".
+7. **Retome.** `/reportes/nuevo/[llave]` rehidrata el borrador donde quedó; si ya se
+   envió, muestra la confirmación; una llave desconocida, vencida o ajena da siempre
+   el mismo cartel ("No encontramos ese reporte"). La ruta es `noindex` y está en el
+   `disallow` del `robots.txt`. Los borradores no enviados se borran a las 48 h.
+
+### 11.2 Socio (`/mi/solicitudes/reportes`)
+
+- `/mi/solicitudes` tiene sub-pestañas por URL **Institucional | Reportes**, y el home
+  de `/mi` un atajo "Solicitudes y reportes".
+- La lista muestra los reportes del socio con su N°, tipo, categoría, fecha y estado.
+  Vacía, ofrece "Nuevo reporte".
+- El wizard del socio es el **mismo**, en modo socio: **2 pasos** (no hay paso de
+  identidad: nombre, DNI, teléfono y email se copian de la ficha al nacer el
+  borrador), sin Turnstile, y con un cupo propio de 5 reportes cada 24 h por socio.
+- Un **socio suspendido puede reportar**: reportar es un derecho del vecino (Art. 2
+  inc. g), no un beneficio de estar al día.
+- Una llave del wizard público no abre nada en `/mi` y una llave de socio no abre nada
+  en `/reportes`: la página de retome del socio exige además que el reporte sea suyo.
+
+### 11.3 Admin (`/admin/solicitudes` → pestaña Reportes)
+
+Reportes es una **pestaña** de Solicitudes, no una sección de la lateral. La pestaña
+lleva el contador de la cola (`received`) y el tablero de `/admin` suma "N reportes
+sin presentar" al desglose de su tarjeta.
+
+1. **Cola.** Chips *Sin presentar · Presentados · Desestimados · Todos*, cada uno con
+   su contador; cada chip cuenta exactamente lo que lista. Un borrador no aparece en
+   ninguna vista: no es trabajo de nadie. Filtros por tipo, categoría y texto (busca
+   en la descripción, la calle, el nombre de quien reporta y el N°), paginado de a 50,
+   más nuevos primero. Cada tarjeta trae el N°, los badges de tipo y estado, el asunto
+   ("Categoría › Tipo"), la ubicación —la calle, o "Punto en el mapa" cuando sólo hay
+   coordenadas—, las marcas de aviso (Reservado, Fuera del barrio, Socio N° 12, N°
+   SCPL) y una tira de hasta dos miniaturas de las **fotos** (nunca del DNI).
+2. **Ficha.** Todo el reporte: identidad (con el aviso de que una reserva no la
+   oculta al panel, sólo al PDF), las dos caras del DNI y las fotos servidas por la
+   ruta autenticada, el mini-mapa de sólo lectura, la línea de tiempo, y el botón
+   **Descargar PDF**.
+3. **Marcar presentado** (en una iniciativa, "Marcar tratada"). Organismo —
+   preseleccionado por el catálogo: un reclamo de la SCPL sugiere SCPL, el resto MCR—,
+   fecha (no futura), expediente opcional y, **sólo en iniciativas**, un acta opcional
+   (`MinutePicker`, con "Asentar con acta" apagado por default). Antes de confirmar,
+   una frase viva dice exactamente qué se va a asentar: "Se va a asentar como
+   presentado ante SCPL el 01/09/2026" / "…como tratada por la Comisión Directiva, sin
+   acta". Al confirmar: sale el aviso al vecino y el reporte deja la cola.
+4. **Desestimar.** Motivo de 5 a 300 caracteres. **No se manda ningún correo** y el
+   motivo **no viaja a la auditoría** (el asiento dice que se desestimó, no qué se
+   escribió). Hoy el motivo tampoco se le muestra al vecino.
+5. **Mapa** (`/admin/solicitudes/reportes/mapa`). Los mismos chips y filtros, con un
+   pin por reporte con coordenadas, coloreado por estado, y el límite del barrio.
+6. **PDF** (`/api/admin/reportes/[id]/pdf`). Se genera a pedido: membrete, N°,
+   categoría, quién reclama —**omitida entera si el reporte es reservado**—,
+   descripción, ubicación con un mini-mapa compuesto en el servidor con tiles del IGN,
+   estado y pie. Si el IGN no responde en 4 s, el PDF sale igual, sin mapa. Cada
+   descarga queda auditada (con los conteos, nunca con el texto del vecino).
+
+### 11.4 Correos, resumen diario y retención
+
+- Al vecino: **acuse** al enviar y **aviso** al presentar o tratar. Al desestimar no
+  se le avisa.
+- A la Comisión: un **correo inmediato por cada reporte nuevo** a los destinatarios
+  del resumen, con la identidad completa y el enlace al panel, **y** un renglón en el
+  resumen diario ("Reportes: 3 recibidos ayer (2 reclamos, 1 iniciativa) · 7 sin
+  presentar"). La cola sin novedades no dispara un correo sola.
+- El cron del resumen diario **purga antes de contar**, todos los días, incluso los
+  tranquilos: borra las imágenes del DNI de los reportes cerrados hace más de 360 días
+  y los borradores de más de 48 h. La retención es una obligación legal y no puede
+  depender de que haya novedades que contar.

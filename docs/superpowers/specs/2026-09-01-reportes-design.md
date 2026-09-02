@@ -483,3 +483,51 @@ fake que honra el `where`, guardas verificadas por mutación), `reports-retentio
 Export Excel del listado, edición de un reporte por el vecino, seguimiento público por número,
 mapa público, estadísticas por zona, notificación al desestimar, adjuntar el PDF al correo de la
 Comisión, y la migración de los chips de Socios al `FilterChips` nuevo.
+
+## 15. Enmiendas de implementación (02/09/2026)
+
+Lo que la implementación resolvió distinto de lo que dice esta spec, con el motivo.
+Cada punto es la versión que vale: la spec de arriba queda como el diseño acordado y
+esto como lo que quedó en el código.
+
+1. **Las actions del borrador del socio NO van envueltas en `requireMember`**
+   (§5.2 y §6.2). La **llave sigue siendo la única credencial** de `saveReporter`,
+   `uploadFile`, `removeFile` y `submit`, con el mismo perfil que el flujo público: son
+   literalmente las mismas actions. Lo que **sí** exige sesión de socio es
+   `startMemberReportAction` —que es la que copia la identidad de la ficha y pone el
+   `memberId`— y las **páginas** del wizard de socio, cuya página de retome además exige
+   que el reporte sea suyo (`memberId === actor.memberId`). El razonamiento: la llave es
+   un secreto de 32 bytes que ya protege el mismo borrador en el flujo público, y
+   duplicar el camino por rol duplicaba la superficie de guardas. **Queda documentado, no
+   cerrado**: si se decide endurecerlo, el cambio es envolver las cuatro actions y
+   agregar `memberId` a sus `where`.
+2. **Las dos consultas de contadores viven en `reports.pendingCount()`**
+   (`src/lib/reports/service.ts`), no en un `counts.ts` propio (§5.3). El servicio ya
+   tenía el `db` inyectado y la consulta es una sola: un módulo aparte habría sido un
+   archivo con una línea y una segunda puerta a la misma tabla. La invariante que
+   importaba —que la pestaña y el tablero digan el mismo número— se sostiene igual,
+   porque los dos llaman a la misma función. El año de la landing sale del mismo lugar
+   (`yearStats`).
+3. **La purga de retención corre ANTES del resumen, todos los días, y acotada** (§9).
+   El orden importa: si corriera después del `hasNews`, un día sin novedades saltearía
+   la retención, que es una obligación legal y no puede depender de que haya algo que
+   contar. El lote está topeado en `PURGE_BATCH = 200` por corrida; la purga es
+   idempotente y drena en noches sucesivas.
+4. **`Report.filedMinuteId` es `onDelete: Restrict`**, no `SetNull` (§4; decisión del
+   operador del 01/09/2026, migración `20260902112958_report_minute_restrict`). Un acta
+   con la que se asentó el tratamiento de una iniciativa **no se puede borrar**. En
+   consecuencia los reportes se cuentan como un referente más en
+   `REFERENCE_COUNT_SELECT` y en `discardUnusedMinute`, y la pantalla del acta los
+   **lista** en su propio grupo: contar sin listar dejaba un acta diciendo "1 asiento"
+   con la grilla vacía debajo.
+5. **El wizard del socio tiene 2 pasos y un socio suspendido puede reportar** (§5.2, tal
+   como estaba diseñado). Se anota acá porque las tres veces que se revisó pareció un
+   error: no lo es. Reportar es un derecho del vecino (Art. 2 inc. g), no un beneficio
+   de estar al día, y `requireMember({ allowSuspended: true })` es deliberado.
+6. **El mini-mapa estático recalcula los tiles con la fórmula estándar y dibuja el
+   contorno del barrio** (§7). Los números que traía el plan estaban mal —para la sede a
+   zoom 16 daba `{ x: 20483, y: 42239 }` y la fórmula da `{ x: 20481, y: 42167 }`—, así
+   que se recomputaron y se anclaron con casos independientes de la implementación (zoom
+   0 = un tile, zoom 1 = cuatro cuadrantes, y la identidad `mundo = tile·256 + píxel`).
+   El contorno se proyecta con la **misma** primitiva que ubica al centro, para que el
+   pin y el polígono no puedan divergir.

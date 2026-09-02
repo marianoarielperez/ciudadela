@@ -27,6 +27,13 @@ de Datos Personales** (Argentina).
 - **Conservación**: las imágenes de DNI y anexos se conservan de forma **permanente**
   (decisión institucional: son el respaldo de la validación de identidad), bajo las
   medidas de este documento.
+- **Reportes (M7)**: las imágenes del DNI de quien reporta se conservan **360 días
+  después de presentado o desestimado** y se borran por la purga diaria; los borradores
+  no enviados, a las **48 h**. Nombre y DNI en texto se conservan con el reporte, que es
+  el registro de lo que la asociación presentó ante el organismo. La purga es un paso
+  del cron del resumen diario y corre **todos los días, también los tranquilos**: la
+  retención es una obligación legal y no puede depender de que haya novedades que
+  contar.
 - **Derechos ARCO**: la rectificación se canaliza por el panel de socio o la CD;
   la supresión de datos de ex socios se evalúa caso por caso por la CD (los datos
   de libros cerrados integran registros institucionales exigibles por IGJ).
@@ -41,7 +48,11 @@ de Datos Personales** (Argentina).
   uno ajeno devuelve **404** —no 403— con el mismo cuerpo que un id inexistente y
   sin tocar el disco, así que el status no funciona como oráculo de existencia.
 - Validación de subida: MIME real (magic bytes), extensiones jpg/png/webp/pdf,
-  máx 10 MB, re-encode de imágenes (elimina metadatos EXIF con GPS).
+  máx 10 MB. **Re-encode de imágenes con sharp sólo en Reportes** (JPEG re-codificado,
+  sin EXIF ni GPS, lado mayor acotado, y por eso `report_files.mime` es siempre
+  `image/jpeg`): ahí toda imagen viene de un vecino que puede no ser socio y llega desde
+  un celular con la geolocalización encendida. Los DNIs de ASOCIATE y REEMPADRONATE
+  **siguen guardándose tal cual llegan** — deuda anotada, no una diferencia de criterio.
 
 ## Aplicación
 

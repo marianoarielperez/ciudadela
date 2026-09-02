@@ -959,6 +959,98 @@ así que no deja ni log ni asiento de auditoría.
 
 ---
 
+### 4.9 Específico del Módulo 7 (Reportes)
+
+Es un **despliegue normal** (4.1): ninguna variable de entorno nueva, ninguna línea
+nueva de crontab, ninguna dependencia nueva y ningún cambio en Nginx. Lo que tiene de
+propio son **dos migraciones**, una carpeta que nace sola, y una verificación de
+cabeceras que sólo se puede hacer contra el servidor.
+
+**1. Las migraciones que trae — son DOS.**
+
+- `20260901212840_add_reports` — **estrictamente aditiva**: dos tablas nuevas
+  (`reports`, `report_files`), una columna nullable en `notifications` (`report_id`) y
+  tres valores **al final** del enum `NotificationType`. No toca `payments`, `fees`,
+  `receipts` ni `members`.
+- `20260902112958_report_minute_restrict` — cambia una sola FK: `reports.filed_minute_id`
+  pasa a `ON DELETE RESTRICT`, para que no se pueda borrar el acta con la que se asentó
+  el tratamiento de una iniciativa. Es un `DROP`+`ADD` del constraint sobre una tabla
+  que en producción va a estar **vacía**.
+
+`npx prisma migrate deploy` aplica las dos, en orden, en el mismo comando de siempre.
+No hay nada que correr a mano.
+
+**2. El deploy**, que es el de 4.1 sin nada agregado (backup previo primero):
+
+```bash
+cd /root/dev/ciudadela && git pull --ff-only && npm ci && npx prisma migrate deploy && NODE_ENV=production npx prisma db seed && npm run build && pm2 restart sigev --update-env && pm2 save && pm2 logs sigev --lines 20 --nostream
+```
+
+**3. Lo que cambia en el servidor sin que haya que tocar nada.**
+
+- **Archivos**: los reportes escriben en `UPLOADS_DIR/reports/{id}/`, que se **crea a
+  demanda** bajo la carpeta de subidas que ya existe (`/var/sigev/uploads`). No hay que
+  crearla ni cambiarle permisos, y `scripts/backup.sh` ya la cubre porque respalda
+  `UPLOADS_DIR` entero.
+- **Cron**: el del resumen diario (`30 7 * * *`, `/api/cron/digest`) **ahora además
+  purga** antes de juntar las novedades. No es una línea nueva de crontab: es un paso
+  más adentro del mismo endpoint. Su respuesta JSON pasa a traer un objeto `retention`
+  —también los días sin novedades, que responden `{"skipped":"no_news", …}`—.
+- **Cabeceras**: las **dos entradas de `Permissions-Policy`** (`/reportes/:path*` y
+  `/mi/solicitudes/reportes/:path*`, con `geolocation=(self)` para el botón "Usar mi
+  ubicación") y las **tres de `Content-Security-Policy`** (las dos rutas de archivos y
+  la del PDF) viven en `next.config.ts` y se hornean en el `npm run build`. **Nginx no
+  se toca.**
+- **Turnstile**: el paso 1 del wizard público lleva el widget, con **las mismas claves**
+  que ya usan ASOCIATE y `/ingresar`. No hay clave nueva que cargar.
+
+**4. Verificación post-deploy.** Además de la de 4.6:
+
+```bash
+curl -sI https://vecinalciudadela.ar/reportes | grep -i 'permissions-policy'
+curl -sI https://vecinalciudadela.ar/api/admin/reportes/1/pdf | grep -i 'content-security-policy'
+```
+
+- El `permissions-policy` de `/reportes` tiene que decir `geolocation=(self)`. Si dice
+  `geolocation=()` —la global—, la entrada específica no entró en el build y el botón
+  "Usar mi ubicación" no va a funcionar en ningún navegador.
+- El del PDF tiene que devolver **exactamente**:
+
+```
+content-security-policy: default-src 'none'; sandbox; frame-ancestors 'none'
+```
+
+  Sin cookie de sesión la ruta responde **403** y la cabecera viaja igual, así que el id
+  da lo mismo. Es el mismo control —y la misma trampa— que el de documentos
+  institucionales (4.7): el handler emite su CSP en la `Response`, pero Next copia las
+  cabeceras de `headers()` con `setHeader`, que **REEMPLAZA**, y sin la entrada
+  específica lo que llega es la CSP larga del sitio. Si ves ésa, la entrada no está en
+  el build. **Medido, no supuesto**: en desarrollo este mismo control dio la CSP global
+  hasta reiniciar el server con la config nueva.
+
+Y desde el navegador, en la misma sesión del deploy:
+
+- **`/reportes`** responde y muestra la silueta del barrio y los dos contadores del año.
+- **`/admin/solicitudes`** muestra la pestaña **Reportes** con su contador.
+- Un **reporte de prueba entero** —de punta a punta, con las dos caras del DNI, una foto
+  y la ubicación— usando **una de las dos casillas de la `EMAIL_ALLOWLIST`** como email
+  de quien reporta: tienen que llegar el acuse y el aviso a la Comisión. Después,
+  **marcarlo presentado** y **bajar su PDF** desde la ficha, comprobando que el PDF sale
+  con el mini-mapa. Al terminar, desestimarlo o borrarlo de la base: es una prueba, no
+  un reclamo de un vecino.
+- El **cron del resumen** responde con `retention` en el JSON. Ojo: correrlo a mano
+  **manda el resumen del día si hay novedades**, así que se hace una sola vez y sabiendo
+  que el correo sale.
+
+**5. El WAF de Cloudflare — pendiente de los primeros días.** Revisar
+**Security → Events** filtrando por POST a `/reportes` durante la primera semana. El
+wizard sube imágenes desde el navegador del vecino, que es exactamente el patrón que ya
+disparó un falso positivo de la regla de React en el panel. Si una subida se bloquea, el
+procedimiento es el de **§4.8**, con una salvedad que cambia el criterio: **`/reportes`
+es una ruta pública y anónima**, así que la excepción tiene que ser lo más angosta
+posible (esa ruta y ese método, nunca la regla entera) y no se abre ninguna por
+adelantado. Un 403 sin rastro en `pm2 logs` es Cloudflare, no la app.
+
 ## 5. Correo: nada que hacer
 
 El dominio autenticado en Brevo **es** `vecinalciudadela.ar`, el mismo del sitio,
