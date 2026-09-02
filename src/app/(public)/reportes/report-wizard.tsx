@@ -147,10 +147,17 @@ type ReportWizardProps = {
    *  no pasa por "Tus datos"). Por defecto sale del modo, igual que el enlace
    *  de `ReportDone`: la landing pública o la lista de /mi. */
   exitHref?: string;
+  /** El nivel del encabezado de cada paso (y el de la pantalla terminal). La
+   *  página pública no tiene otro `<h1>` y por eso es el default; las dos de
+   *  /mi/solicitudes/reportes/nuevo* cuelgan del `<h1>` "Solicitudes" que ya
+   *  puso el layout de la sección, así que pasan `"h2"`. El foco no cambia: el
+   *  ref va sobre el elemento que se renderice, sea cual sea. */
+  headingLevel?: "h1" | "h2";
 };
 
 export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
-  const { streets, consentText, initialKind, initial, startAction } = props;
+  const { streets, consentText, initialKind, initial, startAction, headingLevel = "h1" } = props;
+  const Heading = headingLevel;
   // El captcha se re-arma como una unidad y se pasa con spread: partirlo en
   // `mode` + `siteKey` sueltos volvería a perder la garantía de la unión.
   const captcha: ReportCaptchaProps =
@@ -282,6 +289,7 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
         mode={mode}
         status={doneStatus}
         headingRef={headingRef}
+        headingLevel={headingLevel}
       />
     );
   }
@@ -296,8 +304,11 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
           {REPORT_MESSAGES.notDraft}
         </FormMessage>
         <p className="mt-4">
-          <Link href="/reportes" className={LINK_TARGET}>
-            Volver a Reportes
+          {/* La salida sale del MODO, como la del paso 3 y la de `ReportDone`:
+              con `/reportes` fijo, el socio que abriera una llave ya enviada sin
+              N° terminaba fuera de su panel. */}
+          <Link href={exitHref} className={LINK_TARGET}>
+            {exitLabel}
           </Link>
         </p>
       </div>
@@ -313,7 +324,7 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
         subject="Tu reporte"
         phases={draft.kind === "" ? NEUTRAL_PHASES : PHASES[draft.kind]}
       />
-      <h1
+      <Heading
         ref={headingRef}
         tabIndex={-1}
         className="mt-5 flex items-center gap-2.5 text-2xl font-bold tracking-tight outline-hidden sm:text-3xl"
@@ -325,7 +336,7 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
           <StepIcon className="size-5" />
         </span>
         {TITLES[step]}
-      </h1>
+      </Heading>
       {/* Sin esto, para un lector de pantalla el avance de paso es un cambio
           silencioso de contenido en la misma URL. */}
       <p role="status" className="sr-only">

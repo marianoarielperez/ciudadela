@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENCIES, CLAIM_CATEGORIES, INITIATIVE_CATEGORIES, KIND_LABELS, STATUS_LABELS,
   categoryLabel, filedVerb, findClaimCategory, findSubtype, isScplSubtype,
-  statusLabel, subtypeLabel, suggestedAgency, SCPL_WHATSAPP,
+  dismissedLabel, statusLabel, subtypeLabel, suggestedAgency, SCPL_WHATSAPP,
 } from "@/lib/reports/catalog";
 
 describe("CLAIM_CATEGORIES", () => {
@@ -93,13 +93,27 @@ describe("etiquetas", () => {
 
   // La función que tienen que llamar las pantallas: `filed` se lee por tipo y el
   // resto sale de STATUS_LABELS tal cual.
-  it("statusLabel lee 'filed' por tipo y el resto de STATUS_LABELS", () => {
+  it("statusLabel lee 'filed' y 'dismissed' por tipo, y el resto de STATUS_LABELS", () => {
     expect(statusLabel("initiative", "filed")).toBe("Tratada");
     expect(statusLabel("claim", "filed")).toBe("Presentado");
     expect(statusLabel("claim", "received")).toBe("Recibido");
     expect(statusLabel("initiative", "received")).toBe("Recibido");
     expect(statusLabel("claim", "dismissed")).toBe("Desestimado");
     expect(statusLabel("initiative", "draft")).toBe("Borrador");
+  });
+
+  // El género del estado terminal: `STATUS_LABELS.dismissed` está en masculino
+  // y a una iniciativa la dejaba diciendo "Desestimado" en la pastilla de la
+  // tarjeta del socio. Vive en el dominio y no en la pantalla, como `filedVerb`.
+  it("dismissedLabel concuerda con el sujeto, y statusLabel lo usa", () => {
+    expect(dismissedLabel("claim")).toBe("Desestimado");
+    expect(dismissedLabel("initiative")).toBe("Desestimada");
+    expect(statusLabel("initiative", "dismissed")).toBe(dismissedLabel("initiative"));
+    expect(statusLabel("claim", "dismissed")).toBe(dismissedLabel("claim"));
+    // El masculino crudo de la tabla sigue existiendo (es la etiqueta neutra del
+    // panel, sobre la palabra "reporte"): lo que no puede es llegar a una
+    // iniciativa por `statusLabel`.
+    expect(statusLabel("initiative", "dismissed")).not.toBe(STATUS_LABELS.dismissed);
   });
 
   it("categoryLabel y subtypeLabel caen a un texto neutro si el slug no existe", () => {

@@ -14,10 +14,11 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 // - img-src data:: los blur placeholders de next/image viajan como data: URI
 //   dentro del `style` del wrapper (el hero de la home los usa). Sin esto la
 //   foto aparece de golpe, sin el degradé de carga.
-//   blob: no lo necesita nada hoy —no hay un solo URL.createObjectURL en
-//   `src/`— pero queda declarado para que el día que el editor previsualice
-//   la portada elegida antes de subirla no haya que descubrirlo por una
-//   imagen en blanco.
+//   blob: lo necesita la vista previa de las fotos del wizard de Reportes
+//   (`file-slot.tsx` hace `URL.createObjectURL` del archivo elegido para
+//   mostrarlo antes de subirlo). Estaba declarado desde antes de que existiera
+//   ese uso, que es justamente lo que evitó descubrirlo por una imagen en
+//   blanco; la directiva no cambia.
 // - font-src 'self': next/font hospeda las tipografías en /_next/static, no
 //   hay pedidos a Google Fonts.
 // - connect-src 'self': navegación RSC y Server Actions, todo al mismo origen;

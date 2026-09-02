@@ -136,12 +136,25 @@ export function filedVerb(kind: ReportKindSlug): "Presentado" | "Tratada" {
   return kind === "claim" ? "Presentado" : "Tratada";
 }
 
+/** El estado terminal, con GÉNERO: el sujeto de un reclamo es "el reporte" y el
+ *  de una iniciativa es "la iniciativa". `STATUS_LABELS.dismissed` está en
+ *  masculino y a una iniciativa la deja diciendo "Desestimado". Vive acá —y no
+ *  en la pantalla que lo descubrió— por lo mismo que `filedVerb`: la pastilla
+ *  del socio, la terminal del wizard y la bandeja admin tienen que decir lo
+ *  mismo. */
+export function dismissedLabel(kind: ReportKindSlug): "Desestimado" | "Desestimada" {
+  return kind === "claim" ? "Desestimado" : "Desestimada";
+}
+
 /** LA función que tienen que usar las pantallas para nombrar un estado: pasa
- *  `filed` por `filedVerb` (un reclamo se presenta, una iniciativa se trata) y
- *  el resto por `STATUS_LABELS`. Leer `STATUS_LABELS[status]` a mano le diría
- *  "Presentado" a una iniciativa, que es justo lo que la spec §2 no quiere. */
+ *  `filed` por `filedVerb` (un reclamo se presenta, una iniciativa se trata),
+ *  `dismissed` por `dismissedLabel` (el género) y el resto por `STATUS_LABELS`.
+ *  Leer `STATUS_LABELS[status]` a mano le diría "Presentado" a una iniciativa,
+ *  que es justo lo que la spec §2 no quiere. */
 export function statusLabel(kind: ReportKindSlug, status: ReportStatusSlug): string {
-  return status === "filed" ? filedVerb(kind) : STATUS_LABELS[status];
+  if (status === "filed") return filedVerb(kind);
+  if (status === "dismissed") return dismissedLabel(kind);
+  return STATUS_LABELS[status];
 }
 
 export function findClaimCategory(slug: string | null | undefined): ClaimCategory | null {

@@ -77,6 +77,7 @@ export default async function MiRetomarReportePage({
       streets={streets}
       consentText={legal.privacyConsent}
       initial={{ claim, snapshot: snapshotOf(report) }}
+      headingLevel="h2"
       startAction={startMemberReportAction}
     />
   );

@@ -39,7 +39,8 @@ export function ReportCard({ report }: { report: Report }) {
             {KIND_LABELS[report.kind]}
           </span>
           {/* `statusLabel` y no `STATUS_LABELS[status]`: la pastilla de una
-              iniciativa presentada dice "Tratada" (spec §2). */}
+              iniciativa presentada dice "Tratada" y la de una desestimada,
+              "Desestimada" (spec §2; `filedVerb`/`dismissedLabel`). */}
           <Badge variant={reportStatusBadgeVariant(report.status)}>
             {statusLabel(report.kind, report.status)}
           </Badge>

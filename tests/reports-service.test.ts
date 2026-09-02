@@ -45,8 +45,27 @@ function fakeDb() {
         const r = reports.find((x) => matches(x, where));
         return r ? withFiles(r) : null;
       }),
-      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
-        reports.filter((x) => matches(x, where)).map(withFiles),
+      // Honra el `orderBy` que recibe además del `where`: un doble que devuelve
+      // el orden de inserción deja sin ejercitar el `orderBy` real (lección del
+      // M6), y acá el orden ES parte del contrato de la lista del socio.
+      findMany: vi.fn(
+        async ({
+          where,
+          orderBy,
+        }: {
+          where: Record<string, unknown>;
+          orderBy?: Record<string, "asc" | "desc">;
+        }) => {
+          const rows = reports.filter((x) => matches(x, where)).map(withFiles);
+          const [field, dir] = Object.entries(orderBy ?? {})[0] ?? [];
+          if (field) {
+            rows.sort((a, b) => {
+              const av = (a as Row)[field] as number, bv = (b as Row)[field] as number;
+              return dir === "desc" ? bv - av : av - bv;
+            });
+          }
+          return rows;
+        },
       ),
       updateMany: vi.fn(
         async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
@@ -388,5 +407,28 @@ describe("conteos y listados", () => {
     });
     const list = await service.listForMember(14);
     expect(list.map((r) => r.id)).toEqual([mine.id]);
+    // El `where` y el `orderBy` con los que se pide, tal cual: el filtro por
+    // estado es `SUBMITTED_STATUSES` (received/filed/dismissed — el borrador de
+    // otra pestaña no es un reporte que el socio "mandó") y el orden es por id
+    // descendente, que es el más nuevo arriba.
+    expect(ctx.db.report.findMany).toHaveBeenLastCalledWith({
+      where: { memberId: 14, status: { in: ["received", "filed", "dismissed"] } },
+      orderBy: { id: "desc" },
+      take: 20,
+      include: { files: true },
+    });
+  });
+
+  it("listForMember devuelve el más nuevo primero", async () => {
+    const ids: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await service.startDraft({
+        kind: "claim", anonymous: false, memberId: 14, reporter, ip: "1", userAgent: "",
+      });
+      await service.submit({ reportId: r.id, ...submission });
+      ids.push(r.id);
+    }
+    const list = await service.listForMember(14);
+    expect(list.map((r) => r.id)).toEqual([...ids].reverse());
   });
 });

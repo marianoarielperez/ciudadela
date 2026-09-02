@@ -1,7 +1,8 @@
 // Wizard de reporte en modo SOCIO (M7, spec §5.2). El mismo marco que el
 // público, sin Turnstile y sin el paso de identidad: la ficha ya la tiene. La
-// pantalla no lleva encabezado propio —el <h1> de cada paso lo pone el wizard—,
-// pero sí queda debajo del <h1> "Solicitudes" del layout de la sección.
+// pantalla no lleva encabezado propio: el del paso lo pone el wizard, y va como
+// <h2> (`headingLevel`) porque cuelga del <h1> "Solicitudes" que ya puso el
+// layout de la sección. Con el default `h1` la página quedaba con dos.
 import type { Metadata } from "next";
 
 import { ReportWizard } from "@/app/(public)/reportes/report-wizard";
@@ -39,6 +40,7 @@ export default async function MiNuevoReportePage() {
       mode="member"
       streets={streets}
       consentText={legal.privacyConsent}
+      headingLevel="h2"
       startAction={startMemberReportAction}
     />
   );

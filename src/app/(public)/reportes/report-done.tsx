@@ -13,7 +13,7 @@
 import { Landmark, Send, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import type { Ref } from "react";
-import { statusLabel, type ReportKindSlug, type ReportStatusSlug } from "@/lib/reports/catalog";
+import { dismissedLabel, statusLabel, type ReportKindSlug, type ReportStatusSlug } from "@/lib/reports/catalog";
 import { TramiteTimeline, type TimelineItem } from "../asociate/tramite-timeline";
 
 /** Lo que el vecino puede llegar a ver acá: un borrador no tiene pantalla
@@ -26,6 +26,7 @@ export function ReportDone({
   mode,
   status,
   headingRef,
+  headingLevel = "h1",
 }: {
   number: number;
   kind: ReportKindSlug;
@@ -35,18 +36,20 @@ export function ReportDone({
   status: DoneStatus;
   /** El marco mueve el foco acá al reemplazar el wizard por esta pantalla. */
   headingRef?: Ref<HTMLHeadingElement>;
+  /** El nivel del encabezado. `h1` en la pantalla pública, que no tiene otro;
+   *  `h2` bajo el `<h1>` "Solicitudes" del layout de /mi, que ya lo puso. */
+  headingLevel?: "h1" | "h2";
 }) {
+  const Heading = headingLevel;
   const word = kind === "claim" ? "reporte" : "iniciativa";
   const dismissed = status === "dismissed";
   const closed = status !== "received";
 
-  // `STATUS_LABELS.dismissed` no tiene género (el panel lo lee siempre en
-  // masculino, sobre la palabra "reporte"); acá el sujeto puede ser la
-  // iniciativa. `statusLabel` sí resuelve el de `filed` (Presentado/Tratada).
+  // El género sale del DOMINIO (`dismissedLabel`) y no de un ternario acá: la
+  // pastilla de la tarjeta del socio tenía el suyo en masculino y a una
+  // iniciativa la llamaba "Desestimado". Igual que `filedVerb`, una sola fuente.
   const secondTitle = dismissed
-    ? kind === "claim"
-      ? "Desestimado por la Comisión"
-      : "Desestimada por la Comisión"
+    ? `${dismissedLabel(kind)} por la Comisión`
     : `${statusLabel(kind, "filed")} ${kind === "claim" ? "ante el organismo" : "por la Comisión"}`;
   const secondIcon: LucideIcon = dismissed ? X : Send;
 
@@ -73,13 +76,13 @@ export function ReportDone({
       <p className="font-mono text-xs font-semibold tracking-[0.14em] text-primary uppercase">
         {kind === "claim" ? "Reclamo" : "Iniciativa"}
       </p>
-      <h1
+      <Heading
         ref={headingRef}
         tabIndex={-1}
         className="mt-1 text-2xl font-bold tracking-tight outline-hidden sm:text-3xl"
       >
         Recibimos tu {word} <span className="font-mono tabular-nums text-primary">N° {number}</span>
-      </h1>
+      </Heading>
       <p className="mt-3 text-muted-foreground">{bodyCopy(kind, status)}</p>
       <div className="mt-6">
         <TramiteTimeline items={items} />

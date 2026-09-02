@@ -2,6 +2,7 @@
 // asociación con cada uno. El suspendido la VE y además puede reportar (a
 // diferencia de la baja y del cambio de categoría, que son trámites
 // societarios): es la misma decisión que toma `startMemberReportAction`.
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
@@ -12,7 +13,7 @@ import { requireMember } from "@/lib/auth/require-member";
 import { reports } from "@/lib/reports/service";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Reportes — Vecinal Ciudadela" };
+export const metadata: Metadata = { title: "Reportes — Vecinal Ciudadela" };
 
 export default async function MiReportesPage() {
   const actor = await requireMember({ allowSuspended: true });
