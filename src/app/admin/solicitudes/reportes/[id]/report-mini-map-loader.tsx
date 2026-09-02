@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 const ReportMiniMapLoader = dynamic(() => import("./report-mini-map"), {
   ssr: false,
   loading: () => (
-    <div aria-hidden className="h-56 w-full animate-pulse bg-muted motion-reduce:animate-none" />
+    <div aria-hidden className="h-full min-h-56 w-full animate-pulse bg-muted motion-reduce:animate-none xl:min-h-84" />
   ),
 });
 

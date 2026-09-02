@@ -78,5 +78,5 @@ export default function ReportMiniMap({ lat, lng }: { lat: number; lng: number }
   // "img" volvería presentacionales a los descendientes. Las coordenadas y la
   // calle van en texto DEBAJO del mapa (la ficha), que es la alternativa real
   // para quien no lo ve.
-  return <div ref={ref} role="group" aria-label="Mapa con el punto del reporte" className="h-56 w-full" />;
+  return <div ref={ref} role="group" aria-label="Mapa con el punto del reporte" className="h-full min-h-56 w-full xl:min-h-84" />;
 }

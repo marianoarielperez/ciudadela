@@ -43,9 +43,52 @@ export function reportHref(key: ReportViewKey): string {
   return key === DEFAULT_REPORT_VIEW ? REPORTS_BASE : `${REPORTS_BASE}?estado=${key}`;
 }
 
-export type ReportFilters = { kind: "claim" | "initiative" | null; category: string | null; q: string | null };
+export type ReportFilters = {
+  kind: "claim" | "initiative" | null;
+  category: string | null;
+  q: string | null;
+  year: number | null;
+};
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+/** El año CIVIL ARGENTINO de un instante. Argentina es UTC-3 sin horario de
+ *  verano (CLAUDE.md), así que restar tres horas y leer el año en UTC ES el
+ *  calendario de acá: un reporte enviado el 31/12 a las 23:00 hora argentina
+ *  llega a la base como el 1/1 a las 02:00 UTC, y en UTC diría el año que
+ *  viene. Sin esto, "los reportes de 2026" se comería los últimos tres días
+ *  del año y le adjudicaría al año siguiente reportes que nadie hizo ahí.
+ *
+ *  Misma convención que `civilDayOf` (`src/lib/treasury/periods.ts`), escrita
+ *  aparte a propósito: aquel módulo es el de las cuotas y no se toca desde acá. */
+export function civilYearOf(at: Date): number {
+  return new Date(at.getTime() - 3 * 60 * 60 * 1000).getUTCFullYear();
+}
+
+/** La MEDIANOCHE CIVIL ARGENTINA del 1° de enero de `year`, en UTC: las 03:00
+ *  de ese mismo día. Es la otra mitad de `civilYearOf` y vive al lado para que
+ *  las dos digan lo mismo — con el corte en `Date.UTC(year, 0, 1)` a secas, las
+ *  tres primeras horas del 1/1 UTC (o sea el 31/12 de 21:00 a 23:59 argentinas)
+ *  caerían del lado equivocado del filtro. */
+export function civilYearStartUtc(year: number): Date {
+  return new Date(Date.UTC(year, 0, 1, 3));
+}
+
+/** El primer año que el filtro acepta. No es una regla de negocio: es el piso
+ *  de un desplegable, y descarta el `?anio=1` que no le sirve a nadie. */
+export const MIN_REPORT_YEAR = 2000;
+
+/** El `anio` del querystring, o null. Cuatro dígitos —`Number("2026abc")` da
+ *  NaN pero `Number(" 2026 ")` da 2026, y el `<option>` nunca emite eso— y
+ *  dentro del rango. El techo es el año en curso + 1 y no el año en curso:
+ *  entre el 31/12 21:00 y la medianoche argentinas, "el año que viene" ya tiene
+ *  reportes posibles, y de todas formas un año sin filas devuelve una lista
+ *  vacía, no un error. */
+function parseYear(raw: string | undefined, currentYear: number): number | null {
+  if (raw === undefined || !/^\d{4}$/.test(raw)) return null;
+  const y = Number(raw);
+  return y >= MIN_REPORT_YEAR && y <= currentYear + 1 ? y : null;
+}
 
 /** El valor del parámetro `tipo` para un `kind` del dominio. Lo comparten el
  *  querystring que arma esta misma unidad y los `<select>`/links de página que
@@ -71,7 +114,10 @@ function categoryCatalog(kind: ReportFilters["kind"]): readonly { slug: string }
   return [...CLAIM_CATEGORIES, ...INITIATIVE_CATEGORIES];
 }
 
-export function parseReportFilters(sp: Record<string, string | string[] | undefined>): ReportFilters {
+export function parseReportFilters(
+  sp: Record<string, string | string[] | undefined>,
+  now: Date = new Date(),
+): ReportFilters {
   const tipo = one(sp.tipo);
   const kind = tipo === "reclamo" ? "claim" : tipo === "iniciativa" ? "initiative" : null;
   const cat = one(sp.categoria) ?? null;
@@ -80,8 +126,23 @@ export function parseReportFilters(sp: Record<string, string | string[] | undefi
   // terminando en un espacio, y ese espacio viaja al `contains` y no matchea
   // nada. Trimear primero y recortar después dejaría justo ese caso adentro.
   const q = (one(sp.q) ?? "").slice(0, 80).trim();
-  return { kind, category: known ? cat : null, q: q === "" ? null : q };
+  const year = parseYear(one(sp.anio), civilYearOf(now));
+  return { kind, category: known ? cat : null, q: q === "" ? null : q, year };
 }
+
+/** ¿Hay algún filtro puesto? Lo preguntan las DOS pantallas (para el vacío y
+ *  para mostrar "Limpiar") y el formulario compartido. Una función y no tres
+ *  condiciones copiadas: sumar un filtro y olvidarse de una copia deja al
+ *  operador con una lista vacía y sin el botón que la destraba (la lección de
+ *  `coverageFloor`). */
+export function hasReportFilters(f: ReportFilters): boolean {
+  return f.kind !== null || f.category !== null || f.q !== null || f.year !== null;
+}
+
+/** "Sin filtros", en un solo lugar: la lista y el mapa arman su "Limpiar" con
+ *  esto, y sumar un filtro nuevo es tocar el tipo y esta constante, no dos
+ *  páginas. */
+export const NO_REPORT_FILTERS: ReportFilters = { kind: null, category: null, q: null, year: null };
 
 /** El querystring de los filtros, con el `?` incluido o vacío. Existe aparte
  *  del href porque la vista de MAPA es otra ruta con los mismos filtros: sin
@@ -90,6 +151,9 @@ export function parseReportFilters(sp: Record<string, string | string[] | undefi
 export function reportFiltersQuery(f: ReportFilters, view: ReportViewKey): string {
   const qs = new URLSearchParams();
   if (view !== DEFAULT_REPORT_VIEW) qs.set("estado", view);
+  // El orden es el del formulario (año, tipo, categoría, texto): la URL que el
+  // operador copia se lee igual que la barra que tiene arriba.
+  if (f.year) qs.set("anio", String(f.year));
   const tipo = reportKindParam(f.kind);
   if (tipo) qs.set("tipo", tipo);
   if (f.category) qs.set("categoria", f.category);

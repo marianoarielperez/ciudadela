@@ -26,28 +26,27 @@ import { FilterChips } from "@/components/admin/filter-chips";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
 import { PaginationNav } from "@/components/admin/pagination-nav";
+import { ReportFilterForm } from "@/components/admin/report-filter-form";
 import { ReportKindIcon } from "@/components/admin/report-kind-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { SELECT_CLASS } from "@/lib/admin/field-styles";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { pageHref, paginate, parsePage } from "@/lib/admin/pagination";
 import {
-  countByView, REPORT_LIST_SELECT, REPORT_THUMBS, reportPhotos, reportPlaceLabel, reportWhere,
+  availableYears, countByView, REPORT_LIST_SELECT, REPORT_THUMBS, reportPhotos, reportPlaceLabel,
+  reportWhere,
 } from "@/lib/admin/reports-query";
 import {
-  parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref, reportFiltersQuery,
-  reportKindParam, REPORTS_BASE, reportView,
+  hasReportFilters, parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref,
+  reportFiltersQuery, reportKindParam, REPORTS_BASE, reportView,
+  NO_REPORT_FILTERS,
 } from "@/lib/admin/reports-queue";
 import { reportKindBadgeVariant, reportStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatDateAR } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
-import {
-  categoryLabel, CLAIM_CATEGORIES, INITIATIVE_CATEGORIES, KIND_LABELS, statusLabel, subtypeLabel,
-} from "@/lib/reports/catalog";
+import { categoryLabel, KIND_LABELS, statusLabel, subtypeLabel } from "@/lib/reports/catalog";
 import { cn } from "@/lib/utils";
 import type { ReportStatus } from "@/generated/prisma/client";
 
@@ -66,7 +65,6 @@ const RAIL: Record<ReportStatus, string> = {
   dismissed: "border-l-border",
 };
 
-const NO_FILTERS = { kind: null, category: null, q: null } as const;
 
 export default async function ReportesPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -89,7 +87,9 @@ export default async function ReportesPage(props: {
   // consulta con el mismo `where`: `countByView` ya lo contó. Con dos `count`
   // separados, la línea "1–50 de N" podía discrepar del chip por una fila que
   // entró entre una consulta y la otra.
-  const counts = await countByView(prisma, filters);
+  // Los años del desplegable salen de la MISMA lectura: es un `aggregate` de
+  // una fila y no tiene por qué serializarse detrás de los cuatro contadores.
+  const [counts, years] = await Promise.all([countByView(prisma, filters), availableYears(prisma)]);
   const total = counts[view];
   const { page, pageCount, skip, take } = paginate(total, parsePage(sp), PAGE_SIZE);
   const rows = total === 0 ? [] : await prisma.report.findMany({
@@ -102,21 +102,9 @@ export default async function ReportesPage(props: {
     select: REPORT_LIST_SELECT,
   });
 
-  const hasFilters = filters.kind !== null || filters.category !== null || filters.q !== null;
-  const clearHref = reportFiltersHref(NO_FILTERS, view);
+  const hasFilters = hasReportFilters(filters);
+  const clearHref = reportFiltersHref(NO_REPORT_FILTERS, view);
   const mapHref = `${REPORTS_BASE}/mapa${reportFiltersQuery(filters, view)}`;
-
-  // El `<select>` de categorías es kind-aware: con un tipo elegido muestra sólo
-  // SU catálogo (elegir una categoría que ese tipo no tiene deja el filtro en
-  // nada, ver `parseReportFilters`). Sin tipo van los dos, y `other` —que
-  // existe en los dos catálogos con etiquetas distintas ("Otro reporte" y
-  // "Otra")— aparece UNA sola vez, fuera de los grupos y con un nombre propio:
-  // dos <option> con el mismo value serían la misma consulta escrita dos veces,
-  // y el navegador preseleccionaría siempre la primera.
-  type CategoryOption = { slug: string; label: string };
-  const claimOptions: readonly CategoryOption[] = filters.kind === "initiative" ? [] : CLAIM_CATEGORIES;
-  const initiativeOptions: readonly CategoryOption[] = filters.kind === "claim" ? [] : INITIATIVE_CATEGORIES;
-  const sharedOther = filters.kind === null;
 
   return (
     <div className="space-y-4">
@@ -144,58 +132,14 @@ export default async function ReportesPage(props: {
         }))}
       />
 
-      {/* GET plano: los filtros viven en la URL, así que el deep link y el
-          botón atrás salen solos. La vista viaja en un hidden para que filtrar
-          no devuelva al operador a "Sin presentar". */}
-      <form className="flex flex-wrap items-end gap-2" method="get">
-        {view !== "pendientes" && <input type="hidden" name="estado" value={view} />}
-        <select
-          name="tipo"
-          defaultValue={reportKindParam(filters.kind) ?? ""}
-          className={cn(SELECT_CLASS, "min-h-11")}
-          aria-label="Tipo de reporte"
-        >
-          <option value="">Reclamos e iniciativas</option>
-          <option value="reclamo">Reclamos</option>
-          <option value="iniciativa">Iniciativas</option>
-        </select>
-        <select
-          name="categoria"
-          defaultValue={filters.category ?? ""}
-          className={cn(SELECT_CLASS, "min-h-11")}
-          aria-label="Categoría"
-        >
-          <option value="">Todas las categorías</option>
-          {sharedOther && <option value="other">Otro / Otra</option>}
-          {claimOptions.length > 0 && (
-            <optgroup label="Reclamos">
-              {claimOptions
-                .filter((c) => !(sharedOther && c.slug === "other"))
-                .map((c) => <option key={c.slug} value={c.slug}>{c.label}</option>)}
-            </optgroup>
-          )}
-          {initiativeOptions.length > 0 && (
-            <optgroup label="Iniciativas">
-              {initiativeOptions
-                .filter((c) => !(sharedOther && c.slug === "other"))
-                .map((c) => <option key={`i-${c.slug}`} value={c.slug}>{c.label}</option>)}
-            </optgroup>
-          )}
-        </select>
-        <Input
-          name="q"
-          defaultValue={filters.q ?? ""}
-          placeholder="N°, calle, texto o nombre"
-          aria-label="Buscar"
-          className="min-h-11 w-full sm:w-56"
-        />
-        <Button type="submit" variant="secondary" className="min-h-11">Filtrar</Button>
-        {hasFilters && (
-          <Button asChild variant="ghost" className="min-h-11">
-            <Link href={clearHref}>Limpiar</Link>
-          </Button>
-        )}
-      </form>
+      <ReportFilterForm
+        filters={filters}
+        view={view}
+        years={years}
+        action={REPORTS_BASE}
+        clearHref={clearHref}
+        showSearch
+      />
 
       {rows.length === 0 ? (
         // El texto del vacío por filtros dice que el problema son los filtros;
@@ -315,8 +259,12 @@ export default async function ReportesPage(props: {
           <PaginationNav
             page={page}
             pageCount={pageCount}
+            // Todos los filtros vigentes viajan a la página siguiente: el que
+            // falte se pierde al pasar de página y la lista se ensancha sola
+            // (el motivo de ser de `reportKindParam`).
             href={(n) => pageHref(REPORTS_BASE, {
               estado: view === "pendientes" ? undefined : view,
+              anio: filters.year === null ? undefined : String(filters.year),
               tipo: reportKindParam(filters.kind),
               categoria: filters.category ?? undefined,
               q: filters.q ?? undefined,

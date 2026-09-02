@@ -2,11 +2,15 @@
 // lista, con la ubicación como eje. Cuatro decisiones que no son cosméticas:
 //
 // 1. Los filtros son EXACTAMENTE los de la lista y viajan en los dos sentidos:
-//    esta pantalla lee `estado/tipo/categoria/q` con `parseReportView` y
+//    esta pantalla lee `estado/anio/tipo/categoria/q` con `parseReportView` y
 //    `parseReportFilters`, arma su `where` con `reportWhere` —la misma función
 //    que la lista— y el botón "Lista" devuelve a la lista con los filtros
 //    puestos. Con un `where` propio, el chip diría 7 y el mapa mostraría otra
 //    cosa (la lección de `coverageFloor`, y la razón de ser de `reports-query`).
+//    Y los CONTROLES también son los mismos (`ReportFilterForm`): hasta el
+//    02/09/2026 el mapa honraba los filtros pero no los ofrecía, así que para
+//    ver los reclamos de agua de 2025 en el mapa había que ir a filtrar a la
+//    lista y recién ahí apretar "Mapa".
 // 2. Un reporte SIN punto no desaparece: se cuenta y se dice ("N sin
 //    ubicación"). Un mapa que muestra 4 de 12 sin avisarlo es un mapa que
 //    miente, y el reporte por teléfono o cargado desde el panel no tiene
@@ -26,12 +30,14 @@ import { EmptyState } from "@/components/admin/empty-state";
 import { FilterChips } from "@/components/admin/filter-chips";
 import { FormMessage } from "@/components/admin/form-message";
 import { PageHeader } from "@/components/admin/page-header";
+import { ReportFilterForm } from "@/components/admin/report-filter-form";
 import { Button } from "@/components/ui/button";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
-import { countByView, reportWhere } from "@/lib/admin/reports-query";
+import { availableYears, countByView, reportWhere } from "@/lib/admin/reports-query";
 import {
-  parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref, reportFiltersQuery,
-  REPORTS_BASE, reportView,
+  hasReportFilters, parseReportFilters, parseReportView, REPORT_VIEWS, reportFiltersHref,
+  reportFiltersQuery, REPORTS_BASE, reportView,
+  NO_REPORT_FILTERS,
 } from "@/lib/admin/reports-queue";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { prisma } from "@/lib/prisma";
@@ -50,7 +56,6 @@ const MAPA_BASE = `${REPORTS_BASE}/mapa`;
  *  los reportes sin ubicación. */
 const MAX_POINTS = 500;
 
-const NO_FILTERS = { kind: null, category: null, q: null } as const;
 
 /** El `where` se compone con `AND` y no con spread: `reportWhere` YA usa `OR`
  *  cuando hay texto de búsqueda, así que `{ ...base, OR: [...] }` le pisaría la
@@ -83,8 +88,11 @@ export default async function ReportesMapaPage(props: {
   const filters = parseReportFilters(sp);
   const where = reportWhere(view, filters);
 
-  const [counts, noPointCount, rows] = await Promise.all([
+  const [counts, years, noPointCount, rows] = await Promise.all([
     countByView(prisma, filters),
+    // Los años del desplegable: los MISMOS que ofrece la lista, porque son los
+    // años en que entró un reporte y no los años que tienen un pin.
+    availableYears(prisma),
     prisma.report.count({ where: withoutPoint(where) }),
     prisma.report.findMany({
       where: withPoint(where),
@@ -119,8 +127,11 @@ export default async function ReportesMapaPage(props: {
   const withPointCount = total - noPointCount;
   const clipped = withPointCount > points.length;
 
-  const hasFilters = filters.kind !== null || filters.category !== null || filters.q !== null;
+  const hasFilters = hasReportFilters(filters);
   const listHref = reportFiltersHref(filters, view);
+  // Limpiar filtros NO saca del mapa: la pantalla que el operador eligió es
+  // ésta. Lo comparten la barra de filtros y el vacío por filtros.
+  const clearHref = `${MAPA_BASE}${reportFiltersQuery(NO_REPORT_FILTERS, view)}`;
   const chipHref = (key: (typeof REPORT_VIEWS)[number]["key"]) =>
     `${MAPA_BASE}${reportFiltersQuery(filters, key)}`;
 
@@ -135,9 +146,7 @@ export default async function ReportesMapaPage(props: {
         ? {
             description: "Ningún reporte coincide con esos filtros.",
             action: "Limpiar filtros",
-            // Limpiar filtros NO saca del mapa: la pantalla que el operador
-            // eligió es ésta.
-            href: `${MAPA_BASE}${reportFiltersQuery(NO_FILTERS, view)}`,
+            href: clearHref,
           }
         : { description: reportView(view).empty, action: "Ver la lista", href: listHref };
 
@@ -179,6 +188,19 @@ export default async function ReportesMapaPage(props: {
           href: chipHref(v.key),
           count: counts[v.key],
         }))}
+      />
+
+      {/* Los MISMOS controles de la lista (spec §5.3). Filtrar no saca del
+          mapa: el `action` es esta ruta. Sin campo de texto —un `contains`
+          sobre la descripción no dibuja un pin distinto— aunque el `where` lo
+          siga honrando si llega por URL desde la lista. */}
+      <ReportFilterForm
+        filters={filters}
+        view={view}
+        years={years}
+        action={MAPA_BASE}
+        clearHref={clearHref}
+        showSearch={false}
       />
 
       {points.length === 0 ? (

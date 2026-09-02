@@ -30,6 +30,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { MinuteType } from "@/generated/prisma/client";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { reportPlaceLabel } from "@/lib/admin/reports-query";
+import { cn } from "@/lib/utils";
 import { REPORTS_BASE } from "@/lib/admin/reports-queue";
 import { reportKindBadgeVariant, reportStatusBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
@@ -139,6 +140,7 @@ export default async function ReporteDetallePage({ params }: { params: Promise<{
       : null;
   const fileUrl = (fileId: number) => `/api/admin/reportes/${r.id}/archivos/${fileId}`;
   const place = reportPlaceLabel(r);
+  const hasPoint = r.lat !== null && r.lng !== null;
 
   return (
     <div className="space-y-6">
@@ -180,26 +182,34 @@ export default async function ReporteDetallePage({ params }: { params: Promise<{
 
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="space-y-6">
-          <Card>
-            <CardContent className="space-y-2">
-              <h2 className={SECTION_TITLE}>Descripción</h2>
-              <p className="whitespace-pre-line text-sm">{r.description || "Sin descripción."}</p>
-              {r.scplTicket && (
-                <p className="text-sm text-muted-foreground">
-                  N° de reclamo ante la SCPL: <span className="font-mono">{r.scplTicket}</span>
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          {/* Descripción y ubicación en una fila desde xl (pedido del operador,
+              02/09): recién a 1280 px el contenido —que desde lg ya cede 22 rem
+              al panel derecho— tiene ancho para dos tarjetas con un mapa legible.
+              Las dos tarjetas se estiran a la misma altura y el mapa llena la
+              suya: una descripción larga hace crecer al mapa, nunca corta el
+              texto. Sin punto en el mapa, la fila no se parte: la descripción
+              va a lo ancho y "Sin ubicación" queda como una tarjeta baja. */}
+          <div className={cn("grid gap-6", hasPoint && "xl:grid-cols-2 xl:items-stretch")}>
+            <Card className="h-full">
+              <CardContent className="space-y-2">
+                <h2 className={SECTION_TITLE}>Descripción</h2>
+                <p className="whitespace-pre-line text-sm">{r.description || "Sin descripción."}</p>
+                {r.scplTicket && (
+                  <p className="text-sm text-muted-foreground">
+                    N° de reclamo ante la SCPL: <span className="font-mono">{r.scplTicket}</span>
+                  </p>
+                )}
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardContent className="space-y-3">
-              <h2 className={SECTION_TITLE}>Ubicación</h2>
-              {r.lat !== null && r.lng !== null ? (
-                <>
-                  <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-                    <ReportMiniMap lat={Number(r.lat)} lng={Number(r.lng)} />
-                  </div>
+            <Card className="h-full">
+              <CardContent className="flex h-full flex-col gap-3">
+                <h2 className={SECTION_TITLE}>Ubicación</h2>
+                {hasPoint ? (
+                  <>
+                    <div className="flex-1 overflow-hidden rounded-xl ring-1 ring-foreground/10">
+                      <ReportMiniMap lat={Number(r.lat)} lng={Number(r.lng)} />
+                    </div>
                   {/* Las coordenadas en texto son la alternativa al mapa, no un
                       adorno: quien no lo ve tiene que poder copiarlas. */}
                   <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -215,6 +225,7 @@ export default async function ReporteDetallePage({ params }: { params: Promise<{
               )}
             </CardContent>
           </Card>
+          </div>
 
           <Card>
             <CardContent className="space-y-3">
