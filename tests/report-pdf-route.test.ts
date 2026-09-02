@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
   read: vi.fn(async () => Buffer.from("x")),
   // Tipado con los parámetros reales del generador: es lo que deja aseverar
   // sobre `mock.calls[0]` sin castear (y lo que rompe si la firma cambia).
-  render: vi.fn(
+  render: vi.fn<(d: PdfData, a: PdfAssets) => Promise<Uint8Array>>(
     async () => new Uint8Array([0x25, 0x50, 0x44, 0x46]),
   ),
   map: vi.fn(async () => null as Buffer | null),
