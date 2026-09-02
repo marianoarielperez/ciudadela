@@ -1,10 +1,11 @@
-import { notFound } from "next/navigation";
+import Link from "next/link";
 import { getLegalTexts } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { reports } from "@/lib/reports/service";
 import { startReportAction } from "../../actions";
 import { ReportWizard } from "../../report-wizard";
 import { snapshotOf } from "../../snapshot";
+import { LINK_TARGET } from "../../wizard-shared";
 
 // La llave viene en la URL: nada de esto se puede cachear ni prerenderizar.
 export const dynamic = "force-dynamic";
@@ -28,12 +29,28 @@ export default async function RetomarReportePage({
   const { claim } = await params;
   const report = await reports.findByClaim(claim);
 
-  // Un 404 y nada más. La llave es la ÚNICA credencial de este trámite, así que
-  // la pantalla no puede distinguir "no existe" de "se venció" ni de "es de
-  // otro": cualquier respuesta distinta le contaría a quien prueba llaves si
-  // acertó a medias. El borrador de un socio cae en el mismo 404: ése se retoma
-  // desde /mi, donde la barrera es la sesión.
-  if (!report || report.memberId !== null) notFound();
+  // UNA sola pantalla para los tres casos. La llave es la ÚNICA credencial de
+  // este trámite, así que no puede distinguir "no existe" de "se venció" ni de
+  // "es de otro": cualquier respuesta distinta le contaría a quien prueba llaves
+  // si acertó a medias. El borrador de un socio cae acá también: ése se retoma
+  // desde /mi, donde la barrera es la sesión. Y se dice con texto propio, no con
+  // la 404 genérica, porque el motivo frecuente es el vencimiento a los dos días
+  // y el vecino tiene que saber que empezar de nuevo es lo que corresponde.
+  if (!report || report.memberId !== null) {
+    return (
+      <main className="mx-auto w-full max-w-xl px-4 py-16">
+        <h1 className="text-2xl font-bold tracking-tight">No encontramos ese reporte</h1>
+        <p className="mt-3 text-muted-foreground">
+          El enlace puede estar incompleto o el borrador ya se borró (los borradores duran dos días).
+        </p>
+        <p className="mt-6">
+          <Link href="/reportes" className={LINK_TARGET}>
+            Empezar un reporte
+          </Link>
+        </p>
+      </main>
+    );
+  }
 
   // Con el reporte ya enviado el wizard muestra la pantalla terminal, que no
   // tiene paso 3: el catálogo catastral (40 filas) no tiene por qué viajar al

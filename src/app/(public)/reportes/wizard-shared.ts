@@ -7,6 +7,16 @@ import type { ReportKindSlug } from "@/lib/reports/catalog";
 export { CONTROL_HEIGHT, FOCUS_RING, LINK_TARGET, type StreetOption } from "../asociate/wizard-shared";
 
 export type ReportMode = "public" | "member";
+
+/** Turnstile es del modo PÚBLICO y de nadie más, así que el modo y la clave
+ *  viajan juntos: con un `siteKey?: string` suelto, una página pública que se
+ *  olvidara de pasarlo compilaba igual y montaba el widget con `""` —un captcha
+ *  roto en silencio, que es exactamente la barrera del alta anónima—. La unión
+ *  discriminada lo vuelve imposible por tipos (mismo criterio que `NavNextProps`
+ *  en `../asociate/wizard-ui.tsx`). */
+export type ReportCaptchaProps =
+  | { mode: "public"; siteKey: string }
+  | { mode: "member"; siteKey?: never };
 export type FileKindSlug = "photo" | "dni_front" | "dni_back";
 
 export type StartState = { error?: string; started?: { claim: string } };

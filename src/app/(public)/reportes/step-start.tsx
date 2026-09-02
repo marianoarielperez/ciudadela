@@ -8,30 +8,44 @@ import { FormMessage } from "@/components/admin/form-message";
 import { useFormResetSync } from "@/components/admin/use-form-reset-sync";
 import { TurnstileWidget } from "@/components/public/turnstile-widget";
 import { ChoiceCard, NavButtons } from "../asociate/wizard-ui";
-import type { ReportDraft, ReportMode, StartState } from "./wizard-shared";
+import type { ReportCaptchaProps, ReportDraft, StartState } from "./wizard-shared";
 
-export function StepStart({
-  mode,
-  draft,
-  patch,
-  siteKey,
-  actionState,
-  formAction,
-  pending,
-  error,
-}: {
-  mode: ReportMode;
+// Un reclamo se PRESENTA ante un organismo; una iniciativa la TRATA la Comisión
+// y no sale de la asociación (spec §2). Mientras no haya elección la copia es
+// NEUTRA: prometerle un organismo a quien todavía no eligió es la misma mentira,
+// sólo que antes.
+const IDENTITY_COPY = {
+  "": {
+    legend: "¿Cómo querés figurar?",
+    named: "Tu nombre acompaña el reporte.",
+    reserved: "La Asociación siempre sabe quién reporta; tu nombre no sale de la Asociación.",
+  },
+  claim: {
+    legend: "¿Cómo querés figurar en la presentación?",
+    named: "Tu nombre acompaña el reporte cuando la asociación lo presenta.",
+    reserved:
+      "La Asociación siempre sabe quién reporta; lo reservado es la presentación ante el municipio, la SCPL u otro organismo.",
+  },
+  initiative: {
+    legend: "¿Cómo querés figurar ante la Comisión?",
+    named: "Tu nombre acompaña la iniciativa cuando la Comisión la trata.",
+    reserved:
+      "La Asociación siempre sabe quién reporta; tu nombre queda en la Comisión Directiva y no se publica.",
+  },
+} as const;
+
+type StepStartProps = {
   draft: ReportDraft;
   patch: (values: Partial<ReportDraft>) => void;
-  /** Sólo se usa en el modo público: el del socio no monta Turnstile y su
-   *  página no tiene por qué pasar una clave. */
-  siteKey?: string;
   /** Sólo para pedirle un token nuevo a Turnstile en cada respuesta. */
   actionState: StartState;
   formAction: (formData: FormData) => void;
   pending: boolean;
   error?: string;
-}) {
+};
+
+export function StepStart(props: StepStartProps & ReportCaptchaProps) {
+  const { draft, patch, actionState, formAction, pending, error } = props;
   // Radios que postean: sin esto, tras un rechazo React 19 los deja en lo que
   // dice el DOM y no en el borrador (ver el comentario de `useFormResetSync`).
   const formRef = useRef<HTMLFormElement>(null);
@@ -39,6 +53,7 @@ export function StepStart({
     kind: draft.kind === "claim" ? "reclamo" : draft.kind === "initiative" ? "iniciativa" : "",
     anonymous: draft.anonymous,
   });
+  const copy = IDENTITY_COPY[draft.kind];
 
   return (
     <form ref={formRef} action={formAction} className="space-y-6">
@@ -67,7 +82,7 @@ export function StepStart({
       </fieldset>
 
       <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">¿Cómo querés figurar en la presentación?</legend>
+        <legend className="text-sm font-medium">{copy.legend}</legend>
         <ChoiceCard
           name="anonymous"
           value="no"
@@ -76,7 +91,7 @@ export function StepStart({
           title="Con mi nombre"
           icon={<UserRound className="size-4" />}
         >
-          Tu nombre acompaña el reporte cuando la asociación lo presenta.
+          {copy.named}
         </ChoiceCard>
         <ChoiceCard
           name="anonymous"
@@ -86,13 +101,14 @@ export function StepStart({
           title="De forma reservada"
           icon={<ShieldCheck className="size-4" />}
         >
-          La Asociación siempre sabe quién reporta; lo reservado es la presentación ante el
-          municipio, la SCPL u otro organismo.
+          {copy.reserved}
         </ChoiceCard>
       </fieldset>
 
-      {/* El socio ya viene con sesión: el captcha es para el vecino anónimo. */}
-      {mode === "public" && <TurnstileWidget siteKey={siteKey ?? ""} resetKey={actionState} />}
+      {/* El socio ya viene con sesión: el captcha es para el vecino anónimo. La
+          unión discriminada garantiza que una página pública no pueda montarlo
+          sin clave (mismo criterio que `NavNextProps`). */}
+      {props.mode === "public" && <TurnstileWidget siteKey={props.siteKey} resetKey={actionState} />}
       {error && (
         <FormMessage kind="error" box>
           {error}

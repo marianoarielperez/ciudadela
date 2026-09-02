@@ -11,8 +11,9 @@
 // archivo son `<form>` propios, así que NO pueden ir adentro del form del
 // reporte —un form anidado es HTML inválido y el navegador lo desarma; en la
 // página de retome, que renderiza este paso en el server, la hidratación se
-// rompería—. El form del reporte lleva todos los campos que se postean y un
-// `id`; las fotos son un hermano y el botón de envío lo dispara por `form=`.
+// rompería—. El form del reporte lleva un `id`; las fotos son un hermano, y
+// tanto el checkbox del consentimiento —que va DESPUÉS de las fotos, como manda
+// la spec— como el botón de envío se enganchan por `form=`.
 import { MessageCircle, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState, type KeyboardEvent } from "react";
@@ -87,10 +88,15 @@ export function StepReport({
   onBack?: () => void;
 }) {
   const [inFlight, setInFlight] = useState(0);
-  const formRef = useRef<HTMLFormElement>(null);
+  // El ref cuelga del ENVOLTORIO, no del `<form>`: el consentimiento se postea
+  // por `form=` desde afuera (ver más abajo) y `useFormResetSync` recorre
+  // `ref.current.querySelectorAll`, así que con el ref en el form el checkbox
+  // se quedaba sin re-sincronizar después de un rechazo — que es justo el caso
+  // que el hook existe para cubrir.
+  const wrapRef = useRef<HTMLDivElement>(null);
   // Radios (categoría y tipo) y el checkbox del consentimiento: un rechazo del
   // server los devolvería a su estado por defecto sin avisar.
-  useFormResetSync(formRef, {
+  useFormResetSync(wrapRef, {
     category: draft.category,
     subtype: draft.subtype,
     consent: draft.consent ? "on" : "",
@@ -112,14 +118,8 @@ export function StepReport({
     inFlight === 0;
 
   return (
-    <div className="space-y-8">
-      <form
-        id={FORM_ID}
-        ref={formRef}
-        action={formAction}
-        onKeyDown={swallowEnter}
-        className="space-y-8"
-      >
+    <div ref={wrapRef} className="space-y-8">
+      <form id={FORM_ID} action={formAction} onKeyDown={swallowEnter} className="space-y-8">
         <input type="hidden" name="claim" value={claim} />
         {draft.lat !== null && <input type="hidden" name="lat" value={draft.lat} />}
         {draft.lng !== null && <input type="hidden" name="lng" value={draft.lng} />}
@@ -227,8 +227,9 @@ export function StepReport({
           )}
           {outside && (
             <Callout tone="warning" icon={TriangleAlert}>
-              El punto queda fuera del barrio Ciudadela. Podés enviarlo igual; la Comisión decide si
-              lo canaliza.
+              {kind === "claim"
+                ? "El punto queda fuera del barrio Ciudadela. Podés enviarlo igual; la Comisión decide si lo canaliza."
+                : "El punto queda fuera del barrio Ciudadela. Podés enviarla igual; la Comisión decide si la trata."}
             </Callout>
           )}
           <StreetPicker
@@ -255,22 +256,6 @@ export function StepReport({
           </Field>
         </div>
 
-        <div className="space-y-3 rounded-xl border border-border p-4">
-          <LegalDetails title="Consentimiento de datos personales" text={consentText} />
-          {/* El área que acepta el clic es toda la fila: 44 px de alto, que es
-              el mínimo del proyecto para un target táctil. */}
-          <label className="flex min-h-11 cursor-pointer items-center gap-3">
-            <input
-              type="checkbox"
-              name="consent"
-              required
-              checked={draft.consent}
-              onChange={(e) => patch({ consent: e.target.checked })}
-              className="size-5 shrink-0 accent-primary"
-            />
-            <span className="text-sm">Leí y acepto el consentimiento de datos personales.</span>
-          </label>
-        </div>
       </form>
 
       {/* AFUERA del form del reporte: cada ranura es un `<form>` propio (ver la
@@ -306,6 +291,29 @@ export function StepReport({
             onBusy={(d) => setInFlight((n) => n + d)}
           />
         </ul>
+      </div>
+
+      {/* El consentimiento va ÚLTIMO —después de las fotos, como manda la spec—
+          y por eso también queda afuera del `<form>`: no puede envolverlo sin
+          meter adentro las ranuras de archivo, que son `<form>` propios. Se
+          postea igual por `form=`, que es HTML válido y conserva `required` y
+          la validación nativa del navegador. */}
+      <div className="space-y-3 rounded-xl border border-border p-4">
+        <LegalDetails title="Consentimiento de datos personales" text={consentText} />
+        {/* El área que acepta el clic es toda la fila: 44 px de alto, que es
+            el mínimo del proyecto para un target táctil. */}
+        <label className="flex min-h-11 cursor-pointer items-center gap-3">
+          <input
+            type="checkbox"
+            form={FORM_ID}
+            name="consent"
+            required
+            checked={draft.consent}
+            onChange={(e) => patch({ consent: e.target.checked })}
+            className="size-5 shrink-0 accent-primary"
+          />
+          <span className="text-sm">Leí y acepto el consentimiento de datos personales.</span>
+        </label>
       </div>
 
       {error && (

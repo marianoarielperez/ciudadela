@@ -14,8 +14,19 @@ import { Field } from "../asociate/wizard-ui";
 import { FileSlot } from "./file-slot";
 import { CONTROL_HEIGHT, LINK_TARGET, type ReportDraft, type UploadedFile } from "./wizard-shared";
 
+// Qué avisamos y cuándo depende del tipo (spec §2): un reclamo se PRESENTA ante
+// el organismo, una iniciativa la TRATA la Comisión. Sin elección todavía —no
+// pasa por el paso 2, pero el tipo lo admite— el aviso no promete ninguna de las
+// dos cosas.
+const EMAIL_HINT = {
+  "": "Acá te mandamos el acuse y el aviso de cómo sigue.",
+  claim: "Acá te mandamos el acuse y el aviso cuando lo presentemos.",
+  initiative: "Acá te mandamos el acuse y el aviso cuando la Comisión la trate.",
+} as const;
+
 export function StepIdentity({
   claim,
+  kind,
   draft,
   patch,
   files,
@@ -26,6 +37,8 @@ export function StepIdentity({
   error,
 }: {
   claim: string;
+  /** El tipo elegido en el paso 1: decide la copia, no el flujo. */
+  kind: ReportDraft["kind"];
   draft: ReportDraft;
   patch: (values: Partial<ReportDraft>) => void;
   files: UploadedFile[];
@@ -86,7 +99,7 @@ export function StepIdentity({
             onChange={(e) => patch({ phone: e.target.value })}
           />
         </Field>
-        <Field id="email" label="Email" hint="Acá te mandamos el acuse y el aviso cuando lo presentemos.">
+        <Field id="email" label="Email" hint={EMAIL_HINT[kind]}>
           <Input
             id="email"
             name="email"

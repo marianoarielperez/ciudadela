@@ -15,6 +15,7 @@
 // la URL de retome es la de /mi. `startAction` la inyecta la página: la pública
 // exige captcha, la del socio exige sesión.
 import { FileText, Landmark, MapPinned, Send, UserRound, type LucideIcon } from "lucide-react";
+import Link from "next/link";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { FormMessage } from "@/components/admin/form-message";
 import type { ReportKindSlug } from "@/lib/reports/catalog";
@@ -27,6 +28,8 @@ import { StepReport } from "./step-report";
 import { StepStart } from "./step-start";
 import {
   EMPTY_REPORT_DRAFT,
+  LINK_TARGET,
+  type ReportCaptchaProps,
   type ReportDraft,
   type ReportMode,
   type ReporterState,
@@ -91,6 +94,35 @@ const PHASES: Record<ReportKindSlug, ProcessPhase[]> = {
   ],
 };
 
+// Antes de elegir tipo el camino se dice SIN organismo: quien todavía no eligió
+// puede terminar en una iniciativa, que nunca sale de la asociación (spec §2).
+// Prometerle una presentación acá es la misma mentira que corregimos en el paso
+// 1, sólo que arriba de todo y en cada paso.
+const NEUTRAL_PHASES: ProcessPhase[] = [
+  {
+    icon: Landmark,
+    label: (
+      <>
+        La Comisión
+        <br />
+        lo evalúa
+      </>
+    ),
+    srText: "lo evalúa la Comisión Directiva",
+  },
+  {
+    icon: Send,
+    label: (
+      <>
+        Le da
+        <br />
+        curso
+      </>
+    ),
+    srText: "y le da curso",
+  },
+];
+
 // Decorativos: el título es el dato (el gesto size-9 bg-primary/10 del panel).
 const ICONS: Record<"start" | "identity" | "report", LucideIcon> = {
   start: FileText,
@@ -100,21 +132,9 @@ const ICONS: Record<"start" | "identity" | "report", LucideIcon> = {
 const TITLES = { start: "Empezar", identity: "Tus datos", report: "Tu reporte" } as const;
 type StepKey = keyof typeof TITLES;
 
-export function ReportWizard({
-  mode,
-  streets,
-  consentText,
-  siteKey,
-  initialKind,
-  initial,
-  startAction,
-}: {
-  mode: ReportMode;
+type ReportWizardProps = {
   streets: StreetOption[];
   consentText: string | null;
-  /** Sólo el modo público monta Turnstile: en /mi la sesión es la barrera y la
-   *  página no tiene por qué inventar una clave para pasarla. */
-  siteKey?: string;
   /** Con qué tipo llega desde la landing (`?tipo=`). Sólo propone: el paso 1
    *  sigue siendo una elección. */
   initialKind?: ReportKindSlug;
@@ -123,7 +143,15 @@ export function ReportWizard({
   /** El paso 1 del vecino (`startReportAction`) o el del socio
    *  (`startMemberReportAction`): el marco es el mismo. */
   startAction: (prev: StartState, formData: FormData) => Promise<StartState>;
-}) {
+};
+
+export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
+  const { streets, consentText, initialKind, initial, startAction } = props;
+  // El captcha se re-arma como una unidad y se pasa con spread: partirlo en
+  // `mode` + `siteKey` sueltos volvería a perder la garantía de la unión.
+  const captcha: ReportCaptchaProps =
+    props.mode === "public" ? { mode: "public", siteKey: props.siteKey } : { mode: "member" };
+  const mode: ReportMode = props.mode;
   const steps: StepKey[] = mode === "public" ? ["start", "identity", "report"] : ["start", "report"];
   const retomePath = mode === "public" ? "/reportes/nuevo" : "/mi/solicitudes/reportes/nuevo";
 
@@ -250,18 +278,32 @@ export function ReportWizard({
   }
   // Ya enviado pero sin N° (no debería pasar: el N° es el id). Sin esto el
   // vecino caería en el paso 3 sobre un reporte que ninguna action deja tocar.
+  // Va con salida: un mensaje solo, sin un enlace, deja al vecino en una
+  // pantalla sin nada que tocar.
   if (sentStatus !== null) {
     return (
-      <FormMessage kind="warning" box>
-        {REPORT_MESSAGES.notDraft}
-      </FormMessage>
+      <div>
+        <FormMessage kind="warning" box>
+          {REPORT_MESSAGES.notDraft}
+        </FormMessage>
+        <p className="mt-4">
+          <Link href="/reportes" className={LINK_TARGET}>
+            Volver a Reportes
+          </Link>
+        </p>
+      </div>
     );
   }
 
   const StepIcon = ICONS[step];
   return (
     <div>
-      <ProcessRail step={stepIndex} total={steps.length} subject="Tu reporte" phases={PHASES[kind]} />
+      <ProcessRail
+        step={stepIndex}
+        total={steps.length}
+        subject="Tu reporte"
+        phases={draft.kind === "" ? NEUTRAL_PHASES : PHASES[draft.kind]}
+      />
       <h1
         ref={headingRef}
         tabIndex={-1}
@@ -284,10 +326,9 @@ export function ReportWizard({
       <div className="mt-6">
         {step === "start" && (
           <StepStart
-            mode={mode}
+            {...captcha}
             draft={draft}
             patch={patch}
-            siteKey={siteKey}
             actionState={startState}
             formAction={startFormAction}
             pending={starting}
@@ -297,6 +338,7 @@ export function ReportWizard({
         {step === "identity" && (
           <StepIdentity
             claim={claim}
+            kind={draft.kind}
             draft={draft}
             patch={patch}
             files={files}
