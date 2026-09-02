@@ -89,8 +89,18 @@ las clases de las nueve barras.
 | `SECTION_TAB_COUNT` | `font-mono text-xs tabular-nums text-muted-foreground` | contador en inactiva |
 | `SECTION_TAB_COUNT_ACTIVE` | `font-mono text-xs tabular-nums text-primary` | contador en activa |
 | `SECTION_TAB_ICON` | `size-4 shrink-0` | ícono |
-| `SECTION_TABS_RADIX_LIST` | `group-data-horizontal/tabs:h-auto w-full items-end justify-start overflow-x-auto rounded-none p-0 px-0.5 border-b` | el mismo riel sobre `TabsList variant="section"` |
-| `SECTION_TAB_RADIX_TRIGGER` | `SECTION_TAB` + `flex-none justify-start py-0 font-normal` + `withPrefix("data-[state=inactive]:", SECTION_TAB_INACTIVE)` + `withPrefix("data-active:", SECTION_TAB_ACTIVE)` | el trigger Radix |
+| `SECTION_TABS_RADIX_LIST` | `group-data-horizontal/tabs:h-auto w-full min-w-max items-end justify-start rounded-none border-b p-0 px-0.5` | el mismo riel sobre `TabsList variant="section"`; **sin overflow** (ver nota) |
+| `SECTION_TAB_RADIX_TRIGGER` | `SECTION_TAB` + `flex-none justify-start rounded-b-none py-0 font-normal after:hidden` + `withPrefix("data-[state=inactive]:", SECTION_TAB_INACTIVE)` + `withPrefix("data-active:", SECTION_TAB_ACTIVE)` + `withPrefix("dark:data-active:", "border-border bg-card")` | el trigger Radix |
+
+> **Superado por la implementación (commit `ff1f346`, revisión de la Tarea 1).** La
+> primera versión de esta tabla ponía `overflow-x-auto` en la lista Radix: eso recorta
+> el solape de `-mb-px` (la solapa nunca pisa el riel) y, como `overflow-x` fuerza
+> `overflow-y: auto`, dibuja una barra vertical. El overflow vive en el envoltorio
+> `SECTION_TABS_NAV_ADMIN`, igual que en las barras por URL, y la lista lleva
+> `min-w-max`. Además el `rounded-md` de la base de shadcn no lo pisa `rounded-t-md`
+> (tailwind-merge no descarta el shorthand ante una clase por lado), de ahí
+> `rounded-b-none`; y el subrayado `after:` de la base, aunque con `opacity-0`, extiende
+> el scroll del envoltorio, de ahí `after:hidden`. El detalle vive en el plan, Tarea 3.
 
 `withPrefix(prefix, classes)` antepone el prefijo a cada token separado por
 espacios. Está para que las variantes Radix se **deriven** de las mismas
@@ -150,7 +160,10 @@ para "dejar adentro" esa línea desaparece.
 
 ## 5. Los nueve componentes
 
-Sólo `className`, salvo los dos extras marcados.
+Sólo `className`, salvo los dos extras marcados y un envoltorio: en las cuatro barras
+Radix la `TabsList` va dentro de `<div className={SECTION_TABS_NAV_ADMIN}>`, que es el
+que scrollea (ver la nota de §4.1). Radix no exige que la lista sea hija directa de
+`Tabs`.
 
 | Componente | Cambio |
 |---|---|
