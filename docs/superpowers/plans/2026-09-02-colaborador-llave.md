@@ -1466,7 +1466,7 @@ No se declara terminado el trabajo sin pasar TODOS estos puntos y anotar el resu
 ```bash
 npm test 2>&1 | tail -20
 ```
-Expected: `Test Files  N passed`, `Tests  M passed`, 0 failed. Anotar N y M, y compararlos con `main` (`git stash`-free: correr `git checkout main && npm test | tail -5 && git checkout collaborator-switch` si hace falta el número de referencia). M tiene que ser mayor que en `main` en exactamente la cantidad de tests agregados: **22** (3 en config, 3 en wizard, 2 en create-action, 5 en wizard-client, 4 en member-requests-rules incluido el de `requestableCategories`, 2 en member-requests-service, 1 en mi-solicitudes-actions, 2 en config-actions). Si el número no cierra, listar qué test falta o sobra.
+Expected: `Test Files  N passed`, `Tests  M passed`, 0 failed. Anotar N y M, y compararlos con `main` (`git stash`-free: correr `git checkout main && npm test | tail -5 && git checkout collaborator-switch` si hace falta el número de referencia). M tiene que ser mayor que en `main` en exactamente la cantidad de tests agregados: **23** (3 en config, 3 en wizard, 2 en create-action, 6 en wizard-client —5 del plan más el que fija que `opacity-60` no vuelva, enmienda de §11—, 4 en member-requests-rules incluido el de `requestableCategories`, 2 en member-requests-service, 1 en mi-solicitudes-actions, 2 en config-actions). Si el número no cierra, listar qué test falta o sobra.
 
 ```bash
 npx tsc --noEmit && npm run lint
@@ -1524,19 +1524,23 @@ tests/config.test.ts
 tests/create-application-action.test.ts
 tests/member-requests-rules.test.ts
 tests/member-requests-service.test.ts
+tests/mi-documentos-screen.test.ts
 tests/mi-solicitudes-actions.test.ts
 ```
+
+(`tests/mi-documentos-screen.test.ts` se sumó en la Tarea 7 porque fijaba
+`aria-label="Norma vigente"`; anotado tras la revisión final de rama.)
 
 Un archivo fuera de esta lista es un desvío del plan: justificarlo en el informe o revertirlo.
 
 Chequeos de texto:
 
 ```bash
-grep -rn "Norma vigente" src
+grep -rn "Norma vigente" src/app/mi
 grep -rn "REQUESTABLE_CATEGORIES" src | grep -v ALL_REQUESTABLE_CATEGORIES
 grep -rn "categoryAllowedForResidence(" src
 ```
-Expected: los dos primeros vacíos; el tercero muestra los llamadores del panel intactos (`admin/solicitudes/actions.ts`, `admin/solicitudes/page.tsx`, `admin/solicitudes/[id]/decision-forms.tsx`, `lib/applications/query.ts`) más `asociate/actions.ts` (el mensaje por causa) y `lib/applications/wizard.ts` (la composición). Ninguno con un tercer argumento.
+Expected: los dos primeros vacíos (el primero se acota a `src/app/mi` a propósito: `src/app/admin/documentos/page.tsx` y `document-form.tsx` conservan "Norma vigente" como nombre de la tarjeta y del control de admin, por el alcance de la spec §1 y §5.3; corregido tras la revisión final de rama); el tercero muestra los llamadores del panel intactos (`admin/solicitudes/actions.ts`, `admin/solicitudes/page.tsx`, `admin/solicitudes/[id]/decision-forms.tsx`, `lib/applications/query.ts`) más `asociate/actions.ts` (el mensaje por causa) y `lib/applications/wizard.ts` (la composición). Ninguno con un tercer argumento.
 
 - [ ] **Step 4: Revisión de código**
 

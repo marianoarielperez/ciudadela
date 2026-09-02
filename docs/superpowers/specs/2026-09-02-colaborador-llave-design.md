@@ -87,9 +87,11 @@ estatuto rige. **Fuera de alcance:** ver §9.
   está la revalidación de REG-01 (después de zod, antes de la fecha de
   nacimiento); no es "guarda 0" porque depende de los datos parseados.
 - `checkDniAction` (paso 1) no cambia: no hay categoría todavía.
-- `src/app/admin/solicitudes/actions.ts` (recategorización, admin) pasa `true`
-  con un comentario: la puerta es de la Comisión y el desajuste de residencia
-  sigue siendo **auditado, no bloqueante**, como hoy.
+- ~~`src/app/admin/solicitudes/actions.ts` (recategorización, admin) pasa `true`
+  con un comentario~~ **Reemplazado por la enmienda de §11**: como la regla nueva
+  es una función aparte, la recategorización de admin **no se toca**; sigue
+  llamando a `categoryAllowedForResidence` con dos argumentos, y el desajuste de
+  residencia sigue siendo **auditado, no bloqueante**, como hoy.
 
 ### 4.2 `/mi/solicitudes`
 
