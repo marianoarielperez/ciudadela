@@ -1326,7 +1326,11 @@ en `/admin/configuracion`** → **crontab con sus seis líneas** (`docs/11`, Par
 backup 04:00, `reconcile` 03:17, `applications` 08:05, `accrual` 00:30,
 `digest` 07:30 y `reminder` 10:00) → **`digest_recipients` cargada** en
 `/admin/configuracion`, o el resumen diario no se le manda a nadie → activar
-`asociate_activo` → convocar re-empadronamiento dentro de los 90 días.
+`asociate_activo` → **prender `colaborador_habilitado`** en `/admin/configuracion`
+(la categoría colaborador es de la reforma; hasta ahí el sitio corre con la rama de
+otro barrio deshabilitada, spec 2026-09-02) → **actualizar la descripción del
+estatuto** en `/admin/documentos` (el PDF es el texto reformado) → convocar
+re-empadronamiento dentro de los 90 días.
 
 **El devengo no espera al lanzamiento.** Su línea del crontab tiene fecha dura
 —**antes del 01/10/2026**— y es independiente de todo lo demás de esta lista: no

@@ -85,8 +85,8 @@ describe("la norma destacada", () => {
   it("va arriba y NO se repite dentro de Normas", async () => {
     const html = await render();
 
-    const featured = sectionsOf(html).find((s) => s.includes('aria-label="Norma vigente"'));
-    expect(featured, "no está la sección de la norma vigente").toBeDefined();
+    const featured = sectionsOf(html).find((s) => s.includes('aria-label="Estatuto"'));
+    expect(featured, "no está la sección del estatuto destacado").toBeDefined();
     expect(featured).toContain("Estatuto social");
 
     const normas = sectionTitled(html, "Normas");
@@ -141,7 +141,7 @@ describe("la fila-link", () => {
     const html = await render();
     // Los dos caminos al PDF: la fila de una sección y el botón de la destacada.
     expect(sectionTitled(html, "Normas")!).toContain("(se abre en una pestaña nueva)");
-    const featured = sectionsOf(html).find((s) => s.includes('aria-label="Norma vigente"'))!;
+    const featured = sectionsOf(html).find((s) => s.includes('aria-label="Estatuto"'))!;
     expect(featured).toContain("(se abre en una pestaña nueva)");
   });
 });

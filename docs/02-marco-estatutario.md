@@ -4,6 +4,14 @@ Fuente: Estatuto reformado aprobado por Asamblea Extraordinaria del 15/08/2026,
 **pendiente de oficialización por la IGJ del Chubut**. El sistema se construye ahora
 y se lanza cuando la IGJ apruebe (ver disposición transitoria, Art. 40).
 
+**Lanzamiento anticipado (02/09/2026):** el sitio se publica ANTES de la
+oficialización con la única pieza que depende de la reforma apagada: la categoría
+**socio colaborador** (Art. 5 bis) no se ofrece ni en ASOCIATE ni en
+`/mi/solicitudes` mientras la llave `colaborador_habilitado` (tabla
+`configuration`, switch de superadmin en Configuración → Sitio público) esté
+apagada. Ausente en la base cuenta como apagada. Se prende a mano el día de la
+oficialización. Spec: `docs/superpowers/specs/2026-09-02-colaborador-llave-design.md`.
+
 Este documento mapea cada artículo relevante a reglas concretas del sistema.
 **Es el documento más importante del proyecto.**
 

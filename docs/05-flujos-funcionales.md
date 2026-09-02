@@ -45,7 +45,9 @@ lugar de una actividad.
 
 ## 2. ASOCIATE (wizard público)
 
-Precondición: `asociate_activo=true` y sin re-empadronamiento en curso.
+Precondición: `asociate_activo=true` y sin re-empadronamiento en curso. La rama
+"En otro barrio" (colaborador) exige además `colaborador_habilitado=true`
+(spec 2026-09-02).
 Aceptación de términos + consentimiento de datos personales (textos en
 `Configuracion`, **texto plano** editable por el superadmin) y **Turnstile
 validado server-side en los pasos 1 y 4** — el 1 consulta el padrón con un DNI
@@ -99,7 +101,15 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
 - Opción A: "En el Barrio Ciudadela" → buscador de calle con autocompletado sobre
   la tabla Calle (matchea `nombre_normalizado` y también `orden_carga` numérico;
   ej.: "hernandez", "Hernández", "1906" encuentran "Hernandez , Jose"). + campo altura.
-- Opción B: "En otro barrio" → calle y barrio a mano (texto libre).
+- Opción B: "En otro barrio" → calle y barrio a mano (texto libre). Con la llave
+  `colaborador_habilitado` apagada la tarjeta se muestra **deshabilitada** (radio
+  nativo `disabled`) con el texto "Por ahora, la asociación en línea es sólo para
+  quienes viven en el Barrio Ciudadela.", el mismo que devuelve
+  `createApplicationAction` a un POST armado a mano (`categoryOfferedOnWeb`,
+  que compone REG-01 con la llave; `categoryAllowedForResidence` queda intacta
+  para el panel). La atenuación va por la superficie y el control, nunca por el
+  texto: la línea del motivo es el único aviso que recibe el vecino y se queda a
+  contraste pleno.
 
 **Paso 3 — Categoría**
 - Si Ciudadela: elegir **ACTIVO** ($X/mes obligatoria, voz y voto, puede ocupar cargos)
@@ -114,7 +124,8 @@ checkout de MP y el que viaja en el email de recordatorio de pago.
   cambiar tu elección acá." (no bloquear).
 - Si otro barrio: única opción **COLABORADOR** ($Y/mes obligatoria). Aviso de que
   deberá acreditar vinculación con el barrio (inmueble, familiar residente, o
-  comercio/actividad en la zona).
+  comercio/actividad en la zona). Sólo alcanzable con
+  `colaborador_habilitado=true`.
 
 **Paso 4 — Tus datos**
 - Nombre y apellido, fecha de nacimiento (validar 18+), estado civil,
@@ -452,6 +463,9 @@ La pestaña de cuenta corriente muestra:
 - Actividades: ABM del calendario de espacios (ver `/actividades` en §1).
 - Actas: ABM (tipo, número, fecha, descripción) + vista de movimientos asociados.
 - Configuración (solo superadmin): interruptor de ASOCIATE (`asociate_activo`),
+  la llave de la categoría colaborador (`colaborador_habilitado`, spec
+  2026-09-02; en la tira de estado sin advertencia porque apagada es lo esperado
+  hasta la IGJ),
   datos de contacto (teléfono y email que muestra el sitio público), los **textos
   legales del wizard** (términos y consentimiento de datos) y los **ids de los dos
   planes de Mercado Pago**.
@@ -515,7 +529,10 @@ accesos a las demás secciones.
 - **Solicitar baja** (REG-19) y **solicitar cambio de categoría** (REG-07):
   formulario con motivo opcional → texto formal generado y timestampeado →
   aviso de que la CD debe aceptarla → estado visible en una bandeja propia —
-  **queda para la fase 5B**.
+  **queda para la fase 5B**. Las categorías ofrecidas salen de
+  `requestableCategories(llave)`: con `colaborador_habilitado` apagada no se
+  ofrece ni se acepta Colaborador ("Por ahora no se puede pedir el pase a socio
+  colaborador.").
 - **Suspendidos**: desde la fase 5A, el suspendido ve su panel completo, su
   cuenta y sus recibos, y **puede pagar** sus cuotas pendientes — saldar deuda lo
   acerca a la rehabilitación. Un banner permanente (`FormMessage kind="warning"`)

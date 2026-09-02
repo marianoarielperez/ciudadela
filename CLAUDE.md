@@ -449,9 +449,12 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   acta (el acta marco de REG-12 no existe; spec 2026-09-01). `applicationAcceptedEmail` es un
   ACUSE — el nombre es histórico para no tocar el webhook. Los recibos de ingreso pre-acta
   llevan leyenda de admisión pendiente (`admissionPending`, que se OMITE —no `false`— cuando
-  no aplica). OJO: `ChoiceCard`/`NavButtons` de `asociate/wizard-ui.tsx` los IMPORTAN también
-  REEMPADRONATE y `/mi/solicitudes` —son compartidos, extendidos aditivamente—; lo que diverge
-  a propósito desde el 01/09/2026 es el STEPPER: REEMPADRONATE conserva el suyo inline.
+  no aplica). OJO: las primitivas de `asociate/wizard-ui.tsx` se comparten fuera de ASOCIATE,
+  pero NO con los mismos importadores: REEMPADRONATE toma `Field`/`NavButtons` y no `ChoiceCard`;
+  `ChoiceCard` lo importan el paso 2 (residencia) y el paso 3 (categoría) de ASOCIATE, los dos
+  pasos de REPORTES (`reportes/step-report.tsx`, `reportes/step-start.tsx`) y `/mi/solicitudes`
+  —son compartidos, se extienden aditivamente—; lo que diverge a propósito desde el 01/09/2026
+  es el STEPPER: REEMPADRONATE conserva el suyo inline.
 
 ## Patrones que estrenó el Módulo 7 (Reportes)
 
@@ -595,6 +598,17 @@ conciliación diaria, que simplemente no corre si no están cargados.
 Lo mismo vale para **`digest_recipients`** (fase 4C): quién recibe el resumen
 diario a la Comisión vive en `Configuration` y se edita desde
 `/admin/configuracion`. Cambiar los destinatarios no puede exigir un deploy.
+Y para **`colaborador_habilitado`** (02/09/2026): la categoría socio colaborador
+es del estatuto reformado, pendiente de la IGJ, y el sitio se lanza antes. Con la
+llave apagada —ausente cuenta como apagada— ASOCIATE deshabilita "En otro barrio"
+y `/mi/solicitudes` no ofrece Colaborador; las guardas leen directo
+(`categoryOfferedOnWeb`, `requestableCategories`) y las pantallas de admin no
+cambian. Se prende desde `/admin/configuracion` el día de la oficialización.
+La tarjeta deshabilitada se atenúa por la **superficie y el control**
+(`border-dashed bg-muted/40`, radio e ícono al 50 %) y **nunca por el texto**: la
+línea del motivo es el único aviso que recibe el vecino y se queda a contraste
+pleno — un `opacity` sobre la tarjeta entera la midió en 2,3:1, y hay un test de
+fuente que fija que no vuelva.
 
 ## Prioridad actual
 
@@ -652,5 +666,12 @@ Verificación real pendiente de la 4B: el **débito del socio 14 del 10/09/2026*
 que entrar solo. (`GET /v1/payments/search` **sí indexa en producción** — quedó
 confirmado en el primer `reconcile` real, que recuperó 24 débitos históricos; en
 sandbox devolvía 0 siempre.)
+
+La **llave `colaborador_habilitado`** (02/09/2026) está implementada en la rama
+`collaborator-switch` para lanzar antes de la IGJ: cierra la rama "En otro
+barrio" de ASOCIATE y el pase a colaborador desde `/mi/solicitudes`, y
+`/mi/documentos` ya no rotula el estatuto reformado como "Norma vigente". Sin
+migración ni variable nueva. Queda pendiente el pase de copy que cita artículos
+de la reforma (spec 2026-09-02 §9), a cotejar contra el estatuto anterior.
 
 No arrancar una fase sin cerrar los criterios de aceptación de la anterior.

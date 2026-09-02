@@ -78,16 +78,19 @@ export default async function MiDocumentosPage() {
         </p>
       </div>
       {featured && (
-        // La norma vigente, con el lenguaje visual de la credencial: rounded-2xl
-        // + ring. Sobria y tipográfica — es un documento, no una tarjeta de
-        // identidad.
+        // El estatuto destacado, con el lenguaje visual de la credencial:
+        // rounded-2xl + ring. Sobria y tipográfica — es un documento, no una
+        // tarjeta de identidad. El eyebrow dice "Estatuto" y no "Norma
+        // vigente" (spec 2026-09-02): el PDF cargado es el texto reformado,
+        // pendiente de oficialización por la IGJ, y qué versión rige lo dice la
+        // DESCRIPCIÓN del documento, que la Comisión edita desde /admin/documentos.
         <section
-          aria-label="Norma vigente"
+          aria-label="Estatuto"
           className="space-y-3 rounded-2xl bg-card p-5 ring-1 ring-foreground/10"
         >
           <p className="flex items-center gap-2 text-xs font-semibold tracking-widest text-primary uppercase">
             <ScrollText className="size-4" aria-hidden />
-            Norma vigente
+            Estatuto
           </p>
           <div>
             <h2 className="text-xl font-bold">{featured.title}</h2>
