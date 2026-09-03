@@ -71,11 +71,11 @@ describe("MiTabs", () => {
     const html = await render("/mi");
     const [desktop, mobile] = navs(html);
     // La de escritorio conserva el subrayado (tests/section-tabs.test.ts lo
-    // fija a nivel archivo; acá se fija a nivel render) y se esconde bajo sm.
-    expect(desktop).toMatch(/<nav [^>]*class="[^"]*\bhidden\b[^"]*\bsm:block\b/);
+    // fija a nivel archivo; acá se fija a nivel render) y se esconde bajo md.
+    expect(desktop).toMatch(/<nav [^>]*class="[^"]*\bhidden\b[^"]*\bmd:block\b/);
     expect(desktop).toContain("border-b-2");
-    // La móvil vive dentro de un envoltorio sm:hidden y no usa subrayado.
-    expect(html.slice(html.indexOf(desktop) + desktop.length)).toMatch(/class="[^"]*\bsm:hidden\b/);
+    // La móvil vive dentro de un envoltorio md:hidden y no usa subrayado.
+    expect(html.slice(html.indexOf(desktop) + desktop.length)).toMatch(/class="[^"]*\bmd:hidden\b/);
     expect(mobile).not.toContain("border-b-2");
   });
 

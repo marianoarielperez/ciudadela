@@ -6,8 +6,8 @@
 //
 // Tres niveles visuales, cada uno con su forma, para que una pestaña de sección
 // no se confunda con la nav ni con los filtros:
-//   1. nav del shell de /mi  → subrayado fino en ≥sm y tira grande con la
-//      activa en bloque bajo sm (mi-tabs.tsx, NO usa este módulo)
+//   1. nav del shell de /mi  → subrayado fino en ≥md y tira grande con la
+//      activa en bloque bajo md (mi-tabs.tsx, NO usa este módulo)
 //   2. pestañas de sección   → esta solapa
 //   3. segmentos de vista    → píldora sobre pista gris (filter-chips.tsx)
 //

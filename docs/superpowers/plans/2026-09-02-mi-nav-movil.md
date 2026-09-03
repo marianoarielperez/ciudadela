@@ -15,7 +15,7 @@
 - UI en español (es-AR, "vos"); código, nombres y commits en inglés.
 - Cambio **visual**: `src/lib/mi/nav.ts`, `src/app/mi/layout.tsx`, `src/components/mi/solicitudes-tabs.tsx` y `src/lib/ui/section-tabs.ts` no se modifican (salvo un comentario en el último, Tarea 3).
 - `mi-tabs.tsx` **NO** importa `@/lib/ui/section-tabs` y conserva el literal `border-b-2` (lo fija `tests/section-tabs.test.ts`, "la nav del shell de /mi NO usa el módulo y conserva su subrayado").
-- Corte: `sm` (640 px). Tira nueva `sm:hidden`; nav actual `hidden sm:block`.
+- Corte: `md` (768 px), cambiado desde `sm` por decisión del operador tras la pasada de navegador. Tira nueva `md:hidden`; nav actual `hidden md:block`.
 - Medidas de la spec §3: pestaña `basis-20` (80 px) que crece, `min-h-16` (64 px), radio 10 px, ícono `size-6`, texto `text-sm font-medium` (`font-semibold` en la activa), activa `bg-primary text-primary-foreground`, inactiva `text-foreground` con ícono `text-primary`; botón de 44 px con círculo visible de 36 px (`size-9`), chevron `size-5`, degradado de 64 px (`w-16`).
 - Targets ≥ 44 px; `outline-hidden` + `focus-visible:ring-2 focus-visible:ring-ring`; íconos `aria-hidden`; `aria-current="page"` con la `isMiTabActive` existente.
 - Sin migración, sin variable de entorno, sin dependencia nueva.

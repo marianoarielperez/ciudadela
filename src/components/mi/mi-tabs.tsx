@@ -1,12 +1,14 @@
 "use client";
 // Nav del shell del panel de socio: pestañas por URL (links, no botones —
 // deep-link, botón atrás y aria-current gratis; mismo criterio que
-// TreasuryTabs). Dos presentaciones de la MISMA lista, una por corte:
-//   < sm  MobileStrip: pestañas de 80×64 con el ícono arriba, la activa en
+// TreasuryTabs). Dos presentaciones de la MISMA lista, una por corte en `md`
+// (768px) y no en `sm`: entre 640 y 767px la nav de subrayado (684px) cortaba
+// "Documentos" sin ninguna señal, mientras la tira entra entera y sin flechas.
+//   < md  MobileStrip: pestañas de 80×64 con el ícono arriba, la activa en
 //         bloque celeste y una flecha flotante que desplaza la tira. Nace de
 //         que en 375px "Solicitudes" y "Documentos" quedaban fuera de la vista
 //         sin ninguna señal (spec 2026-09-02-mi-nav-movil-design).
-//   ≥ sm  DesktopTabs: la tira con subrayado de siempre, sin cambios.
+//   ≥ md  DesktopTabs: la tira con subrayado de siempre, sin cambios.
 // Ninguna de las dos importa `section-tabs`: son la nav del shell (nivel 1),
 // no pestañas de sección; tests/section-tabs.test.ts lo fija.
 import Link from "next/link";
@@ -45,12 +47,12 @@ export function MiTabs({ tabs }: { tabs: MiTab[] }) {
   );
 }
 
-// ---- Escritorio (≥ sm): sin cambios respecto de la 5A ----------------------
+// ---- Escritorio (≥ md): sin cambios respecto de la 5A ----------------------
 // Targets de 48px. El -my-1/py-1 evita que overflow-x-auto recorte el anillo
 // de foco (la trampa documentada en section-tabs.ts).
 function DesktopTabs({ tabs, pathname }: { tabs: MiTab[]; pathname: string }) {
   return (
-    <nav aria-label="Secciones del panel" className="-mx-4 -my-1 hidden overflow-x-auto px-4 py-1 sm:block">
+    <nav aria-label="Secciones del panel" className="-mx-4 -my-1 hidden overflow-x-auto px-4 py-1 md:block">
       <ul className="flex min-w-max gap-1">
         {tabs.map((tab) => {
           const active = isMiTabActive(pathname, tab.href);
@@ -79,7 +81,7 @@ function DesktopTabs({ tabs, pathname }: { tabs: MiTab[]; pathname: string }) {
   );
 }
 
-// ---- Celular (< sm) ---------------------------------------------------------
+// ---- Celular (< md) ---------------------------------------------------------
 
 type Edges = { overflows: boolean; atStart: boolean; atEnd: boolean };
 
@@ -146,7 +148,7 @@ function MobileStrip({ tabs, pathname }: { tabs: MiTab[]; pathname: string }) {
     const observer = new ResizeObserver((entries) => {
       const width = entries[entries.length - 1]?.contentRect.width ?? el.clientWidth;
       // La tira volvió de `display:none` (vertical → horizontal → vertical
-      // cruza `sm`): el navegador le dejó scrollLeft en 0 y hay que recentrar.
+      // cruza `md`): el navegador le dejó scrollLeft en 0 y hay que recentrar.
       const returned = lastWidth.current === 0 && width > 0;
       lastWidth.current = width;
       if (returned) revealActive();
@@ -174,7 +176,7 @@ function MobileStrip({ tabs, pathname }: { tabs: MiTab[]; pathname: string }) {
     // `-mx-4`: la tira usa el ancho entero de la pantalla (el envoltorio del
     // header trae px-4). `relative`: las flechas se posicionan contra esto, y
     // viven DENTRO del nav porque son los controles que lo operan.
-    <nav aria-label="Secciones del panel" className="relative -mx-4 sm:hidden">
+    <nav aria-label="Secciones del panel" className="relative -mx-4 md:hidden">
       {/* El padding vertical vive DENTRO del contenedor con scroll para que
           el anillo de foco (2px) de las pestañas no se recorte. La barra de
           scroll se esconde: las flechas son la señal.

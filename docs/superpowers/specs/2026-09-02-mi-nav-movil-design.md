@@ -18,7 +18,8 @@ sección activa que no se ve.
 
 | Pregunta | Decisión |
 |---|---|
-| Alcance | **Solo celular** (< 640 px). Desde `sm` la nav actual queda **byte-idéntica**. |
+| Alcance | **Solo celular** (< 768 px). Desde `md` la nav actual queda **byte-idéntica**. |
+| Corte | **`md` (768 px)**, no `sm`: la pasada de navegador midió que entre 640 y 767 px la nav de subrayado (684 px) cortaba "Documentos" sin señal, mientras la tira entra entera y sin flechas (decisión del operador, 02/09/2026). |
 | Espacio vertical | Lo que haga falta arriba; la nav **se va con el encabezado** al hacer scroll (no es sticky). |
 | Patrón | Tira grande que desliza, con **señal y botón** de "hay más" (variante C del mockup). Descartadas: mosaico 3×2 y fichas en dos filas. |
 | Flecha | Botón que **desplaza** la tira; al llegar al final aparece **del lado izquierdo** apuntando atrás. **Deslizar con el dedo sigue funcionando.** |
@@ -41,7 +42,7 @@ Mockup aprobado: artefacto "Navegación móvil de /mi" (tres estados a 375 px).
 | Inactiva | `text-foreground`, sin fondo; `hover:bg-muted` |
 | Flecha | **Flotante** sobre el borde de la tira: botón de 44 px de target con un círculo visible de 36 px `bg-primary` y chevron de 20 px, sobre un degradado de 64 px de `bg-background` a transparente. No ocupa ancho: la tira usa los 375 px enteros (`-mx-4`), y en 375 px se ven **cuatro pestañas enteras** y una parcial, que es la que queda bajo la flecha. |
 | Alto total de la nav | ≈ 78 px (hoy ≈ 56 px) |
-| Corte | `sm:hidden` para la tira nueva; `hidden sm:block` para la nav actual |
+| Corte | `md:hidden` para la tira nueva; `hidden md:block` para la nav actual |
 
 Estados de las flechas (cada una con su degradado):
 
@@ -98,8 +99,8 @@ Estados de las flechas (cada una con su degradado):
 
 Un archivo de producto: `src/components/mi/mi-tabs.tsx` (ya es `"use client"`).
 
-- `MiTabs` renderiza dos hermanos: `<nav className="hidden sm:block">` con el markup de hoy
-  sin cambios, y `<MobileStrip>` (mismo archivo) con `sm:hidden`.
+- `MiTabs` renderiza dos hermanos: `<nav className="hidden md:block">` con el markup de hoy
+  sin cambios, y `<MobileStrip>` (mismo archivo) con `md:hidden`.
 - `MobileStrip` es donde viven el `ref` del contenedor, el estado `{ atStart, atEnd, overflows }`,
   el `ResizeObserver`, el listener de scroll y el `useLayoutEffect` del posicionado.
 - Mapa de íconos: el `ICONS` existente, con `size-6` en la tira.
@@ -113,9 +114,9 @@ Un archivo de producto: `src/components/mi/mi-tabs.tsx` (ya es `"use client"`).
   - en cada nav hay **exactamente un** `aria-current="page"` para `/mi`, `/mi/documentos` y
     una subruta (`/mi/solicitudes/reportes`);
   - los dos botones tienen nombre accesible y `type="button"`;
-  - la nav móvil lleva `sm:hidden` y la de escritorio `hidden sm:block`.
+  - la nav móvil lleva `md:hidden` y la de escritorio `hidden md:block`.
 - **Existentes** sin tocar: `tests/mi-nav.test.ts`, `tests/section-tabs.test.ts`.
-- **En navegador** (dev server, viewport 375 × 812 y 640): cuatro pestañas visibles en
+- **En navegador** (dev server, viewport 375 × 812 y 768): cuatro pestañas visibles en
   Inicio con la flecha derecha; en Documentos la tira arranca al final con la flecha
-  izquierda; tocar la flecha desplaza; deslizar con el dedo funciona; en 640 px aparece la
+  izquierda; tocar la flecha desplaza; deslizar con el dedo funciona; en 768 px aparece la
   nav actual. Captura de cada estado.

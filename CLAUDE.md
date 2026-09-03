@@ -88,8 +88,8 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **Badges de estado**: `src/lib/admin/status-badges.ts`, no ternarios por pantalla.
 - **Pestañas de sección: solapa "Carpeta" desde `src/lib/ui/section-tabs.ts`**
   (02/09/2026). Tres niveles, cada uno con su forma: la nav del shell de `/mi` es
-  subrayado desde `sm` y **tira grande bajo `sm`** (`mi-tabs.tsx`, NO usa
-  el módulo; bajo `sm` pinta pestañas de 80×64 con la activa en bloque celeste,
+  subrayado desde `md` y **tira grande bajo `md`** (`mi-tabs.tsx`, NO usa
+  el módulo; bajo `md` pinta pestañas de 80×64 con la activa en bloque celeste,
   flechas flotantes que desplazan y la activa a la vista al cargar — spec
   2026-09-02-mi-nav-movil-design), las pestañas de sección son
   solapas (las 4 por URL y las 4 Radix, con `TabsList variant="section"`) y los
