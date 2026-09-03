@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** En celulares (< 640 px), reemplazar la tira de pestañas del shell de `/mi` por una tira grande con la activa en bloque celeste, flechas flotantes que la desplazan y la activa siempre a la vista al cargar; en escritorio nada cambia.
+**Goal:** En celulares (< 768 px), reemplazar la tira de pestañas del shell de `/mi` por una tira grande con la activa en bloque celeste, flechas flotantes que la desplazan y la activa siempre a la vista al cargar; en escritorio nada cambia.
 
-**Architecture:** Un solo archivo de producto, `src/components/mi/mi-tabs.tsx`, pasa a renderizar dos hermanos a partir de la MISMA lista `MiTab[]`: `DesktopTabs` (el markup de hoy, `hidden sm:block`) y `MobileStrip` (`sm:hidden`), que es el único con estado (bordes del scroll) y efectos (`ResizeObserver`, listener de scroll, `useLayoutEffect` de posicionado). `src/lib/mi/nav.ts`, el layout y las páginas no se tocan.
+**Architecture:** Un solo archivo de producto, `src/components/mi/mi-tabs.tsx`, pasa a renderizar dos hermanos a partir de la MISMA lista `MiTab[]`: `DesktopTabs` (el markup de hoy, `hidden md:block`) y `MobileStrip` (`md:hidden`), que es el único con estado (bordes del scroll) y efectos (`ResizeObserver`, listener de scroll, `useLayoutEffect` de posicionado). `src/lib/mi/nav.ts`, el layout y las páginas no se tocan.
 
 **Tech Stack:** Next.js 16.3 (App Router), React 19.2, Tailwind v4, lucide-react, vitest 4 (entorno `node`, render con `renderToStaticMarkup`).
 
@@ -432,6 +432,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 2: Verificación en el navegador (375 px y 640 px)
 
+> Nota: el corte pasó de sm (640) a md (768) por decisión del operador tras esta pasada; los pasos de abajo ya están actualizados.
+
 Esta tarea no escribe código salvo que la verificación encuentre un defecto. Necesita una sesión de socio en el dev server; **Claude no tipea contraseñas**: el operador (Mariano) inicia sesión en la pestaña del Browser pane y avisa.
 
 **Files:**
@@ -468,7 +470,10 @@ Con el preset mobile activo (toque emulado), `left_click_drag` desde el centro d
 
 - [ ] **Step 6: Escritorio intacto**
 
-`resize_window` `{ preset: "desktop" }` (y luego `{ width: 640, height: 900 }` para el borde del corte). Verificar: la tira grande no está, la nav con subrayado se ve con las seis pestañas, Documentos activa con `border-primary`. Captura `mi-nav-640.png`.
+`resize_window` `{ preset: "desktop" }` y luego los dos lados del corte:
+
+- `{ width: 768, height: 900 }` (justo en `md`): la tira grande no está, la nav con subrayado se ve con las **seis** pestañas enteras y Documentos activa con `border-primary`. Captura `mi-nav-768.png`.
+- `{ width: 700, height: 900 }` (justo abajo del corte): la nav con subrayado no está y la tira grande muestra las **seis** pestañas **sin ninguna flecha** (`find` de "Ver más secciones" y "Ver secciones anteriores" devuelve envoltorios con `hidden`). Captura `mi-nav-700.png`.
 
 - [ ] **Step 7: Socio que no paga cuota (si hay uno a mano)**
 

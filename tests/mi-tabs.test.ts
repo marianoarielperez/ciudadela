@@ -84,9 +84,11 @@ describe("MiTabs", () => {
     const mobile = navs(html)[1];
     const [inicio, cuenta] = links(mobile);
     expect(cuenta).toContain('aria-current="page"');
-    // Sin asumir el orden dentro del atributo: dos aserciones por token.
-    expect(cuenta).toMatch(/class="[^"]*(^|\s)bg-primary(\s|")/);
-    expect(cuenta).toMatch(/class="[^"]*(^|\s)text-primary-foreground(\s|")/);
+    // Sin asumir el orden dentro del atributo: dos aserciones por token. Y
+    // ancladas al `<a …>`: el string del link incluye el <svg>, que lleva la
+    // misma clase `text-primary-foreground` cuando la pestaña está activa.
+    expect(cuenta).toMatch(/<a [^>]*class="[^"]*(\s|")bg-primary(\s|")/);
+    expect(cuenta).toMatch(/<a [^>]*class="[^"]*(\s|")text-primary-foreground(\s|")/);
     expect(inicio).not.toContain("bg-primary");
     expect(inicio).toMatch(/<svg [^>]*class="[^"]*\btext-primary\b/);
   });
@@ -101,7 +103,9 @@ describe("MiTabs", () => {
     for (const li of items) {
       expect(li).toMatch(/\bbasis-20\b/);
       // `grow` a secas, no `grow-0`: la clase tiene que terminar donde termina.
-      expect(li).toMatch(/class="[^"]*(^|\s)grow(\s|")/);
+      // El borde izquierdo es `(\s|")` y no `(^|\s)`: después de `class="` el
+      // ancla `^` no puede matchear nunca, así que sólo servía el `\s`.
+      expect(li).toMatch(/class="[^"]*(\s|")grow(\s|")/);
     }
     expect(mobile).toMatch(/<a [^>]*class="[^"]*\bmin-h-16\b/);
   });
@@ -172,5 +176,28 @@ describe("readEdges", () => {
     expect(await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: max - 1 })).toMatchObject({
       atEnd: true,
     });
+  });
+
+  // El borde exacto de la holgura, clavado de los dos lados: si EDGE_SLACK
+  // cambia de valor o el comparador pasa de >= a >, estos cuatro se caen.
+  it("justo en la holgura cuenta como final, y un pixel antes no", async () => {
+    const { EDGE_SLACK } = await import("@/components/mi/mi-tabs");
+    const max = 600 - 375;
+    expect(
+      await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: max - EDGE_SLACK }),
+    ).toMatchObject({ atEnd: true });
+    expect(
+      await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: max - EDGE_SLACK - 1 }),
+    ).toMatchObject({ atEnd: false });
+  });
+
+  it("justo en la holgura cuenta como inicio, y un pixel después no", async () => {
+    const { EDGE_SLACK } = await import("@/components/mi/mi-tabs");
+    expect(
+      await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: EDGE_SLACK }),
+    ).toMatchObject({ atStart: true });
+    expect(
+      await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: EDGE_SLACK + 1 }),
+    ).toMatchObject({ atStart: false });
   });
 });

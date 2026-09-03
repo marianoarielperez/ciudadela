@@ -105,7 +105,10 @@ const SSR_EDGES: Edges = { overflows: true, atStart: true, atEnd: false };
 
 function MobileStrip({ tabs, pathname }: { tabs: MiTab[]; pathname: string }) {
   const listRef = useRef<HTMLUListElement>(null);
-  const lastWidth = useRef(0);
+  // -1 y no 0: "todavía no medí" tiene que ser distinguible de "midió 0 porque
+  // estaba oculta". Con 0, la PRIMERA observación se leía como un regreso de
+  // `display:none` y recentraba de más.
+  const lastWidth = useRef(-1);
   const [edges, setEdges] = useState<Edges>(SSR_EDGES);
 
   const sync = useCallback(() => {
@@ -149,6 +152,8 @@ function MobileStrip({ tabs, pathname }: { tabs: MiTab[]; pathname: string }) {
       const width = entries[entries.length - 1]?.contentRect.width ?? el.clientWidth;
       // La tira volvió de `display:none` (vertical → horizontal → vertical
       // cruza `md`): el navegador le dejó scrollLeft en 0 y hay que recentrar.
+      // Exige un ancho previo de EXACTAMENTE 0 (o sea, oculta y ya medida): la
+      // primera observación llega con -1 y no cuenta como regreso.
       const returned = lastWidth.current === 0 && width > 0;
       lastWidth.current = width;
       if (returned) revealActive();
