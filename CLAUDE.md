@@ -87,11 +87,11 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   que lo resuelve; `size="card"` es una línea). **Nunca renderizar un `thead` sin filas.**
 - **Badges de estado**: `src/lib/admin/status-badges.ts`, no ternarios por pantalla.
 - **Pestañas de sección: solapa "Carpeta" desde `src/lib/ui/section-tabs.ts`**
-  (02/09/2026). Tres niveles con tres formas: la nav del shell de `/mi` es
-  subrayado en escritorio y **tira grande en celular** (`mi-tabs.tsx`, NO usa
+  (02/09/2026). Tres niveles, cada uno con su forma: la nav del shell de `/mi` es
+  subrayado desde `sm` y **tira grande bajo `sm`** (`mi-tabs.tsx`, NO usa
   el módulo; bajo `sm` pinta pestañas de 80×64 con la activa en bloque celeste,
   flechas flotantes que desplazan y la activa a la vista al cargar — spec
-  2026-09-02-mi-nav-movil), las pestañas de sección son
+  2026-09-02-mi-nav-movil-design), las pestañas de sección son
   solapas (las 4 por URL y las 4 Radix, con `TabsList variant="section"`) y los
   filtros de vista son segmentos (`FilterChips`). Una barra nueva importa las
   constantes del módulo; `tests/section-tabs.test.ts` lo fija de fuente. Ojo

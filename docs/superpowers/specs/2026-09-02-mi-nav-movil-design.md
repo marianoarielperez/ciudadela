@@ -106,7 +106,7 @@ Un archivo de producto: `src/components/mi/mi-tabs.tsx` (ya es `"use client"`).
 
 ## 8. Pruebas
 
-- **Nuevo** `tests/mi-tabs.test.tsx` (render con `renderToStaticMarkup` y `usePathname`
+- **Nuevo** `tests/mi-tabs.test.ts` (render con `renderToStaticMarkup` y `usePathname`
   mockeado, como en `section-tabs.test.ts`):
   - las dos navs listan las mismas pestañas en el mismo orden (`miTabsFor(true)` y
     `miTabsFor(false)`);
