@@ -31,6 +31,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 type Row = {
   id: number;
+  number: number | null;
   kind: "claim" | "initiative";
   status: string;
   category: string;
@@ -116,6 +117,9 @@ function seed(rows: Row[]) {
 }
 
 const BASE: Omit<Row, "id"> = {
+  // El N° PÚBLICO del pin. Por defecto NO coincide con ningún id de los
+  // fixtures: el rótulo tiene que salir de él y el `href` del id.
+  number: 500,
   kind: "claim",
   status: "received",
   category: "water",
@@ -170,11 +174,11 @@ describe("/admin/solicitudes/reportes/mapa", () => {
     seed([{ ...BASE, id: 1 }]);
     await render();
     const select = h.findMany.mock.calls[0][0].select as Record<string, unknown>;
-    expect(Object.keys(select).sort()).toEqual(["category", "id", "kind", "lat", "lng", "status"]);
+    expect(Object.keys(select).sort()).toEqual(["category", "id", "kind", "lat", "lng", "number", "status"]);
   });
 
   it("el payload del mapa no lleva un solo dato de identidad ni la descripción", async () => {
-    seed([{ ...BASE, id: 14 }]);
+    seed([{ ...BASE, id: 14, number: 3 }]);
     await render();
     const serialized = JSON.stringify(lastPoints());
     expect(serialized).not.toContain("PIERDE_AGUA_EN_LA_VEREDA");
@@ -182,10 +186,12 @@ describe("/admin/solicitudes/reportes/mapa", () => {
     expect(serialized).not.toContain("description");
     expect(serialized).not.toContain("reporterName");
     // Lo que sí lleva: el rótulo ya redactado y el link a la ficha.
+    // El rótulo lleva el N° PÚBLICO (3) y el link, el id (14): el pin dice lo
+    // que el vecino cita y navega por la llave interna.
     expect(lastPoints()[0]).toMatchObject({
       id: 14,
       status: "received",
-      title: "N° 14 · Reclamo · Agua potable",
+      title: "N° 3 · Reclamo · Agua potable",
       state: "Recibido",
       href: "/admin/solicitudes/reportes/14",
       lat: -45.7966,
@@ -228,11 +234,11 @@ describe("/admin/solicitudes/reportes/mapa", () => {
   });
 
   it("el estado se nombra según el tipo: una iniciativa se desestima en femenino", async () => {
-    seed([{ ...BASE, id: 9, kind: "initiative", status: "dismissed", category: "cultural" }]);
+    seed([{ ...BASE, id: 9, number: 4, kind: "initiative", status: "dismissed", category: "cultural" }]);
     await render({ estado: "desestimados" });
     expect(lastPoints()[0]).toMatchObject({
       status: "dismissed",
-      title: "N° 9 · Iniciativa · Cultural",
+      title: "N° 4 · Iniciativa · Cultural",
       state: "Desestimada",
     });
   });
@@ -255,12 +261,15 @@ describe("/admin/solicitudes/reportes/mapa", () => {
   });
 
   it("la lista sr-only es la ruta de teclado: un link por reporte dibujado", async () => {
-    seed([{ ...BASE, id: 1 }, { ...BASE, id: 2, kind: "initiative", category: "social" }]);
+    seed([
+      { ...BASE, id: 1, number: 6 },
+      { ...BASE, id: 2, number: 7, kind: "initiative", category: "social" },
+    ]);
     const html = await render();
     expect(html).toContain("Reportes dibujados en el mapa");
     expect(html).toContain('href="/admin/solicitudes/reportes/1"');
     expect(html).toContain('href="/admin/solicitudes/reportes/2"');
-    expect(html).toContain("N° 2 · Iniciativa · Social · Recibido");
+    expect(html).toContain("N° 7 · Iniciativa · Social · Recibido");
   });
 
   it("con reportes pero ninguno ubicado, el vacío manda a la lista y no al mapa", async () => {

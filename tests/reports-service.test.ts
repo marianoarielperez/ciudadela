@@ -17,6 +17,9 @@ function fakeDb() {
   const reports: Row[] = [];
   const files: FileRow[] = [];
   let nextId = 1;
+  // La fila única de `report_sequences`. El doble la trata como la trata
+  // MariaDB: `$executeRaw` la incrementa y `findUniqueOrThrow` la lee.
+  const sequence = { id: 1, last: 0 };
   const matches = (r: Row, where: Record<string, unknown>) =>
     Object.entries(where).every(([k, v]) => {
       if (v !== null && typeof v === "object" && "in" in (v as object)) {
@@ -87,8 +90,37 @@ function fakeDb() {
         files.filter((f) => f.reportId === where.reportId),
       ),
     },
+    // La transacción del envío. El `tx` que recibe el callback expone lo mismo
+    // que usa `submit`: el `updateMany` de reportes —el MISMO, que honra el
+    // `where`— y las dos piezas de la secuencia. Y modela lo único que importa
+    // de una transacción para este contrato: si el callback TIRA, el número
+    // vuelve atrás. Sin ese `rollback` el test de la carrera pasaría igual con
+    // un `return` en vez del `throw`, que es justo la guarda que sostiene la
+    // serie sin huecos (REG-33).
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const before = sequence.last;
+      const tx = {
+        report: { updateMany: db.report.updateMany },
+        $executeRaw: vi.fn(async () => {
+          sequence.last += 1;
+          return 1;
+        }),
+        reportSequence: {
+          findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: number } }) => {
+            if (where.id !== sequence.id) throw new Error("no existe la fila de la secuencia");
+            return { ...sequence };
+          }),
+        },
+      };
+      try {
+        return await fn(tx);
+      } catch (e) {
+        sequence.last = before;
+        throw e;
+      }
+    }),
   };
-  return { db, reports, files };
+  return { db, reports, files, sequence };
 }
 
 const reporter = { name: "Ana López", dni: "30123456", phone: "2974000000", email: "ana@example.com" };
@@ -181,11 +213,14 @@ describe("submit", () => {
   it("pasa draft→received, estampa submittedAt, consentAt y la marca de fuera del barrio", async () => {
     const { id } = await vecinoDraft();
     const r = await service.submit({ reportId: id, ...submission });
-    expect(r).toEqual({ ok: true, id });
+    // El N° PÚBLICO viaja en la respuesta Y queda escrito en la fila: es lo que
+    // el acuse le manda al vecino y lo que la pantalla terminal imprime.
+    expect(r).toEqual({ ok: true, id, number: 1 });
     expect(ctx.reports[0]).toMatchObject({
       status: "received",
       submittedAt: NOW,
       consentAt: NOW,
+      number: 1,
       category: "streets",
       subtype: "pothole",
       outsideBoundary: false,
@@ -232,7 +267,7 @@ describe("submit", () => {
       lat: null,
       lng: null,
     });
-    expect(r).toEqual({ ok: true, id });
+    expect(r).toEqual({ ok: true, id, number: 1 });
   });
 
   // La normalización de `rules.ts` («"" → null») tiene que llegar a la BASE: una
@@ -247,7 +282,7 @@ describe("submit", () => {
       lat: null,
       lng: null,
     });
-    expect(r).toEqual({ ok: true, id });
+    expect(r).toEqual({ ok: true, id, number: 1 });
     expect(ctx.reports[0].subtype).toBeNull();
   });
 
@@ -274,6 +309,44 @@ describe("submit", () => {
       ok: false,
       error: REPORT_MESSAGES.notDraft,
     });
+  });
+
+  // REG-33 aplicado a los reportes: el envío perdido de la carrera de arriba
+  // PIDIÓ un número antes de descubrir que el borrador ya no era suyo, y ese
+  // número tiene que volver con el rollback. Si no volviera, el próximo vecino
+  // sería el "N° 3" siendo el segundo reporte de la historia — el hueco que
+  // esta serie viene a eliminar.
+  //
+  // MUTACIÓN que lo prueba: cambiar el `throw new NotDraftError()` de
+  // `service.submit` por un `return { ok: false, ... }` deja la transacción
+  // commitear y esta aserción se pone en rojo (`last` queda en 2).
+  it("un envío que pierde la carrera NO consume número: la secuencia vuelve atrás", async () => {
+    const a = await vecinoDraft();
+    const stale = await ctx.db.report.findUnique({ where: { id: a.id } });
+    expect(await service.submit({ reportId: a.id, ...submission })).toMatchObject({ number: 1 });
+    ctx.db.report.findUnique.mockResolvedValueOnce(stale);
+    await service.submit({ reportId: a.id, ...submission });
+    expect(ctx.sequence.last).toBe(1);
+
+    // Y el siguiente envío REAL toma el 2, no el 3: la serie quedó corrida.
+    const b = await vecinoDraft();
+    expect(await service.submit({ reportId: b.id, ...submission })).toEqual({
+      ok: true,
+      id: b.id,
+      number: 2,
+    });
+  });
+
+  // El N° no es el id: la fila nace `draft` en el paso 1 y los abandonados se
+  // llevaban un número. Con tres borradores muertos antes, el primer envío
+  // sigue siendo el N° 1 aunque su id sea el 4.
+  it("los borradores abandonados no gastan número: el primer envío es el N° 1", async () => {
+    for (let i = 0; i < 3; i++) {
+      await service.startDraft({ kind: "claim", anonymous: false, ip: "1", userAgent: "" });
+    }
+    const { id } = await vecinoDraft();
+    expect(id).toBe(4);
+    expect(await service.submit({ reportId: id, ...submission })).toEqual({ ok: true, id, number: 1 });
   });
 });
 

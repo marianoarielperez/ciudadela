@@ -10,7 +10,10 @@ import { makeReportNotifier } from "@/lib/reports/notify";
 type SendInput = Parameters<typeof mailer.sendToReport>[0];
 
 const report = {
-  id: 14, kind: "claim", anonymous: false, category: "water", subtype: "leak",
+  // `id` es la llave interna (el `reportId` de la fila de `Notification` y el
+  // enlace al panel); `number` es el N° PÚBLICO que va en el TEXTO del correo.
+  // Distintos a propósito.
+  id: 14, number: 3 as number | null, kind: "claim", anonymous: false, category: "water", subtype: "leak",
   reporterName: "Ana López", reporterDni: "30123456", reporterPhone: "2974", reporterEmail: "ana@example.com" as string | null,
   streetName: "Cerro Catedral", addressDetail: "al 280", description: "Pierde agua.",
   filedAgency: "scpl", filedAgencyOther: null, filedAt: new Date("2026-09-12T15:00:00Z"), filedReference: null,
@@ -59,6 +62,35 @@ describe("sendReceived / sendFiled", () => {
     await expect(notifier.sendReceived(14)).resolves.toBeUndefined();
     expect(log.mock.calls.flat().join(" ")).not.toContain("ana@example.com");
     log.mockRestore();
+  });
+});
+
+// El vecino cita el N° que le llegó por correo, y el operador lo busca en la
+// cola por ese mismo número: los tres correos tienen que decir el PÚBLICO.
+describe("el N° de los tres correos es el público, no el id", () => {
+  const textOf = (send: { mock: { calls: unknown[][] } }, i = 0) =>
+    JSON.stringify((send.mock.calls[i][0] as { message: unknown }).message);
+
+  it("acuse, aviso de presentado y alerta a la Comisión dicen N° 3, no N° 14", async () => {
+    const { notifier, send } = build();
+    await notifier.sendReceived(14);
+    expect(textOf(send)).toContain("N° 3");
+    expect(textOf(send)).not.toContain("N° 14");
+    await notifier.sendFiled(14);
+    expect(textOf(send, 1)).toContain("N° 3");
+    await notifier.sendBoardAlert(14, ["a@b.com"]);
+    expect(textOf(send, 2)).toContain("N° 3");
+    // Y el enlace al panel sigue yendo por el ID: es la URL de la ficha.
+    expect(textOf(send, 2)).toContain("/admin/solicitudes/reportes/14");
+  });
+
+  // No debería pasar —los tres corren después del envío, que escribe el número
+  // en su misma transacción— pero un correo sin ningún número es peor que uno
+  // con la llave interna.
+  it("sin número escrito, el correo cae al id antes que salir sin número", async () => {
+    const { notifier, send } = build({ number: null });
+    await notifier.sendReceived(14);
+    expect(textOf(send)).toContain("N° 14");
   });
 });
 

@@ -172,7 +172,7 @@ export default async function ReportesPage(props: {
                     <CardHeader>
                       <CardTitle as="h2" className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                         <span className="flex items-center gap-2">
-                          <span className="font-mono tabular-nums text-muted-foreground">N° {r.id}</span>
+                          <span className="font-mono tabular-nums text-muted-foreground">N° {r.number ?? "—"}</span>
                           <Badge variant={reportKindBadgeVariant(r.kind)}>
                             <ReportKindIcon kind={r.kind} /> {KIND_LABELS[r.kind]}
                           </Badge>

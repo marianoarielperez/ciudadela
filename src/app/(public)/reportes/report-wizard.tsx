@@ -293,7 +293,8 @@ export function ReportWizard(props: ReportWizardProps & ReportCaptchaProps) {
       />
     );
   }
-  // Ya enviado pero sin N° (no debería pasar: el N° es el id). Sin esto el
+  // Ya enviado pero sin N° (no debería pasar: el envío y el N° se escriben en
+  // la misma transacción, así que un reporte enviado siempre tiene). Sin esto el
   // vecino caería en el paso 3 sobre un reporte que ninguna action deja tocar.
   // Va con salida: un mensaje solo, sin un enlace, deja al vecino en una
   // pantalla sin nada que tocar.

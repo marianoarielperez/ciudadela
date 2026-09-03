@@ -52,6 +52,9 @@ import { REPORT_FILE_CSP } from "@/lib/reports/file-response";
 
 const report = {
   id: 14,
+  // El N° PÚBLICO, distinto del id a propósito: al papel y al nombre del
+  // archivo va el 3; a la auditoría y a la lectura de la base, el 14.
+  number: 3,
   kind: "claim",
   status: "received",
   anonymous: false,
@@ -141,7 +144,7 @@ describe("GET /api/admin/reportes/[id]/pdf", () => {
     );
 
     expect(res.headers.get("Content-Type")).toBe("application/pdf");
-    expect(res.headers.get("Content-Disposition")).toBe('inline; filename="reporte-14.pdf"');
+    expect(res.headers.get("Content-Disposition")).toBe('inline; filename="reporte-3.pdf"');
     expect(res.headers.get("Cache-Control")).toBe("no-store, private");
     expect(res.headers.get("Vary")).toBe("Cookie");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
@@ -153,7 +156,7 @@ describe("GET /api/admin/reportes/[id]/pdf", () => {
     await call();
     const [data] = renderCall();
     expect(data).toMatchObject({
-      number: 14,
+      number: 3,
       kind: "claim",
       status: "received",
       categoryLabel: "Agua potable",

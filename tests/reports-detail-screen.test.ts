@@ -53,6 +53,9 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 const BASE = {
   id: 14,
+  // El N° PÚBLICO, distinto del id a propósito: la ficha muestra el 3 y navega,
+  // descarga y audita por el 14.
+  number: 3 as number | null,
   kind: "claim" as const,
   status: "received" as const,
   anonymous: false,
@@ -115,7 +118,10 @@ describe("la ficha del reporte", () => {
 
   it("un reclamo pendiente ofrece las dos decisiones y NO consulta el libro de actas", async () => {
     const html = render(await ReporteDetallePage(params("14")));
-    expect(html).toContain("Reporte N° 14");
+    expect(html).toContain("Reporte N° 3");
+    expect(html).not.toContain("Reporte N° 14");
+    // Los `href` siguen con el id: la URL, la descarga del PDF y las fotos.
+    expect(html).toContain('href="/api/admin/reportes/14/pdf"');
     expect(html).toContain("Marcar presentado");
     expect(html).toContain("FILE_FORM");
     expect(html).toContain("DISMISS_FORM");

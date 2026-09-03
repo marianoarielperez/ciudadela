@@ -13,15 +13,25 @@ import { currentYearAR } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 import { isInsideBoundary } from "./boundary";
 import { hashClaim, isClaimShaped, mintClaim } from "./claim";
+import { nextReportNumber } from "./number";
 import { MAX_DISMISS_REASON, MIN_DISMISS_REASON, REPORT_MESSAGES, validateSubmission } from "./rules";
 
 export type ReportWithFiles = Report & { files: ReportFile[] };
 export type Result = { ok: true } | { ok: false; error: string };
-export type SubmitResult = { ok: true; id: number } | { ok: false; error: string };
+/** `id` es lo interno (URL, FK, auditoría) y `number` es lo que se MUESTRA.
+ *  Viajan los dos porque el llamador necesita los dos: la pantalla imprime el
+ *  N° y el correo/el asiento apuntan al id. */
+export type SubmitResult = { ok: true; id: number; number: number } | { ok: false; error: string };
 
 export type ReporterInput = { name: string; dni: string; phone: string; email: string };
 
-type Db = Pick<PrismaClient, "report">;
+type Db = Pick<PrismaClient, "report" | "$transaction">;
+
+/** El "no era borrador" del envío, como EXCEPCIÓN y no como valor de retorno:
+ *  es la única forma de abortar la transacción del envío para que el N° que ya
+ *  se pidió vuelva atrás con ella. Privada del módulo: afuera se sigue viendo
+ *  el mismo `{ ok: false, error: REPORT_MESSAGES.notDraft }` de siempre. */
+class NotDraftError extends Error {}
 
 /** Los estados que ya no son borrador: lo que el socio ve en su panel y lo que
  *  cuenta la landing como "enviado". Un solo lugar, no un `in` por consulta. */
@@ -87,7 +97,9 @@ export function makeReports(deps: { db: Db; now?: () => Date }) {
     },
 
     /** El envío. Revalida TODO contra la base con `validateSubmission` —el
-     *  wizard sólo apaga botones— y escribe con un updateMany por estado. */
+     *  wizard sólo apaga botones— y escribe con un updateMany por estado, ahora
+     *  adentro de una transacción: es el único momento en que se asigna el N°
+     *  público, y el número y la transición tienen que vivir o morir juntos. */
     async submit(input: {
       reportId: number;
       category: string | null;
@@ -129,27 +141,47 @@ export function makeReports(deps: { db: Db; now?: () => Date }) {
 
       const hasCoords = input.lat !== null && input.lng !== null;
       const at = now();
-      const { count } = await db.report.updateMany({
-        where: { id: report.id, status: "draft" },
-        data: {
-          status: "received",
-          submittedAt: at,
-          consentAt: at,
-          category: input.category,
-          // La misma normalización que hizo `validateSubmission` para juzgar: una
-          // categoría sin tipos guarda NULL, no el `""` de un `<select>` sin elegir.
-          subtype: input.subtype?.trim() || null,
-          description: input.description.trim(),
-          lat: hasCoords ? new Prisma.Decimal(input.lat as number) : null,
-          lng: hasCoords ? new Prisma.Decimal(input.lng as number) : null,
-          outsideBoundary: hasCoords ? !isInsideBoundary(input.lat as number, input.lng as number) : false,
-          streetId: input.streetId,
-          streetName: input.streetName?.trim() || null,
-          addressDetail: input.addressDetail?.trim() || null,
-          scplTicket: input.scplTicket?.trim() || null,
-        },
-      });
-      return count === 1 ? { ok: true, id: report.id } : { ok: false, error: REPORT_MESSAGES.notDraft };
+      // El N° público se pide TARDE y ADENTRO de la transacción (REG-33, calcado
+      // de los recibos): todo lo que se podía validar ya se validó arriba, y el
+      // lock de la fila de `report_sequences` se sostiene hasta el commit. Si el
+      // `updateMany` no toma la fila —otro POST ganó la carrera y el borrador ya
+      // no es `draft`— se TIRA adentro para que la transacción haga rollback y
+      // el número NO quede consumido: un hueco en la serie es exactamente lo que
+      // esto viene a evitar. Nada de red ni de disco acá adentro.
+      try {
+        return await db.$transaction(async (tx) => {
+          const number = await nextReportNumber(tx);
+          const { count } = await tx.report.updateMany({
+            where: { id: report.id, status: "draft" },
+            data: {
+              status: "received",
+              submittedAt: at,
+              consentAt: at,
+              number,
+              category: input.category,
+              // La misma normalización que hizo `validateSubmission` para juzgar: una
+              // categoría sin tipos guarda NULL, no el `""` de un `<select>` sin elegir.
+              subtype: input.subtype?.trim() || null,
+              description: input.description.trim(),
+              lat: hasCoords ? new Prisma.Decimal(input.lat as number) : null,
+              lng: hasCoords ? new Prisma.Decimal(input.lng as number) : null,
+              outsideBoundary: hasCoords ? !isInsideBoundary(input.lat as number, input.lng as number) : false,
+              streetId: input.streetId,
+              streetName: input.streetName?.trim() || null,
+              addressDetail: input.addressDetail?.trim() || null,
+              scplTicket: input.scplTicket?.trim() || null,
+            },
+          });
+          if (count !== 1) throw new NotDraftError();
+          return { ok: true as const, id: report.id, number };
+        });
+      } catch (e) {
+        // El rollback ya devolvió el número. Afuera se contesta lo MISMO que
+        // contestaba el `updateMany` condicional antes de la transacción, para
+        // que la pantalla no cambie de texto por un detalle de implementación.
+        if (e instanceof NotDraftError) return { ok: false, error: REPORT_MESSAGES.notDraft };
+        throw e;
+      }
     },
 
     async file(input: {

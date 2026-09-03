@@ -28,8 +28,9 @@ export function snapshotOf(r: ReportWithFiles): ReportSnapshot {
     // Sólo id y tipo: el `path` en disco no tiene por qué viajar al navegador
     // (los archivos se sirven por ruta autenticada, nunca por su ruta real).
     files: r.files.map((f) => ({ id: f.id, kind: f.kind })),
-    // El N° visible ES el id, y sólo existe cuando ya se envió: un borrador no
-    // tiene número que mostrar.
-    number: r.status === "draft" ? null : r.id,
+    // El N° visible es el PÚBLICO (`number`), no el id: la fila nace `draft` en
+    // el paso 1 y la serie se pide recién al enviar, así que un borrador no
+    // tiene número que mostrar y llega en `null` por construcción.
+    number: r.number,
   };
 }

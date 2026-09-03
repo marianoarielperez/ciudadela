@@ -180,13 +180,16 @@ describe("detalle rediseñado", () => {
     prismaMock.minute.findUnique.mockResolvedValue({
       ...DETAIL,
       movements: [],
-      reportsFiled: [{ id: 14, kind: "initiative", category: "sports" }],
+      // El N° PÚBLICO (2) es distinto del id (14): el índice del acta nombra el
+      // reporte por lo que se ve y enlaza por la llave interna.
+      reportsFiled: [{ id: 14, number: 2, kind: "initiative", category: "sports" }],
       _count: { ...COUNTS, movements: 0, reportsFiled: 1 },
     });
     const html = render(await ActaPage(props));
     expect(html).toContain("Reportes");
     expect(html).toContain('href="/admin/solicitudes/reportes/14"');
-    expect(html).toContain("Iniciativa N° 14");
+    expect(html).toContain("Iniciativa N° 2");
+    expect(html).not.toContain("Iniciativa N° 14");
     expect(html).toContain("Deportiva");
     expect(html).not.toContain("todavía no respalda ningún asiento");
   });

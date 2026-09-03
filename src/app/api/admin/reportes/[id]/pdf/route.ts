@@ -78,9 +78,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const lng = r.lng === null ? null : Number(r.lng);
   const map = lat !== null && lng !== null ? await renderStaticMap({ lat, lng }) : null;
 
+  // El papel que va al organismo lleva el N° PÚBLICO, que es el que el vecino
+  // tiene en su acuse. El respaldo por `id` no debería usarse nunca —un borrador
+  // ya salió por 404 y el envío escribe el número en su misma transacción— pero
+  // un PDF sin número no se puede citar en ningún expediente.
+  const shown = r.number ?? r.id;
+
   const bytes = await renderReportPdf(
     {
-      number: r.id,
+      number: shown,
       kind: r.kind,
       status: r.status as "received" | "filed" | "dismissed",
       categoryLabel: categoryLabel(r.kind, r.category),
@@ -143,7 +149,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     headers: {
       "Content-Type": "application/pdf",
       // `inline`: el operador lo mira antes de mandarlo al organismo.
-      "Content-Disposition": `inline; filename="reporte-${r.id}.pdf"`,
+      "Content-Disposition": `inline; filename="reporte-${shown}.pdf"`,
       "Cache-Control": "no-store, private",
       Vary: "Cookie",
       "X-Content-Type-Options": "nosniff",

@@ -71,7 +71,7 @@ const BASE = {
   userAgent: null,
   createdAt: new Date(Date.UTC(2026, 8, 1, 12)),
   updatedAt: new Date(Date.UTC(2026, 8, 1, 12)),
-} satisfies Omit<Report, "id" | "kind" | "status" | "category">;
+} satisfies Omit<Report, "id" | "number" | "kind" | "status" | "category">;
 
 const withFiles = (r: Report): Report & { files: ReportFile[] } => ({ ...r, files: [] });
 
@@ -104,12 +104,12 @@ describe("/mi/solicitudes/reportes", () => {
   it("un reclamo presentado dice ante QUÉ organismo; una iniciativa, que la trató la Comisión", async () => {
     h.listForMember.mockResolvedValue([
       withFiles({
-        ...BASE, id: 31, kind: "claim", category: "water", subtype: "no_water",
+        ...BASE, id: 31, number: 5, kind: "claim", category: "water", subtype: "no_water",
         status: "filed", filedAt: new Date(Date.UTC(2026, 8, 10, 12)),
         filedAgency: "scpl", filedReference: "12345",
       }),
       withFiles({
-        ...BASE, id: 30, kind: "initiative", category: "sports",
+        ...BASE, id: 30, number: 4, kind: "initiative", category: "sports",
         status: "filed", filedAt: new Date(Date.UTC(2026, 8, 9, 12)),
       }),
     ]);
@@ -126,7 +126,7 @@ describe("/mi/solicitudes/reportes", () => {
   it("en la tarjeta de una iniciativa presentada no aparece la palabra Presentado", async () => {
     h.listForMember.mockResolvedValue([
       withFiles({
-        ...BASE, id: 30, kind: "initiative", category: "sports",
+        ...BASE, id: 30, number: 4, kind: "initiative", category: "sports",
         status: "filed", filedAt: new Date(Date.UTC(2026, 8, 9, 12)),
       }),
     ]);
@@ -135,19 +135,22 @@ describe("/mi/solicitudes/reportes", () => {
     expect(html).not.toContain("Presentado");
   });
 
-  it("un reporte recibido se anuncia como recibido", async () => {
+  // La tarjeta del socio imprime el N° PÚBLICO, no el id: es el que él cita
+  // cuando pregunta y el que el operador busca en la cola.
+  it("un reporte recibido se anuncia como recibido, con el N° público", async () => {
     h.listForMember.mockResolvedValue([
-      withFiles({ ...BASE, id: 12, kind: "claim", category: "waste", status: "received" }),
+      withFiles({ ...BASE, id: 12, number: 2, kind: "claim", category: "waste", status: "received" }),
     ]);
     const html = await render(MiReportesPage() as Promise<React.ReactNode>);
     expect(html).toContain("Recibido");
-    expect(html).toContain("N° 12");
+    expect(html).toContain("N° 2");
+    expect(html).not.toContain("N° 12");
   });
 });
 
 describe("/mi/solicitudes/reportes/nuevo/[claim]", () => {
   const params = Promise.resolve({ claim: "K".repeat(43) });
-  const draft = withFiles({ ...BASE, id: 7, kind: "claim", category: null, status: "draft", submittedAt: null });
+  const draft = withFiles({ ...BASE, id: 7, number: null, kind: "claim", category: null, status: "draft", submittedAt: null });
 
   it("el borrador propio monta el wizard en modo socio, sin siteKey y con la llave", async () => {
     h.findByClaim.mockResolvedValue(draft);

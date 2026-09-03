@@ -89,7 +89,7 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
       // mostraría ninguno abajo. Sin `description` ni un solo dato de quien
       // reportó: esto es un índice del libro de actas, no la ficha del reporte
       // (Ley 25.326, mismo criterio que `REPORT_LIST_SELECT`).
-      reportsFiled: { orderBy: { id: "asc" }, select: { id: true, kind: true, category: true } },
+      reportsFiled: { orderBy: { id: "asc" }, select: { id: true, number: true, kind: true, category: true } },
     },
   });
   if (!minute) notFound();
@@ -210,7 +210,7 @@ export default async function ActaPage(props: { params: Promise<{ id: string }> 
               {minute.reportsFiled.map((r) => (
                 <li key={r.id}>
                   <Link className={INLINE_LINK} href={`/admin/solicitudes/reportes/${r.id}`}>
-                    {KIND_LABELS[r.kind]} N° {r.id}
+                    {KIND_LABELS[r.kind]} N° {r.number ?? "—"}
                   </Link>{" "}
                   <span className="text-muted-foreground">
                     — {categoryLabel(r.kind, r.category)}, {filedVerb(r.kind).toLowerCase()} con esta acta

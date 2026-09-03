@@ -15,6 +15,15 @@ function codeOf(e: unknown): string {
   return typeof code === "string" && code !== "" ? code.slice(0, 200) : "unknown";
 }
 
+/** El N° que va al correo es el PÚBLICO, nunca el id: es el que el vecino cita
+ *  cuando pregunta y el que el operador busca en la cola. El respaldo por `id`
+ *  no debería usarse jamás —los tres correos corren DESPUÉS del envío, y el
+ *  envío escribe el número en su misma transacción— pero un correo sin ningún
+ *  número es peor que uno con la llave interna. */
+function publicNumber(r: { id: number; number: number | null }): number {
+  return r.number ?? r.id;
+}
+
 export function makeReportNotifier(deps: {
   db: Pick<PrismaClient, "report">;
   mailer: Pick<typeof mailer, "sendToReport">;
@@ -38,7 +47,7 @@ export function makeReportNotifier(deps: {
         await deps.mailer.sendToReport({
           reportId, to: r.reporterEmail, type: "report_received",
           message: reportReceivedEmail({
-            number: r.id, kind: r.kind, categoryLabel: categoryLabel(r.kind, r.category),
+            number: publicNumber(r), kind: r.kind, categoryLabel: categoryLabel(r.kind, r.category),
             contactEmail: await deps.contactEmail(),
           }),
           summary: "acuse de reporte recibido",
@@ -56,7 +65,7 @@ export function makeReportNotifier(deps: {
           r.filedAgency === "other" ? r.filedAgencyOther : r.filedAgency ? AGENCY_LABELS[r.filedAgency] : null;
         await deps.mailer.sendToReport({
           reportId, to: r.reporterEmail, type: "report_filed",
-          message: reportFiledEmail({ number: r.id, kind: r.kind, agencyLabel, filedAt: r.filedAt, reference: r.filedReference }),
+          message: reportFiledEmail({ number: publicNumber(r), kind: r.kind, agencyLabel, filedAt: r.filedAt, reference: r.filedReference }),
           summary: r.kind === "claim" ? "aviso de reporte presentado" : "aviso de iniciativa tratada",
         });
       } catch (e) {
@@ -76,7 +85,7 @@ export function makeReportNotifier(deps: {
         const r = await load(reportId);
         if (!r) return out;
         message = reportBoardAlertEmail({
-          number: r.id, kind: r.kind,
+          number: publicNumber(r), kind: r.kind,
           categoryLabel: categoryLabel(r.kind, r.category),
           subtypeLabel: r.kind === "claim" ? subtypeLabel(r.category, r.subtype) || null : null,
           street: streetOf(r),

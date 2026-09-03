@@ -893,6 +893,17 @@ model Receipt {
 // Contador por año. Se incrementa con INSERT … ON DUPLICATE KEY UPDATE dentro
 // de la transacción que crea el recibo: el bloqueo de fila serializa y, si la
 // transacción falla, el número no se consumió (sin huecos).
+// La secuencia del N° público de reportes: UNA sola fila (`id = 1`). Calcada de
+// `ReceiptSequence`: el `INSERT … ON DUPLICATE KEY UPDATE` deja la fila
+// bloqueada hasta el commit de la transacción del envío, así que dos envíos
+// concurrentes se serializan y un rollback no consume número.
+model ReportSequence {
+  id   Int @id @db.SmallInt
+  last Int
+
+  @@map("report_sequences")
+}
+
 model ReceiptSequence {
   year Int @id @db.SmallInt
   last Int
@@ -1270,6 +1281,14 @@ enum ReportAgency {
 // mismo que "foto de un bache".
 model Report {
   id               Int            @id @default(autoincrement())
+  // El N° PÚBLICO del reporte: corrido, sin huecos y asignado recién al ENVIAR
+  // (`nextReportNumber`, misma disciplina que la serie de recibos de REG-33).
+  // NULL mientras la fila es borrador —el paso 1 del wizard la crea antes de
+  // que el vecino termine, y cada wizard abandonado se llevaba un número—; no
+  // nulo desde el envío. El `id` sigue mandando en todo lo interno (URLs, FKs,
+  // claims, auditoría, `reportId` de los formularios): lo único que cambia es
+  // lo que se MUESTRA.
+  number           Int?           @unique
   kind             ReportKind
   status           ReportStatus   @default(draft)
   anonymous        Boolean        @default(false)

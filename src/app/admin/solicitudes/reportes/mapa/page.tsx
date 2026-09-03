@@ -100,7 +100,8 @@ export default async function ReportesMapaPage(props: {
       // dibuja un pin y lo que rotula su popup. Ni `description` ni
       // `reporterName` ni `reporterEmail` — no es que no se muestren: no se
       // leen de la base.
-      select: { id: true, kind: true, status: true, category: true, lat: true, lng: true },
+      // `number` es lo que ROTULA el pin; `id` es lo que arma su `href`.
+      select: { id: true, number: true, kind: true, status: true, category: true, lat: true, lng: true },
       // El desempate no es adorno: con el tope de `MAX_POINTS`, un orden no
       // determinista haría que dos recargas dibujen conjuntos distintos.
       orderBy: [{ id: "desc" }],
@@ -114,7 +115,7 @@ export default async function ReportesMapaPage(props: {
     lat: Number(r.lat),
     lng: Number(r.lng),
     status: r.status as MapPoint["status"],
-    title: `N° ${r.id} · ${KIND_LABELS[r.kind]} · ${categoryLabel(r.kind, r.category)}`,
+    title: `N° ${r.number ?? "—"} · ${KIND_LABELS[r.kind]} · ${categoryLabel(r.kind, r.category)}`,
     // `statusLabel` y no `STATUS_LABELS[status]`: una iniciativa se "trata" y
     // "Desestimada" tiene género (spec §2).
     state: statusLabel(r.kind, r.status),

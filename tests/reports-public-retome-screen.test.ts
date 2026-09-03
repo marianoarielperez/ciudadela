@@ -65,10 +65,10 @@ const BASE = {
   userAgent: null,
   createdAt: new Date(Date.UTC(2026, 8, 1, 12)),
   updatedAt: new Date(Date.UTC(2026, 8, 1, 12)),
-} satisfies Omit<Report, "id" | "kind" | "status" | "category">;
+} satisfies Omit<Report, "id" | "number" | "kind" | "status" | "category">;
 
 const withFiles = (r: Report): Report & { files: ReportFile[] } => ({ ...r, files: [] });
-const draft = withFiles({ ...BASE, id: 7, kind: "claim", category: null, status: "draft" });
+const draft = withFiles({ ...BASE, id: 7, number: null, kind: "claim", category: null, status: "draft" });
 
 const params = Promise.resolve({ claim: "K".repeat(43) });
 
@@ -128,7 +128,7 @@ describe("/reportes/nuevo/[claim]", () => {
   it("un reporte ya enviado monta el wizard con el snapshot y sin el catálogo de calles", async () => {
     h.findByClaim.mockResolvedValue(
       withFiles({
-        ...BASE, id: 31, kind: "claim", category: "water", status: "received",
+        ...BASE, id: 31, number: 6, kind: "claim", category: "water", status: "received",
         submittedAt: new Date(Date.UTC(2026, 8, 1, 12)),
       }),
     );
@@ -139,7 +139,8 @@ describe("/reportes/nuevo/[claim]", () => {
     expect(props.streets).toEqual([]);
     expect(props.initial).toMatchObject({
       claim: "K".repeat(43),
-      snapshot: expect.objectContaining({ status: "received", number: 31 }),
+      // El N° del snapshot es el PÚBLICO (6), no el id (31).
+      snapshot: expect.objectContaining({ status: "received", number: 6 }),
     });
     expect(h.findMany).not.toHaveBeenCalled();
   });

@@ -7,6 +7,10 @@ import type { ReportWithFiles } from "@/lib/reports/service";
 function report(over: Partial<ReportWithFiles> = {}): ReportWithFiles {
   return {
     id: 7,
+    // El N° PÚBLICO es una columna aparte del id, y el fixture le da un valor
+    // DISTINTO a propósito: con `number: 7` un snapshot que siguiera leyendo el
+    // id pasaría este test sin que nadie se entere.
+    number: null,
     kind: "claim",
     status: "draft",
     anonymous: false,
@@ -60,10 +64,10 @@ describe("snapshotOf", () => {
     expect(s.number).toBeNull();
   });
 
-  it("ya enviado: el N° visible es el id, y el estado viaja entero", () => {
+  it("ya enviado: el N° visible es el PÚBLICO (no el id), y el estado viaja entero", () => {
     for (const status of ["received", "filed", "dismissed"] as const) {
-      const s = snapshotOf(report({ status, ...REPORTER }));
-      expect(s.number, status).toBe(7);
+      const s = snapshotOf(report({ status, number: 3, ...REPORTER }));
+      expect(s.number, status).toBe(3);
       expect(s.status, status).toBe(status);
     }
   });

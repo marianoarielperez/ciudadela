@@ -39,7 +39,7 @@ import ReportesPage from "@/app/admin/solicitudes/reportes/page";
 
 type File = { id: number; kind: string };
 type Row = {
-  id: number; kind: "claim" | "initiative"; status: string; anonymous: boolean;
+  id: number; number: number | null; kind: "claim" | "initiative"; status: string; anonymous: boolean;
   memberId: number | null; category: string; subtype: string | null;
   streetName: string | null; addressDetail: string | null; submittedAt: Date | null;
   outsideBoundary: boolean; scplTicket: string | null;
@@ -48,6 +48,10 @@ type Row = {
 };
 
 const BASE: Omit<Row, "id"> = {
+  // El N° PÚBLICO por defecto NO coincide con ningún id de los fixtures: la
+  // tarjeta tiene que imprimirlo a él y no al id (los borradores del medio se
+  // llevaron ids sin llevarse número).
+  number: 500,
   kind: "claim", status: "received", anonymous: false, memberId: null, category: "water",
   subtype: null, streetName: null, addressDetail: null,
   submittedAt: new Date(Date.UTC(2026, 8, 1, 12)),
@@ -133,6 +137,16 @@ describe("/admin/solicitudes/reportes", () => {
     // Decorativas y perezosas: la cuenta ya la dice el badge.
     expect(html).toContain('alt=""');
     expect(html).toContain('loading="lazy"');
+  });
+
+  // El N° de la tarjeta es el PÚBLICO, y el `href` sigue siendo el del id: son
+  // dos cosas distintas y esta pantalla las muestra juntas.
+  it("la tarjeta imprime el N° público y enlaza por el id", async () => {
+    seed([{ ...BASE, id: 7, number: 2 }]);
+    const html = await render();
+    expect(html).toContain("N° 2");
+    expect(html).not.toContain("N° 7");
+    expect(html).toContain('href="/admin/solicitudes/reportes/7"');
   });
 
   it("sin fotos no hay tira ni badge", async () => {

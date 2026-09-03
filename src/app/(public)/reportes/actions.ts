@@ -238,5 +238,7 @@ export async function submitReportAction(_prev: SubmitState, formData: FormData)
     },
     ip,
   });
-  return { done: { number: result.id } };
+  // El N° PÚBLICO que devolvió el servicio, nunca el id: el id es la llave
+  // interna (URL del panel, FK, auditoría) y no es lo que el vecino cita.
+  return { done: { number: result.number } };
 }

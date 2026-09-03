@@ -68,7 +68,9 @@ beforeEach(() => {
   mocks.startDraft.mockResolvedValue({ id: 14, claim: CLAIM });
   mocks.findByClaim.mockResolvedValue(draft());
   mocks.saveReporter.mockResolvedValue({ ok: true });
-  mocks.submit.mockResolvedValue({ ok: true, id: 14 });
+  // El servicio devuelve las dos cosas: el `id` (llave interna: correos,
+  // auditoría) y el `number` PÚBLICO. Distintos a propósito.
+  mocks.submit.mockResolvedValue({ ok: true, id: 14, number: 3 });
   mocks.save.mockResolvedValue({ id: 3, width: 10, height: 10 });
   mocks.remove.mockResolvedValue(true);
   mocks.draftAllows.mockReturnValue(true);
@@ -183,7 +185,10 @@ describe("submitReportAction", () => {
   };
   it("envía, manda el acuse y la alerta, audita sin datos personales", async () => {
     const r = await submitReportAction({}, fd(body));
-    expect(r).toEqual({ done: { number: 14 } });
+    // El `done.number` es el N° PÚBLICO que devolvió el SERVICIO, no el id: la
+    // pantalla terminal imprime lo que el vecino va a citar. Los correos y el
+    // asiento, en cambio, siguen yendo por el id (las tres líneas de abajo).
+    expect(r).toEqual({ done: { number: 3 } });
     expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({
       reportId: 14, category: "streets", subtype: "pothole", lat: -45.797, lng: -67.494, streetId: 3, consent: true,
     }));
@@ -227,7 +232,7 @@ describe("submitReportAction", () => {
   it("un SMTP caído en el acuse no convierte el envío en error", async () => {
     mocks.sendReceived.mockRejectedValueOnce(new Error("x"));
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await submitReportAction({}, fd(body))).toEqual({ done: { number: 14 } });
+    expect(await submitReportAction({}, fd(body))).toEqual({ done: { number: 3 } });
     spy.mockRestore();
   });
 });

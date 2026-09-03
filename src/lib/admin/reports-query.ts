@@ -20,9 +20,9 @@ import {
   type ReportFilters, type ReportViewKey,
 } from "./reports-queue";
 
-/** El techo de `Report.id`: la columna es un `Int` de Prisma, o sea un INT con
- *  signo de MariaDB. Un valor por encima no es "ningún reporte": es un literal
- *  que la base rechaza. */
+/** El techo de `Report.number`: la columna es un `Int` de Prisma, o sea un INT
+ *  con signo de MariaDB. Un valor por encima no es "ningún reporte": es un
+ *  literal que la base rechaza. */
 const INT_MAX = 2147483647;
 
 export function reportWhere(view: ReportViewKey, f: ReportFilters): Prisma.ReportWhereInput {
@@ -55,15 +55,18 @@ export function reportWhere(view: ReportViewKey, f: ReportFilters): Prisma.Repor
     ];
     // Un texto todo dígitos es (también) el N° del reporte: el operador que
     // tipea "14" está buscando el reporte 14, y de paso sigue viendo el que
-    // menciona "14" en la descripción. Tres condiciones, y las tres importan:
-    // entero y `> 0` porque el id lo es, y `<= 2147483647` porque la columna es
-    // un INT con signo de MariaDB — un `q` de 19 dígitos pasa `Number.isInteger`
-    // (es un float redondo, no un entero exacto) y llega a la base como un
-    // literal fuera de rango. OJO: `Number("14e3")` da 14000 y SÍ es un entero
-    // positivo, así que esta guarda no lo descarta; lo descarta el tope de 80
-    // caracteres y nada más, y ese caso es inofensivo (busca el reporte 14000).
+    // menciona "14" en la descripción. Se busca por `number` y NO por `id`: el
+    // operador busca lo que VE —en la tarjeta, en el PDF y en el correo del
+    // vecino está el N° público—, y desde que la serie se asigna al enviar los
+    // dos ya no coinciden. Tres condiciones, y las tres importan: entero y `> 0`
+    // porque la serie lo es, y `<= 2147483647` porque la columna es un INT con
+    // signo de MariaDB — un `q` de 19 dígitos pasa `Number.isInteger` (es un
+    // float redondo, no un entero exacto) y llega a la base como un literal
+    // fuera de rango. OJO: `Number("14e3")` da 14000 y SÍ es un entero positivo,
+    // así que esta guarda no lo descarta; lo descarta el tope de 80 caracteres y
+    // nada más, y ese caso es inofensivo (busca el reporte 14000).
     const n = Number(f.q);
-    if (Number.isInteger(n) && n > 0 && n <= INT_MAX) or.push({ id: n });
+    if (Number.isInteger(n) && n > 0 && n <= INT_MAX) or.push({ number: n });
     where.OR = or;
   }
   return where;
@@ -124,6 +127,9 @@ export async function availableYears(
  *  bandeja de Altas). Buscar por un campo no obliga a devolverlo. */
 export const REPORT_LIST_SELECT = {
   id: true,
+  // El N° PÚBLICO: es lo que la tarjeta imprime y lo que el operador busca. El
+  // `id` sigue viniendo porque es el del `href` y el de la key de React.
+  number: true,
   kind: true,
   status: true,
   anonymous: true,

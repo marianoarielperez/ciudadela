@@ -35,7 +35,10 @@ export function ReportCard({ report }: { report: Report }) {
         <CardTitle as="h2" className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <span className="flex items-center gap-2">
             <Icon aria-hidden className="size-4 text-primary" />
-            <span className="font-mono tabular-nums text-muted-foreground">N° {report.id}</span>
+            {/* El N° PÚBLICO, no el id: es el que el socio cita y el que ve el
+                operador en el panel. `?? "—"` sólo por tipos —la lista del
+                panel de socio nunca trae borradores—. */}
+            <span className="font-mono tabular-nums text-muted-foreground">N° {report.number ?? "—"}</span>
             {KIND_LABELS[report.kind]}
           </span>
           {/* `statusLabel` y no `STATUS_LABELS[status]`: la pastilla de una

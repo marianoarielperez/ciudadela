@@ -43,25 +43,31 @@ describe("reportWhere", () => {
     expect(w.OR).toHaveLength(3);
   });
 
-  it("un texto numérico también busca por N°", () => {
+  // El operador busca por lo que VE, y lo que ve es el N° PÚBLICO: desde que la
+  // serie se asigna al enviar, el id y el número ya no coinciden.
+  //
+  // MUTACIÓN que lo prueba: volver el `or.push({ number: n })` de
+  // `reports-query.ts` a `{ id: n }` pone en rojo las dos aserciones de abajo.
+  it("un texto numérico también busca por el N° PÚBLICO, no por el id", () => {
     const w = reportWhere("todos", filters({ q: "14" }));
-    expect(w.OR).toContainEqual({ id: 14 });
-    // Y uno que no es un id no ensucia el OR con un `id: NaN`.
+    expect(w.OR).toContainEqual({ number: 14 });
+    expect(w.OR).not.toContainEqual(expect.objectContaining({ id: expect.anything() }));
+    // Y uno que no es un número no ensucia el OR con un `number: NaN`.
     expect(reportWhere("todos", filters({ q: "pozo" })).OR).not.toContainEqual(
-      expect.objectContaining({ id: expect.anything() }),
+      expect.objectContaining({ number: expect.anything() }),
     );
     expect(reportWhere("todos", filters({ q: "0" })).OR).toHaveLength(3);
   });
 
   it("un número más grande que un INT no se busca como N°", () => {
-    // `Report.id` es un INT con signo: 19 dígitos pasan `Number.isInteger`
+    // `Report.number` es un INT con signo: 19 dígitos pasan `Number.isInteger`
     // (es un float redondo) y llegarían a MariaDB como un literal fuera de
     // rango. El texto sigue buscándose, que es lo que el operador tipeó.
     const w = reportWhere("todos", filters({ q: "1234567890123456789" }));
     expect(w.OR).toHaveLength(3);
-    expect(w.OR).not.toContainEqual(expect.objectContaining({ id: expect.anything() }));
+    expect(w.OR).not.toContainEqual(expect.objectContaining({ number: expect.anything() }));
     // Y el borde de arriba sí entra.
-    expect(reportWhere("todos", filters({ q: "2147483647" })).OR).toContainEqual({ id: 2147483647 });
+    expect(reportWhere("todos", filters({ q: "2147483647" })).OR).toContainEqual({ number: 2147483647 });
     expect(reportWhere("todos", filters({ q: "2147483648" })).OR).toHaveLength(3);
   });
 
@@ -72,14 +78,19 @@ describe("reportWhere", () => {
 
 // Filas de mentira con lo que el `where` mira. El doble las filtra APLICANDO el
 // `where` recibido, cláusula por cláusula.
-type Row = { id: number; status: string; kind: string; category: string; description: string; streetName: string; reporterName: string; submittedAt: Date | null };
+// El `number` NO coincide con el `id` en ninguna fila, a propósito: los
+// borradores del medio se llevaron ids sin llevarse número, que es exactamente
+// lo que pasa en la base real. Así una búsqueda que siguiera mirando el id
+// devolvería otra fila y el test lo ve.
+type Row = { id: number; number: number | null; status: string; kind: string; category: string; description: string; streetName: string; reporterName: string; submittedAt: Date | null };
 const ROWS: Row[] = [
-  { id: 1, status: "received", kind: "claim", category: "water", description: "no hay agua", streetName: "Pizarro", reporterName: "Ana", submittedAt: arg(2026, 3, 10) },
-  { id: 2, status: "received", kind: "initiative", category: "social", description: "una plaza", streetName: "Rivadavia", reporterName: "Beto", submittedAt: arg(2026, 5, 4) },
-  { id: 3, status: "filed", kind: "initiative", category: "social", description: "un taller", streetName: "Pizarro", reporterName: "Cora", submittedAt: arg(2025, 7, 1) },
-  { id: 4, status: "dismissed", kind: "initiative", category: "sports", description: "una cancha", streetName: "Mitre", reporterName: "Dora", submittedAt: arg(2024, 2, 20) },
-  // El borrador no fue enviado: no tiene fecha y no lo lista ninguna vista.
-  { id: 5, status: "draft", kind: "initiative", category: "social", description: "sin enviar", streetName: "Mitre", reporterName: "Eva", submittedAt: null },
+  { id: 1, number: 7, status: "received", kind: "claim", category: "water", description: "no hay agua", streetName: "Pizarro", reporterName: "Ana", submittedAt: arg(2026, 3, 10) },
+  { id: 2, number: 8, status: "received", kind: "initiative", category: "social", description: "una plaza", streetName: "Rivadavia", reporterName: "Beto", submittedAt: arg(2026, 5, 4) },
+  { id: 3, number: 9, status: "filed", kind: "initiative", category: "social", description: "un taller", streetName: "Pizarro", reporterName: "Cora", submittedAt: arg(2025, 7, 1) },
+  { id: 4, number: 10, status: "dismissed", kind: "initiative", category: "sports", description: "una cancha", streetName: "Mitre", reporterName: "Dora", submittedAt: arg(2024, 2, 20) },
+  // El borrador no fue enviado: no tiene fecha, no tiene N° y no lo lista
+  // ninguna vista.
+  { id: 5, number: null, status: "draft", kind: "initiative", category: "social", description: "sin enviar", streetName: "Mitre", reporterName: "Eva", submittedAt: null },
 ];
 
 type TextFilter = { contains: string };
@@ -88,7 +99,7 @@ type Where = {
   kind?: string;
   category?: string;
   submittedAt?: { gte?: Date; lt?: Date };
-  OR?: Array<Partial<Record<"description" | "streetName" | "reporterName", TextFilter>> & { id?: number }>;
+  OR?: Array<Partial<Record<"description" | "streetName" | "reporterName", TextFilter>> & { number?: number }>;
 };
 
 /** El doble APLICA el `where`, y TIRA ante una cláusula que no conoce (misma
@@ -116,7 +127,7 @@ function matches(row: Row, where: Where): boolean {
   }
   if (where.OR) {
     const hit = where.OR.some((clause) => {
-      if (clause.id !== undefined) return clause.id === row.id;
+      if (clause.number !== undefined) return clause.number === row.number;
       const [[field, filter]] = Object.entries(clause) as [["description" | "streetName" | "reporterName", TextFilter]];
       return row[field].includes(filter.contains);
     });

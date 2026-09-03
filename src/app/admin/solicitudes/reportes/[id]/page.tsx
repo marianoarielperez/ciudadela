@@ -139,17 +139,23 @@ export default async function ReporteDetallePage({ params }: { params: Promise<{
       ? AGENCY_LABELS[r.filedAgency]
       : null;
   const fileUrl = (fileId: number) => `/api/admin/reportes/${r.id}/archivos/${fileId}`;
+  // El N° PÚBLICO es lo único que se MUESTRA; el `id` sigue armando los `href`,
+  // el `reportId` de los dos formularios y el asiento de auditoría. `?? "—"` es
+  // sólo por tipos: un borrador ya salió por `notFound()` más arriba, y desde
+  // que la serie se asigna en la transacción del envío, un reporte enviado
+  // siempre tiene número.
+  const shown = r.number ?? "—";
   const place = reportPlaceLabel(r);
   const hasPoint = r.lat !== null && r.lng !== null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`Reporte N° ${r.id}`}
+        title={`Reporte N° ${shown}`}
         breadcrumb={[
           { label: "Solicitudes", href: "/admin/solicitudes" },
           { label: "Reportes", href: REPORTS_BASE },
-          { label: `N° ${r.id}` },
+          { label: `N° ${shown}` },
         ]}
         actions={
           // <a> plano y no <Link>: es una descarga de API, no una navegación
@@ -245,7 +251,7 @@ export default async function ReporteDetallePage({ params }: { params: Promise<{
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={fileUrl(f.id)}
-                          alt={`Foto adjunta al reporte N° ${r.id}`}
+                          alt={`Foto adjunta al reporte N° ${shown}`}
                           loading="lazy"
                           decoding="async"
                           className="w-full rounded-lg border border-border bg-muted object-cover"
