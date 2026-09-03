@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENCIES, CLAIM_CATEGORIES, INITIATIVE_CATEGORIES, KIND_LABELS, STATUS_LABELS,
   categoryLabel, filedVerb, findClaimCategory, findSubtype, isScplSubtype,
-  dismissedLabel, statusLabel, subtypeLabel, suggestedAgency, SCPL_WHATSAPP,
+  dismissedLabel, statusLabel, subtypeLabel, suggestedAgency, SCPL_WHATSAPP, directAgency, DIRECT_AGENCY_LABELS, MCR_RECLAMOS,
 } from "@/lib/reports/catalog";
 
 describe("CLAIM_CATEGORIES", () => {
@@ -31,7 +31,7 @@ describe("CLAIM_CATEGORIES", () => {
 
   it("los tipos SCPL son exactamente los que marcó el operador", () => {
     const scpl = CLAIM_CATEGORIES.flatMap((c) =>
-      c.subtypes.filter((s) => s.scpl).map((s) => `${c.slug}/${s.slug}`),
+      c.subtypes.filter((s) => s.direct === "scpl").map((s) => `${c.slug}/${s.slug}`),
     );
     expect(scpl).toEqual([
       "water/no_water", "water/low_pressure", "water/leak",
@@ -61,6 +61,29 @@ describe("INITIATIVE_CATEGORIES", () => {
     expect(INITIATIVE_CATEGORIES.map((c) => c.slug)).toEqual([
       "social", "cultural", "sports", "works", "safety", "other",
     ]);
+  });
+});
+
+describe("organismo directo", () => {
+  it("los tipos MCR son los tres de calles que marcó el operador (02/09/2026)", () => {
+    const mcr = CLAIM_CATEGORIES.flatMap((c) =>
+      c.subtypes.filter((s) => s.direct === "mcr").map((s) => `${c.slug}/${s.slug}`),
+    );
+    expect(mcr).toEqual(["streets/pothole", "streets/dirt_road", "streets/sidewalk"]);
+  });
+
+  it("directAgency sale del tipo; sólo la SCPL tiene número de reclamo", () => {
+    expect(directAgency("streets", "pothole")).toBe("mcr");
+    expect(directAgency("water", "leak")).toBe("scpl");
+    expect(directAgency("streets", "other")).toBeNull();
+    expect(directAgency(null, null)).toBeNull();
+    expect(isScplSubtype("streets", "pothole")).toBe(false);
+    expect(DIRECT_AGENCY_LABELS).toEqual({ scpl: "SCPL", mcr: "MCR" });
+    expect(MCR_RECLAMOS.href).toBe("https://www.comodoro.gov.ar/reclamosmicalle/");
+  });
+
+  it("un tipo MCR sugiere MCR al marcarlo presentado, como cualquier reclamo no SCPL", () => {
+    expect(suggestedAgency({ kind: "claim", category: "streets", subtype: "pothole" })).toBe("mcr");
   });
 });
 

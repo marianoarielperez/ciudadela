@@ -6,8 +6,9 @@
 //
 // La lista de reclamos la dio el operador el 01/09/2026 (calcada de Comodoro
 // Reporta, con "Semáforos" fuera y "Otro reporte" como salida libre). Los tipos
-// con `scpl: true` son los que el vecino puede y debe reclamar TAMBIÉN ante la
-// SCPL por WhatsApp; el wizard lo avisa y pide el número de reclamo.
+// con `direct` son los que el vecino puede y debe reclamar TAMBIÉN ante ese
+// organismo (SCPL por WhatsApp, con número de reclamo; MCR por su formulario web,
+// sin número); el wizard lo avisa en cada caso.
 
 export type ReportKindSlug = "claim" | "initiative";
 export type ReportStatusSlug = "draft" | "received" | "filed" | "dismissed";
@@ -18,7 +19,11 @@ export type ReportIconName =
   | "bus-front" | "message-square-warning"
   | "users" | "palette" | "trophy" | "hard-hat" | "shield" | "lightbulb";
 
-export type ClaimSubtype = { slug: string; label: string; scpl?: true };
+/** `direct`: el organismo ante el que el vecino puede y debe hacer TAMBIÉN el
+ *  reclamo por su cuenta. La SCPL da número de reclamo (el wizard lo pide); el
+ *  formulario "Reclamos mi calle" de la MCR no da ninguno (sólo la leyenda). */
+export type DirectAgency = "scpl" | "mcr";
+export type ClaimSubtype = { slug: string; label: string; direct?: DirectAgency };
 export type ClaimCategory = {
   slug: string;
   label: string;
@@ -32,28 +37,28 @@ export const CLAIM_CATEGORIES: readonly ClaimCategory[] = [
   {
     slug: "water", label: "Agua potable", icon: "droplets",
     subtypes: [
-      { slug: "no_water", label: "Falta de agua", scpl: true },
-      { slug: "low_pressure", label: "Falta presión de agua", scpl: true },
-      { slug: "leak", label: "Pérdida de agua en la red", scpl: true },
+      { slug: "no_water", label: "Falta de agua", direct: "scpl" },
+      { slug: "low_pressure", label: "Falta presión de agua", direct: "scpl" },
+      { slug: "leak", label: "Pérdida de agua en la red", direct: "scpl" },
       { slug: "other", label: "Otro" },
     ],
   },
   {
     slug: "sewage", label: "Cloacas y saneamiento", icon: "waves",
     subtypes: [
-      { slug: "blocked", label: "Cloacas tapadas", scpl: true },
-      { slug: "internal_overflow", label: "Desborde interno", scpl: true },
-      { slug: "manhole_overflow", label: "Desborde en boca de registro", scpl: true },
-      { slug: "manhole_cover", label: "Tapa de registro en malas condiciones", scpl: true },
+      { slug: "blocked", label: "Cloacas tapadas", direct: "scpl" },
+      { slug: "internal_overflow", label: "Desborde interno", direct: "scpl" },
+      { slug: "manhole_overflow", label: "Desborde en boca de registro", direct: "scpl" },
+      { slug: "manhole_cover", label: "Tapa de registro en malas condiciones", direct: "scpl" },
       { slug: "other", label: "Otro" },
     ],
   },
   {
     slug: "electricity", label: "Electricidad y luminarias", icon: "zap",
     subtypes: [
-      { slug: "voltage", label: "Problemas de tensión", scpl: true },
-      { slug: "streetlight", label: "Falta de alumbrado público / luminaria quemada", scpl: true },
-      { slug: "pole", label: "Poste dañado / peligro en vía pública", scpl: true },
+      { slug: "voltage", label: "Problemas de tensión", direct: "scpl" },
+      { slug: "streetlight", label: "Falta de alumbrado público / luminaria quemada", direct: "scpl" },
+      { slug: "pole", label: "Poste dañado / peligro en vía pública", direct: "scpl" },
       { slug: "other", label: "Otro" },
     ],
   },
@@ -69,9 +74,9 @@ export const CLAIM_CATEGORIES: readonly ClaimCategory[] = [
   {
     slug: "streets", label: "Calles y vía pública", icon: "traffic-cone",
     subtypes: [
-      { slug: "pothole", label: "Baches / pozos en calzada" },
-      { slug: "dirt_road", label: "Calle de tierra en mal estado" },
-      { slug: "sidewalk", label: "Veredas rotas" },
+      { slug: "pothole", label: "Baches / pozos en calzada", direct: "mcr" },
+      { slug: "dirt_road", label: "Calle de tierra en mal estado", direct: "mcr" },
+      { slug: "sidewalk", label: "Veredas rotas", direct: "mcr" },
       { slug: "other", label: "Otro" },
     ],
   },
@@ -174,8 +179,20 @@ export function findSubtype(
   return category.subtypes.find((s) => s.slug === subtypeSlug) ?? null;
 }
 
+/** El organismo directo del tipo, o null si el reclamo no tiene uno. */
+export function directAgency(
+  categorySlug: string | null | undefined,
+  subtypeSlug: string | null | undefined,
+): DirectAgency | null {
+  return findSubtype(categorySlug, subtypeSlug)?.direct ?? null;
+}
+
+export const DIRECT_AGENCY_LABELS: Record<DirectAgency, string> = { scpl: "SCPL", mcr: "MCR" };
+
+/** Sólo la SCPL entrega número de reclamo: es el único organismo directo con
+ *  campo de ticket en el wizard, en la ficha y en el PDF. */
 export function isScplSubtype(categorySlug: string | null, subtypeSlug: string | null): boolean {
-  return findSubtype(categorySlug, subtypeSlug)?.scpl === true;
+  return directAgency(categorySlug, subtypeSlug) === "scpl";
 }
 
 /** El organismo con el que arranca el formulario de "presentado" (spec §2,
@@ -208,4 +225,11 @@ export function subtypeLabel(
 export const SCPL_WHATSAPP = {
   display: "+54 9 2975 26-0760",
   href: "https://wa.me/5492975260760",
+} as const;
+
+/** El formulario "Reclamos mi calle" de la Municipalidad (operador, 02/09/2026).
+ *  No entrega número de reclamo: el wizard sólo muestra la leyenda con el enlace. */
+export const MCR_RECLAMOS = {
+  display: "comodoro.gov.ar/reclamosmicalle",
+  href: "https://www.comodoro.gov.ar/reclamosmicalle/",
 } as const;

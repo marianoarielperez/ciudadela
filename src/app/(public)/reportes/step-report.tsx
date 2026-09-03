@@ -24,7 +24,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { isInsideBoundary } from "@/lib/reports/boundary";
-import { findClaimCategory, isScplSubtype, SCPL_WHATSAPP } from "@/lib/reports/catalog";
+import {
+  DIRECT_AGENCY_LABELS,
+  directAgency,
+  findClaimCategory,
+  MCR_RECLAMOS,
+  SCPL_WHATSAPP,
+} from "@/lib/reports/catalog";
 import { isLocationRequired, MAX_DESCRIPTION } from "@/lib/reports/rules";
 import { cn } from "@/lib/utils";
 import { StreetPicker } from "../asociate/street-picker";
@@ -112,7 +118,10 @@ export function StepReport({
 
   const category = kind === "claim" ? findClaimCategory(draft.category) : null;
   const subtypes = category?.subtypes ?? [];
-  const scpl = isScplSubtype(draft.category, draft.subtype);
+  // El organismo directo del tipo elegido: SCPL (con número de reclamo) o MCR
+  // (sólo la leyenda con el enlace). Sale del catálogo, no de esta pantalla.
+  const direct = directAgency(draft.category, draft.subtype);
+  const scpl = direct === "scpl";
   const locationRequired = isLocationRequired({ kind, category: draft.category || null });
   const hasPoint = draft.lat !== null && draft.lng !== null;
   const outside = hasPoint && !isInsideBoundary(draft.lat as number, draft.lng as number);
@@ -153,11 +162,15 @@ export function StepReport({
                 value={s.slug}
                 checked={draft.subtype === s.slug}
                 // Sólo un tipo SCPL conserva el N° de reclamo ya tipeado.
-                onSelect={() => patch({ subtype: s.slug, scplTicket: s.scpl ? draft.scplTicket : "" })}
+                onSelect={() =>
+                  patch({ subtype: s.slug, scplTicket: s.direct === "scpl" ? draft.scplTicket : "" })
+                }
                 title={s.label}
                 aside={
-                  s.scpl ? (
-                    <span className="rounded-4xl bg-secondary px-2 py-0.5 text-xs font-medium">SCPL</span>
+                  s.direct ? (
+                    <span className="rounded-4xl bg-secondary px-2 py-0.5 text-xs font-medium">
+                      {DIRECT_AGENCY_LABELS[s.direct]}
+                    </span>
                   ) : undefined
                 }
               />
@@ -165,10 +178,30 @@ export function StepReport({
           </fieldset>
         )}
 
+        {/* La leyenda del organismo directo (textos del operador, 02/09/2026):
+            la SCPL entrega número de reclamo y se pide abajo; la MCR no, así
+            que ahí va sólo el enlace al formulario. */}
+        {direct === "mcr" && (
+          <Callout tone="info" icon={MessageCircle}>
+            Tomamos tu pedido para elevarlo, pero también te pedimos que hagas este reclamo ante la
+            Municipalidad en{" "}
+            <a
+              href={MCR_RECLAMOS.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold underline underline-offset-2"
+            >
+              {MCR_RECLAMOS.display}
+            </a>
+            , para reforzarlo.
+          </Callout>
+        )}
+
         {scpl && (
           <div className="space-y-3">
             <Callout tone="info" icon={MessageCircle}>
-              Este reclamo también conviene hacerlo directo a la SCPL por WhatsApp al{" "}
+              Tomamos tu pedido para elevarlo, pero también te pedimos que hagas este reclamo en la
+              SCPL por WhatsApp al{" "}
               <a
                 href={SCPL_WHATSAPP.href}
                 target="_blank"
@@ -177,8 +210,7 @@ export function StepReport({
               >
                 {SCPL_WHATSAPP.display}
               </a>
-              . Nosotros lo tomamos y lo elevamos, pero pedí tu número de reclamo ahí: es lo que
-              después permite seguirlo.
+              . Si ya lo hiciste, dejanos más abajo el número de reclamo para poder seguirlo.
             </Callout>
             <Field id="scplTicket" label="N° de reclamo SCPL (opcional)">
               <Input
