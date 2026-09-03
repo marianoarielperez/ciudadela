@@ -469,10 +469,17 @@ Actividad sistemática semanal de un espacio de la sede ("Gimnasia mujeres",
 
 Migración `20260901212840_add_reports`, **estrictamente aditiva** (dos tablas nuevas,
 una columna nullable en `notifications` y tres valores al final de un enum), más
-`20260902112958_report_minute_restrict`, que endurece una sola FK. Campos:
+`20260902112958_report_minute_restrict`, que endurece una sola FK, y
+`20260903203910_report_public_number`, que suma el N° público y su secuencia. Campos:
 
-- `id` — el número visible del reporte ("Reporte N° 14"). **No es una serie numerada**:
-  REG-33 es de recibos y esto es un autoincrement.
+- `id` — la clave interna: manda en las URLs, las FKs, la auditoría y los formularios.
+  **Nunca se muestra como número del reporte** desde el 03/09/2026.
+- `number` — el **N° público** ("Reporte N° 14"), único, NULL mientras es borrador. Se
+  asigna **al enviar**, dentro de la transacción del envío, con la fila única de
+  `report_sequences` (misma disciplina que los recibos, REG-33: se pide tarde, el lock
+  se sostiene hasta el commit y un rollback no lo consume). Antes el N° era el `id`, y
+  como la fila nace como borrador en el paso 1 del wizard, cada wizard abandonado se
+  llevaba un número — el primer reporte real de producción salió como "N° 16".
 - `kind` (`claim` | `initiative`) — reclamo o iniciativa. Decide el copy de todas las
   pantallas y de los dos correos: un reclamo se **presenta ante un organismo**, una
   iniciativa la **trata la Comisión** (Art. 6 Derechos 2).

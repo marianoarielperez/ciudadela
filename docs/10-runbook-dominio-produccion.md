@@ -963,10 +963,11 @@ así que no deja ni log ni asiento de auditoría.
 
 Es un **despliegue normal** (4.1): ninguna variable de entorno nueva, ninguna línea
 nueva de crontab, ninguna dependencia nueva y ningún cambio en Nginx. Lo que tiene de
-propio son **dos migraciones**, una carpeta que nace sola, y una verificación de
+propio son **tres migraciones**, una carpeta que nace sola, y una verificación de
 cabeceras que sólo se puede hacer contra el servidor.
 
-**1. Las migraciones que trae — son DOS.**
+**1. Las migraciones que trae — son TRES.** Las dos primeras salieron con el módulo
+(desplegadas el 03/09/2026); la tercera vino después y **renumera**.
 
 - `20260901212840_add_reports` — **estrictamente aditiva**: dos tablas nuevas
   (`reports`, `report_files`), una columna nullable en `notifications` (`report_id`) y
@@ -975,10 +976,34 @@ cabeceras que sólo se puede hacer contra el servidor.
 - `20260902112958_report_minute_restrict` — cambia una sola FK: `reports.filed_minute_id`
   pasa a `ON DELETE RESTRICT`, para que no se pueda borrar el acta con la que se asentó
   el tratamiento de una iniciativa. Es un `DROP`+`ADD` del constraint sobre una tabla
-  que en producción va a estar **vacía**.
+  que en ese momento estaba **vacía**.
+- `20260903203910_report_public_number` — el **N° público** del reporte (columna
+  `reports.number`, única, NULL en los borradores) y la tabla `report_sequences` (una
+  fila; misma disciplina que `receipt_sequences`, REG-33). Hasta acá el N° que veía el
+  vecino era el `id`, y como la fila nace como borrador en el paso 1 del wizard, cada
+  wizard abandonado se llevaba un número: el primer reporte real de producción salió
+  como "N° 16". Trae un **backfill**: renumera lo ya enviado (`status <> 'draft'`) como
+  1..N en orden de `submitted_at`, y deja la secuencia en N. **Consecuencia visible**:
+  el reporte que la web mostraba como N° 16 pasa a ser el **N° 1** en la ficha, en el
+  PDF, en la lista del socio y en cualquier correo que salga desde entonces. Si ese
+  número ya se le comunicó a alguien, cambió; decidirlo antes, no descubrirlo cuando un
+  vecino llame.
 
-`npx prisma migrate deploy` aplica las dos, en orden, en el mismo comando de siempre.
-No hay nada que correr a mano.
+`npx prisma migrate deploy` aplica las que falten, en orden, en el mismo comando de
+siempre. No hay nada que correr a mano. Después de la tercera, **una verificación de
+dos líneas** que cierra la única rama silenciosa del backfill (que la variable de
+sesión no sobreviva entre sentencias y el `sql_mode` no sea estricto):
+
+```bash
+mysql sigev -e "SELECT COUNT(*) AS sin_numero FROM reports WHERE status <> 'draft' AND number IS NULL; SELECT last FROM report_sequences;"
+```
+
+`sin_numero` tiene que ser **0** y `last` igual a la cantidad de reportes no-borrador.
+Si `sin_numero` no es 0, parar: el backfill no corrió como debía y el próximo envío
+chocaría contra el índice único.
+
+Ojo con la búsqueda del panel: el texto todo dígitos busca el **N° público**, no el
+`id`. Un id anotado en un papel dejó de servir como término de búsqueda.
 
 **2. El deploy**, que es el de 4.1 sin nada agregado (backup previo primero):
 

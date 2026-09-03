@@ -1169,7 +1169,9 @@ canaliza (REG-37; Art. 2 inc. g y Art. 6 Derechos 2). **Es un registro, no un si
 de tickets**: no promete resolución, no tiene SLA y no reemplaza el reclamo directo del
 vecino ante el organismo. Spec completa:
 `docs/superpowers/specs/2026-09-01-reportes-design.md`. Rama `reports`. Migraciones
-`20260901212840_add_reports` (aditiva) y `20260902112958_report_minute_restrict`.
+`20260901212840_add_reports` (aditiva), `20260902112958_report_minute_restrict` y
+`20260903203910_report_public_number` (el N° público asignado al enviar, con backfill
+que renumera lo ya enviado; ver `docs/10` §4.9).
 
 **Módulo propio con tablas propias.** La razón de esa decisión es la que se ve en el
 `git diff`: el núcleo de plata no se toca.

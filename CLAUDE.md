@@ -654,16 +654,15 @@ con el operador (tres sesiones) y una ronda final de arreglos. El módulo no mod
 **ni un archivo existente** de `src/lib/treasury/*` ni de `src/lib/mp/*`. Lo que falta
 es el merge y el despliegue.
 
-El **Módulo 7 (Reportes) está CERRADO** (02/09/2026) **en la rama `reports`, sin
-mergear y sin desplegar**: el núcleo del dominio (Parte 1), el wizard público y el del
-socio (Parte 2), y la bandeja del admin con la ficha, el PDF, el mapa y esta
-documentación (Parte 3). No modificó **ni un archivo existente** de
-`src/lib/treasury/*` ni de `src/lib/mp/*` (verificado con `git diff --stat`). Lo que
-falta es el merge, el push y el despliegue con **las DOS migraciones**
-(`20260901212840_add_reports` y `20260902112958_report_minute_restrict`, que
-`prisma migrate deploy` aplica juntas). Procedimiento propio: `docs/10` §4.9 — no hay
-variable de entorno nueva ni línea nueva de crontab, pero sí una verificación de
-cabeceras que sólo se puede hacer contra el servidor.
+El **Módulo 7 (Reportes) está CERRADO, MERGEADO y DESPLEGADO** (03/09/2026): el
+núcleo del dominio (Parte 1), el wizard público y el del socio (Parte 2), y la bandeja
+del admin con la ficha, el PDF, el mapa y esta documentación (Parte 3). No modificó
+**ni un archivo existente** de `src/lib/treasury/*` ni de `src/lib/mp/*` (verificado
+con `git diff --stat`). Después del primer deploy se sumó el **N° público asignado al
+enviar** (`reports.number` + `report_sequences`, patrón de recibos), porque el N° era el
+`id` y los borradores abandonados lo salteaban: la tercera migración,
+`20260903203910_report_public_number`, **renumera lo ya enviado** (el "N° 16" de
+producción pasa a N° 1). Procedimiento y verificación post-migración: `docs/10` §4.9.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab
