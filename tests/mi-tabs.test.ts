@@ -84,7 +84,9 @@ describe("MiTabs", () => {
     const mobile = navs(html)[1];
     const [inicio, cuenta] = links(mobile);
     expect(cuenta).toContain('aria-current="page"');
-    expect(cuenta).toMatch(/class="[^"]*\bbg-primary\b[^"]*\btext-primary-foreground\b/);
+    // Sin asumir el orden dentro del atributo: dos aserciones por token.
+    expect(cuenta).toMatch(/class="[^"]*(^|\s)bg-primary(\s|")/);
+    expect(cuenta).toMatch(/class="[^"]*(^|\s)text-primary-foreground(\s|")/);
     expect(inicio).not.toContain("bg-primary");
     expect(inicio).toMatch(/<svg [^>]*class="[^"]*\btext-primary\b/);
   });
@@ -98,7 +100,8 @@ describe("MiTabs", () => {
     expect(items).toHaveLength(miTabsFor(true).length);
     for (const li of items) {
       expect(li).toMatch(/\bbasis-20\b/);
-      expect(li).toMatch(/\bgrow\b/);
+      // `grow` a secas, no `grow-0`: la clase tiene que terminar donde termina.
+      expect(li).toMatch(/class="[^"]*(^|\s)grow(\s|")/);
     }
     expect(mobile).toMatch(/<a [^>]*class="[^"]*\bmin-h-16\b/);
   });
@@ -125,5 +128,49 @@ describe("MiTabs", () => {
     expect(left).toMatch(/<div [^>]*\bhidden=""/);
     expect(right).toContain("Ver más secciones");
     expect(right).not.toMatch(/<div [^>]*\bhidden=""/);
+  });
+});
+
+describe("readEdges", () => {
+  // Sin DOM: lo único que mira la función son tres números.
+  async function edgesOf(el: { scrollWidth: number; clientWidth: number; scrollLeft: number }) {
+    const { readEdges } = await import("@/components/mi/mi-tabs");
+    return readEdges(el as HTMLElement);
+  }
+
+  it("no hay desborde si entran todas las pestañas", async () => {
+    expect(await edgesOf({ scrollWidth: 320, clientWidth: 375, scrollLeft: 0 })).toMatchObject({
+      overflows: false,
+    });
+  });
+
+  it("no hay desborde si lo que sobra no supera la holgura", async () => {
+    const { EDGE_SLACK } = await import("@/components/mi/mi-tabs");
+    expect(
+      await edgesOf({ scrollWidth: 375 + EDGE_SLACK, clientWidth: 375, scrollLeft: 0 }),
+    ).toMatchObject({ overflows: false });
+  });
+
+  it("con desborde real y scroll en cero está al inicio y no al final", async () => {
+    expect(await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: 0 })).toEqual({
+      overflows: true,
+      atStart: true,
+      atEnd: false,
+    });
+  });
+
+  it("a mitad de la tira no está ni al inicio ni al final", async () => {
+    expect(await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: 100 })).toEqual({
+      overflows: true,
+      atStart: false,
+      atEnd: false,
+    });
+  });
+
+  it("a un pixel del tope ya cuenta como final (holgura)", async () => {
+    const max = 600 - 375;
+    expect(await edgesOf({ scrollWidth: 600, clientWidth: 375, scrollLeft: max - 1 })).toMatchObject({
+      atEnd: true,
+    });
   });
 });
