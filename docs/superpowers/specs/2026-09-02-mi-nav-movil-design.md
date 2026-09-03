@@ -1,7 +1,7 @@
 # Navegación móvil del panel de socio (`/mi`) — diseño
 
 **Fecha:** 2026-09-02
-**Estado:** aprobado por el operador (entrevista de cuatro rondas + mockup)
+**Estado:** implementado y verificado en el navegador (2026-09-02)
 **Alcance:** un componente. Cambio visual; ninguna regla de negocio ni ruta se toca.
 
 ## 1. Problema
