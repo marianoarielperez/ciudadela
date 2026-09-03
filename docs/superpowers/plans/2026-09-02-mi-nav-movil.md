@@ -430,7 +430,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Verificación en el navegador (375 px y 640 px)
+### Task 2: Verificación en el navegador (375 px, 700 px y 768 px)
 
 > Nota: el corte pasó de sm (640) a md (768) por decisión del operador tras esta pasada; los pasos de abajo ya están actualizados.
 
