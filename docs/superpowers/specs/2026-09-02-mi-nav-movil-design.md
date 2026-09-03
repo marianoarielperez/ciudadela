@@ -22,6 +22,7 @@ sección activa que no se ve.
 | Espacio vertical | Lo que haga falta arriba; la nav **se va con el encabezado** al hacer scroll (no es sticky). |
 | Patrón | Tira grande que desliza, con **señal y botón** de "hay más" (variante C del mockup). Descartadas: mosaico 3×2 y fichas en dos filas. |
 | Flecha | Botón que **desplaza** la tira; al llegar al final aparece **del lado izquierdo** apuntando atrás. **Deslizar con el dedo sigue funcionando.** |
+| Dónde va la flecha | **Flota sobre el borde** de la tira, con un degradado corto detrás. Se descartaron las columnas fijas de 44 px: con dos columnas en 375 px entran 3,5 pestañas de 80 px, no cuatro (decisión posterior a la primera versión del spec). |
 | Activa a la vista | Al cargar cualquier sección la tira **arranca ya desplazada** para que la activa se vea. |
 | Cuántas a la vista | Cuatro enteras en 375 px, con **texto de 14 px** (se descartó cinco con 12 px). |
 | Marca de activa | **Bloque celeste lleno** (`bg-primary`, texto blanco). |
@@ -38,17 +39,17 @@ Mockup aprobado: artefacto "Navegación móvil de /mi" (tres estados a 375 px).
 | Texto | 14 px `font-medium`; `font-semibold` en la activa |
 | Activa | `bg-primary text-primary-foreground` (4,71:1) |
 | Inactiva | `text-foreground`, sin fondo; `hover:bg-muted` |
-| Columnas de flecha | 44 px cada una, una por lado; botón redondo de 36 px `bg-primary` con chevron de 20 px |
+| Flecha | **Flotante** sobre el borde de la tira: botón de 44 px de target con un círculo visible de 36 px `bg-primary` y chevron de 20 px, sobre un degradado de 64 px de `bg-background` a transparente. No ocupa ancho: la tira usa los 375 px enteros (`-mx-4`), y en 375 px se ven **cuatro pestañas enteras** y una parcial, que es la que queda bajo la flecha. |
 | Alto total de la nav | ≈ 78 px (hoy ≈ 56 px) |
 | Corte | `sm:hidden` para la tira nueva; `hidden sm:block` para la nav actual |
 
-Estados de las flechas:
+Estados de las flechas (cada una con su degradado):
 
-- **Al inicio** (`scrollLeft ≈ 0`): la izquierda invisible, la derecha visible.
+- **Al inicio** (`scrollLeft ≈ 0`): la izquierda ausente, la derecha visible.
 - **En el medio**: las dos visibles.
-- **Al final**: la derecha invisible, la izquierda visible.
-- **Todo entra** (`scrollWidth ≤ clientWidth`): las dos columnas **ausentes** (`hidden`) y las
-  pestañas se reparten el ancho.
+- **Al final**: la derecha ausente, la izquierda visible.
+- **Todo entra** (`scrollWidth ≤ clientWidth`): las dos ausentes y las pestañas se reparten el
+  ancho (`flex-grow`).
 
 ## 4. Comportamiento
 
@@ -58,21 +59,23 @@ Estados de las flechas:
   `scrollLeft` directo para que la pestaña con `aria-current` quede visible (centrada si se
   puede). **No** se usa `scrollIntoView`: puede mover la página en vertical.
 - **Estado de las flechas**: derivado de `scrollLeft`, `scrollWidth` y `clientWidth` con un
-  listener de `scroll` (pasivo) y un `ResizeObserver` sobre el contenedor. Con desborde, las
-  dos columnas están **siempre en el DOM** (`invisible` + `disabled` cuando no corresponden):
-  si se quitaran, el ancho de la tira cambiaría al aparecer/desaparecer una flecha y el estado
-  podría oscilar. Solo cuando todo entra se quitan las dos a la vez, lo que únicamente ensancha
-  la tira y no puede reintroducir desborde.
+  listener de `scroll` (pasivo) y un `ResizeObserver` sobre el contenedor. Como las flechas
+  **flotan** (posición absoluta), aparecer o desaparecer no cambia el ancho de la tira y el
+  estado no puede oscilar; por eso se ocultan con `hidden` a secas, y un botón oculto sale
+  del orden de tabulación.
+- **Servidor e hidratación**: se pinta el estado "desborda y al inicio" (solo la flecha
+  derecha), que es el más probable en un celular; el `useLayoutEffect` lo corrige con
+  medidas reales antes del primer pintado.
 - **Deslizar con el dedo**: el contenedor es `overflow-x-auto` como hoy; nada lo intercepta.
 
 ## 5. Accesibilidad
 
-- Targets: pestañas 80 × 64 px; botones 44 × 44 px de columna (36 px visibles).
+- Targets: pestañas 80 × 64 px; botones de 44 × 44 px (36 px visibles).
 - Nombres accesibles de los botones: "Ver más secciones" / "Ver secciones anteriores";
-  íconos `aria-hidden`. Un botón `disabled` sale del orden de tabulación.
-- Foco: `outline-hidden focus-visible:ring-2 focus-visible:ring-ring` en pestañas y botones,
-  con el `-my-1 py-1` del contenedor para que el anillo no se recorte (trampa documentada en
-  `section-tabs.ts`).
+  íconos `aria-hidden`. Un botón `hidden` sale del orden de tabulación.
+- Foco: `outline-hidden focus-visible:ring-2 focus-visible:ring-ring` en pestañas y botones.
+  El contenedor con scroll lleva `pt-1.5 pb-2` propios, así que el anillo de 2 px de las
+  pestañas no se recorta (la trampa documentada en `section-tabs.ts`).
 - Landmarks: la nav de escritorio y la móvil comparten `aria-label="Secciones del panel"`;
   como una de las dos está en `display: none`, el lector de pantalla ve una sola.
 - `aria-current="page"` en la activa, con la misma `isMiTabActive` de hoy.
