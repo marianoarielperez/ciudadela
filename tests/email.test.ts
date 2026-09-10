@@ -160,6 +160,20 @@ describe("templates", () => {
     expect(r.html).toContain("Cuota social · marzo 2025");
   });
 
+  // Reparto de un cobro de MP (spec 2026-09-10): el recibo de cada socio sale
+  // por SU parte, y el correo tiene que explicar por qué dice $ 6.000 si el
+  // vecino transfirió $ 18.000. Sin `sharedPayment`, ni una palabra de más.
+  it("receiptEmail con sharedPayment agrega la leyenda del pago compartido; sin él, no", () => {
+    const con = receiptEmail({
+      name: "Ana", number: "2026-00012", concept: "Cuota social · agosto 2026", amount: 6000,
+      sharedPayment: { total: 18000, paidAt: new Date("2026-09-08T15:00:00Z") },
+    });
+    expect(con.text).toContain("parte de un pago de $ 18.000,00 cobrado por Mercado Pago el 08/09/2026");
+    expect(con.html).toContain("parte de un pago de $ 18.000,00");
+    const sin = receiptEmail({ name: "Ana", number: "2026-00012", concept: "Cuota social · agosto 2026", amount: 6000 });
+    expect(sin.text).not.toContain("parte de un pago");
+  });
+
   // El vecino recibe un enlace de COBRO que no pidió: el correo tiene que
   // dejarlo verificar cuánto y por qué sin abrirlo, y decirle hasta cuándo vale
   // —el importe queda congelado al valor de cuota del día en que se generó—.
@@ -271,7 +285,7 @@ describe("templates", () => {
       notificationsFailed: 0, cronFailures: [], webhookErrors: 0, ...noReports,
     });
     expect(m.text).toContain("Débito automático");
-    expect(m.text).toContain("Link de pago");
+    expect(m.text).toContain("Mercado Pago");
     expect(m.text).not.toContain("debit");
   });
 

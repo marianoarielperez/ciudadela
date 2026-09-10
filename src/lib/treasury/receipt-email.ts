@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { receiptSummaryOf } from "./receipt-summary";
 import { readReceiptPdf, receiptRelativePath } from "./receipts-dir";
 import { treasuryService } from "./service";
+import { sharedPaymentOf } from "./split-group";
 
 type Mailer = Pick<typeof mailer, "sendToMember" | "sendToApplication">;
 
@@ -25,7 +26,7 @@ function codeOf(e: unknown): string {
 }
 
 export function makeReceiptEmailer(deps: {
-  db: Pick<PrismaClient, "receipt">;
+  db: Pick<PrismaClient, "receipt" | "payment" | "mpUnmatchedPayment">;
   mailer: Mailer;
   readPdf: (relPath: string) => Promise<Buffer>;
   regenerate: (receiptId: number) => Promise<Uint8Array>;
@@ -41,6 +42,8 @@ export function makeReceiptEmailer(deps: {
               // Un pago de cuota de ingreso cuelga de la solicitud: todavía no
               // hay ficha, pero el recibo le corresponde igual (REG-33).
               application: { select: { id: true, fullName: true, email: true } },
+              // Reparto: con esto `sharedPaymentOf` sabe si hay partes sin otra consulta.
+              splitParts: { select: { id: true } },
             },
           },
         },
@@ -74,6 +77,14 @@ export function makeReceiptEmailer(deps: {
           // contenido es determinístico a partir de la fila.
           pdf = Buffer.from(await deps.regenerate(r.id));
         }
+        // Parte de un cobro de MP repartido: la leyenda explica por qué el
+        // recibo dice menos de lo que el vecino transfirió (spec 2026-09-10 §7).
+        const shared = await sharedPaymentOf(deps.db, {
+          amount: Number(r.payment.amount),
+          mpPaymentId: r.payment.mpPaymentId ?? null,
+          splitOfPaymentId: r.payment.splitOfPaymentId ?? null,
+          hasParts: (r.payment.splitParts ?? []).length > 0,
+        });
         // El concepto sale de la fila del recibo, congelado al emitir: no se
         // recalcula desde `payment.fees`, que al anular quedan despegadas.
         const message = receiptEmail({
@@ -84,6 +95,7 @@ export function makeReceiptEmailer(deps: {
           // El recibo va contra la solicitud: todavía no hay resolución de la
           // Comisión, así que el correo lo dice (spec 2026-09-01 §6.4).
           admissionPending: target.kind === "application",
+          ...(shared ? { sharedPayment: { total: shared.total, paidAt: shared.paidAt } } : {}),
         });
         const payload = {
           to: target.to,

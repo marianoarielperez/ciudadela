@@ -470,9 +470,14 @@ export function receiptEmail(opts: {
   /** Recibo de la cuota de ingreso previo al acta (spec 2026-09-01 §6.4): el
    *  comprobante no acredita la condición de socio. Ausente → correo de siempre. */
   admissionPending?: boolean;
+  /** Parte de un cobro de MP repartido (spec 2026-09-10): total y fecha del cobro. */
+  sharedPayment?: { total: number; paidAt: Date };
 }): Rendered {
   const amount = formatARS(opts.amount);
   const admission = opts.admissionPending ? `\n\n${ADMISSION_PENDING_LEGEND}` : "";
+  const shared = opts.sharedPayment
+    ? `\n\nEste recibo es parte de un pago de ${formatARS(opts.sharedPayment.total)} cobrado por Mercado Pago el ${formatDateAR(opts.sharedPayment.paidAt)}.`
+    : "";
   return {
     subject: `Recibo ${opts.number} — Vecinal Ciudadela`,
     text: `Hola ${opts.name}:
@@ -480,12 +485,12 @@ export function receiptEmail(opts: {
 Registramos tu pago y te enviamos el recibo N° ${opts.number}.
 
 Concepto: ${opts.concept}
-Importe: ${amount}${admission}
+Importe: ${amount}${admission}${shared}
 
 El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.${SIGNATURE}`,
     html: layout(`Recibo ${opts.number}`, `<p>Hola <strong>${esc(opts.name)}</strong>:</p>
 <p>Registramos tu pago y te enviamos el recibo <strong>N° ${esc(opts.number)}</strong>.</p>
-<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>${opts.admissionPending ? `\n<p>${esc(ADMISSION_PENDING_LEGEND)}</p>` : ""}
+<p>Concepto: ${esc(opts.concept)}<br>Importe: <strong>${esc(amount)}</strong></p>${opts.admissionPending ? `\n<p>${esc(ADMISSION_PENDING_LEGEND)}</p>` : ""}${opts.sharedPayment ? `\n<p>${esc(shared.trim())}</p>` : ""}
 <p>El recibo en PDF va adjunto a este correo. Si no reconocés este pago, respondé este mensaje o acercate a la sede.</p>`),
   };
 }

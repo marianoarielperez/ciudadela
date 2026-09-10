@@ -28,6 +28,9 @@ function setup(
     concept: "Cuota social · septiembre 2026",
     payment: {
       id: 3, type: "cash", amount: "6000.00", memberId: 1,
+      // El select real los pide: sin partes ni portador, `sharedPaymentOf` no
+      // consulta nada y el correo de siempre queda idéntico.
+      mpPaymentId: null as string | null, splitOfPaymentId: null as number | null, splitParts: [] as Array<{ id: number }>,
       member: member ? { id: 1, fullName: "Ana", ...member } : null,
       // Un pago de cuota de ingreso todavía no tiene socio: cuelga de la solicitud.
       application: application ?? null,
@@ -174,5 +177,18 @@ describe("sendReceiptEmail", () => {
     const s = setup({ email: "ana@x.com", emailStatus: "declared" });
     expect(await s.emailer.sendReceiptEmail(99)).toEqual({ sent: false, reason: "error", code: "not_found" });
     expect(s.mailer.sendToMember).not.toHaveBeenCalled();
+  });
+
+  it("una parte de un reparto lleva la leyenda del pago compartido en el correo", async () => {
+    const s = setup({ email: "ana@x.com", emailStatus: "declared" });
+    // La parte: 6.000 de un cobro de 18.000 cuyo portador es el pago 1.
+    Object.assign(s.receipt.payment, { amount: "6000.00", mpPaymentId: null, splitOfPaymentId: 1, splitParts: [] });
+    const db = s.db as unknown as Record<string, unknown>;
+    db.payment = { findUnique: vi.fn(async () => ({ mpPaymentId: "mp-18k" })) };
+    db.mpUnmatchedPayment = {
+      findUnique: vi.fn(async () => ({ id: 5, amount: "18000.00", paidAt: new Date("2026-09-08T15:00:00Z") })),
+    };
+    expect(await s.emailer.sendReceiptEmail(7)).toEqual({ sent: true });
+    expect(s.mailer.sendToMember.mock.calls[0][0].message.text).toContain("parte de un pago de $ 18.000,00");
   });
 });

@@ -164,4 +164,23 @@ describe("renderReceiptPdf", () => {
     expect(yOf(sin, "Anulado: Cargado por error") - yOf(con, "Anulado: Cargado por error")).toBe(23);
     expect(con.map((d) => d.text)).toContain("ANULADO");
   });
+
+  // Reparto (spec 2026-09-10): la leyenda sólo con `sharedPayment`; sin él, el
+  // dato del recibo de siempre produce el mismo pie.
+  it("con sharedPayment dibuja la leyenda del pago compartido y empuja el motivo de anulación 12 pt", async () => {
+    const base = {
+      number: "2026-00012", issuedAt: new Date("2026-09-08T15:00:00Z"),
+      memberName: "Maza Monica", memberNumber: 193,
+      concept: "Cuota social · agosto 2026", methodLabel: "Mercado Pago", amount: 6000,
+      voided: { reason: "no era de ella" },
+    } as const;
+    const sin = await drawnText(await renderReceiptPdf(base));
+    const con = await drawnText(await renderReceiptPdf({
+      ...base, sharedPayment: { total: 18000, paidAt: new Date("2026-09-08T15:00:00Z") },
+    }));
+    const all = (texts: Drawn[]) => texts.map((t) => t.text).join(" ");
+    expect(all(con)).toContain("Parte de un pago de $ 18.000,00 cobrado por Mercado Pago el 08/09/2026.");
+    expect(all(sin)).not.toContain("Parte de un pago");
+    expect(yOf(sin, "Anulado: no era de ella") - yOf(con, "Anulado: no era de ella")).toBe(12);
+  });
 });

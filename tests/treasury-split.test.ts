@@ -108,8 +108,11 @@ describe("registerSplitPayment — el reparto", () => {
     expect(log.indexOf("lock")).toBe(1);
     expect(log.indexOf("row-update")).toBeLessThan(log.indexOf("seq"));
     expect(log.filter((e) => e === "seq" || e === "receipt")).toEqual(["seq", "receipt", "seq", "receipt"]);
-    // El PDF, DESPUÉS del commit y uno por parte.
+    // El PDF, DESPUÉS del commit y uno por parte. Y los DOS llevan la leyenda
+    // del pago compartido: ninguno cubre los $ 18.000 que entraron por MP.
     expect(renderPdf).toHaveBeenCalledTimes(2);
+    expect(renderPdf).toHaveBeenNthCalledWith(1, expect.objectContaining({ sharedPayment: { total: 18000, paidAt: PAID_AT } }));
+    expect(renderPdf).toHaveBeenNthCalledWith(2, expect.objectContaining({ sharedPayment: { total: 18000, paidAt: PAID_AT } }));
   });
 
   it("una parte sola en una fila fresca escribe exactamente lo que escribe registerPayment", async () => {

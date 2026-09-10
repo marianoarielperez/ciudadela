@@ -21,6 +21,10 @@ export type ReceiptPdfData = {
   /** Recibo de la cuota de ingreso previo al acta: suma la leyenda del pie
    *  (spec 2026-09-01 §6.4). Ausente o false → el pie de siempre. */
   admissionPending?: boolean;
+  /** Parte de un cobro de MP repartido entre socios (spec 2026-09-10 §7): el
+   *  total y la fecha del cobro. Sin contar socios, para que el texto no
+   *  envejezca. Ausente → el pie de siempre. */
+  sharedPayment?: { total: number; paidAt: Date };
 };
 
 const PRIMARY = rgb(0 / 255, 121 / 255, 188 / 255); // #0079BC
@@ -141,6 +145,16 @@ export async function renderReceiptPdf(data: ReceiptPdfData): Promise<Uint8Array
     page.drawText(safe("que se adquiere con la resolución de la Comisión Directiva asentada en acta."), {
       x: margin, y, size: 8, font, color: MUTED,
     });
+  }
+
+  if (data.sharedPayment) {
+    // El vecino transfirió $ 18.000 y su recibo dice $ 6.000: esta línea es lo
+    // que lo explica sin que tenga que llamar a la sede.
+    y -= 12;
+    page.drawText(
+      safe(`Parte de un pago de ${formatARS(data.sharedPayment.total)} cobrado por Mercado Pago el ${formatDateAR(data.sharedPayment.paidAt)}.`),
+      { x: margin, y, size: 8, font, color: MUTED },
+    );
   }
 
   if (data.voided) {

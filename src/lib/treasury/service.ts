@@ -11,7 +11,7 @@ import { formatReceiptNumber, nextReceiptSeq, type TxLike } from "./receipt-numb
 import { renderReceiptPdf, type ReceiptPdfData } from "./receipt-pdf";
 import { receiptRelativePath, writeReceiptPdf } from "./receipts-dir";
 import { allocate, cashConceptsFor, coverageFloor, feeAmountFor, revertFees, type CashConcept } from "./rules";
-import { cents, INBOX_CONCEPT_TYPE, loadGroup, MAX_SPLIT_PARTS } from "./split-group";
+import { cents, INBOX_CONCEPT_TYPE, loadGroup, MAX_SPLIT_PARTS, sharedPaymentOf } from "./split-group";
 import { SPLIT_GUARD_MESSAGES } from "./split-messages";
 import { splitPartGuards, type SplitPartPlan } from "./split-preview";
 import { isFeePeriodUniqueViolation, isUniqueViolation } from "./unique-violation";
@@ -132,6 +132,8 @@ export function makeTreasuryService(deps: Deps) {
             // Un pago de cuota de ingreso cuelga de la solicitud y todavía no
             // tiene socio: sin esto el recibo salía a nombre de "—".
             application: { select: { fullName: true } },
+            // Reparto: con esto `sharedPaymentOf` sabe si hay partes sin otra consulta.
+            splitParts: { select: { id: true } },
           },
         },
       },
@@ -139,6 +141,12 @@ export function makeTreasuryService(deps: Deps) {
     if (!r) throw new TreasuryError("El recibo no existe.");
     const member = r.payment.member;
     const open = member?.memberships.find((m) => m.book.status === "open");
+    const shared = await sharedPaymentOf(db, {
+      amount: Number(r.payment.amount),
+      mpPaymentId: r.payment.mpPaymentId ?? null,
+      splitOfPaymentId: r.payment.splitOfPaymentId ?? null,
+      hasParts: (r.payment.splitParts ?? []).length > 0,
+    });
     return {
       number: r.number,
       issuedAt: r.issuedAt,
@@ -158,6 +166,9 @@ export function makeTreasuryService(deps: Deps) {
       // dato del recibo de un socio siga siendo byte-idéntico al de siempre: este
       // es el camino de la plata y el flag es puramente aditivo.
       ...(!member && r.payment.application !== null ? { admissionPending: true } : {}),
+      // Misma regla: se OMITE cuando no aplica, para que el dato del recibo de
+      // siempre siga byte-idéntico.
+      ...(shared ? { sharedPayment: { total: shared.total, paidAt: shared.paidAt } } : {}),
     };
   }
 

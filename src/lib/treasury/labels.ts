@@ -5,7 +5,11 @@ import type { CashConcept } from "./rules";
 
 export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
   debit: "Débito automático",
-  link: "Link de pago",
+  // "Mercado Pago" y no "Link de pago" (decisión 10, 10/09/2026): la bandeja
+  // asienta con este tipo también las TRANSFERENCIAS al CVU, y el recibo tiene
+  // que decir por dónde entró la plata sin afirmar un medio que no fue. El
+  // gateway no lee `payment_type_id`, así que no hay forma de distinguirlos.
+  link: "Mercado Pago",
   cash: "Efectivo",
   voluntary: "Aporte voluntario",
   entry: "Cuota de ingreso",
