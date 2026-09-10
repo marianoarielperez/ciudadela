@@ -4,13 +4,14 @@
 import type { PaymentType, PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createKeyedMutex } from "@/lib/keyed-mutex";
+import { allocateFor, readFeeContext } from "./fee-allocation";
 import { feeValueReader, makeFeeValueReader, NO_FEE_VALUE_MESSAGE } from "./fee-values";
 import { PAYMENT_TYPE_LABELS, paymentConcept } from "./labels";
 import { comparePeriods, currentPeriod, periodYear, type Period } from "./periods";
 import { formatReceiptNumber, nextReceiptSeq, type TxLike } from "./receipt-number";
 import { renderReceiptPdf, type ReceiptPdfData } from "./receipt-pdf";
 import { receiptRelativePath, writeReceiptPdf } from "./receipts-dir";
-import { allocate, cashConceptsFor, coverageFloor, feeAmountFor, revertFees, type CashConcept } from "./rules";
+import { cashConceptsFor, feeAmountFor, revertFees, type CashConcept } from "./rules";
 import { cents, INBOX_CONCEPT_TYPE, loadGroup, MAX_SPLIT_PARTS, sharedPaymentOf } from "./split-group";
 import { SPLIT_GUARD_MESSAGES } from "./split-messages";
 import { splitPartGuards, type SplitPartPlan } from "./split-preview";
@@ -253,38 +254,21 @@ export function makeTreasuryService(deps: Deps) {
       });
       if (!member) throw new TreasuryError("El socio no existe.");
       if (n > 0) {
-        // El reingreso más nuevo entra en el piso de cobertura y NO se puede
-        // derivar de `joinedAt` (REG-11: el reingreso no reinicia la antigüedad,
-        // ver `applications/record.ts`). `date` es la fecha del ACTA que
-        // resolvió el reingreso: el reingreso rige desde el acta.
-        const [fees, readmission] = await Promise.all([
-          db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } }),
-          db.movement.findFirst({
-            where: { memberId: member.id, type: "readmission" },
-            orderBy: [{ date: "desc" }, { id: "desc" }],
-            select: { date: true },
-          }),
-        ]);
-        const pending = fees.filter((f) => f.status === "pending").map((f) => f.period);
+        // Las cuotas y el reingreso, y después el piso de cobertura: las mismas
+        // dos funciones que usa la vista previa del reparto (`previewSplit`), no
+        // una copia. Si divergieran, la pantalla anunciaría un mes y el recibo
+        // diría otro.
+        const ctx = await readFeeContext(db, member.id);
         // Un dado de baja no devenga: se le cobra la deuda congelada y ni una
         // cuota más.
         if (member.status === "withdrawn") {
-          if (opts.strictWithdrawn && n > pending.length) {
-            throw new TreasuryError(SPLIT_GUARD_MESSAGES.withdrawnCount(pending.length));
+          if (opts.strictWithdrawn && n > ctx.pending.length) {
+            throw new TreasuryError(SPLIT_GUARD_MESSAGES.withdrawnCount(ctx.pending.length));
           }
-          n = Math.min(n, pending.length);
+          n = Math.min(n, ctx.pending.length);
           if (n === 0) return { kind: "no_pending_withdrawn" };
         }
-        const allocation = allocate({
-          pending,
-          existing: fees.map((f) => f.period),
-          n,
-          // El PISO, no el mes en curso: la cuenta corriente no tiene fila para
-          // lo que ya está cubierto. El piso puede quedar ANTES de hoy (quien no
-          // pagó septiembre y paga en octubre cubre septiembre primero) y también
-          // DESPUÉS (un alta de noviembre).
-          startAt: coverageFloor({ joinedAt: member.joinedAt, readmittedAt: readmission?.date ?? null }),
-        });
+        const allocation = allocateFor(ctx, member, n);
         periods = allocation.toPay;
         toCreate = allocation.toCreate;
       }

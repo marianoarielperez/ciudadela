@@ -5,8 +5,9 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { countPendingFees } from "./account";
 import { activeExemption } from "./exemptions";
+import { allocateFor, readFeeContext } from "./fee-allocation";
 import { paymentConcept } from "./labels";
-import { allocate, cashConceptsFor, coverageFloor, type CashConcept } from "./rules";
+import { cashConceptsFor, type CashConcept } from "./rules";
 import { SPLIT_GUARD_MESSAGES as M } from "./split-messages";
 import { cents, INBOX_CONCEPT_TYPE } from "./split-group";
 
@@ -59,8 +60,8 @@ export type SplitPreviewPart = { memberId: number; name: string; memberNumber: n
 
 /** La vista previa, resuelta en el SERVIDOR contra la base: qué cuotas se
  *  imputan a cada socio (las más viejas primero, y las que se crean desde el
- *  piso de cobertura con el reingreso), con el mismo `allocate` y el mismo
- *  `coverageFloor` que usa el núcleo al asentar. */
+ *  piso de cobertura con el reingreso), con `readFeeContext` y `allocateFor`:
+ *  las MISMAS funciones que usa el núcleo al asentar (`preparePart`). */
 export async function previewSplit(
   db: Pick<PrismaClient, "member" | "fee" | "movement">,
   parts: SplitPartPlan[],
@@ -79,20 +80,9 @@ export async function previewSplit(
     const type = INBOX_CONCEPT_TYPE[p.concept];
     let periods: string[] = [];
     if (p.concept === "fees") {
-      const [fees, readmission] = await Promise.all([
-        db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } }),
-        db.movement.findFirst({
-          where: { memberId: member.id, type: "readmission" },
-          orderBy: [{ date: "desc" }, { id: "desc" }],
-          select: { date: true },
-        }),
-      ]);
-      periods = allocate({
-        pending: fees.filter((f) => f.status === "pending").map((f) => f.period),
-        existing: fees.map((f) => f.period),
-        n: p.n,
-        startAt: coverageFloor({ joinedAt: member.joinedAt, readmittedAt: readmission?.date ?? null }),
-      }).toPay;
+      // Las MISMAS dos funciones que usa `preparePart` al asentar, no una copia:
+      // lo que esta pantalla anuncia es lo que el recibo va a congelar.
+      periods = allocateFor(await readFeeContext(db, member.id), member, p.n).toPay;
     }
     out.push({ memberId: member.id, name: member.fullName, memberNumber, concept: paymentConcept(type, periods), amount: p.amount });
   }
