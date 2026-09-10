@@ -11,7 +11,9 @@ import { formatReceiptNumber, nextReceiptSeq, type TxLike } from "./receipt-numb
 import { renderReceiptPdf, type ReceiptPdfData } from "./receipt-pdf";
 import { receiptRelativePath, writeReceiptPdf } from "./receipts-dir";
 import { allocate, cashConceptsFor, coverageFloor, feeAmountFor, revertFees, type CashConcept } from "./rules";
+import { cents, INBOX_CONCEPT_TYPE, loadGroup, MAX_SPLIT_PARTS } from "./split-group";
 import { SPLIT_GUARD_MESSAGES } from "./split-messages";
+import { splitPartGuards, type SplitPartPlan } from "./split-preview";
 import { isFeePeriodUniqueViolation, isUniqueViolation } from "./unique-violation";
 
 export class TreasuryError extends Error {
@@ -66,6 +68,17 @@ export type RegisterResult =
     }
   | { kind: "already_processed"; paymentId: number }
   | { kind: "no_pending_withdrawn" };
+
+/** Una parte del reparto de un cobro de la bandeja (spec 2026-09-10). */
+export type SplitPartInput = SplitPartPlan;
+export type RegisterSplitInput = { rowId: number; parts: SplitPartInput[]; actorId: number; note?: string | null };
+export type SplitPartResult = {
+  memberId: number; paymentId: number; receiptId: number; number: string; periods: Period[]; amount: number; pdfWritten: boolean;
+};
+export type RegisterSplitResult =
+  | { kind: "registered"; rowStatus: "matched" | "partial"; parts: SplitPartResult[] }
+  /** El unique del portador chocó: otro escritor asentó ESTE cobro en el medio. */
+  | { kind: "already_processed"; paymentId: number };
 
 /** Tipos que imputan cuotas. `entry` no imputa (REG-14: cubre el mes de alta). */
 const FEE_TYPES: readonly PaymentType[] = ["debit", "link", "cash"];
@@ -418,6 +431,117 @@ export function makeTreasuryService(deps: Deps) {
     return { kind: "registered", ...created, periods: [...part.periods].sort(comparePeriods), amount: part.amount, pdfWritten };
   }
 
+  // ── Reparto de un cobro de la bandeja (spec 2026-09-10 §5.2) ────────────────
+  //
+  // Un pago por socio en UNA transacción. El PORTADOR es el pago que lleva el
+  // `mpPaymentId` de la fila: el que ya existe (aplicado, anulado o
+  // reembolsado: sigue portando el id de MP y las partes nuevas cuelgan de él),
+  // o la primera parte, que entonces es el primer INSERT de la transacción — si
+  // el unique choca, muere antes de pedir número (REG-33). Los números, al
+  // final, uno por parte. NO toma mutex: lo pone `registerSplitPayment`.
+  async function registerSplitCore(input: RegisterSplitInput, retried: boolean): Promise<RegisterSplitResult> {
+    const M = SPLIT_GUARD_MESSAGES;
+    const row = await db.mpUnmatchedPayment.findUnique({
+      where: { id: input.rowId },
+      select: { id: true, mpPaymentId: true, preapprovalId: true, amount: true, paidAt: true, status: true },
+    });
+    if (!row) throw new TreasuryError(M.rowGone);
+    if (row.status !== "open" && row.status !== "partial") throw new TreasuryError(M.rowResolved);
+    const partsCents = input.parts.reduce((s, p) => s + cents(p.amount), 0);
+    // Foto del grupo AFUERA de la transacción: es para el mensaje temprano de la
+    // suma. La que manda es la relectura de adentro, con la fila bloqueada.
+    const before = await loadGroup(db, { mpPaymentId: row.mpPaymentId, amount: Number(row.amount) });
+    if (partsCents !== cents(before.totals.unassigned)) {
+      throw new TreasuryError(M.sum(partsCents / 100, before.totals.unassigned));
+    }
+    const guard = await splitPartGuards(db, input.parts, now());
+    if (guard) throw new TreasuryError(guard);
+
+    const prepared: Array<{ memberId: number; part: PreparedPart }> = [];
+    for (const p of input.parts) {
+      const r = await preparePart({
+        memberId: p.memberId,
+        type: INBOX_CONCEPT_TYPE[p.concept],
+        n: p.concept === "fees" ? p.n : 0,
+        amount: p.amount,
+        // La fecha REAL del cobro, la de MP: el recibo lleva el día en que se
+        // cobró, no el día en que el operador lo repartió.
+        paidAt: row.paidAt,
+        actorId: input.actorId,
+        note: input.note ?? null,
+      }, { strictWithdrawn: true });
+      // En modo estricto el cesante sin pendientes ya tiró arriba: esto no
+      // puede pasar, y si pasa tiene que ser ruidoso, no un recorte silencioso.
+      if (r.kind !== "prepared") throw new TreasuryError(M.withdrawnCount(0));
+      prepared.push({ memberId: p.memberId, part: r.part });
+    }
+
+    let created: { rowStatus: "matched" | "partial"; parts: Array<{ paymentId: number; receiptId: number; number: string }> };
+    try {
+      created = await db.$transaction(async (tx) => {
+        // Lock de la fila EN LA BASE: el mutex `unmatched:{id}` es de proceso y
+        // no protege contra una consola de MySQL ni contra un segundo proceso.
+        await tx.$queryRaw`SELECT id FROM mp_unmatched_payments WHERE id = ${row.id} FOR UPDATE`;
+        const live = await tx.mpUnmatchedPayment.findUnique({ where: { id: row.id }, select: { status: true, amount: true } });
+        if (!live || (live.status !== "open" && live.status !== "partial")) throw new TreasuryError(M.rowResolved);
+        const group = await loadGroup(tx, { mpPaymentId: row.mpPaymentId, amount: Number(live.amount) });
+        if (partsCents !== cents(group.totals.unassigned)) throw new TreasuryError(M.changed);
+
+        let holderId: number | null = group.holder?.id ?? null;
+        const written: Array<{ paymentId: number; part: PreparedPart }> = [];
+        for (const { part } of prepared) {
+          const identity: PaymentIdentity = holderId === null
+            ? { mpPaymentId: row.mpPaymentId, preapprovalId: row.preapprovalId }
+            : { splitOfPaymentId: holderId };
+          const paymentId = await writePaymentAndFees(tx, part, identity);
+          if (holderId === null) holderId = paymentId;
+          written.push({ paymentId, part });
+        }
+        const assignedAfter = cents(group.totals.assigned) + partsCents;
+        const rowStatus: "matched" | "partial" = assignedAfter >= cents(Number(live.amount)) ? "matched" : "partial";
+        // El sello de quién resolvió va ADENTRO: antes se escribía después del
+        // commit y, si fallaba, la pantalla decía "automático" sobre una
+        // resolución manual.
+        const updated = await tx.mpUnmatchedPayment.updateMany({
+          where: { id: row.id, status: { in: ["open", "partial"] } },
+          data: { status: rowStatus, paymentId: holderId, resolvedAt: now(), resolvedById: input.actorId },
+        });
+        if (updated.count !== 1) throw new TreasuryError(M.changed);
+        // Los números, al final y en el orden de las partes.
+        const parts: Array<{ paymentId: number; receiptId: number; number: string }> = [];
+        for (const w of written) parts.push({ paymentId: w.paymentId, ...(await issueReceipt(tx, w.paymentId, w.part)) });
+        return { rowStatus, parts };
+      });
+    } catch (e) {
+      // El unique del portador chocó: otro escritor (la vinculación de una
+      // suscripción, el cron) asentó ESTE cobro entre la foto y el INSERT. Se
+      // excluye el unique de (socio, período), que es la carrera de abajo.
+      if (isUniqueViolation(e) && !isFeePeriodUniqueViolation(e)) {
+        const winner = await db.payment.findUnique({ where: { mpPaymentId: row.mpPaymentId }, select: { id: true } });
+        if (winner) return { kind: "already_processed", paymentId: winner.id };
+      }
+      // Carrera con el cron de devengo: se recalcula TODO el reparto y se
+      // reintenta una vez, igual que el cobro simple.
+      if (!retried && isFeePeriodUniqueViolation(e)) {
+        console.warn("[treasury] P2002 al imputar un reparto: se recalcula la imputación y se reintenta", input.rowId);
+        return registerSplitCore(input, true);
+      }
+      throw e;
+    }
+    // Después del commit: PDF best-effort, uno por parte.
+    const parts: SplitPartResult[] = [];
+    for (let i = 0; i < created.parts.length; i++) {
+      const c = created.parts[i];
+      const { memberId, part } = prepared[i];
+      const pdfWritten = await writePdfBestEffort(c.receiptId, receiptRelativePath(c.number));
+      parts.push({
+        memberId, paymentId: c.paymentId, receiptId: c.receiptId, number: c.number,
+        periods: [...part.periods].sort(comparePeriods), amount: part.amount, pdfWritten,
+      });
+    }
+    return { kind: "registered", rowStatus: created.rowStatus, parts };
+  }
+
   // Núcleo de la reversión: devuelve las cuotas, marca el pago y anula el
   // recibo. Es el MISMO movimiento para el mostrador (`voided`, con operador) y
   // para Mercado Pago (`refunded`, sin operador): lo único que cambia es el
@@ -497,6 +621,36 @@ export function makeTreasuryService(deps: Deps) {
     async registerPayment(input: RegisterPaymentInput): Promise<RegisterResult> {
       const key = input.memberId !== null ? `member:${input.memberId}` : `application:${input.applicationId ?? 0}`;
       return memberMutex.run(key, () => registerPaymentCore(input));
+    },
+
+    /** Reparte un cobro de la bandeja entre 1..5 socios en UNA transacción
+     *  (spec 2026-09-10 §5.2). La bandeja lo llama SIEMPRE, también con una
+     *  sola parte. Mutex: la fila afuera, y adentro los socios en orden
+     *  ASCENDENTE — claves distintas se anidan, y el orden fijo evita que dos
+     *  repartos cruzados se traben. `revertCore` toma UN mutex de socio y no
+     *  anida: no hay ciclo posible. */
+    async registerSplitPayment(input: RegisterSplitInput): Promise<RegisterSplitResult> {
+      const M = SPLIT_GUARD_MESSAGES;
+      if (input.parts.length === 0) throw new TreasuryError(M.noParts);
+      if (input.parts.length > MAX_SPLIT_PARTS) throw new TreasuryError(M.tooManyParts);
+      if (new Set(input.parts.map((p) => p.memberId)).size !== input.parts.length) {
+        throw new TreasuryError(M.duplicateMember);
+      }
+      for (const p of input.parts) {
+        const amount = Math.round(p.amount * 100) / 100;
+        if (!Number.isFinite(amount) || amount <= 0) throw new TreasuryError(M.amountZero);
+        if (amount > MAX_AMOUNT) {
+          throw new TreasuryError("El monto supera el máximo que admite el sistema ($ 99.999.999,99).");
+        }
+        const okCount = p.concept === "fees"
+          ? Number.isInteger(p.n) && p.n >= 1 && p.n <= MAX_FEES_PER_PAYMENT
+          : p.n === 0;
+        if (!okCount) throw new TreasuryError(M.count);
+      }
+      const memberIds = [...new Set(input.parts.map((p) => p.memberId))].sort((a, b) => a - b);
+      const withMembers = <T>(ids: number[], fn: () => Promise<T>): Promise<T> =>
+        ids.length === 0 ? fn() : memberMutex.run(`member:${ids[0]}`, () => withMembers(ids.slice(1), fn));
+      return memberMutex.run(`unmatched:${input.rowId}`, () => withMembers(memberIds, () => registerSplitCore(input, false)));
     },
 
     async registerCashPayment(input: {
