@@ -6,6 +6,7 @@
 // legítimo, cobrarle sin saber que lo es, no.
 // Hasta 10 resultados; el operador afina la consulta.
 import type { MemberCategory, MemberStatus, Prisma, PrismaClient } from "@/generated/prisma/client";
+import { MAX_SPLIT_PARTS } from "./split-group";
 
 export type MemberHit = {
   id: number;
@@ -35,6 +36,22 @@ export async function searchMembers(db: Pick<PrismaClient, "membership">, q: str
     include: { member: { select: { id: true, fullName: true, dni: true, category: true, status: true } } },
     orderBy: { memberNumber: "asc" },
     take: 10,
+  });
+  return rows.map((r) => ({ memberNumber: r.memberNumber, ...r.member }));
+}
+
+/** Los socios del libro abierto cuya casilla es la del pagador (spec 2026-09-10
+ *  §8.1): un matrimonio suele compartir email, y es la pista con la que el
+ *  operador arma el reparto. Casilla exacta, no `contains`: es un dato personal
+ *  y no se busca por fragmentos. Hasta el tope de partes. */
+export async function membersByEmail(db: Pick<PrismaClient, "membership">, email: string): Promise<MemberHit[]> {
+  const trimmed = email.trim();
+  if (trimmed === "") return [];
+  const rows = await db.membership.findMany({
+    where: { book: { status: "open" }, member: { email: trimmed } },
+    include: { member: { select: { id: true, fullName: true, dni: true, category: true, status: true } } },
+    orderBy: { memberNumber: "asc" },
+    take: MAX_SPLIT_PARTS,
   });
   return rows.map((r) => ({ memberNumber: r.memberNumber, ...r.member }));
 }

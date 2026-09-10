@@ -1,7 +1,12 @@
 "use server";
-// Resolver una fila de la bandeja (spec 4B §7): aplicarla a un socio como N
-// cuotas o como aporte voluntario —con el `mpPaymentId` y la fecha REAL del
-// cobro, no la del reloj de esta corrida—, o descartarla con motivo.
+// Resolver una fila de la bandeja (spec 4B §7, ampliada por la 2026-09-10):
+// repartirla entre hasta cinco socios —cada parte con su concepto, sus cuotas y
+// su importe, con el `mpPaymentId` y la fecha REAL del cobro y no la del reloj de
+// esta corrida—, o descartarla con motivo.
+//
+// El reparto va en DOS pasos: el primer envío devuelve la vista previa resuelta
+// contra la base con un token, y sólo el segundo —que trae ese token— cobra. Un
+// socio solo es un reparto de una parte: no hay un segundo camino de escritura.
 //
 // La auditoría lleva ids, códigos, contadores y montos. NUNCA el email del
 // pagador ni el texto libre que escribió el operador (Ley 25.326): esos datos
@@ -14,10 +19,17 @@ import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseForm } from "@/lib/forms";
 import { prisma } from "@/lib/prisma";
+import { parseArsInput } from "@/lib/treasury/ars-input";
 import { OtherIncomeError, recordOtherIncome } from "@/lib/treasury/other-income";
 import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { treasuryService, TreasuryError } from "@/lib/treasury/service";
+import { cents, loadGroup, MAX_SPLIT_PARTS } from "@/lib/treasury/split-group";
+import { SPLIT_GUARD_MESSAGES as M } from "@/lib/treasury/split-messages";
+import {
+  previewSplit, splitConfirmToken, splitPartGuards,
+  type SplitPartPlan, type SplitPreviewPart,
+} from "@/lib/treasury/split-preview";
 
 // El recibo viaja aparte del texto: un string no puede llevar un link, y sin
 // link al recibo el mensaje del duplicado deja al operador sin a dónde ir.
@@ -32,6 +44,9 @@ type State = {
    *  salida —corregir el texto en Otros ingresos—. Viaja el id, no el concepto:
    *  el texto libre del operador no va a la URL (Ley 25.326, docs/08). */
   income?: { id: number };
+  /** El paso de confirmación (spec 2026-09-10 §8.2): las partes resueltas en el
+   *  servidor y el token que vuelve con el segundo envío. */
+  confirm?: { token: string; total: number; parts: SplitPreviewPart[] };
 };
 
 const BASE = "/admin/tesoreria/sin-conciliar";
@@ -47,17 +62,13 @@ function errCode(e: unknown): string {
   return "unknown";
 }
 
-// Ese `mpPaymentId` ya tiene un Payment. Son dos historias muy distintas y el
-// operador tiene que poder distinguirlas:
-//  - `applied`: el cobro está bien asentado (reenvío de MP, o dos operadores
-//    sobre la misma fila). No hay nada que hacer.
-//  - `voided` / `refunded`: se había asentado y ese recibo se anuló o se
-//    reembolsó. El Payment sobrevive a la anulación, así que sigue frenando el
-//    duplicado: la reimputación no se puede hacer desde esta pantalla, y
-//    decirle "ya está registrado" a secas lo dejaría sin entender por qué.
-// En los dos casos se le da el número de recibo y el link, que es lo único
-// accionable que hay. Que un pago anulado deje de contar como duplicado es otra
-// discusión —toca la barrera contra el reenvío de MP— y no se decide acá.
+// Ese `mpPaymentId` ya tiene un Payment: otro escritor (la vinculación de una
+// suscripción, el cron, otro operador) asentó ESTE cobro entre la vista previa y
+// el commit. El caso "recibo anulado" ya no es un callejón —las partes nuevas
+// cuelgan del portador anulado, así que un reparto sobre una fila reabierta
+// entra igual—: si se llega acá fue una carrera, y lo que corresponde es
+// recargar la fila. En los dos casos viaja el número de recibo y su link, que es
+// lo único accionable que hay.
 function alreadyProcessedState(
   existing: { status: PaymentStatus; receipt: { id: number; number: string } | null } | null,
 ): State {
@@ -72,14 +83,10 @@ function alreadyProcessedState(
       receipt,
     };
   }
-  const head = receipt
-    ? `Este cobro de Mercado Pago ya se había asentado con el recibo N° ${receipt.number}`
-    : "Este cobro de Mercado Pago ya se había asentado";
-  const tail = existing.status === "voided"
-    ? receipt ? " y ese recibo se anuló." : " y ese pago se anuló."
-    : " y después figura como reembolsado.";
   return {
-    error: `${head}${tail} Por ahora esta plata no se puede volver a imputar desde acá: la fila queda pendiente.`,
+    error: receipt
+      ? `Este cobro de Mercado Pago se asentó con el recibo N° ${receipt.number} mientras lo repartías, y ese recibo figura anulado. Recargá la fila y volvé a intentarlo.`
+      : "Este cobro de Mercado Pago se asentó mientras lo repartías. Recargá la fila y volvé a intentarlo.",
     receipt,
   };
 }
@@ -89,19 +96,35 @@ function alreadyProcessedState(
 // "Invalid input: expected number, received NaN" en pantalla.
 const resolveSchema = z.object({
   rowId: z.coerce.number("Fila inválida.").int("Fila inválida.").positive("Fila inválida."),
-  memberId: z.coerce
-    .number("Elegí a qué socio se le aplica.")
-    .int("Elegí a qué socio se le aplica.")
-    .positive("Elegí a qué socio se le aplica."),
-  concept: z.enum(["fees", "voluntary"], { error: "Elegí cómo aplicar el pago." }),
-  count: z.coerce
-    .number("Indicá cuántas cuotas.")
-    .int("La cantidad tiene que ser un número entero.")
-    .positive("Indicá cuántas cuotas.")
-    .max(60, "Como máximo 60 cuotas.")
-    .optional(),
+  socios: z.string(M.noParts).min(1, M.noParts),
   note: z.string().max(200, "La nota no puede superar los 200 caracteres.").optional(),
+  confirmar: z.string().optional(),
+  confirmToken: z.string().optional(),
 });
+
+const CONCEPTS = ["fees", "voluntary", "extraordinary"] as const;
+
+// Las partes viajan como `part_<socio>_concept|count|amount`, en el orden de
+// `socios`. Se leen a mano: zod no modela claves dinámicas y el mensaje tiene
+// que decir QUÉ parte falló en el idioma del operador.
+function readParts(formData: FormData, socios: string): { ok: true; parts: SplitPartPlan[] } | { ok: false; error: string } {
+  const ids = socios.split(",").map((s) => s.trim());
+  if (ids.some((s) => !/^\d+$/.test(s) || Number(s) <= 0)) return { ok: false, error: M.noParts };
+  if (ids.length > MAX_SPLIT_PARTS) return { ok: false, error: M.tooManyParts };
+  if (new Set(ids).size !== ids.length) return { ok: false, error: M.duplicateMember };
+  const parts: SplitPartPlan[] = [];
+  for (const id of ids) {
+    const concept = String(formData.get(`part_${id}_concept`) ?? "");
+    if (!(CONCEPTS as readonly string[]).includes(concept)) return { ok: false, error: "Elegí cómo aplicar cada parte." };
+    const countRaw = String(formData.get(`part_${id}_count`) ?? "").trim();
+    const n = concept === "fees" ? Number(countRaw) : 0;
+    if (concept === "fees" && (!/^\d{1,2}$/.test(countRaw) || n < 1 || n > 60)) return { ok: false, error: M.count };
+    const amount = parseArsInput(String(formData.get(`part_${id}_amount`) ?? ""));
+    if (amount === null || amount <= 0) return { ok: false, error: M.amountZero };
+    parts.push({ memberId: Number(id), concept: concept as SplitPartPlan["concept"], n, amount });
+  }
+  return { ok: true, parts };
+}
 
 export async function resolveUnmatchedAction(_prev: State, formData: FormData): Promise<State> {
   const actor = await requireAdmin();
@@ -109,36 +132,42 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
   const parsed = parseForm(resolveSchema, formData);
   if (!parsed.ok) return { error: parsed.error };
   const d = parsed.data;
-  if (d.concept === "fees" && !d.count) return { error: "Indicá cuántas cuotas." };
+  const read = readParts(formData, d.socios);
+  if (!read.ok) return { error: read.error };
+  const parts = read.parts;
 
   const row = await prisma.mpUnmatchedPayment.findUnique({ where: { id: d.rowId } });
-  if (!row) return { error: "La fila ya no existe." };
+  if (!row) return { error: M.rowGone };
   // Dos operadores sobre la misma fila: el segundo no vuelve a cobrarla. La
-  // barrera dura es la unique de `mpPaymentId` en el servicio; esto le da al
-  // segundo un mensaje en castellano en vez de un error técnico.
-  if (row.status !== "open") return { error: "Esta fila ya fue resuelta." };
+  // barrera dura es el lock de fila y el unique del portador en el servicio;
+  // esto le da un mensaje en castellano en vez de un error técnico.
+  if (row.status !== "open" && row.status !== "partial") return { error: M.rowResolved };
+
+  // La suma se compara contra lo SIN ASIGNAR (una fila parcial ya tiene una
+  // parte aplicada), con la misma aritmética que la pantalla y el núcleo.
+  const group = await loadGroup(prisma, { mpPaymentId: row.mpPaymentId, amount: Number(row.amount) });
+  const sum = parts.reduce((s, p) => s + cents(p.amount), 0);
+  if (sum !== cents(group.totals.unassigned)) return { error: M.sum(sum / 100, group.totals.unassigned) };
+  // Pre-validación barata con los MISMOS textos que el núcleo (que revalida).
+  const guard = await splitPartGuards(prisma, parts);
+  if (guard) return { error: guard };
+
+  // Paso 1: la confirmación, resuelta en el servidor. El token vuelve con el
+  // paso 2 y, si las partes cambiaron en el medio, se vuelve a pedir.
+  const token = splitConfirmToken(row.id, parts);
+  if (d.confirmar !== "1" || d.confirmToken !== token) {
+    const preview = await previewSplit(prisma, parts);
+    return { confirm: { token, total: group.totals.unassigned, parts: preview } };
+  }
 
   let result;
   try {
-    result = await treasuryService.registerPayment({
-      memberId: d.memberId,
-      // `link` y no `cash`: la plata entró por Mercado Pago y el recibo tiene
-      // que decir por dónde entró. `voluntary` no imputa cuotas, así que va con
-      // n = 0 (el servicio rechaza cualquier otra cosa).
-      type: d.concept === "fees" ? "link" : "voluntary",
-      n: d.concept === "fees" ? (d.count ?? 1) : 0,
-      amount: Number(row.amount),
-      paidAt: row.paidAt,
-      mpPaymentId: row.mpPaymentId,
-      preapprovalId: row.preapprovalId,
-      actorId: actor.actorId,
-      note: d.note ?? null,
-    });
+    result = await treasuryService.registerSplitPayment({ rowId: row.id, parts, actorId: actor.actorId, note: d.note ?? null });
   } catch (e) {
     // Toda regla de negocio ya viene redactada en es-AR desde el servicio; lo
     // demás es un error nuestro y no se le muestra crudo al operador.
     if (e instanceof TreasuryError) return { error: e.message };
-    console.error("[unmatched] registerPayment falló", errCode(e));
+    console.error("[unmatched] registerSplitPayment falló", errCode(e));
     return { error: "No se pudo aplicar el pago. Reintentá en un momento." };
   }
   if (result.kind === "already_processed") {
@@ -148,44 +177,23 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
     });
     return alreadyProcessedState(existing);
   }
-  if (result.kind === "no_pending_withdrawn") {
-    return {
-      error: "El socio está dado de baja y no tiene cuotas pendientes: no hay a qué imputarlo.",
-    };
-  }
 
-  // `registerPayment` ya cerró la fila DENTRO de su transacción (la marcó
-  // `matched` con el paymentId): acá sólo se sella QUIÉN la resolvió. El
-  // `updateMany` acotado a `status: "matched"` es a propósito — si por lo que
-  // fuera la fila no quedó cerrada, esto no le inventa un responsable.
-  //
-  // Envuelto en try como el email de al lado: para acá el pago, la imputación y
-  // el recibo numerado ya están commiteados. Perder el sello de quién resolvió
-  // es cosmético; perder el redirect al recibo —que ya existe y ya tiene
-  // número— no: el operador vería un error genérico y no encontraría el recibo.
-  try {
-    await prisma.mpUnmatchedPayment.updateMany({
-      where: { id: row.id, status: "matched" },
-      data: { resolvedById: actor.actorId },
-    });
-  } catch (e) {
-    console.error("[unmatched] sellado de resolvedById falló", errCode(e));
-  }
-
-  // Best-effort, igual que en Efectivo: para acá el pago, la imputación y el
-  // recibo numerado ya están commiteados. Si el email explota, el resultado se
-  // degrada a "error" y el flujo sigue — reintentar le cobraría dos veces al
-  // socio. `sendReceiptEmail` decide solo si hay casilla a la que mandar.
-  let emailed: ReceiptEmailOutcome = "skipped";
-  try {
-    const r = await sendReceiptEmail(result.receiptId);
-    emailed = r.sent ? "sent" : r.reason;
-  } catch (e) {
-    console.error("[unmatched] sendReceiptEmail lanzó", errCode(e));
-    emailed = "error";
+  // Best-effort, un email por parte: para acá los pagos, las cuotas y los
+  // recibos numerados ya están commiteados. Reintentar cobraría dos veces.
+  const emailed: ReceiptEmailOutcome[] = [];
+  for (const part of result.parts) {
+    try {
+      const r = await sendReceiptEmail(part.receiptId);
+      emailed.push(r.sent ? "sent" : r.reason);
+    } catch (e) {
+      console.error("[unmatched] sendReceiptEmail lanzó", errCode(e));
+      emailed.push("error");
+    }
   }
 
   const ip = (await headers()).get("x-real-ip") ?? "unknown";
+  // Ids, códigos, contadores y montos. Ni la casilla del pagador, ni los
+  // nombres, ni la nota (Ley 25.326).
   await audit({
     userId: actor.actorId,
     action: "unmatched_resolve",
@@ -193,18 +201,19 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
     entityId: row.id,
     detail: {
       action: "apply",
-      memberId: d.memberId,
-      paymentId: result.paymentId,
-      receiptId: result.receiptId,
-      concept: d.concept,
-      count: d.count ?? null,
-      amount: result.amount,
-      emailed,
+      rowStatus: result.rowStatus,
+      total: group.totals.unassigned,
+      parts: result.parts.map((p, i) => ({
+        memberId: p.memberId, paymentId: p.paymentId, receiptId: p.receiptId,
+        concept: parts[i].concept, count: parts[i].concept === "fees" ? parts[i].n : null,
+        amount: p.amount, emailed: emailed[i],
+      })),
     },
     ip,
   });
-  // Fuera del try: redirect() señaliza con una excepción y el catch se la comería.
-  redirect(`/admin/tesoreria/recibos/${result.receiptId}?emitido=1&email=${emailed}`);
+  // A la MISMA fila, que muestra las partes con sus recibos y a quién se le
+  // envió. Fuera del try: redirect() señaliza con una excepción.
+  redirect(`${BASE}/${row.id}?emitidos=${result.parts.length}&email=${emailed.join(",")}`);
 }
 
 const dismissSchema = z.object({

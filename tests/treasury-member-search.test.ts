@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-import { memberSearchWhere, searchMembers } from "@/lib/treasury/member-search";
+import { membersByEmail, memberSearchWhere, searchMembers } from "@/lib/treasury/member-search";
 
 describe("member search", () => {
   // Sin filtro de estado: al cesante hay que poder cobrarle la deuda congelada
@@ -46,5 +46,26 @@ describe("member search", () => {
   it("con consulta vacía no consulta", async () => {
     const db = { membership: { findMany: vi.fn() } } as never;
     expect(await searchMembers(db, "  ")).toEqual([]);
+  });
+});
+
+describe("membersByEmail", () => {
+  it("busca en el libro abierto por la casilla exacta, ordena por número y acota al tope", async () => {
+    const findMany = vi.fn(async () => [
+      { memberNumber: 192, member: { id: 192, fullName: "Araoz Hugo", dni: "1", category: "active", status: "active" } },
+      { memberNumber: 193, member: { id: 193, fullName: "Maza Monica", dni: "2", category: "active", status: "active" } },
+    ]);
+    const hits = await membersByEmail({ membership: { findMany } } as never, "haraoz@yahoo.com");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { book: { status: "open" }, member: { email: "haraoz@yahoo.com" } },
+      orderBy: { memberNumber: "asc" },
+      take: 5,
+    }));
+    expect(hits.map((h) => h.id)).toEqual([192, 193]);
+  });
+  it("sin casilla no consulta", async () => {
+    const findMany = vi.fn();
+    expect(await membersByEmail({ membership: { findMany } } as never, "  ")).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

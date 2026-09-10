@@ -5,8 +5,10 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { countPendingFees } from "./account";
 import { activeExemption } from "./exemptions";
-import { cashConceptsFor, type CashConcept } from "./rules";
+import { paymentConcept } from "./labels";
+import { allocate, cashConceptsFor, coverageFloor, type CashConcept } from "./rules";
 import { SPLIT_GUARD_MESSAGES as M } from "./split-messages";
+import { cents, INBOX_CONCEPT_TYPE } from "./split-group";
 
 /** Una parte del reparto, como la decide el operador. `n` es 0 para los aportes. */
 export type SplitPartPlan = { memberId: number; concept: CashConcept; n: number; amount: number };
@@ -39,4 +41,60 @@ export async function splitPartGuards(
     }
   }
   return null;
+}
+
+/** Huella de "esto es exactamente lo que se confirmó": fila + partes ordenadas
+ *  por socio, importes en centavos. No es una firma —no hay secreto y no
+ *  pretende serlo— sino la guarda contra la deriva, como `arrearsConfirmToken`:
+ *  si el operador cambia una cuota después de leer la confirmación, la action
+ *  vuelve a pedirla en vez de emitir a ciegas. */
+export function splitConfirmToken(rowId: number, parts: SplitPartPlan[]): string {
+  const sorted = [...parts].sort((a, b) => a.memberId - b.memberId);
+  return `${rowId}|${sorted.map((p) => `${p.memberId}:${p.concept}:${p.n}:${cents(p.amount)}`).join(",")}`;
+}
+
+/** Una parte tal como la lee el operador antes de confirmar. `concept` es el
+ *  MISMO texto que va a decir el recibo. */
+export type SplitPreviewPart = { memberId: number; name: string; memberNumber: number | null; concept: string; amount: number };
+
+/** La vista previa, resuelta en el SERVIDOR contra la base: qué cuotas se
+ *  imputan a cada socio (las más viejas primero, y las que se crean desde el
+ *  piso de cobertura con el reingreso), con el mismo `allocate` y el mismo
+ *  `coverageFloor` que usa el núcleo al asentar. */
+export async function previewSplit(
+  db: Pick<PrismaClient, "member" | "fee" | "movement">,
+  parts: SplitPartPlan[],
+): Promise<SplitPreviewPart[]> {
+  const out: SplitPreviewPart[] = [];
+  for (const p of parts) {
+    const member = await db.member.findUnique({
+      where: { id: p.memberId },
+      select: {
+        id: true, fullName: true, joinedAt: true,
+        memberships: { select: { memberNumber: true, book: { select: { status: true } } } },
+      },
+    });
+    if (!member) throw new Error(M.memberGone);
+    const memberNumber = member.memberships.find((m) => m.book.status === "open")?.memberNumber ?? null;
+    const type = INBOX_CONCEPT_TYPE[p.concept];
+    let periods: string[] = [];
+    if (p.concept === "fees") {
+      const [fees, readmission] = await Promise.all([
+        db.fee.findMany({ where: { memberId: member.id }, select: { period: true, status: true } }),
+        db.movement.findFirst({
+          where: { memberId: member.id, type: "readmission" },
+          orderBy: [{ date: "desc" }, { id: "desc" }],
+          select: { date: true },
+        }),
+      ]);
+      periods = allocate({
+        pending: fees.filter((f) => f.status === "pending").map((f) => f.period),
+        existing: fees.map((f) => f.period),
+        n: p.n,
+        startAt: coverageFloor({ joinedAt: member.joinedAt, readmittedAt: readmission?.date ?? null }),
+      }).toPay;
+    }
+    out.push({ memberId: member.id, name: member.fullName, memberNumber, concept: paymentConcept(type, periods), amount: p.amount });
+  }
+  return out;
 }

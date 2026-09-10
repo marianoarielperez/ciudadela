@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminActor } from "@/lib/auth/require-admin";
+import type { ReceiptEmailResult } from "@/lib/treasury/receipt-email";
 
 // La bandeja sin conciliar mueve plata que YA entró: aplicar una fila emite un
 // recibo a nombre de un vecino. La guarda tiene que cortar ANTES de tocar el
 // servicio, la base, la auditoría y el redirect. Y el asiento no puede llevar
 // el email del pagador ni el texto libre del descarte (Ley 25.326).
 const mocks = vi.hoisted(() => ({
-  register: vi.fn(),
+  // El reparto es el ÚNICO camino de "aplicar" desde la bandeja (Task 4): un
+  // solo socio es un reparto de una parte.
+  registerSplit: vi.fn(),
+  // El grupo del cobro y las guardas por socio son consultas propias, ya
+  // probadas aparte: acá se prueba el CONTRATO de la action.
+  loadGroup: vi.fn(),
+  guards: vi.fn(async (): Promise<string | null> => null),
+  preview: vi.fn(),
   findUnique: vi.fn(),
   // El pago que ganó el `mpPaymentId`: es lo que distingue "ya está bien
   // asentado" de "se había asentado y ese recibo se anuló".
@@ -15,7 +23,10 @@ const mocks = vi.hoisted(() => ({
   // La tercera salida escribe en `other_incomes` con el `tx` de la transacción.
   incomeCreate: vi.fn(async () => ({ id: 77 })),
   incomeFindUnique: vi.fn(),
-  sendEmail: vi.fn(async () => ({ sent: true })),
+  // Tipado explícito, como `admin`: el reparto manda un email por parte y el
+  // test necesita devolver un `{ sent: false, reason }` por parte, que la
+  // inferencia de `{ sent: true }` no admite.
+  sendEmail: vi.fn(async (): Promise<ReceiptEmailResult> => ({ sent: true })),
   audit: vi.fn(async () => {}),
   // Tipado explícito: sin él TS infiere la forma del rechazo y el
   // `mockResolvedValueOnce` del caso autorizado no compila.
@@ -39,8 +50,20 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 vi.mock("@/lib/treasury/service", () => ({
-  treasuryService: { registerPayment: mocks.register },
+  treasuryService: { registerSplitPayment: mocks.registerSplit },
   TreasuryError: class extends Error {},
+}));
+// Mocks PARCIALES: el token y los textos de las guardas salen de los módulos
+// reales. Si se mockearan enteros, el test verificaría su propia copia del
+// formato del token en vez del que la action va a emitir.
+vi.mock("@/lib/treasury/split-group", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/treasury/split-group")>()),
+  loadGroup: mocks.loadGroup,
+}));
+vi.mock("@/lib/treasury/split-preview", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/treasury/split-preview")>()),
+  splitPartGuards: mocks.guards,
+  previewSplit: mocks.preview,
 }));
 vi.mock("@/lib/treasury/receipt-email", () => ({ sendReceiptEmail: mocks.sendEmail }));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
@@ -50,6 +73,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { redirect } from "next/navigation";
 import { TreasuryError } from "@/lib/treasury/service";
+import { splitConfirmToken } from "@/lib/treasury/split-preview";
 import {
   dismissUnmatchedAction,
   registerAsOtherIncomeAction,
@@ -82,237 +106,201 @@ function openRow() {
   };
 }
 
-// El formulario mínimo para imputar: una cuota al socio 1 sobre la fila 5.
-function applyForm(): FormData {
+// El reparto de referencia: $ 18.000 entre dos socios, dos cuotas y una.
+const TWO_PLUS_ONE = [
+  { memberId: 192, concept: "fees" as const, n: 2, amount: 12000 },
+  { memberId: 193, concept: "fees" as const, n: 1, amount: 6000 },
+];
+function splitForm(opts: { confirm?: boolean; token?: string; note?: string; amounts?: [string, string] } = {}): FormData {
   const form = new FormData();
   form.append("rowId", "5");
-  form.append("memberId", "1");
-  form.append("concept", "fees");
-  form.append("count", "1");
+  form.append("socios", "192,193");
+  form.append("part_192_concept", "fees");
+  form.append("part_192_count", "2");
+  form.append("part_192_amount", opts.amounts?.[0] ?? "12000");
+  form.append("part_193_concept", "fees");
+  form.append("part_193_count", "1");
+  form.append("part_193_amount", opts.amounts?.[1] ?? "6000");
+  if (opts.note) form.append("note", opts.note);
+  if (opts.confirm) {
+    form.append("confirmar", "1");
+    form.append("confirmToken", opts.token ?? splitConfirmToken(5, TWO_PLUS_ONE));
+  }
   return form;
 }
+function openGroup(unassigned = 18000) {
+  return { holder: null, parts: [], all: [], totals: { assigned: 18000 - unassigned, unassigned, status: unassigned === 18000 ? "open" : "partial" } };
+}
+const PREVIEW = [
+  { memberId: 192, name: "Araoz Hugo", memberNumber: 192, concept: "Cuota social · julio a agosto 2026 (2 cuotas)", amount: 12000 },
+  { memberId: 193, name: "Maza Monica", memberNumber: 193, concept: "Cuota social · agosto 2026", amount: 6000 },
+];
+const REGISTERED = {
+  kind: "registered" as const, rowStatus: "matched" as const,
+  parts: [
+    { memberId: 192, paymentId: 3, receiptId: 7, number: "2026-00007", periods: ["2026-07", "2026-08"], amount: 12000, pdfWritten: true },
+    { memberId: 193, paymentId: 4, receiptId: 8, number: "2026-00008", periods: ["2026-08"], amount: 6000, pdfWritten: true },
+  ],
+};
 
-describe("resolveUnmatchedAction", () => {
+describe("resolveUnmatchedAction (reparto en dos pasos)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.updateMany.mockResolvedValue({ count: 1 });
     mocks.sendEmail.mockResolvedValue({ sent: true });
+    mocks.loadGroup.mockResolvedValue(openGroup());
+    mocks.guards.mockResolvedValue(null);
+    mocks.preview.mockResolvedValue(PREVIEW);
   });
 
   it("sin admin no lee la fila, no registra, no audita y no redirige", async () => {
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "fees");
-    form.append("count", "1");
-    const r = await resolveUnmatchedAction({}, form);
+    const r = await resolveUnmatchedAction({}, splitForm());
     expect(r.error).toBe("No tenés permiso para editar el padrón.");
     expect(mocks.findUnique).not.toHaveBeenCalled();
-    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
   });
 
-  it("con admin: registra con el mpPaymentId y la fecha de la fila, sella quién resolvió, audita sin el email del pagador y redirige al recibo", async () => {
+  it("primer envío: devuelve la confirmación resuelta en el servidor y NO registra", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({
-      kind: "registered", paymentId: 3, receiptId: 7, number: "2026-00007",
-      periods: ["2026-08"], amount: 12000, pdfWritten: true,
-    });
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "fees");
-    form.append("count", "2");
-    await resolveUnmatchedAction({}, form);
+    const r = await resolveUnmatchedAction({}, splitForm());
+    expect(r.confirm).toEqual({ token: splitConfirmToken(5, TWO_PLUS_ONE), total: 18000, parts: PREVIEW });
+    expect(mocks.preview).toHaveBeenCalledWith(expect.anything(), TWO_PLUS_ONE);
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
 
-    // La plata se asienta con la identidad y la fecha REALES del cobro de MP,
-    // no con las de esta corrida: si `paidAt` fuera hoy, el recibo mentiría y
-    // la cuota caería en el período equivocado.
-    expect(mocks.register).toHaveBeenCalledWith({
-      memberId: 1, type: "link", n: 2, amount: 12000, paidAt: PAID_AT,
-      mpPaymentId: "mp-123", preapprovalId: "pre-9", actorId: 9, note: null,
-    });
-    // El servicio ya cerró la fila; acá sólo se sella el responsable, y sólo si
-    // quedó `matched`.
-    expect(mocks.updateMany).toHaveBeenCalledWith({
-      where: { id: 5, status: "matched" }, data: { resolvedById: 9 },
-    });
-    // `userId` e `ip` explícitos: un objectContaining que no los mira deja
-    // pasar un asiento firmado por el actor equivocado, o por null.
+  it("segundo envío con el token: registra el reparto con la fila y el actor, manda un email por parte, audita sin la casilla y vuelve a la fila", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.registerSplit.mockResolvedValueOnce(REGISTERED);
+    mocks.sendEmail.mockResolvedValueOnce({ sent: true }).mockResolvedValueOnce({ sent: false, reason: "no_email" });
+    await resolveUnmatchedAction({}, splitForm({ confirm: true, note: "matrimonio" }));
+    expect(mocks.registerSplit).toHaveBeenCalledWith({ rowId: 5, parts: TWO_PLUS_ONE, actorId: 9, note: "matrimonio" });
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.sendEmail).toHaveBeenNthCalledWith(1, 7);
+    expect(mocks.sendEmail).toHaveBeenNthCalledWith(2, 8);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
       userId: 9, ip: "unknown",
       action: "unmatched_resolve", entity: "mp_unmatched_payment", entityId: 5,
       detail: {
-        action: "apply", memberId: 1, paymentId: 3, receiptId: 7,
-        concept: "fees", count: 2, amount: 12000, emailed: "sent",
+        action: "apply", rowStatus: "matched", total: 18000,
+        parts: [
+          { memberId: 192, paymentId: 3, receiptId: 7, concept: "fees", count: 2, amount: 12000, emailed: "sent" },
+          { memberId: 193, paymentId: 4, receiptId: 8, concept: "fees", count: 1, amount: 6000, emailed: "no_email" },
+        ],
       },
     }));
-    // Ni el email del pagador ni la descripción de MP pueden aparecer en el
-    // asiento, esté donde esté dentro del objeto.
     const entry = JSON.stringify(auditedEntry());
     expect(entry).not.toContain("vecino@example.com");
     expect(entry).not.toContain("Cuota mensual");
-    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/recibos/7?emitido=1&email=sent");
+    expect(entry).not.toContain("matrimonio");
+    expect(entry).not.toContain("Araoz");
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/sin-conciliar/5?emitidos=2&email=sent,no_email");
   });
 
-  it("aporte voluntario: va con type voluntary y sin cuotas", async () => {
+  it("un token de otro reparto (las partes cambiaron después de leer) vuelve a pedir confirmación", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({
-      kind: "registered", paymentId: 4, receiptId: 8, number: "2026-00008",
-      periods: [], amount: 12000, pdfWritten: true,
-    });
+    const r = await resolveUnmatchedAction({}, splitForm({ confirm: true, token: "5|192:fees:1:1200000,193:fees:1:600000" }));
+    expect(r.confirm?.token).toBe(splitConfirmToken(5, TWO_PLUS_ONE));
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
+  });
+
+  it("la suma inexacta se rechaza con los dos importes, antes de la vista previa", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    const r = await resolveUnmatchedAction({}, splitForm({ amounts: ["12000", "5000"] }));
+    expect(r.error).toBe("Las partes suman $ 17.000,00 y hay $ 18.000,00 sin asignar.");
+    expect(mocks.preview).not.toHaveBeenCalled();
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
+  });
+
+  it("una fila parcial se compara contra lo sin asignar y se puede completar", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce({ ...openRow(), status: "partial" });
+    mocks.loadGroup.mockResolvedValueOnce(openGroup(6000));
     const form = new FormData();
     form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "voluntary");
-    await resolveUnmatchedAction({}, form);
-    expect(mocks.register).toHaveBeenCalledWith(expect.objectContaining({ type: "voluntary", n: 0 }));
+    form.append("socios", "200");
+    form.append("part_200_concept", "fees");
+    form.append("part_200_count", "1");
+    form.append("part_200_amount", "6000");
+    const r = await resolveUnmatchedAction({}, form);
+    expect(r.confirm?.total).toBe(6000);
   });
 
   it("una fila ya resuelta no se vuelve a cobrar", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce({ ...openRow(), status: "matched" });
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "fees");
-    form.append("count", "1");
-    const r = await resolveUnmatchedAction({}, form);
+    const r = await resolveUnmatchedAction({}, splitForm({ confirm: true }));
     expect(r.error).toBe("Esta fila ya fue resuelta.");
-    expect(mocks.register).not.toHaveBeenCalled();
-    expect(redirect).not.toHaveBeenCalled();
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
   });
 
-  it("already_processed con el pago aplicado: dice el número de recibo, lo linkea y no lo pinta de error", async () => {
+  it("la guarda de un socio se muestra tal cual (categoría, cesante, exento)", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({ kind: "already_processed", paymentId: 3 });
-    mocks.paymentFindUnique.mockResolvedValueOnce({
-      status: "applied", receipt: { id: 7, number: "2026-00007" },
-    });
-    const r = await resolveUnmatchedAction({}, applyForm());
-    expect(r.error).toBe(
-      "Este cobro de Mercado Pago ya está asentado: se registró con el recibo N° 2026-00007. No hace falta volver a aplicarlo.",
-    );
-    // El cobro está bien asentado: no se perdió plata y no corresponde el rojo.
-    expect(r.kind).toBe("warning");
-    expect(r.receipt).toEqual({ id: 7, number: "2026-00007" });
-    expect(mocks.audit).not.toHaveBeenCalled();
-    expect(redirect).not.toHaveBeenCalled();
+    mocks.guards.mockResolvedValueOnce("Ese concepto no corresponde a la categoría del socio.");
+    const r = await resolveUnmatchedAction({}, splitForm());
+    expect(r.error).toBe("Ese concepto no corresponde a la categoría del socio.");
+    expect(mocks.preview).not.toHaveBeenCalled();
   });
 
-  // La fila que reabre una anulación vuelve a "Resolver" y choca contra el
-  // mismo `mpPaymentId`. Decirle "ya está registrado" a secas la dejaba muda:
-  // el operador tiene que leer que ese recibo se anuló y poder ir a verlo.
-  it("already_processed con el recibo anulado: lo dice, linkea el recibo y avisa que desde acá no se reimputa", async () => {
-    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({ kind: "already_processed", paymentId: 3 });
-    mocks.paymentFindUnique.mockResolvedValueOnce({
-      status: "voided", receipt: { id: 7, number: "2026-00007" },
-    });
-    const r = await resolveUnmatchedAction({}, applyForm());
-    expect(r.error).toBe(
-      "Este cobro de Mercado Pago ya se había asentado con el recibo N° 2026-00007 y ese recibo se anuló."
-      + " Por ahora esta plata no se puede volver a imputar desde acá: la fila queda pendiente.",
-    );
-    expect(r.kind).toBeUndefined();
-    expect(r.receipt).toEqual({ id: 7, number: "2026-00007" });
-    expect(mocks.audit).not.toHaveBeenCalled();
-    expect(redirect).not.toHaveBeenCalled();
+  it("más de cinco socios, un socio repetido, cuotas o importe inválidos: se rechazan antes de tocar la base", async () => {
+    mocks.admin.mockResolvedValue({ ok: true, actorId: 9 });
+    const six = new FormData();
+    six.append("rowId", "5");
+    six.append("socios", "1,2,3,4,5,6");
+    expect((await resolveUnmatchedAction({}, six)).error).toBe("Como máximo 5 socios por pago.");
+    const dup = new FormData();
+    dup.append("rowId", "5");
+    dup.append("socios", "192,192");
+    expect((await resolveUnmatchedAction({}, dup)).error).toBe("Un socio no puede aparecer dos veces en el reparto.");
+    const badCount = splitForm();
+    badCount.set("part_192_count", "72");
+    expect((await resolveUnmatchedAction({}, badCount)).error).toBe("La cantidad de cuotas tiene que estar entre 1 y 60.");
+    const badAmount = splitForm({ amounts: ["12.000", "6000"] });
+    expect((await resolveUnmatchedAction({}, badAmount)).error).toBe("El importe de cada parte tiene que ser mayor a cero.");
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    mocks.admin.mockReset();
+    mocks.admin.mockResolvedValue({ ok: false, reason: "not_admin", error: "No tenés permiso para editar el padrón." });
   });
 
   it("una regla de negocio del servicio se le muestra al operador tal como la redactó", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockRejectedValueOnce(new TreasuryError("El monto no puede ser cero."));
-    const r = await resolveUnmatchedAction({}, applyForm());
-    expect(r.error).toBe("El monto no puede ser cero.");
-    expect(mocks.updateMany).not.toHaveBeenCalled();
+    mocks.registerSplit.mockRejectedValueOnce(new TreasuryError("Este pago cambió mientras lo repartías. Revisá la fila y volvé a intentarlo."));
+    const r = await resolveUnmatchedAction({}, splitForm({ confirm: true }));
+    expect(r.error).toBe("Este pago cambió mientras lo repartías. Revisá la fila y volvé a intentarlo.");
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
   });
 
-  it("la nota del operador llega al pago y NO entra al asiento", async () => {
+  it("already_processed con el pago aplicado: dice el recibo, lo linkea y no lo pinta de error", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({
-      kind: "registered", paymentId: 3, receiptId: 7, number: "2026-00007",
-      periods: ["2026-08"], amount: 12000, pdfWritten: true,
-    });
-    const form = applyForm();
-    form.append("note", "Lo pagó la hija por transferencia");
-    await resolveUnmatchedAction({}, form);
-    expect(mocks.register).toHaveBeenCalledWith(
-      expect.objectContaining({ note: "Lo pagó la hija por transferencia" }),
-    );
-    // Texto libre del operador: puede nombrar a un vecino y no va a la auditoría.
-    expect(JSON.stringify(auditedEntry())).not.toContain("transferencia");
-  });
-
-  it("más de 60 cuotas se rechaza en castellano antes de tocar la base", async () => {
-    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "fees");
-    form.append("count", "72");
-    const r = await resolveUnmatchedAction({}, form);
-    expect(r.error).toBe("Como máximo 60 cuotas.");
-    expect(mocks.findUnique).not.toHaveBeenCalled();
-    expect(mocks.register).not.toHaveBeenCalled();
-  });
-
-  it("no_pending_withdrawn: se explica por qué no hay a qué imputarlo", async () => {
-    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({ kind: "no_pending_withdrawn" });
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "fees");
-    form.append("count", "1");
-    const r = await resolveUnmatchedAction({}, form);
-    expect(r.error).toBe(
-      "El socio está dado de baja y no tiene cuotas pendientes: no hay a qué imputarlo.",
-    );
+    mocks.registerSplit.mockResolvedValueOnce({ kind: "already_processed", paymentId: 3 });
+    mocks.paymentFindUnique.mockResolvedValueOnce({ status: "applied", receipt: { id: 7, number: "2026-00007" } });
+    const r = await resolveUnmatchedAction({}, splitForm({ confirm: true }));
+    expect(r.error).toBe("Este cobro de Mercado Pago ya está asentado: se registró con el recibo N° 2026-00007. No hace falta volver a aplicarlo.");
+    expect(r.kind).toBe("warning");
+    expect(r.receipt).toEqual({ id: 7, number: "2026-00007" });
     expect(mocks.audit).not.toHaveBeenCalled();
-    expect(redirect).not.toHaveBeenCalled();
   });
 
-  it("si el email del recibo explota, la plata ya cobrada igual queda auditada y redirige", async () => {
+  it("si el email de una parte explota, la plata ya cobrada igual queda auditada y redirige", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce(openRow());
-    mocks.register.mockResolvedValueOnce({
-      kind: "registered", paymentId: 3, receiptId: 7, number: "2026-00007",
-      periods: ["2026-08"], amount: 12000, pdfWritten: true,
-    });
+    mocks.registerSplit.mockResolvedValueOnce(REGISTERED);
     mocks.sendEmail.mockRejectedValueOnce(Object.assign(new Error("pool timeout"), { code: "ETIMEDOUT" }));
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("memberId", "1");
-    form.append("concept", "fees");
-    form.append("count", "1");
-    await resolveUnmatchedAction({}, form);
+    await resolveUnmatchedAction({}, splitForm({ confirm: true }));
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
-      detail: expect.objectContaining({ emailed: "error" }),
+      detail: expect.objectContaining({ parts: [expect.objectContaining({ emailed: "error" }), expect.objectContaining({ emailed: "sent" })] }),
     }));
-    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/recibos/7?emitido=1&email=error");
-  });
-
-  it("sin socio elegido se rechaza en castellano antes de tocar la base", async () => {
-    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
-    const form = new FormData();
-    form.append("rowId", "5");
-    form.append("concept", "fees");
-    form.append("count", "1");
-    const r = await resolveUnmatchedAction({}, form);
-    expect(r.error).toBe("Elegí a qué socio se le aplica.");
-    expect(mocks.findUnique).not.toHaveBeenCalled();
-    expect(mocks.register).not.toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/sin-conciliar/5?emitidos=2&email=error,sent");
   });
 });
 
