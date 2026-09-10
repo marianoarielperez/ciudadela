@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import {
-  cents, groupTotals, isRefundedGroup, loadGroup, MAX_SPLIT_PARTS, parseSociosParam, sharedPaymentOf,
+  cents, groupTotals, isMemberId, isRefundedGroup, loadGroup, MAX_MEMBER_ID, MAX_SPLIT_PARTS,
+  parseSociosParam, sharedPaymentOf,
 } from "@/lib/treasury/split-group";
 import { SPLIT_GUARD_MESSAGES } from "@/lib/treasury/split-messages";
 
@@ -150,6 +151,16 @@ describe("parseSociosParam", () => {
     expect(parseSociosParam(undefined)).toEqual([]);
     expect(parseSociosParam("")).toEqual([]);
     expect(parseSociosParam("abc,-1,0,7.5,9")).toEqual([9]);
+  });
+  it("un id que no entra en el INT de MySQL se ignora, no llega a la base", () => {
+    // "99999999999999999999" pasa el `^\d+$` y llega como 1e20: ni es un entero
+    // exacto ni cabe en la columna. Antes se consultaba y Prisma tiraba.
+    expect(parseSociosParam("99999999999999999999")).toEqual([]);
+    expect(parseSociosParam("2147483648,192")).toEqual([192]);
+    expect(parseSociosParam(String(MAX_MEMBER_ID))).toEqual([MAX_MEMBER_ID]);
+    expect(isMemberId(0)).toBe(false);
+    expect(isMemberId(1.5)).toBe(false);
+    expect(isMemberId(MAX_MEMBER_ID)).toBe(true);
   });
 });
 

@@ -301,12 +301,13 @@ export default async function UnmatchedDetailPage(props: {
                 <Badge variant={unmatchedStatusBadgeVariant(row.status)}>{UNMATCHED_STATUS_LABELS[row.status]}</Badge>
               </dd>
             </dl>
-            {canAssign && (
-              <FormMessage kind="warning" box as="div" role="none">
-                <p className="font-medium">{UNMATCHED_REASON_LABELS[reason] ?? row.reason}</p>
-                <p className="mt-1">{REASON_HELP[reason] ?? "Este cobro no se pudo aplicar automáticamente."}</p>
-              </FormMessage>
-            )}
+            {/* El motivo va en TODA fila, también en las resueltas: es por qué
+                esta plata cayó acá, y una fila aplicada o descartada sigue
+                necesitando explicarlo cuando alguien la revisa meses después. */}
+            <FormMessage kind="warning" box as="div" role="none">
+              <p className="font-medium">{UNMATCHED_REASON_LABELS[reason] ?? row.reason}</p>
+              <p className="mt-1">{REASON_HELP[reason] ?? "Este cobro no se pudo aplicar automáticamente."}</p>
+            </FormMessage>
             {group.all.length > 0 && (
               <div className="space-y-2">
                 <p>

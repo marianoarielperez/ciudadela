@@ -132,6 +132,16 @@ export async function sharedPaymentOf(
   return cents(payment.amount) < cents(total) ? { rowId: row.id, mpPaymentId: holderMpId, total, paidAt: row.paidAt } : null;
 }
 
+/** El techo del `Int` de MySQL: `Member.id` es un autoincrement de 32 bits, así
+ *  que cualquier cosa por encima no puede ser un socio. Y `Number.isSafeInteger`
+ *  descarta lo que perdió precisión al parsearse ("99999999999999999999" llega
+ *  como 1e20). */
+export const MAX_MEMBER_ID = 2_147_483_647;
+
+export function isMemberId(n: number): boolean {
+  return Number.isSafeInteger(n) && n > 0 && n <= MAX_MEMBER_ID;
+}
+
 /** `?socios=192,193` → `[192, 193]`: enteros positivos, sin repetidos, hasta el
  *  tope. Lo que no es un id se ignora (una URL editada a mano no puede tirar la
  *  pantalla). */
@@ -141,7 +151,9 @@ export function parseSociosParam(raw: string | undefined): number[] {
   for (const piece of raw.split(",")) {
     if (!/^\d+$/.test(piece.trim())) continue;
     const n = Number(piece);
-    if (n <= 0 || out.includes(n)) continue;
+    // Un id que no entra en un INT de MySQL —ni en un entero exacto de JS— no es
+    // un socio: se ignora acá y no llega a la base como una consulta que tira.
+    if (!isMemberId(n) || out.includes(n)) continue;
     out.push(n);
     if (out.length === MAX_SPLIT_PARTS) break;
   }

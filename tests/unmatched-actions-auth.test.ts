@@ -260,6 +260,17 @@ describe("resolveUnmatchedAction (reparto en dos pasos)", () => {
     expect(redirect).not.toHaveBeenCalled();
   });
 
+  it("un id que no entra en el INT de MySQL se rechaza sin leer la fila", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    const form = new FormData();
+    form.append("rowId", "5");
+    form.append("socios", "99999999999");
+    const r = await resolveUnmatchedAction({}, form);
+    expect(r.error).toBe(M.noParts);
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.loadGroup).not.toHaveBeenCalled();
+  });
+
   it("una fila ya resuelta no se vuelve a cobrar", async () => {
     mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     mocks.findUnique.mockResolvedValueOnce({ ...openRow(), status: "matched" });

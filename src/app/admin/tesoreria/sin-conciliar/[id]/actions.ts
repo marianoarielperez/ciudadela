@@ -24,7 +24,7 @@ import { OtherIncomeError, recordOtherIncome } from "@/lib/treasury/other-income
 import { sendReceiptEmail } from "@/lib/treasury/receipt-email";
 import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { treasuryService, TreasuryError } from "@/lib/treasury/service";
-import { cents, loadGroup, MAX_SPLIT_PARTS } from "@/lib/treasury/split-group";
+import { cents, isMemberId, loadGroup, MAX_SPLIT_PARTS } from "@/lib/treasury/split-group";
 import { SPLIT_GUARD_MESSAGES as M } from "@/lib/treasury/split-messages";
 import {
   previewSplit, splitConfirmToken, splitPartGuards,
@@ -109,7 +109,9 @@ const CONCEPTS = ["fees", "voluntary", "extraordinary"] as const;
 // que decir QUÉ parte falló en el idioma del operador.
 function readParts(formData: FormData, socios: string): { ok: true; parts: SplitPartPlan[] } | { ok: false; error: string } {
   const ids = socios.split(",").map((s) => s.trim());
-  if (ids.some((s) => !/^\d+$/.test(s) || Number(s) <= 0)) return { ok: false, error: M.noParts };
+  // El mismo criterio que `parseSociosParam`: un id que no entra en el INT de
+  // MySQL no es un socio y no llega a la base como una consulta que tira.
+  if (ids.some((s) => !/^\d+$/.test(s) || !isMemberId(Number(s)))) return { ok: false, error: M.noParts };
   if (ids.length > MAX_SPLIT_PARTS) return { ok: false, error: M.tooManyParts };
   if (new Set(ids).size !== ids.length) return { ok: false, error: M.duplicateMember };
   const parts: SplitPartPlan[] = [];
