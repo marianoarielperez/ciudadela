@@ -46,6 +46,20 @@ export function groupTotals(
   return { assigned: assigned / 100, unassigned: unassigned / 100, status };
 }
 
+/** ¿Mercado Pago DEVOLVIÓ esta plata? Un reembolso es un hecho sobre el dinero
+ *  de MP —volvió al bolsillo del pagador—, así que no queda nada para asignarle
+ *  a ningún socio: la fila sólo se puede descartar. Una ANULACIÓN de mostrador
+ *  no dice nada sobre el dinero de MP (la plata sigue en la cuenta) y no bloquea
+ *  nada: por eso la pregunta es por `refunded` y no por "no aplicado".
+ *
+ *  Es UNA función y la comparten el núcleo, las dos actions y la pantalla —la
+ *  lección de `coverageFloor` y de `activeExemption`—: con un `where` por
+ *  camino, alcanzaba con que uno olvidara mirarlo para volver a emitirle un
+ *  recibo a un vecino por plata que la asociación ya no tiene. */
+export function isRefundedGroup(payments: ReadonlyArray<{ status: PaymentStatus }>): boolean {
+  return payments.some((p) => p.status === "refunded");
+}
+
 export const GROUP_PAYMENT_SELECT = {
   id: true, amount: true, status: true, type: true, mpPaymentId: true, splitOfPaymentId: true, memberId: true,
   member: { select: { id: true, fullName: true } },
@@ -64,7 +78,12 @@ export type GroupRow = {
   receipt: { id: number; number: string; concept: string; voidedAt: Date | null } | null;
 };
 
-export type LoadedGroup = { holder: GroupRow | null; parts: GroupRow[]; all: GroupRow[]; totals: GroupTotals };
+export type LoadedGroup = {
+  holder: GroupRow | null; parts: GroupRow[]; all: GroupRow[]; totals: GroupTotals;
+  /** `isRefundedGroup(all)`: viaja con el grupo para que ninguna pantalla ni
+   *  action tenga que recordar preguntarlo por su cuenta. */
+  refunded: boolean;
+};
 
 type RawRow = Omit<GroupRow, "amount"> & { amount: unknown };
 
@@ -80,14 +99,14 @@ export async function loadGroup(
   row: { mpPaymentId: string; amount: number },
 ): Promise<LoadedGroup> {
   const holderRaw = await db.payment.findUnique({ where: { mpPaymentId: row.mpPaymentId }, select: GROUP_PAYMENT_SELECT });
-  if (!holderRaw) return { holder: null, parts: [], all: [], totals: groupTotals([], row.amount) };
+  if (!holderRaw) return { holder: null, parts: [], all: [], totals: groupTotals([], row.amount), refunded: false };
   const holder = toRow(holderRaw as RawRow);
   const partsRaw = await db.payment.findMany({
     where: { splitOfPaymentId: holder.id }, select: GROUP_PAYMENT_SELECT, orderBy: { id: "asc" },
   });
   const parts = (partsRaw as RawRow[]).map(toRow).sort((a, b) => a.id - b.id);
   const all = [holder, ...parts];
-  return { holder, parts, all, totals: groupTotals(all, row.amount) };
+  return { holder, parts, all, totals: groupTotals(all, row.amount), refunded: isRefundedGroup(all) };
 }
 
 /** La leyenda de "pago compartido" del recibo y del email (decisión 4): total y

@@ -146,6 +146,11 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
   // La suma se compara contra lo SIN ASIGNAR (una fila parcial ya tiene una
   // parte aplicada), con la misma aritmética que la pantalla y el núcleo.
   const group = await loadGroup(prisma, { mpPaymentId: row.mpPaymentId, amount: Number(row.amount) });
+  // Reembolsado: la fila volvió a `open` porque el reparto se deshizo, pero la
+  // plata volvió al pagador. El núcleo lo revalida (dos veces, con la fila
+  // bloqueada); acá se corta antes de la suma para que el operador lea el motivo
+  // real en vez de una cuenta que igual no se puede aplicar.
+  if (group.refunded) return { error: M.refunded };
   const sum = parts.reduce((s, p) => s + cents(p.amount), 0);
   if (sum !== cents(group.totals.unassigned)) return { error: M.sum(sum / 100, group.totals.unassigned) };
   // Pre-validación barata con los MISMOS textos que el núcleo (que revalida).
@@ -305,6 +310,11 @@ export async function registerAsOtherIncomeAction(_prev: State, formData: FormDa
       });
       if (!row) return { kind: "gone" as const };
       if (row.status !== "open") return { kind: "resolved" as const };
+      // La MISMA guarda que el reparto, con la misma función: si MP reembolsó el
+      // cobro, la plata tampoco es de la asociación y no hay ningún ingreso que
+      // registrar. La única salida de esa fila es descartarla.
+      const group = await loadGroup(tx, { mpPaymentId: row.mpPaymentId, amount: Number(row.amount) });
+      if (group.refunded) throw new OtherIncomeError(M.refunded);
       const income = await recordOtherIncome(tx, {
         amount: Number(row.amount),
         // La fecha del ingreso es la del COBRO, no la del reloj de esta corrida:

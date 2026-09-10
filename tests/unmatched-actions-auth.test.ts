@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   // El pago que ganó el `mpPaymentId`: es lo que distingue "ya está bien
   // asentado" de "se había asentado y ese recibo se anuló".
   paymentFindUnique: vi.fn(),
+  paymentFindMany: vi.fn(async () => []),
   updateMany: vi.fn(async () => ({ count: 1 })),
   // La tercera salida escribe en `other_incomes` con el `tx` de la transacción.
   incomeCreate: vi.fn(async () => ({ id: 77 })),
@@ -38,6 +39,11 @@ vi.mock("@/lib/prisma", () => {
   const tx = {
     mpUnmatchedPayment: { findUnique: mocks.findUnique, updateMany: mocks.updateMany },
     otherIncome: { create: mocks.incomeCreate, findUnique: mocks.incomeFindUnique },
+    // La tercera salida ahora lee el GRUPO con el `tx` de su propia transacción
+    // (la guarda del reembolso). `loadGroup` está mockeada más abajo, así que el
+    // veredicto lo da el mock; esto está para que el doble tenga la misma FORMA
+    // que el cliente que la action le pasa.
+    payment: { findUnique: mocks.paymentFindUnique, findMany: mocks.paymentFindMany },
   };
   return {
     prisma: {
@@ -73,6 +79,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { redirect } from "next/navigation";
 import { TreasuryError } from "@/lib/treasury/service";
+import { SPLIT_GUARD_MESSAGES as M } from "@/lib/treasury/split-messages";
 import { splitConfirmToken } from "@/lib/treasury/split-preview";
 import {
   dismissUnmatchedAction,
@@ -129,7 +136,16 @@ function splitForm(opts: { confirm?: boolean; token?: string; note?: string; amo
   return form;
 }
 function openGroup(unassigned = 18000) {
-  return { holder: null, parts: [], all: [], totals: { assigned: 18000 - unassigned, unassigned, status: unassigned === 18000 ? "open" : "partial" } };
+  return {
+    holder: null, parts: [], all: [], refunded: false,
+    totals: { assigned: 18000 - unassigned, unassigned, status: unassigned === 18000 ? "open" : "partial" },
+  };
+}
+// Reembolsado: la fila volvió a `open` porque el reparto se deshizo, pero la
+// plata volvió al pagador. La aritmética del grupo dice "todo sin asignar", que
+// es justamente por qué hace falta la bandera aparte.
+function refundedGroup() {
+  return { ...openGroup(), refunded: true };
 }
 const PREVIEW = [
   { memberId: 192, name: "Araoz Hugo", memberNumber: 192, concept: "Cuota social · julio a agosto 2026 (2 cuotas)", amount: 12000 },
@@ -230,6 +246,18 @@ describe("resolveUnmatchedAction (reparto en dos pasos)", () => {
     form.append("part_200_amount", "6000");
     const r = await resolveUnmatchedAction({}, form);
     expect(r.confirm?.total).toBe(6000);
+  });
+
+  it("un cobro REEMBOLSADO no se reparte: el motivo real, sin vista previa ni registro", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.loadGroup.mockResolvedValueOnce(refundedGroup());
+    const r = await resolveUnmatchedAction({}, splitForm({ confirm: true }));
+    expect(r.error).toBe(M.refunded);
+    expect(mocks.preview).not.toHaveBeenCalled();
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
   });
 
   it("una fila ya resuelta no se vuelve a cobrar", async () => {
@@ -387,6 +415,10 @@ describe("registerAsOtherIncomeAction", () => {
     vi.clearAllMocks();
     mocks.updateMany.mockResolvedValue({ count: 1 });
     mocks.incomeCreate.mockResolvedValue({ id: 77 });
+    // Explícito y no heredado del describe de arriba: `clearAllMocks` borra las
+    // llamadas, no las implementaciones, y depender de eso hace que el orden de
+    // los describes decida el resultado.
+    mocks.loadGroup.mockResolvedValue(openGroup());
   });
 
   function incomeForm(concept = "Alquiler del salón para el cumpleaños de Ramírez"): FormData {
@@ -448,6 +480,21 @@ describe("registerAsOtherIncomeAction", () => {
     // resuelto en enero no cae en el que está en curso. El `?ingreso=` abre el
     // ejercicio del propio ingreso, con esa fila a la vista.
     expect(redirect).toHaveBeenCalledWith("/admin/tesoreria/otros-ingresos?ingreso=77&registrado=1");
+  });
+
+  it("un cobro REEMBOLSADO tampoco es un ingreso de la asociación: no se registra nada", async () => {
+    // La MISMA guarda que el reparto y con la misma función: la plata volvió al
+    // pagador, así que no es de un socio NI de la asociación. La única salida de
+    // esa fila es descartarla.
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.loadGroup.mockResolvedValueOnce(refundedGroup());
+    const r = await registerAsOtherIncomeAction({}, incomeForm());
+    expect(r.error).toBe(M.refunded);
+    expect(mocks.incomeCreate).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
   });
 
   it("una fila ya resuelta no se vuelve a registrar", async () => {

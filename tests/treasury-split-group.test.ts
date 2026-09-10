@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import {
-  cents, groupTotals, loadGroup, MAX_SPLIT_PARTS, parseSociosParam, sharedPaymentOf,
+  cents, groupTotals, isRefundedGroup, loadGroup, MAX_SPLIT_PARTS, parseSociosParam, sharedPaymentOf,
 } from "@/lib/treasury/split-group";
 import { SPLIT_GUARD_MESSAGES } from "@/lib/treasury/split-messages";
 
@@ -56,6 +56,23 @@ function fakeDb(payments: Array<Record<string, unknown> & { id: number }>, rows:
   };
 }
 
+// Un reembolso es un hecho sobre el dinero de MERCADO PAGO: volvió al pagador.
+// Una anulación de mostrador no dice nada sobre ese dinero. La distinción es toda
+// la guarda, así que se prueba pura y en los dos sentidos.
+describe("isRefundedGroup", () => {
+  it("una parte reembolsada marca el grupo entero", () => {
+    expect(isRefundedGroup([{ status: "applied" }, { status: "refunded" }])).toBe(true);
+    expect(isRefundedGroup([{ status: "refunded" }])).toBe(true);
+  });
+  it("una ANULACIÓN de mostrador no lo marca: la plata de MP sigue en la cuenta", () => {
+    expect(isRefundedGroup([{ status: "voided" }, { status: "applied" }])).toBe(false);
+    expect(isRefundedGroup([{ status: "voided" }])).toBe(false);
+  });
+  it("un grupo vacío no está reembolsado", () => {
+    expect(isRefundedGroup([])).toBe(false);
+  });
+});
+
 describe("loadGroup", () => {
   it("sin portador: grupo vacío y fila abierta", async () => {
     const db = fakeDb([]);
@@ -78,6 +95,19 @@ describe("loadGroup", () => {
     expect(g.parts.map((p) => p.id)).toEqual([8, 9]);
     expect(g.all.map((p) => p.amount)).toEqual([12000, 0.01, 6000]);
     expect(g.totals).toEqual({ assigned: 12000.01, unassigned: 5999.99, status: "partial" });
+  });
+  it("`refunded` viaja con el grupo: lo mira una sola función y no cada lector", async () => {
+    const anulado = fakeDb([
+      { id: 7, mpPaymentId: "mp-1", splitOfPaymentId: null, amount: "12000.00", status: "voided" },
+    ]);
+    expect((await loadGroup(anulado as never, { mpPaymentId: "mp-1", amount: 18000 })).refunded).toBe(false);
+    const devuelto = fakeDb([
+      { id: 7, mpPaymentId: "mp-1", splitOfPaymentId: null, amount: "12000.00", status: "applied" },
+      { id: 8, mpPaymentId: null, splitOfPaymentId: 7, amount: "6000.00", status: "refunded" },
+    ]);
+    expect((await loadGroup(devuelto as never, { mpPaymentId: "mp-1", amount: 18000 })).refunded).toBe(true);
+    // Sin portador tampoco hay reembolso: no hay nada de MP asentado todavía.
+    expect((await loadGroup(fakeDb([]) as never, { mpPaymentId: "mp-1", amount: 18000 })).refunded).toBe(false);
   });
 });
 

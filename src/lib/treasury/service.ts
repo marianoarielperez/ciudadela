@@ -15,7 +15,7 @@ import { cashConceptsFor, feeAmountFor, revertFees, type CashConcept } from "./r
 import { cents, INBOX_CONCEPT_TYPE, loadGroup, MAX_SPLIT_PARTS, sharedPaymentOf } from "./split-group";
 import { SPLIT_GUARD_MESSAGES } from "./split-messages";
 import { splitPartGuards, type SplitPartPlan } from "./split-preview";
-import { isFeePeriodUniqueViolation, isUniqueViolation } from "./unique-violation";
+import { isFeePeriodUniqueViolation, isUniqueViolation, MP_PAYMENT_INDEX, uniqueViolationTarget } from "./unique-violation";
 
 export class TreasuryError extends Error {
   constructor(message: string) {
@@ -446,6 +446,12 @@ export function makeTreasuryService(deps: Deps) {
     // Foto del grupo AFUERA de la transacción: es para el mensaje temprano de la
     // suma. La que manda es la relectura de adentro, con la fila bloqueada.
     const before = await loadGroup(db, { mpPaymentId: row.mpPaymentId, amount: Number(row.amount) });
+    // Mercado Pago devolvió esta plata: `revertCore` dejó la fila en `open` —que
+    // es lo correcto, el reparto anterior se deshizo— y sin esta guarda la fila
+    // se volvía a repartir y se le emitían recibos a los vecinos por plata que
+    // ya no está. Se pregunta acá y OTRA VEZ adentro de la transacción, con la
+    // fila bloqueada: el reembolso puede llegar en el medio.
+    if (before.refunded) throw new TreasuryError(M.refunded);
     if (partsCents !== cents(before.totals.unassigned)) {
       throw new TreasuryError(M.sum(partsCents / 100, before.totals.unassigned));
     }
@@ -480,6 +486,9 @@ export function makeTreasuryService(deps: Deps) {
         const live = await tx.mpUnmatchedPayment.findUnique({ where: { id: row.id }, select: { status: true, amount: true } });
         if (!live || (live.status !== "open" && live.status !== "partial")) throw new TreasuryError(M.rowResolved);
         const group = await loadGroup(tx, { mpPaymentId: row.mpPaymentId, amount: Number(live.amount) });
+        // La relectura con la fila bloqueada: si el reembolso entró entre la foto
+        // y el lock, se corta acá, antes de la primera escritura.
+        if (group.refunded) throw new TreasuryError(M.refunded);
         if (partsCents !== cents(group.totals.unassigned)) throw new TreasuryError(M.changed);
 
         let holderId: number | null = group.holder?.id ?? null;
@@ -511,7 +520,7 @@ export function makeTreasuryService(deps: Deps) {
       // El unique del portador chocó: otro escritor (la vinculación de una
       // suscripción, el cron) asentó ESTE cobro entre la foto y el INSERT. Se
       // excluye el unique de (socio, período), que es la carrera de abajo.
-      if (isUniqueViolation(e) && !isFeePeriodUniqueViolation(e)) {
+      if (uniqueViolationTarget(e) === MP_PAYMENT_INDEX) {
         const winner = await db.payment.findUnique({ where: { mpPaymentId: row.mpPaymentId }, select: { id: true } });
         if (winner) return { kind: "already_processed", paymentId: winner.id };
       }
@@ -567,8 +576,29 @@ export function makeTreasuryService(deps: Deps) {
       if (!r) throw new TreasuryError("El recibo no existe.");
       if (r.voidedAt) throw new TreasuryError("El recibo ya está anulado.");
       const { toPending, toDelete } = revertFees(r.payment.fees.map((f) => f.period), currentPeriod(at));
+      // El `mpPaymentId` del PORTADOR del grupo, si este pago es plata de MP: es
+      // la llave con la que se bloquea la fila de la bandeja adentro de la
+      // transacción. Se resuelve afuera (una consulta, y el portador de un pago
+      // no cambia nunca) para que el `FOR UPDATE` pueda ser el PRIMER statement.
+      const holderMpId: string | null = r.payment.mpPaymentId
+        ?? (r.payment.splitOfPaymentId
+          ? (await db.payment.findUnique({
+              where: { id: r.payment.splitOfPaymentId }, select: { mpPaymentId: true },
+            }))?.mpPaymentId ?? null
+          : null);
       let periodsReverted = 0;
       await db.$transaction(async (tx) => {
+        // El MISMO lock que toma `registerSplitCore`, y PRIMERO: sin él, el
+        // `findMany` de abajo saca su foto de las partes aplicadas sin la fila
+        // tomada, y un reparto del resto que commitea en el medio quedaba
+        // aplicado mientras esta anulación devolvía la fila a `open` — plata
+        // imputada a un socio y la bandeja diciendo que no hay nada asignado.
+        // Los dos escritores toman la fila antes de cualquier otra cosa, así que
+        // se serializan sin ciclo posible. Un cobro de mostrador no tiene fila
+        // que bloquear y no la toca.
+        if (holderMpId !== null) {
+          await tx.$queryRaw`SELECT id FROM mp_unmatched_payments WHERE mp_payment_id = ${holderMpId} FOR UPDATE`;
+        }
         if (memberId !== null && toPending.length > 0) {
           // `paymentId` en el `where` es la guarda que impide devolver a pendiente
           // una cuota que ya se reimputó a OTRO pago con recibo válido: sin él,

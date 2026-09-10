@@ -30,4 +30,9 @@ export const SPLIT_GUARD_MESSAGES = {
   sum: (parts: number, unassigned: number): string =>
     `Las partes suman ${formatARS(parts)} y hay ${formatARS(unassigned)} sin asignar.`,
   changed: "Este pago cambió mientras lo repartías. Revisá la fila y volvé a intentarlo.",
+  // Un reembolso NO es una anulación de mostrador: la plata volvió al pagador y
+  // la asociación no la tiene. Ni se le puede emitir un recibo a un socio ni se
+  // puede registrar como ingreso de la asociación; la única salida es descartar.
+  refunded:
+    "Mercado Pago reembolsó este cobro: la plata volvió al pagador y no se puede asignar a socios. Descartá la fila.",
 } as const;

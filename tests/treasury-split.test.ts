@@ -357,6 +357,87 @@ describe("anulación y reembolso por grupo (spec §5.3, §5.4)", () => {
     expect(fake.state.rows[0].status).toBe("open");
   });
 
+  it("REEMBOLSADO no se vuelve a repartir: la plata volvió al pagador (guarda nueva de la revisión final)", async () => {
+    const { fake, svc } = await splitted();
+    await svc.refundPayment({ mpPaymentId: "mp-18k", reason: "Reembolso en Mercado Pago" });
+    // La fila quedó `open` —el reparto se deshizo— y las cuotas, pendientes: sin
+    // la guarda, el reparto entra igual y le emite recibos a los dos vecinos por
+    // plata que la asociación ya no tiene (reproducido con este mismo doble).
+    expect(fake.state.rows[0].status).toBe("open");
+    const seqBefore = fake.state.seq;
+    const payments = fake.state.payments.length;
+    fake.state.log.length = 0;
+    await expect(svc.registerSplitPayment({ rowId: 5, actorId: 9, parts: twoPlusOne })).rejects.toThrow(M.refunded);
+    // Corta en la LECTURA TEMPRANA: no se abre ni la transacción. (Sin esta
+    // aserción la guarda de afuera se podía borrar en verde, porque la de adentro
+    // tira igual y el rollback deja todo como estaba.)
+    expect(fake.state.log).not.toContain("start");
+    expect(fake.state.payments).toHaveLength(payments);
+    expect(fake.state.receipts).toHaveLength(2); // los dos anulados del reparto original
+    expect(fake.state.seq).toBe(seqBefore);
+    expect(fake.state.rows[0].status).toBe("open");
+    expect(fake.state.fees.every((f) => f.status === "pending")).toBe(true);
+  });
+
+  it("el reembolso llega entre la foto y el lock: se corta ADENTRO, antes de la primera escritura", async () => {
+    // La otra mitad de la guarda, y la única forma de verificarla por mutación:
+    // acá la lectura temprana no ve nada (la fila no tiene portador) y el
+    // reembolso aparece recién con la fila bloqueada. Sin la relectura, el
+    // reparto sigue y choca contra la unique del portador: devolvería
+    // `already_processed` en vez de decir que la plata se devolvió.
+    const fake = splitFakeDb({ members: [hugo, monica], fees: FEES, rows: [row()] });
+    fake.state.beforeTransaction = () => {
+      fake.state.payments.push({ id: 41, memberId: 192, type: "debit", amount: "18000.00", status: "refunded", mpPaymentId: "mp-18k", preapprovalId: null, splitOfPaymentId: null, paidAt: PAID_AT });
+    };
+    await expect(svcOn(fake).registerSplitPayment({ rowId: 5, actorId: 9, parts: twoPlusOne })).rejects.toThrow(M.refunded);
+    expect(fake.state.payments).toHaveLength(1);
+    expect(fake.state.receipts).toHaveLength(0);
+    expect(fake.state.seq).toBe(0);
+    expect(fake.state.fees.every((f) => f.status === "pending")).toBe(true);
+  });
+
+  it("una parte ANULADA no bloquea nada: la fila reabierta se sigue pudiendo repartir", async () => {
+    // El contrapunto del `it` de arriba, y la razón de que la guarda pregunte por
+    // `refunded` y no por "no aplicado": una anulación de mostrador no dice nada
+    // sobre el dinero de MP, que sigue en la cuenta de la asociación.
+    const { fake, svc, parts } = await splitted();
+    await svc.voidReceipt({ receiptId: parts[1].receiptId, actorId: 9, reason: "a" });
+    await svc.voidReceipt({ receiptId: parts[0].receiptId, actorId: 9, reason: "b" });
+    expect(fake.state.rows[0].status).toBe("open");
+    const r = await svc.registerSplitPayment({ rowId: 5, actorId: 9, parts: twoPlusOne });
+    expect(r.kind).toBe("registered");
+  });
+
+  it("la anulación de una parte toma el lock de la fila ANTES de decidir su estado", async () => {
+    // Sin el lock primero, el `findMany` de las partes aplicadas saca su foto sin
+    // la fila tomada: un reparto del resto que commitea en el medio queda
+    // aplicado y esta anulación devuelve la fila a `open` igual. Se fija el
+    // ORDEN, que es lo único que la evita.
+    const { fake, svc, parts } = await splitted();
+    fake.state.log.length = 0;
+    await svc.voidReceipt({ receiptId: parts[1].receiptId, actorId: 9, reason: "no era" });
+    const log = fake.state.log;
+    expect(log[0]).toBe("start");
+    expect(log[1]).toBe("lock");
+    expect(log.indexOf("lock")).toBeLessThan(log.indexOf("row-update"));
+  });
+
+  it("anular un cobro de mostrador NO toca la fila de la bandeja: ningún lock", async () => {
+    // Un efectivo no tiene fila que bloquear, y bloquear "la fila del null"
+    // habría serializado todos los recibos del mostrador entre sí.
+    const fake = splitFakeDb({ members: [hugo], fees: FEES.filter((f) => f.memberId === 192), rows: [row()] });
+    const svc = svcOn(fake);
+    const p = await svc.registerPayment({
+      memberId: 192, type: "cash", n: 2, amount: 12000, paidAt: PAID_AT,
+      mpPaymentId: null, preapprovalId: null, actorId: 9, note: null,
+    });
+    if (p.kind !== "registered") throw new Error(p.kind);
+    fake.state.log.length = 0;
+    await svc.voidReceipt({ receiptId: p.receiptId, actorId: 9, reason: "error de caja" });
+    expect(fake.state.log).not.toContain("lock");
+    expect(fake.state.log).toContain("row-update");
+  });
+
   it("reembolso de un cobro desconocido: not_found", async () => {
     const { svc } = await splitted();
     expect(await svc.refundPayment({ mpPaymentId: "nope", reason: "x" })).toEqual({ kind: "not_found" });

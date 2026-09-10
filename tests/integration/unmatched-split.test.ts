@@ -13,6 +13,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import { makeFeeValueReader } from "@/lib/treasury/fee-values";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { makeTreasuryService } from "@/lib/treasury/service";
+import { groupTotals } from "@/lib/treasury/split-group";
 import { SPLIT_GUARD_MESSAGES as M } from "@/lib/treasury/split-messages";
 
 const url = process.env.DATABASE_URL_TEST;
@@ -163,6 +164,64 @@ describe.skipIf(!url)("reparto de un cobro de la bandeja (MariaDB)", () => {
     expect(await prisma.fee.count({ where: { memberId: { in: [ids[0], ids[1]] }, status: "pending" } })).toBe(3);
     expect(await prisma.mpUnmatchedPayment.findUniqueOrThrow({ where: { id: rowId } })).toMatchObject({ status: "open", paymentId: null });
     expect(await s.refundPayment({ mpPaymentId: MP_ID, reason: "x" })).toEqual({ kind: "already_reverted", status: "refunded" });
+  });
+
+  it("una fila REEMBOLSADA no se vuelve a repartir: ni un pago nuevo ni un número de la serie", async () => {
+    // El reembolso deja la fila en `open` —el reparto se deshizo— y las cuotas
+    // pendientes: la foto es indistinguible de una fila que nunca se aplicó. Sin
+    // la guarda, el reparto entraba y les emitía recibos a los vecinos por plata
+    // que Mercado Pago ya devolvió al pagador.
+    const rowId = await seedRow();
+    const s = svc();
+    await s.registerSplitPayment({ rowId, parts: twoPlusOne(), actorId });
+    await s.refundPayment({ mpPaymentId: MP_ID, reason: "Reembolso en Mercado Pago" });
+    expect(await prisma.mpUnmatchedPayment.findUniqueOrThrow({ where: { id: rowId } })).toMatchObject({ status: "open" });
+    const seqBefore = (await prisma.receiptSequence.findUniqueOrThrow({ where: { year: YEAR } })).last;
+    const paymentsBefore = await prisma.payment.count({ where: { memberId: { in: ids } } });
+    await expect(s.registerSplitPayment({ rowId, parts: twoPlusOne(), actorId })).rejects.toThrow(M.refunded);
+    expect(await prisma.payment.count({ where: { memberId: { in: ids } } })).toBe(paymentsBefore);
+    expect((await prisma.receiptSequence.findUniqueOrThrow({ where: { year: YEAR } })).last).toBe(seqBefore);
+    expect(await prisma.mpUnmatchedPayment.findUniqueOrThrow({ where: { id: rowId } })).toMatchObject({ status: "open" });
+  });
+
+  it("anulación y reparto del resto A LA VEZ, con dos instancias del servicio: la fila queda consistente con el grupo", async () => {
+    // El mutex de `registerSplitPayment` es de PROCESO: dos instancias del módulo
+    // no lo comparten, así que lo único que serializa a los dos escritores es el
+    // `FOR UPDATE` de la fila en MariaDB —el que la anulación ahora toma primero—.
+    // Sin él, la anulación saca su foto de las partes aplicadas sin la fila
+    // tomada y puede devolverla a `open` con plata imputada a un socio.
+    //
+    // El resultado se afirma como INVARIANTE y no por orden: los dos órdenes son
+    // legítimos (gana el reparto → Parcial con lo que quede; gana la anulación →
+    // el reparto lee "cambió" y la fila queda abierta) y cuál gana no es
+    // determinístico. Lo que no puede pasar es que el estado de la fila y el
+    // grupo digan cosas distintas.
+    const rowId = await seedRow();
+    const s = svc();
+    const r = await s.registerSplitPayment({ rowId, parts: twoPlusOne(), actorId });
+    if (r.kind !== "registered") throw new Error(r.kind);
+    await s.voidReceipt({ receiptId: r.parts[1].receiptId, actorId, reason: "no era" });
+    // Segunda instancia del módulo: mutex propio. El `vi.mock("@/lib/prisma")` es
+    // hoisted y sigue aplicando después del reset.
+    vi.resetModules();
+    const { makeTreasuryService: makeSecond } = await import("@/lib/treasury/service");
+    const s2 = makeSecond({
+      db: prisma, feeValues: makeFeeValueReader(prisma),
+      renderPdf: async () => new Uint8Array(), writePdf: async () => {},
+    });
+    await Promise.allSettled([
+      s.voidReceipt({ receiptId: r.parts[0].receiptId, actorId, reason: "tampoco" }),
+      s2.registerSplitPayment({ rowId, parts: [{ memberId: ids[2], concept: "fees", n: 1, amount: 6000 }], actorId }),
+    ]);
+    const row = await prisma.mpUnmatchedPayment.findUniqueOrThrow({ where: { id: rowId } });
+    const holder = await prisma.payment.findUniqueOrThrow({ where: { mpPaymentId: MP_ID }, select: { id: true } });
+    const all = await prisma.payment.findMany({
+      where: { OR: [{ id: holder.id }, { splitOfPaymentId: holder.id }] },
+      select: { amount: true, status: true },
+    });
+    const derived = groupTotals(all.map((p) => ({ amount: Number(p.amount), status: p.status })), Number(row.amount));
+    console.log(`[unmatched-split] carrera: fila ${row.status}, grupo ${derived.status} (asignado ${derived.assigned})`);
+    expect(row.status).toBe(derived.status);
   });
 
   it("cinco partes entran en el presupuesto de 5 s de Prisma (tiempo medido)", async () => {

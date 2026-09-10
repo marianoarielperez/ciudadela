@@ -16,6 +16,14 @@ const FEE_PERIOD_INDEX = "fees_member_id_period_key";
  *  la lista de columnas en vez del nombre del índice. */
 const FEE_PERIOD_COLUMNS = "member_id,period";
 
+/** Nombre del índice del `@unique` de `payments.mpPaymentId`: la barrera de
+ *  idempotencia del dinero de Mercado Pago. Se mira POR NOMBRE y no como "un
+ *  P2002 que no es el de (socio, período)": el catch del reparto escribe varios
+ *  pagos, cuotas y recibos, y un unique nuevo en cualquiera de esas tablas se
+ *  habría leído como "otro escritor ganó el cobro" —y con el ganador ausente,
+ *  el error real se tragaba sin rastro—. */
+export const MP_PAYMENT_INDEX = "payments_mp_payment_id_key";
+
 export function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
 }

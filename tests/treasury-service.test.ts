@@ -181,6 +181,10 @@ function fakeDb(opts: {
       }),
     },
     $executeRaw: vi.fn(async () => { state.seq++; return 1; }),
+    // El `FOR UPDATE` de la fila de la bandeja que toma la anulación de plata de
+    // MP: acá no se asierta nada, sólo tiene que existir para que el doble no
+    // explote (el orden se fija en `tests/treasury-split.test.ts`).
+    $queryRaw: vi.fn(async () => []),
     receiptSequence: {
       findUniqueOrThrow: vi.fn(async (args: { where: { year: number } }) => ({ year: args.where.year, last: state.seq })),
     },

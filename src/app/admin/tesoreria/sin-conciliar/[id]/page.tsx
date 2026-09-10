@@ -39,6 +39,7 @@ import { periodLabel } from "@/lib/treasury/periods";
 import type { ReceiptEmailOutcome } from "@/lib/treasury/receipt-notice";
 import { cashConceptsFor, type FeeValueAmounts } from "@/lib/treasury/rules";
 import { loadGroup, MAX_SPLIT_PARTS, parseSociosParam, type GroupRow } from "@/lib/treasury/split-group";
+import { SPLIT_GUARD_MESSAGES } from "@/lib/treasury/split-messages";
 import { DismissForm, OtherIncomeForm } from "./resolve-form";
 import { SplitForm, type SplitPartMember } from "./split-form";
 
@@ -194,6 +195,10 @@ export default async function UnmatchedDetailPage(props: {
   const canAssign = row.status === "open" || row.status === "partial";
   const dismissed = row.status === "dismissed";
   const group = await loadGroup(prisma, { mpPaymentId: row.mpPaymentId, amount: Number(row.amount) });
+  // Reembolsado: la fila está `open` porque el reparto se deshizo, pero la plata
+  // volvió al pagador. No se reparte ni se registra como ingreso —lo mismo que
+  // rechazan las dos actions, decidido con la MISMA función—: sólo se descarta.
+  const assignable = canAssign && !group.refunded;
   const income = row.status === "other_income"
     ? await prisma.otherIncome.findUnique({
         where: { mpPaymentId: row.mpPaymentId },
@@ -202,13 +207,13 @@ export default async function UnmatchedDetailPage(props: {
     : null;
 
   const [hits, suggestions, feeValue] = await Promise.all([
-    canAssign && q !== "" ? searchMembers(prisma, q) : Promise.resolve([] as MemberHit[]),
-    canAssign && row.payerEmail ? membersByEmail(prisma, row.payerEmail) : Promise.resolve([] as MemberHit[]),
+    assignable && q !== "" ? searchMembers(prisma, q) : Promise.resolve([] as MemberHit[]),
+    assignable && row.payerEmail ? membersByEmail(prisma, row.payerEmail) : Promise.resolve([] as MemberHit[]),
     // El valor vigente sólo se lee cuando hay socios elegidos (mismo criterio
     // que Efectivo: en modo búsqueda nadie mira ese dato).
-    canAssign && chosen.length > 0 ? feeValueReader.current() : Promise.resolve(null),
+    assignable && chosen.length > 0 ? feeValueReader.current() : Promise.resolve(null),
   ]);
-  const loaded = canAssign
+  const loaded = assignable
     ? await Promise.all(chosen.map((mid) => loadPartMember(mid, feeValue, row.id, chosen)))
     : [];
   const parts = loaded.filter((p): p is SplitPartMember => p !== null);
@@ -324,7 +329,14 @@ export default async function UnmatchedDetailPage(props: {
           </CardContent>
         </Card>
 
-        {!canAssign ? (
+        {canAssign && group.refunded ? (
+          <Card>
+            <CardHeader><CardTitle>Reembolsado por Mercado Pago</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <FormMessage kind="warning" box role="none">{SPLIT_GUARD_MESSAGES.refunded}</FormMessage>
+            </CardContent>
+          </Card>
+        ) : !canAssign ? (
           <Card>
             <CardHeader><CardTitle>{UNMATCHED_STATUS_LABELS[row.status]}</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
@@ -464,7 +476,11 @@ export default async function UnmatchedDetailPage(props: {
             Si no es de un socio
           </h2>
           <div className="divide-y rounded-md border">
-            <OtherIncomeForm rowId={row.id} amount={Number(row.amount)} paidAt={formatDateAR(row.paidAt)} />
+            {/* Un cobro reembolsado tampoco es un ingreso de la asociación: la
+                plata volvió al pagador. Queda sólo el descarte, que es la salida. */}
+            {!group.refunded && (
+              <OtherIncomeForm rowId={row.id} amount={Number(row.amount)} paidAt={formatDateAR(row.paidAt)} />
+            )}
             <DismissForm rowId={row.id} />
           </div>
         </section>
