@@ -388,7 +388,7 @@ URL, el botón atrás funciona y `aria-current` sale solo. El encabezado
   Pendientes = `open` + `partial`; Resueltos = aplicadas, ingresos no societarios y
   descartadas. Cada fila lleva a un detalle con **tres salidas**:
   1. **Repartir entre socios** (spec 2026-09-10): hasta 5 socios, que viajan en la
-     URL (`?socios=`). Sugerencias por la casilla del pagador y buscador; una parte
+     URL (`?socios=`). Sugerencias ("Recomendados": los socios con el email del pagador) y buscador; una parte
      por socio con concepto según su categoría (la misma regla que Efectivo y la
      exención vigente), cantidad de cuotas e importe prellenado con n × valor
      vigente; la suma tiene que dar **exactamente** lo sin asignar. **Dos pasos**:

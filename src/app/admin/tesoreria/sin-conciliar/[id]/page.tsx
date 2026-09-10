@@ -396,9 +396,15 @@ export default async function UnmatchedDetailPage(props: {
               )}
               {pendingSuggestions.length > 0 && !full && (
                 <div className="space-y-1">
+                  {/* "Recomendados" y no "socios con la casilla del pagador" (pedido
+                      del operador, 10/09/2026): el título se lee de un vistazo y el
+                      porqué —el email que coincide— va en la línea de abajo. */}
                   <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Socios con la casilla del pagador
+                    Recomendados
                   </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Tienen cargado el email del pagador (<span className="break-all">{row.payerEmail}</span>).
+                  </p>
                   <ul className="divide-y rounded-xl border">
                     {pendingSuggestions.map((h) => (
                       <MemberRow key={h.id} hit={h} addHref={addHref(h.id)} disabled={false} />

@@ -1092,7 +1092,7 @@ Verificación post-deploy:
 
 1. `/admin/tesoreria/sin-conciliar` abre y lista la fila de $ 18.000 del 08/09 como
    Pendiente.
-2. Resolverla: agregar a los dos socios (la casilla del pagador los sugiere), 2
+2. Resolverla: agregar a los dos socios (aparecen como "Recomendados" por el email del pagador), 2
    cuotas al socio y 1 a la socia, Revisar → Confirmar. Tienen que salir **dos
    recibos consecutivos** y la fila quedar **Aplicado** con las dos partes. Ojo con
    la suma: los importes vienen prellenados con n × valor vigente y tienen que dar
