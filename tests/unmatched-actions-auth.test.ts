@@ -249,8 +249,22 @@ describe("resolveUnmatchedAction (reparto en dos pasos)", () => {
     expect(mocks.preview).not.toHaveBeenCalled();
   });
 
+  it("si la vista previa explota, el operador lee un mensaje y no se cobra nada", async () => {
+    mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
+    mocks.findUnique.mockResolvedValueOnce(openRow());
+    mocks.preview.mockRejectedValueOnce(new Error("boom"));
+    const r = await resolveUnmatchedAction({}, splitForm());
+    expect(r.error).toBe("No se pudo armar la vista previa. Reintentá en un momento.");
+    expect(mocks.registerSplit).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
   it("más de cinco socios, un socio repetido, cuotas o importe inválidos: se rechazan antes de tocar la base", async () => {
-    mocks.admin.mockResolvedValue({ ok: true, actorId: 9 });
+    // Uno por llamada, y NINGUNO persistente: si un `expect` de los de abajo
+    // falla, el test corta y un `mockResolvedValue` sin restaurar dejaría a los
+    // tests siguientes corriendo con un admin autorizado.
+    for (let i = 0; i < 4; i++) mocks.admin.mockResolvedValueOnce({ ok: true, actorId: 9 });
     const six = new FormData();
     six.append("rowId", "5");
     six.append("socios", "1,2,3,4,5,6");
@@ -265,8 +279,6 @@ describe("resolveUnmatchedAction (reparto en dos pasos)", () => {
     const badAmount = splitForm({ amounts: ["12.000", "6000"] });
     expect((await resolveUnmatchedAction({}, badAmount)).error).toBe("El importe de cada parte tiene que ser mayor a cero.");
     expect(mocks.findUnique).not.toHaveBeenCalled();
-    mocks.admin.mockReset();
-    mocks.admin.mockResolvedValue({ ok: false, reason: "not_admin", error: "No tenés permiso para editar el padrón." });
   });
 
   it("una regla de negocio del servicio se le muestra al operador tal como la redactó", async () => {

@@ -156,7 +156,17 @@ export async function resolveUnmatchedAction(_prev: State, formData: FormData): 
   // paso 2 y, si las partes cambiaron en el medio, se vuelve a pedir.
   const token = splitConfirmToken(row.id, parts);
   if (d.confirmar !== "1" || d.confirmToken !== token) {
-    const preview = await previewSplit(prisma, parts);
+    // La vista previa lee la base: un socio borrado en el medio, o la base
+    // caída, tiran. Todavía no se cobró nada, así que lo único que corresponde
+    // es un mensaje y volver a intentar — un error crudo dejaría la pantalla
+    // en blanco sobre una fila que sigue abierta.
+    let preview: SplitPreviewPart[];
+    try {
+      preview = await previewSplit(prisma, parts);
+    } catch (e) {
+      console.error("[unmatched] previewSplit falló", errCode(e));
+      return { error: "No se pudo armar la vista previa. Reintentá en un momento." };
+    }
     return { confirm: { token, total: group.totals.unassigned, parts: preview } };
   }
 
