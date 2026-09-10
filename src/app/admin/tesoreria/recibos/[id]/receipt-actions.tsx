@@ -16,13 +16,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { emailReceiptAction, voidReceiptAction } from "./actions";
 
-export function ReceiptActions({ receiptId, voided, hasEmail, emailedAt }: {
+export function ReceiptActions({ receiptId, voided, hasEmail, emailedAt, voidHint }: {
   receiptId: number;
   voided: boolean;
   hasEmail: boolean;
   /** Ya formateado en el servidor: la fecha se arma en hora argentina y no en
    *  la del navegador del operador. */
   emailedAt: string | null;
+  /** Qué pasa con la bandeja al anular (parte de un reparto, spec 2026-09-10),
+   *  ya redactado por el servidor. Null → nada extra. */
+  voidHint?: string | null;
 }) {
   const [emailState, emailAction, emailPending] = useActionState(emailReceiptAction, {});
   const [voidState, voidAction, voidPending] = useActionState(voidReceiptAction, {});
@@ -74,6 +77,7 @@ export function ReceiptActions({ receiptId, voided, hasEmail, emailedAt }: {
               El número no se reutiliza: el recibo queda anulado, con el motivo y quién lo anuló.
               Las cuotas que cubría vuelven a pendientes.
             </p>
+            {voidHint && <p className="text-sm text-warning">{voidHint}</p>}
             <div className="space-y-1">
               <Label htmlFor="reason">Motivo</Label>
               <Input id="reason" name="reason" maxLength={200} required autoComplete="off" />

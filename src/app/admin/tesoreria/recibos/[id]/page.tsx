@@ -11,6 +11,7 @@ import { notFound } from "next/navigation";
 import { FormMessage } from "@/components/admin/form-message";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { INLINE_LINK } from "@/lib/admin/link-styles";
 import { receiptBadgeVariant } from "@/lib/admin/status-badges";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatARS, formatDateAR } from "@/lib/format";
@@ -18,6 +19,7 @@ import { prisma } from "@/lib/prisma";
 import { amountInWords } from "@/lib/treasury/amount-words";
 import { PAYMENT_TYPE_LABELS } from "@/lib/treasury/labels";
 import { resolveEmailNotice } from "@/lib/treasury/receipt-notice";
+import { loadGroup, sharedPaymentOf } from "@/lib/treasury/split-group";
 import { ReceiptActions } from "./receipt-actions";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +64,9 @@ export default async function ReciboPage(props: {
             },
           },
           registeredBy: { select: { name: true } },
+          // Sólo para saber SI este pago fue repartido: `sharedPaymentOf` no
+          // consulta nada cuando no hay partes ni portador.
+          splitParts: { select: { id: true } },
         },
       },
       voidedBy: { select: { name: true } },
@@ -77,6 +82,20 @@ export default async function ReciboPage(props: {
   // pura y se prueba aparte, sin React ni Next (tests/treasury-receipt-notice.test.ts).
   const notice = sp.emitido === "1" ? resolveEmailNotice(emailParam) : null;
   const amount = Number(r.payment.amount);
+  // Parte de un reparto (spec 2026-09-10 §7): total y fecha del cobro de MP, y
+  // qué le pasa a la bandeja si este recibo se anula.
+  const shared = await sharedPaymentOf(prisma, {
+    amount, mpPaymentId: r.payment.mpPaymentId, splitOfPaymentId: r.payment.splitOfPaymentId,
+    hasParts: r.payment.splitParts.length > 0,
+  });
+  let voidHint: string | null = null;
+  if (shared && !voided) {
+    const group = await loadGroup(prisma, { mpPaymentId: shared.mpPaymentId, amount: shared.total });
+    const others = group.all.some((p) => p.status === "applied" && p.id !== r.payment.id);
+    voidHint = others
+      ? `Anularlo deja ${formatARS(amount)} sin asignar en la bandeja Sin conciliar.`
+      : "Anularlo devuelve la fila a Pendientes en la bandeja Sin conciliar.";
+  }
 
   return (
     <div className="space-y-4">
@@ -92,6 +111,13 @@ export default async function ReciboPage(props: {
           Anulado el {formatDateAR(r.voidedAt)}
           {r.voidedBy?.name ? ` por ${r.voidedBy.name}` : ""}
           {r.voidReason ? `: ${r.voidReason}` : "."}
+        </FormMessage>
+      )}
+      {shared && (
+        <FormMessage kind="neutral" box as="div" role="none">
+          Parte de un pago de <span className="font-mono tabular-nums">{formatARS(shared.total)}</span> cobrado por
+          Mercado Pago el {formatDateAR(shared.paidAt)}.{" "}
+          <Link className={INLINE_LINK} href={`/admin/tesoreria/sin-conciliar/${shared.rowId}`}>Ver en la bandeja</Link>
         </FormMessage>
       )}
       <div className="grid gap-4 md:grid-cols-2">
@@ -130,6 +156,7 @@ export default async function ReciboPage(props: {
               voided={voided}
               hasEmail={Boolean(member?.email) && member?.emailStatus !== "bounced"}
               emailedAt={r.emailedAt ? formatDateAR(r.emailedAt) : null}
+              voidHint={voidHint}
             />
           </CardContent>
         </Card>
