@@ -24,6 +24,9 @@ export const UNMATCHED_STATUS_LABELS: Record<UnmatchedStatus, string> = {
   // ningún socio. No dice "aplicado" (no hay socio ni recibo) ni "descartado"
   // (la plata no se fue a ningún lado).
   other_income: "Ingreso no societario",
+  // Reparto (spec 2026-09-10): una parte se anuló y queda plata sin asignar.
+  // Es trabajo pendiente: la lista la muestra entre las Pendientes.
+  partial: "Parcial",
 };
 
 // El catálogo de estados de una suscripción es de Mercado Pago y puede crecer

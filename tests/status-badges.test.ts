@@ -86,26 +86,28 @@ describe("treasury badges", () => {
 });
 
 describe("unmatchedStatusBadgeVariant", () => {
-  // Las cuatro vidas de una fila de la bandeja se ven distintas: la que espera
-  // decisión (celeste), la aplicada a un socio, la descartada y el ingreso no
-  // societario. Que dos compartan variante volvería la columna ilegible —
-  // "descartado" y "es plata nuestra pero de nadie" son afirmaciones opuestas.
-  it("le da una variante propia a cada estado", () => {
-    const variants = (["open", "matched", "dismissed", "other_income"] as const).map(unmatchedStatusBadgeVariant);
-    expect(variants).toEqual(["default", "outline", "secondary", "success"]);
+  // Las vidas de una fila de la bandeja se ven distintas: la que espera decisión
+  // (celeste), la aplicada a un socio, la descartada y el ingreso no societario.
+  // `partial` (reparto con plata sin asignar, spec 2026-09-10) comparte el RELLENO
+  // de `open` a propósito: es trabajo pendiente y se lee igual desde lejos; el
+  // rótulo "Parcial" es lo que la distingue de cerca.
+  it("le da una variante propia a cada estado, y parcial comparte la de pendiente", () => {
+    const variants = (["open", "matched", "dismissed", "other_income", "partial"] as const).map(unmatchedStatusBadgeVariant);
+    expect(variants).toEqual(["default", "outline", "secondary", "success", "default"]);
     expect(new Set(variants).size).toBe(4);
   });
-  it("ninguna de las cuatro es 'ghost': esa variante no se ve como pastilla", () => {
+  it("ninguna es 'ghost': esa variante no se ve como pastilla", () => {
     // `ghost` no tiene fondo y su borde es transparente: en la columna Estado
     // se leía como texto suelto de 12 px al lado de una pastilla de verdad.
-    const variants = (["open", "matched", "dismissed", "other_income"] as const).map(unmatchedStatusBadgeVariant);
+    const variants = (["open", "matched", "dismissed", "other_income", "partial"] as const).map(unmatchedStatusBadgeVariant);
     expect(variants).not.toContain("ghost");
   });
   it("cada estado tiene su etiqueta en es-AR y ninguna se repite", () => {
     const labels = Object.values(UNMATCHED_STATUS_LABELS);
-    expect(labels).toHaveLength(4);
-    expect(new Set(labels).size).toBe(4);
+    expect(labels).toHaveLength(5);
+    expect(new Set(labels).size).toBe(5);
     expect(UNMATCHED_STATUS_LABELS.other_income).toBe("Ingreso no societario");
+    expect(UNMATCHED_STATUS_LABELS.partial).toBe("Parcial");
   });
 });
 

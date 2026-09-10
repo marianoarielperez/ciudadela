@@ -80,7 +80,9 @@ export function feeStatusBadgeVariant(status: FeeStatus): BadgeVariant {
 //                  Antes era "ghost" —sin fondo y con borde transparente—, que
 //                  en pantalla se leía como texto suelto y no como etiqueta.
 export function unmatchedStatusBadgeVariant(status: UnmatchedStatus): BadgeVariant {
-  if (status === "open") return "default";
+  // `partial` comparte el relleno de `open`: las dos son trabajo pendiente y se
+  // leen igual de lejos; el rótulo las distingue de cerca.
+  if (status === "open" || status === "partial") return "default";
   if (status === "dismissed") return "secondary";
   if (status === "other_income") return "success";
   return "outline"; // matched

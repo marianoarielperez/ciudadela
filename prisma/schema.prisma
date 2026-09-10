@@ -785,6 +785,9 @@ enum UnmatchedStatus {
   matched
   dismissed
   other_income
+  // Reparto (spec 2026-09-10): hay plata asignada y plata sin asignar. Lo
+  // escribe SIEMPRE el núcleo, derivado del grupo del cobro (portador + partes).
+  partial
 }
 
 // Por dónde entró un ingreso no societario: el mostrador o Mercado Pago.
@@ -838,30 +841,38 @@ model Fee {
 }
 
 model Payment {
-  id             Int                  @id @default(autoincrement())
-  memberId       Int?                 @map("member_id")
-  member         Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
-  applicationId  Int?                 @map("application_id")
-  application    Application?         @relation(fields: [applicationId], references: [id], onDelete: SetNull)
-  type           PaymentType
-  amount         Decimal              @db.Decimal(10, 2)
-  paidAt         DateTime             @map("paid_at")
-  mpPaymentId    String?              @unique @map("mp_payment_id") @db.VarChar(64)
-  preapprovalId  String?              @map("preapproval_id") @db.VarChar(64)
-  registeredById Int?                 @map("registered_by_id")
-  registeredBy   User?                @relation("PaymentRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
-  note           String?              @db.VarChar(200)
-  status         PaymentStatus        @default(applied)
-  createdAt      DateTime             @default(now()) @map("created_at")
-  fees           Fee[]
-  receipt        Receipt?
-  unmatched      MpUnmatchedPayment[]
+  id               Int                  @id @default(autoincrement())
+  memberId         Int?                 @map("member_id")
+  member           Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  applicationId    Int?                 @map("application_id")
+  application      Application?         @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  type             PaymentType
+  amount           Decimal              @db.Decimal(10, 2)
+  paidAt           DateTime             @map("paid_at")
+  mpPaymentId      String?              @unique @map("mp_payment_id") @db.VarChar(64)
+  preapprovalId    String?              @map("preapproval_id") @db.VarChar(64)
+  // Reparto (spec 2026-09-10): esta parte pertenece al dinero de MP que porta
+  // `splitOf` —el pago que lleva `mpPaymentId`—. Nunca las dos cosas a la vez:
+  // el portador tiene `mpPaymentId` y esto en null; una parte, al revés. Lo
+  // garantiza el núcleo (`writePaymentAndFees`), no la base.
+  splitOfPaymentId Int?                 @map("split_of_payment_id")
+  splitOf          Payment?             @relation("PaymentSplit", fields: [splitOfPaymentId], references: [id], onDelete: Restrict)
+  splitParts       Payment[]            @relation("PaymentSplit")
+  registeredById   Int?                 @map("registered_by_id")
+  registeredBy     User?                @relation("PaymentRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
+  note             String?              @db.VarChar(200)
+  status           PaymentStatus        @default(applied)
+  createdAt        DateTime             @default(now()) @map("created_at")
+  fees             Fee[]
+  receipt          Receipt?
+  unmatched        MpUnmatchedPayment[]
 
   @@index([memberId, paidAt])
   // Las pantallas listan pagos por rango de fechas sin filtrar por socio.
   @@index([paidAt])
   // La conciliación (4B) busca los pagos de una suscripción por preapproval.
   @@index([preapprovalId])
+  @@index([splitOfPaymentId])
   @@map("payments")
 }
 
