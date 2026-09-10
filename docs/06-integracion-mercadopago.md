@@ -317,7 +317,8 @@ Procesamiento (inline: la escala lo permite):
        `point_of_interaction.transaction_data.subscription_id`.
      - `rejected` → `payment_rejected_traced` (queda registrado; no crea nada, no
        consume número de recibo). `refunded` / `charged_back` → `payment_refunded`:
-       **anula el recibo y devuelve las cuotas a pendientes**, y una segunda
+       **anula el recibo —o TODOS los recibos del grupo, si el cobro se repartió
+       (spec 2026-09-10)— y devuelve las cuotas a pendientes**, y una segunda
        notificación del mismo reembolso da `refund_ignored`.
      - Nada de lo anterior → **bandeja**, con su motivo (`unmatched_no_reference`,
        `unmatched_no_subscription`, `unmatched_application_missing`,
@@ -499,6 +500,32 @@ serie numerada es de las cuotas sociales y está armada alrededor del socio (REG
 Ver `docs/04` (`other_incomes`) y `docs/05` §5. Es un **registro**, no contabilidad
 general (`docs/01`).
 
+### 10. Reparto de un cobro entre socios
+
+Un cobro sin referencia puede ser de más de un socio (un matrimonio que transfiere
+las cuotas de los dos). Desde la bandeja se reparte entre hasta cinco socios
+(spec `docs/superpowers/specs/2026-09-10-unmatched-split-design.md`):
+
+- **Un `Payment` por socio, cada uno con su recibo**, en **una** transacción con la
+  fila bloqueada (`SELECT … FOR UPDATE`). Uno solo, el **portador**, lleva el
+  `mpPaymentId`; los demás apuntan a él con `splitOfPaymentId`. Las tres barreras
+  de idempotencia por `mpPaymentId` (`payments`, `mp_unmatched_payments`,
+  `other_incomes`) quedan intactas; `resolve.ts` y `reconcile` encuentran al
+  portador y responden `already_processed` como siempre.
+- **La suma de las partes = lo cobrado, exacto a centavos**, revalidado dentro de
+  la transacción. Las guardas por socio son las de Efectivo (`cashConceptsFor`) más
+  la exención vigente (`activeExemption`), y la imputación es la **misma** función
+  que usan el recibo y la vista previa (`readFeeContext` / `allocateFor`,
+  `src/lib/treasury/fee-allocation.ts`): lo que la pantalla anticipa es lo que el
+  cobro escribe.
+- **La fila se deriva del grupo**: `partial` mientras quede plata sin asignar.
+  Anular una parte → `partial`; anular todas → `open`, y la fila se vuelve a
+  aplicar (las partes nuevas cuelgan del portador anulado). Un reembolso de MP
+  revierte todo el grupo.
+- El tipo `link` se rotula **"Mercado Pago"** en recibo, email y cuenta corriente:
+  la bandeja asienta con él también las transferencias, y el gateway no lee
+  `payment_type_id`.
+
 ## Matriz de conciliación
 
 | Origen del dinero | Identificación | Registro |
@@ -506,7 +533,7 @@ general (`docs/01`).
 | Débito de suscripción creada por SIGeV | `external_reference` | Automático |
 | Débito de suscripción preexistente vinculada | `preapproval_id` | Automático (fase 4B) |
 | Link de pago generado por SIGeV | `external_reference` | Automático |
-| Pago suelto / transferencia al CVU | — | Manual (bandeja "Sin conciliar") |
+| Pago suelto / transferencia al CVU | — | Manual (bandeja "Sin conciliar"), a uno o varios socios (§10) |
 | Efectivo en sede | Admin | Manual con recibo inmediato |
 | Plata que no es de ningún socio | Admin | Ingreso no societario, sin recibo (§9) |
 

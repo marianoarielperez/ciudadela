@@ -159,10 +159,25 @@ Identidad única de la persona a través de todos los libros.
   además atrapa el `P2002` de la unique: un mismo cobro llegando dos veces —por los
   dos tópicos del webhook, por un reintento de MP o por la conciliación— devuelve
   `already_processed` y no crea un segundo pago. **Anular el recibo NO lo borra**: si
-  se borrara, un reenvío de MP volvería a cobrar. Corolario conocido: un cobro cuyo
-  recibo se anuló **no se puede reimputar** (deuda anotada en `docs/07`).
+  se borrara, un reenvío de MP volvería a cobrar. Corolario acotado por la fase 4D:
+  un cobro **de la bandeja** cuyo recibo se anuló **sí** se vuelve a aplicar (las
+  partes nuevas cuelgan del portador anulado, que conserva su `mp_payment_id`); lo
+  que sigue sin camino es reimputar un débito de suscripción anulado por mostrador
+  fuera de la bandeja (deuda anotada en `docs/07`).
+- **`split_of_payment_id`** (nullable, FK a `payments`, RESTRICT; reparto, spec
+  2026-09-10): esta parte pertenece al dinero de MP que porta ese pago. El
+  **portador** es el pago que lleva `mp_payment_id`; las partes llevan este puntero
+  y `mp_payment_id` en NULL. Nunca las dos cosas: lo garantiza el núcleo
+  (`writePaymentAndFees`). El **grupo** de un cobro = portador + partes; el
+  reembolso lo revierte entero y la fila de la bandeja se decide por su suma
+  (`split-group.ts`). Un cobro sin reparto es un portador sin partes.
 - `registerPayment` es el **único** camino que escribe pago + cuotas + recibo.
   Efectivo, webhook, bandeja y vinculación lo llaman; no hay una segunda escritura.
+  El reparto de la bandeja (`registerSplitPayment`, fase 4D) no es una segunda
+  escritura: comparte el mismo núcleo partido en `preparePart` /
+  `writePaymentAndFees` / `issueReceipt`, y la imputación es la **misma** función
+  (`readFeeContext` / `allocateFor`, `fee-allocation.ts`) que usan el recibo y la
+  vista previa del reparto.
 
 ### Recibo — `Receipt` / tabla `receipts`
 - `numero` correlativo único global formato `AAAA-NNNNN` (una sola serie para todos
@@ -242,7 +257,7 @@ Identidad única de la persona a través de todos los libros.
 ### PagoSinConciliar — `MpUnmatchedPayment` / tabla `mp_unmatched_payments` (fase 4B)
 - `mp_payment_id` (UNIQUE), `monto`, `fecha`, `payer_email`, `external_reference`,
   `descripcion`, **`preapproval_id`**, **`motivo`**,
-  `estado` (`open` | `matched` | `dismissed` | **`other_income`**), `pago_id` (FK
+  `estado` (`open` | **`partial`** | `matched` | `dismissed` | **`other_income`**), `pago_id` (FK
   real a Pago, `SetNull`), `resuelto_por`, `resuelto_at`
 - Bandeja de los pagos de MP que no se pudieron atribuir a un socio: es el único
   lugar donde esa plata existe, así que el encabezado de Pendientes muestra la
@@ -256,10 +271,15 @@ Identidad única de la persona a través de todos los libros.
   migrar por cada motivo nuevo: `no_reference`, `no_subscription`,
   `application_missing`, `duplicate_entry`, `withdrawn_no_pending`,
   `treasury_rejected`.
-- **La fila se cierra sola al aplicar y se reabre al anular**: `registerPayment`
-  marca `matched` dentro de la misma transacción del cobro, y anular el recibo o
-  recibir un reembolso la devuelve a `open` con `pago_id`, `resuelto_por` y
-  `resuelto_at` en NULL.
+- **El estado se DERIVA del grupo y lo escribe siempre el núcleo** (spec 2026-09-10
+  §4.3): `asignado` = Σ pagos `applied` del grupo; `open` ⇔ nada asignado,
+  `partial` ⇔ queda plata sin asignar, `matched` ⇔ todo asignado. `registerSplitPayment`
+  cierra (o deja `partial`) dentro de la misma transacción, con `resuelto_por`;
+  anular una parte recalcula el grupo dentro de la transacción de la reversión
+  (`open` con `pago_id` en NULL si no queda ninguna aplicada, `partial` si queda
+  alguna); un reembolso revierte todo el grupo y la reabre. Una fila reabierta
+  **se puede volver a aplicar**: las partes nuevas cuelgan del portador anulado,
+  que conserva su `mp_payment_id` (la barrera contra reenvíos no se toca).
 - `payer_email` y `descripcion` son datos personales: viven en la fila (la lee sólo
   el admin) y **nunca** van a la auditoría ni al log.
 

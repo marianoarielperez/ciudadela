@@ -527,6 +527,41 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   (`dismissedLabel`). Cuando una pantalla nueva escribe una frase sobre un reporte, la
   pregunta es qué dice esa frase en los dos tipos.
 
+## Patrones que estrenó el reparto de la bandeja (fase 4D, 10/09/2026)
+
+- **Portador + partes, en UNA transacción.** Un cobro de MP repartido entre
+  socios es un `Payment` por socio; uno solo (el portador) lleva `mpPaymentId` y
+  los demás apuntan a él con `splitOfPaymentId`. Las tres barreras de
+  idempotencia por `mpPaymentId` no se tocaron. El portador es el PRIMER INSERT
+  (si el unique choca, muere antes de pedir número), la fila se bloquea con
+  `SELECT … FOR UPDATE` y la suma se revalida adentro; los números, al final,
+  uno por parte. `registerSplitPayment` es el único escritor del reparto y la
+  bandeja lo llama SIEMPRE, también con una sola parte.
+- **El estado de la fila se DERIVA del grupo y lo escribe el núcleo.**
+  `groupTotals` (`split-group.ts`) es la única aritmética para la pantalla, la
+  lista y el núcleo: `open` / `partial` / `matched` según Σ `applied` del grupo.
+  Anular una parte recalcula el grupo dentro de la reversión; un reembolso
+  revierte el grupo entero. Corolario: la fila reabierta se vuelve a aplicar
+  (las partes nuevas cuelgan del portador anulado) — el callejón de la 4B se
+  cerró sin tocar la barrera.
+- **El refactor del núcleo fue sin cambio de comportamiento, con la suite vieja
+  como red.** `registerPaymentCore` se partió en `preparePart` /
+  `writePaymentAndFees` / `issueReceipt`, y `tests/treasury-service.test.ts` y
+  `tests/integration/mp-apply-concurrency.test.ts` pasaron sin tocar una
+  aserción (sólo se extendió el fake). Rediseñar una pantalla no autoriza a
+  reescribir su lógica; refactorizar el núcleo tampoco. En la revisión salió una
+  pieza más: `readFeeContext` / `allocateFor` (`fee-allocation.ts`) es UNA
+  función compartida por el recibo (`preparePart`) y la vista previa
+  (`previewSplit`), así que lo que la pantalla anticipa no puede divergir de lo
+  que el cobro imputa.
+- **La bandeja era un sexto camino de cobro sin las guardas de los otros
+  cinco.** Ahora usa `cashConceptsFor` (la misma función que Efectivo) y
+  `activeExemption` (la misma que las otras guardas), y `SPLIT_GUARD_MESSAGES`
+  es el único texto: la action pre-valida lo barato y el núcleo revalida todo.
+- **`link` se rotula "Mercado Pago".** La bandeja asienta con ese tipo también
+  las transferencias; el gateway no lee `payment_type_id` y un tipo nuevo habría
+  sido un dato que el operador tiene que adivinar.
+
 ## Flujo de trabajo con el operador (Mariano)
 
 - Claude Code trabaja **localmente en Windows**: escribe código, corre dev server, commitea.
@@ -663,6 +698,11 @@ enviar** (`reports.number` + `report_sequences`, patrón de recibos), porque el 
 `id` y los borradores abandonados lo salteaban: la tercera migración,
 `20260903203910_report_public_number`, **renumera lo ya enviado** (el "N° 16" de
 producción pasa a N° 1). Procedimiento y verificación post-migración: `docs/10` §4.9.
+
+La **fase 4D (reparto de un cobro de la bandeja entre socios)** está en la rama
+`unmatched-split` (spec 2026-09-10): trae una migración (`payment_split`) y su
+verificación post-deploy es `docs/10` §4.10. Los $ 18.000 del 08/09 esperan ese
+despliegue para repartirse 2+1 desde la pantalla.
 
 **Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
 01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab

@@ -384,19 +384,24 @@ URL, el botón atrás funciona y `aria-current` sale solo. El encabezado
 
 - **Sin conciliar** (`/admin/tesoreria/sin-conciliar`) — la plata de Mercado Pago que
   no se pudo atribuir a nadie. El encabezado de Pendientes muestra la **suma en
-  pesos** sin atribuir, no el recuento: es el único lugar donde ese dinero existe.
-  Filtro pendientes/resueltos y paginación; cada fila lleva a un detalle con **tres
-  salidas**:
-  1. **Vincular a un socio**, con buscador, indicando cuántas cuotas cubre o
-     registrándolo como aporte voluntario. Emite recibo como cualquier cobro.
+  pesos** sin asignar (el importe de las `open` más el resto de las `partial`).
+  Pendientes = `open` + `partial`; Resueltos = aplicadas, ingresos no societarios y
+  descartadas. Cada fila lleva a un detalle con **tres salidas**:
+  1. **Repartir entre socios** (spec 2026-09-10): hasta 5 socios, que viajan en la
+     URL (`?socios=`). Sugerencias por la casilla del pagador y buscador; una parte
+     por socio con concepto según su categoría (la misma regla que Efectivo y la
+     exención vigente), cantidad de cuotas e importe prellenado con n × valor
+     vigente; la suma tiene que dar **exactamente** lo sin asignar. **Dos pasos**:
+     el primero devuelve la confirmación resuelta en el servidor (qué cuotas se
+     imputan a cada uno, importes y total), el segundo emite un recibo por socio
+     en una sola transacción. Un solo socio es el caso de una parte.
   2. **Registrarlo como ingreso no societario**, con concepto en texto libre. **No
-     emite recibo.**
-  3. **Descartar**, con motivo.
-  Un cesante sin cuotas pendientes ve la explicación, no un formulario con máximo
-  cero. Y una fila **reabierta por una anulación** no se puede volver a aplicar (el
-  pago anulado conserva su `mpPaymentId`, que es la barrera contra reenvíos de MP):
-  la pantalla lo dice y linkea al recibo, en vez de dejar que alguien descarte plata
-  real.
+     emite recibo.** Sólo con la fila `open`.
+  3. **Descartar**, con motivo. Sólo con la fila `open`.
+  Anular el recibo de una parte deja la fila **Parcial** con el resto sin asignar,
+  que se asigna desde la misma pantalla; anular todas la devuelve a Pendientes y se
+  puede volver a aplicar. Cada recibo de un reparto lleva la leyenda "Parte de un
+  pago de $ X cobrado por Mercado Pago el DD/MM/AAAA".
 - **Suscripciones** (`/admin/tesoreria/suscripciones`) — dos bloques: **Sin
   vincular** (las que MP tiene y SIGeV no, con sugerencia de socio por email o
   apellido) y **Vinculadas** (desde la base, con monto y última sincronización). La

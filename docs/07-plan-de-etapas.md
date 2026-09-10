@@ -184,7 +184,7 @@ a partir de la segunda pasada MP entregó todo por su cuenta (ver `docs/11` Part
 | 2 | Débito de suscripción **no** vinculada → bandeja `no_subscription`; vincular aplica esa fila sola | ✅ verificado |
 | 3 | `solicitud:{id}` inexistente + suscripción vinculada → se aplica como débito (el caso del 306) | ⚠️ cubierto por tests y verificado en la revisión de código; no se reprodujo a mano |
 | 4 | `pago:{id}:2` aplica las dos cuotas más viejas; con monto distinto, `link_amount_mismatch` | ⚠️ parcial: la imputación sí, contra MP real (el pago aplicó abril y mayo, recibo `2026-00005`); el `link_amount_mismatch` está sólo por tests |
-| 5 | Pago sin referencia → bandeja → se resuelve desde ahí; anular el recibo reabre la fila | ⚠️ el pago sin referencia cayó en la bandeja y se resolvió como **ingreso no societario**; resolverlo **hacia un socio** se ejercitó con una fila `no_subscription`, y la **reapertura al anular** está fijada por tests (el `updateMany` dentro de la transacción, probado por orden) |
+| 5 | Pago sin referencia → bandeja → se resuelve desde ahí; anular el recibo reabre la fila | ✅ la fase 4D cerró el camino: el reparto entre socios se ejercitó de punta a punta sobre una fila sembrada y la reapertura al anular pasó a ser por grupo. El primer caso real (08/09/2026, $ 18.000 sin referencia) se reparte entre dos socios al desplegar la 4D (`docs/10` §4.10) |
 | 6 | `refunded` → anula el recibo y devuelve las cuotas a pendientes | ✅ reembolso real desde el panel del vendedor: anuló solo, la serie no se reutilizó, y el segundo aviso dio `refund_ignored` |
 | 7 | Débito de un cesante se imputa a su deuda congelada; sin pendientes, a la bandeja | ⚠️ cubierto por tests. No se reprodujo a mano a propósito: exigía autorizar otra suscripción entera para un solo mensaje de pantalla |
 | 8 | Débito de un adherente crea y paga la cuota del período | ⚠️ cubierto por tests; el socio de la batería es activo |
@@ -250,9 +250,11 @@ habitual.
   4C agregó el botón de cancelar, pero **acotado a socios dados de baja** (enmienda
   del operador), así que el socio **vigente** con dos débitos sigue sin remedio
   dentro del sistema: hay que cancelar uno desde el panel de Mercado Pago.
-- **Reimputar un cobro cuyo recibo se anuló** no tiene camino: el pago anulado
-  conserva su `mpPaymentId`, que es la barrera contra reenvíos de MP. Arreglarlo de
-  fondo exige decidir qué pasa con esa barrera.
+- **Reimputar un cobro cuyo recibo se anuló**: resuelto en la fase 4D (10/09/2026).
+  La fila reabierta se vuelve a aplicar; las partes nuevas cuelgan del portador
+  anulado, que conserva su `mpPaymentId`. Sigue sin camino la reimputación de un
+  débito de suscripción anulado por mostrador FUERA de la bandeja (el reenvío de MP
+  responde `already_processed`).
 - **La navegación por ejercicio** existe en Otros ingresos pero no en Deudores,
   Efectivo ni Recibos (decisión del cliente: no ensanchar la fase antes del 10/09).
 - **`AdminActor` no devuelve los roles vivos**, así que el layout del panel llama a
@@ -425,6 +427,39 @@ porque depende del dato de deuda real.
 aviso no sale "el día 30" sino el **último día civil del mes** (en febrero el 30 no
 existe y ese mes nunca habría avisado), y el resumen sale **07:30** y no 09:00, para
 que la Comisión lo tenga antes de arrancar el día.
+
+### Fase 4D — Reparto de un cobro entre socios — **CERRADA** (10/09/2026)
+
+Spec: `docs/superpowers/specs/2026-09-10-unmatched-split-design.md`. Plan:
+`docs/superpowers/plans/2026-09-10-unmatched-split.md`. Disparador: el cobro de
+$ 18.000 sin referencia del 08/09/2026 (dos cuotas de un socio y una de su esposa).
+
+- `Payment.splitOfPaymentId` (portador + partes), `UnmatchedStatus.partial`, una
+  migración (`20260910202715_payment_split`). `registerSplitPayment` en `service.ts`,
+  sobre el núcleo refactorizado en `preparePart` / `writePaymentAndFees` /
+  `issueReceipt` sin cambio de comportamiento (la suite de la 4A/4B pasó sin tocar
+  una aserción). La imputación quedó en **una** función compartida por el recibo y
+  la vista previa (`readFeeContext` / `allocateFor`, `fee-allocation.ts`, extraída
+  en la revisión).
+- Anulación y reembolso por grupo; la fila reabierta se vuelve a aplicar.
+- Pantalla Resolver con reparto tipo boleta, sugerencias por casilla, dos pasos con
+  token; la lista y `/admin/salud` cuentan `open + partial`; leyenda en PDF y email;
+  `link` → "Mercado Pago".
+- Tres huecos de la bandeja cerrados: conceptos por categoría, exención vigente y
+  suma exacta.
+
+| # | Criterio | Estado |
+|---|---|---|
+| 1 | Un cobro sin referencia → 2 cuotas a A + 1 a B → dos recibos consecutivos, fila Aplicado, cada socio ve su recibo, PDFs con leyenda y "Mercado Pago" | <resultado> |
+| 2 | Suma inexacta: botón bloqueado; POST a mano rechazado sin consumir número | <resultado> |
+| 3 | Anular el recibo de B → Parcial con el resto sin asignar; reasignar a C → Aplicado; el de A intacto | <resultado> |
+| 4 | Anular todo → Pendiente; volver a aplicar funciona; el portador anulado conserva `mpPaymentId` | <resultado> |
+| 5 | `refunded` de MP → todas las partes `refunded`, cuotas pendientes, fila Pendiente; reintento → `refund_ignored` | <resultado> |
+| 6 | Dos repartos concurrentes → uno gana, el otro lee "cambió mientras"/"ya fue resuelta"; sin huecos | <resultado> |
+| 7 | Adherente sin cuotas; exento sólo aportes con el acta; cesante sólo deuda | <resultado> |
+| 8 | Una parte en fila fresca ≡ las filas de hoy | <resultado> |
+| 9 | Cinco partes contra MariaDB: 124 ms (< 5 s) | <resultado> |
+| 10 | Suite verde sin tocar aserciones de `treasury-service` ni `mp-apply-concurrency`; `tsc`, lint y build en verde | <resultado> |
 
 ### Insumos que deja el Módulo 3 para el Módulo 4
 

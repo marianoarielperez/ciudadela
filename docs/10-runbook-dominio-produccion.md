@@ -1076,6 +1076,33 @@ es una ruta pública y anónima**, así que la excepción tiene que ser lo más 
 posible (esa ruta y ese método, nunca la regla entera) y no se abre ninguna por
 adelantado. Un 403 sin rastro en `pm2 logs` es Cloudflare, no la app.
 
+### 4.10 Específico de la fase 4D (reparto de un cobro entre socios)
+
+Trae **una migración** (`20260910202715_payment_split`: columna
+`payments.split_of_payment_id` + FK + índice, y el valor `partial` en el enum de
+`mp_unmatched_payments.status`). `deploy.sh` la aplica; no hay backfill ni script.
+
+Nota de entorno **local** (no del VPS): con Prisma 7 y `prisma.config.ts`,
+`npx prisma migrate dev` **no regenera el cliente**. Después de migrar hay que correr
+`npx prisma generate` a mano, o el tipo de `splitOfPaymentId` no existe y `tsc` falla
+por algo que ya está en la base.
+
+Verificación post-deploy:
+
+1. `/admin/tesoreria/sin-conciliar` abre y lista la fila de $ 18.000 del 08/09 como
+   Pendiente.
+2. Resolverla: agregar a los dos socios (la casilla del pagador los sugiere), 2
+   cuotas al socio y 1 a la socia, Revisar → Confirmar. Tienen que salir **dos
+   recibos consecutivos** y la fila quedar **Aplicado** con las dos partes. Ojo con
+   la suma: los importes vienen prellenados con n × valor vigente y tienen que dar
+   **exactamente** $ 18.000; si el valor del día no cierra en esa cuenta, se ajustan
+   a mano hasta que el total quede en cero sin asignar.
+3. Abrir cada recibo: leyenda "Parte de un pago de $ 18.000,00…" y medio
+   "Mercado Pago". `/admin/salud` no cambia de veredicto.
+4. Si algo sale mal a mitad del reparto, **no hay estado intermedio**: es una sola
+   transacción. Revisar `pm2 logs sigev --lines 50 --nostream` por
+   `[treasury]` y volver a intentar desde la misma fila.
+
 ## 5. Correo: nada que hacer
 
 El dominio autenticado en Brevo **es** `vecinalciudadela.ar`, el mismo del sitio,
