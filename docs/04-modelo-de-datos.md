@@ -280,6 +280,11 @@ Identidad única de la persona a través de todos los libros.
   alguna); un reembolso revierte todo el grupo y la reabre. Una fila reabierta
   **se puede volver a aplicar**: las partes nuevas cuelgan del portador anulado,
   que conserva su `mp_payment_id` (la barrera contra reenvíos no se toca).
+  El **cobro simple** (`registerPayment`: webhook, vinculación de suscripciones,
+  conciliación diaria) sigue cerrando la fila `open` → `matched` dentro de su
+  propia transacción y **sin `resuelto_por`** — es lo que mantiene cierta la
+  viñeta de `preapproval_id`: vincular una suscripción cierra solas las filas que
+  la estaban esperando, sin que nadie pase por la bandeja.
 - `payer_email` y `descripcion` son datos personales: viven en la fila (la lee sólo
   el admin) y **nunca** van a la auditoría ni al log.
 

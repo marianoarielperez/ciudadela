@@ -182,8 +182,10 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 ## Patrones que estrenó el Módulo 4 (fase 4B)
 
 - **`registerPayment` es el ÚNICO camino que escribe pago + cuotas + recibo.**
-  Efectivo, webhook de MP, bandeja sin conciliar y vinculación de suscripciones lo
-  llaman todos. No hay una segunda escritura, y por eso las cuatro invariantes de
+  Efectivo, webhook de MP y vinculación de suscripciones lo llaman; desde la 4D la
+  bandeja llama a `registerSplitPayment`, que comparte el núcleo partido
+  (`preparePart` / `writePaymentAndFees` / `issueReceipt`) y no es una segunda
+  escritura. No hay un segundo escritor, y por eso las cuatro invariantes de
   REG-33 se verifican en un solo lugar.
 - **`Payment.mpPaymentId` es la barrera de idempotencia del dinero de MP**, y son
   DOS capas: la ruta del webhook por `WebhookEvent` (`body.id`, que MP **sí** manda
@@ -538,8 +540,13 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   uno por parte. `registerSplitPayment` es el único escritor del reparto y la
   bandeja lo llama SIEMPRE, también con una sola parte.
 - **El estado de la fila se DERIVA del grupo y lo escribe el núcleo.**
-  `groupTotals` (`split-group.ts`) es la única aritmética para la pantalla, la
-  lista y el núcleo: `open` / `partial` / `matched` según Σ `applied` del grupo.
+  `groupTotals` (`split-group.ts`) es la única aritmética de la pantalla y de la
+  lista: `open` / `partial` / `matched` según Σ `applied` del grupo. El núcleo no
+  la reimplementa —reusa `loadGroup(...).totals` para el chequeo de la suma
+  exacta— pero **rederiva el estado después de escribir**, con la misma regla:
+  `assignedAfter >= cents(amount)` ⇒ `matched`, si no `partial`, y la reversión
+  decide por `stillApplied.length === 0`. La aritmética es una; el estado se
+  vuelve a calcular contra lo que quedó escrito, no contra la lectura previa.
   Anular una parte recalcula el grupo dentro de la reversión; un reembolso
   revierte el grupo entero. Corolario: la fila reabierta se vuelve a aplicar
   (las partes nuevas cuelgan del portador anulado) — el callejón de la 4B se

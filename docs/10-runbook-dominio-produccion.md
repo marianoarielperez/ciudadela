@@ -1082,10 +1082,11 @@ Trae **una migración** (`20260910202715_payment_split`: columna
 `payments.split_of_payment_id` + FK + índice, y el valor `partial` en el enum de
 `mp_unmatched_payments.status`). `deploy.sh` la aplica; no hay backfill ni script.
 
-Nota de entorno **local** (no del VPS): con Prisma 7 y `prisma.config.ts`,
-`npx prisma migrate dev` **no regenera el cliente**. Después de migrar hay que correr
-`npx prisma generate` a mano, o el tipo de `splitOfPaymentId` no existe y `tsc` falla
-por algo que ya está en la base.
+Nota de entorno **local** (no del VPS): medido en este repo el 10/09/2026,
+`npx prisma migrate dev` **no regeneró el cliente**. No está confirmado por qué (la
+sospecha es la combinación de Prisma 7 con `prisma.config.ts`, sin verificar); lo
+práctico es correr `npx prisma generate` a mano después de migrar, o el tipo de
+`splitOfPaymentId` no existe y `tsc` falla por algo que ya está en la base.
 
 Verificación post-deploy:
 
