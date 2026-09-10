@@ -4426,9 +4426,12 @@ Con la base local sembrada (`scripts/dev/seed-unmatched.ts`), recorrer los CA 1,
 
 - [ ] **Step 7: Commit final**
 
+(`.superpowers/` está git-ignored: el informe y las capturas quedan locales, como
+en los módulos anteriores; lo que se commitea es la tabla de CA de `docs/07`.)
+
 ```bash
-git add .superpowers/sdd/unmatched-split docs/07-plan-de-etapas.md
-git commit -m "chore(4D): final verification report and acceptance table
+git add docs/07-plan-de-etapas.md
+git commit -m "chore(4D): acceptance table with the measured results
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git log --oneline main..unmatched-split
