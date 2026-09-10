@@ -173,7 +173,8 @@ Identidad única de la persona a través de todos los libros.
   (`split-group.ts`). Un cobro sin reparto es un portador sin partes.
 - `registerPayment` y `registerSplitPayment` comparten el **único** núcleo que
   escribe pago + cuotas + recibo.
-  Efectivo, webhook, bandeja y vinculación lo llaman; no hay una segunda escritura.
+  Efectivo, webhook y vinculación lo llaman; la bandeja llama a `registerSplitPayment`
+  sobre el mismo núcleo; no hay una segunda escritura.
   El reparto de la bandeja (`registerSplitPayment`, fase 4D) no es una segunda
   escritura: comparte el mismo núcleo partido en `preparePart` /
   `writePaymentAndFees` / `issueReceipt`, y la imputación es la **misma** función
