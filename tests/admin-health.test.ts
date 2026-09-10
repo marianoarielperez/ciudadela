@@ -444,11 +444,11 @@ describe("fetchHealth — Mercado Pago y dinero", () => {
     // Misma ventana de 24 h: la de afuera no cuenta.
     expect(h.mp.legacyIpns).toBe(2);
   });
-  it("la bandeja distingue lo abierto del total histórico que pasó por ahí", async () => {
+  it("la bandeja distingue lo abierto (open + partial, spec 2026-09-10) del total histórico que pasó por ahí", async () => {
     const h = await fetchHealth(fakeDb({
-      unmatched: [{ status: "open" }, { status: "open" }, { status: "matched" }, { status: "dismissed" }],
+      unmatched: [{ status: "open" }, { status: "open" }, { status: "partial" }, { status: "matched" }, { status: "dismissed" }],
     }), NOW);
-    expect(h.money).toMatchObject({ inboxOpen: 2, inboxTotal: 4 });
+    expect(h.money).toMatchObject({ inboxOpen: 3, inboxTotal: 5 });
   });
   it("los débitos cruzan estado de suscripción con estado de SOCIO", async () => {
     const h = await fetchHealth(fakeDb({

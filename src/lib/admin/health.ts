@@ -477,7 +477,9 @@ export async function fetchHealth(db: HealthDb, now: Date): Promise<HealthSnapsh
     db.auditLog.count({ where: { action: "webhook_rejected_signature", createdAt: { gte: since } } }),
     // Misma ventana, action propio: las dos cosas se veían juntas y no lo son.
     db.auditLog.count({ where: { action: "webhook_legacy_ipn", createdAt: { gte: since } } }),
-    db.mpUnmatchedPayment.count({ where: { status: "open" } }),
+    // `partial` (reparto con plata sin asignar, spec 2026-09-10) es trabajo
+    // pendiente igual que `open`: la bandeja lo lista entre las Pendientes.
+    db.mpUnmatchedPayment.count({ where: { status: { in: ["open", "partial"] } } }),
     db.mpUnmatchedPayment.count(),
     // Las filas y no un `count`: la pregunta cruza estado de suscripción con
     // estado de SOCIO y se agrupa por socio (`classifyDebits`), y eso no se

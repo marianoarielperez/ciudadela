@@ -9,7 +9,7 @@
 // tampoco se hereda de él (Next renderiza layout y página en paralelo).
 import Link from "next/link";
 import { INLINE_LINK } from "@/lib/admin/link-styles";
-import type { Prisma } from "@/generated/prisma/client";
+import type { PaymentStatus, Prisma } from "@/generated/prisma/client";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FormMessage } from "@/components/admin/form-message";
 import { PaginationNav } from "@/components/admin/pagination-nav";
@@ -23,12 +23,45 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { formatARS, formatDateAR } from "@/lib/format";
 import type { UnmatchedReason } from "@/lib/mp/unmatched";
 import { prisma } from "@/lib/prisma";
+import { groupTotals } from "@/lib/treasury/split-group";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Sin conciliar — SIGeV" };
 
 const BASE = "/admin/tesoreria/sin-conciliar";
 const PAGE_SIZE = 50;
+
+// El GRUPO de la fila —portador más partes del reparto (spec 2026-09-10)—, que
+// es lo que la tabla muestra: a quiénes se les aplicó y con qué recibos. Un solo
+// `include` para la página y para el total en pesos, así las dos lecturas ven lo
+// mismo.
+const GROUP_INCLUDE = {
+  payment: {
+    select: {
+      id: true, amount: true, status: true, memberId: true,
+      member: { select: { fullName: true } },
+      receipt: { select: { id: true, number: true } },
+      splitParts: {
+        select: {
+          id: true, amount: true, status: true, memberId: true,
+          member: { select: { fullName: true } },
+          receipt: { select: { id: true, number: true } },
+        },
+        orderBy: { id: "asc" as const },
+      },
+    },
+  },
+} as const;
+
+type GroupPart = { id: number; amount: unknown; status: PaymentStatus; memberId: number | null; member: { fullName: string } | null; receipt: { id: number; number: string } | null };
+type RowWithGroup = { payment: (GroupPart & { splitParts: GroupPart[] }) | null };
+
+/** Portador + partes, como los lee `groupTotals`. Sin portador, grupo vacío. */
+function groupOf(r: RowWithGroup): Array<GroupPart & { amount: number }> {
+  if (!r.payment) return [];
+  const { splitParts, ...holder } = r.payment;
+  return [holder, ...splitParts].map((p) => ({ ...p, amount: Number(p.amount) }));
+}
 
 export default async function SinConciliarPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -47,16 +80,21 @@ export default async function SinConciliarPage(props: {
   // vistas y la bandeja perdía el rastro de plata que sí entró.
   const where: Prisma.MpUnmatchedPaymentWhereInput = resolved
     ? { status: { in: ["matched", "dismissed", "other_income"] } }
-    : { status: "open" };
+    // `partial` es plata que sigue sin dueño (spec 2026-09-10): va con las pendientes.
+    : { status: { in: ["open", "partial"] } };
 
   const total = await prisma.mpUnmatchedPayment.count({ where });
   // El total en pesos se calcula sólo en Pendientes: es plata cobrada sin
-  // recibo, y una fila ya resuelta dejó de serlo. Sobre TODO el filtro y no
-  // sobre la página: la cifra sería mentira si dependiera de dónde está parado
-  // el operador.
+  // recibo, y una fila ya resuelta dejó de serlo. Lo sin asignar: el importe
+  // entero de las `open` y el RESTO de las `partial`. Sobre todo el filtro y no
+  // sobre la página —la cifra sería mentira si dependiera de dónde está parado
+  // el operador— y con la misma función que la pantalla Resolver y el núcleo
+  // (`groupTotals`). Se leen las filas y no un `aggregate` porque el resto de
+  // una `partial` no se suma en SQL; son pocas: la bandeja se vacía.
   const pendingSum = resolved || total === 0
     ? 0
-    : Number((await prisma.mpUnmatchedPayment.aggregate({ where, _sum: { amount: true } }))._sum?.amount ?? 0);
+    : (await prisma.mpUnmatchedPayment.findMany({ where, include: GROUP_INCLUDE }))
+        .reduce((sum, r) => sum + groupTotals(groupOf(r), Number(r.amount)).unassigned, 0);
 
   const pg = paginate(total, parsePage(sp), PAGE_SIZE);
   const rows = await prisma.mpUnmatchedPayment.findMany({
@@ -66,17 +104,7 @@ export default async function SinConciliarPage(props: {
     orderBy: resolved ? { resolvedAt: "desc" } : { paidAt: "desc" },
     skip: pg.skip,
     take: pg.take,
-    include: {
-      payment: {
-        // Se trae lo que la tabla muestra y nada más: a quién se le aplicó y con
-        // qué recibo.
-        select: {
-          memberId: true,
-          member: { select: { fullName: true } },
-          receipt: { select: { id: true, number: true } },
-        },
-      },
-    },
+    include: GROUP_INCLUDE,
   });
   // Qué se registró como ingreso no societario, para la columna "Aplicado a".
   // La unión con `other_incomes` es el `mpPaymentId` (único en las dos tablas) y
@@ -180,24 +208,35 @@ export default async function SinConciliarPage(props: {
                   <TableCell>{UNMATCHED_REASON_LABELS[r.reason as UnmatchedReason] ?? r.reason}</TableCell>
                   <TableCell>
                     <Badge variant={unmatchedStatusBadgeVariant(r.status)}>{UNMATCHED_STATUS_LABELS[r.status]}</Badge>
-                    {r.payment?.receipt && (
+                    {/* Un recibo por parte APLICADA: un reparto entre varios
+                        socios emite uno por cada uno, y una parte anulada dejó
+                        de contar. */}
+                    {groupOf(r).filter((p) => p.status === "applied" && p.receipt).map((p) => (
                       <Link
+                        key={p.id}
                         className="ml-2 font-mono text-xs text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                        href={`/admin/tesoreria/recibos/${r.payment.receipt.id}`}
+                        href={`/admin/tesoreria/recibos/${p.receipt!.id}`}
                       >
-                        {r.payment.receipt.number}
+                        {p.receipt!.number}
                       </Link>
-                    )}
+                    ))}
                   </TableCell>
                   {resolved && (
                     <TableCell>
-                      {r.payment?.memberId ? (
-                        <Link
-                          className={INLINE_LINK}
-                          href={`/admin/socios/${r.payment.memberId}?tab=cuenta`}
-                        >
-                          {r.payment.member?.fullName ?? `Socio ${r.payment.memberId}`}
-                        </Link>
+                      {/* Todos los socios del grupo, no sólo el portador: un
+                          cobro repartido se aplicó a varios y la columna tiene
+                          que nombrarlos a todos. */}
+                      {groupOf(r).some((p) => p.status === "applied" && p.memberId) ? (
+                        <span className="flex flex-wrap gap-x-1">
+                          {groupOf(r).filter((p) => p.status === "applied" && p.memberId).map((p, i, arr) => (
+                            <span key={p.id}>
+                              <Link className={INLINE_LINK} href={`/admin/socios/${p.memberId}?tab=cuenta`}>
+                                {p.member?.fullName ?? `Socio ${p.memberId}`}
+                              </Link>
+                              {i < arr.length - 1 ? "," : ""}
+                            </span>
+                          ))}
+                        </span>
                       ) : r.status === "other_income" ? (
                         // No hay socio, pero tampoco es un guión: la plata entró
                         // y es de la vecinal. Lo que va acá es a qué corresponde,
@@ -217,7 +256,7 @@ export default async function SinConciliarPage(props: {
                       className="inline-flex min-h-11 items-center text-primary outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                       href={`${BASE}/${r.id}`}
                     >
-                      {r.status === "open" ? "Resolver" : "Ver"}
+                      {r.status === "open" || r.status === "partial" ? "Resolver" : "Ver"}
                       {/* Siete filas con el mismo link "Resolver" son siete
                           destinos idénticos para un lector de pantalla: el
                           sufijo oculto dice cuál es cuál. */}
