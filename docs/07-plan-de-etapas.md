@@ -450,16 +450,16 @@ $ 18.000 sin referencia del 08/09/2026 (dos cuotas de un socio y una de su espos
 
 | # | Criterio | Estado |
 |---|---|---|
-| 1 | Un cobro sin referencia → 2 cuotas a A + 1 a B → dos recibos consecutivos, fila Aplicado, cada socio ve su recibo, PDFs con leyenda y "Mercado Pago" | <resultado> |
-| 2 | Suma inexacta: botón bloqueado; POST a mano rechazado sin consumir número | <resultado> |
-| 3 | Anular el recibo de B → Parcial con el resto sin asignar; reasignar a C → Aplicado; el de A intacto | <resultado> |
-| 4 | Anular todo → Pendiente; volver a aplicar funciona; el portador anulado conserva `mpPaymentId` | <resultado> |
-| 5 | `refunded` de MP → todas las partes `refunded`, cuotas pendientes, fila Pendiente; reintento → `refund_ignored` | <resultado> |
-| 6 | Dos repartos concurrentes → uno gana, el otro lee "cambió mientras"/"ya fue resuelta"; sin huecos | <resultado> |
-| 7 | Adherente sin cuotas; exento sólo aportes con el acta; cesante sólo deuda | <resultado> |
-| 8 | Una parte en fila fresca ≡ las filas de hoy | <resultado> |
-| 9 | Cinco partes contra MariaDB: 124 ms (< 5 s) | <resultado> |
-| 10 | Suite verde sin tocar aserciones de `treasury-service` ni `mp-apply-concurrency`; `tsc`, lint y build en verde | <resultado> |
+| 1 | Un cobro sin referencia → 2 cuotas a A + 1 a B → dos recibos consecutivos, fila Aplicado, cada socio ve su recibo, PDFs con leyenda y "Mercado Pago" | ✅ en local sobre una fila sembrada de $ 18.300 (2 cuotas + 1): recibos 2026-00011/00012 consecutivos, fila Aplicado, PDFs con leyenda y "Mercado Pago" (tests de PDF/email); la vista del socio en /mi/cuenta la cotejó el operador en Chrome. |
+| 2 | Suma inexacta: botón bloqueado; POST a mano rechazado sin consumir número | ✅ botón deshabilitado medido en el navegador; POST a mano rechazado antes de la transacción (unit) y sin número consumido (integración). |
+| 3 | Anular el recibo de B → Parcial con el resto sin asignar; reasignar a C → Aplicado; el de A intacto | ✅ anulación de una parte → Parcial con el resto; reasignación → Aplicado (integración test 3 y navegador, fila 10). |
+| 4 | Anular todo → Pendiente; volver a aplicar funciona; el portador anulado conserva `mpPaymentId` | ✅ integración test 3: fila Pendiente y re-reparto colgando del portador anulado, que conserva `mpPaymentId`. |
+| 5 | `refunded` de MP → todas las partes `refunded`, cuotas pendientes, fila Pendiente; reintento → `refund_ignored` | ✅ integración test 4 (partes `refunded`, cuotas pendientes, fila Pendiente, reintento `already_reverted`); el `refund_ignored` del webhook lo fija su test previo. Tras la revisión final, una fila reembolsada ya NO se puede volver a asignar (guarda nueva). |
+| 6 | Dos repartos concurrentes → uno gana, el otro lee "cambió mientras"/"ya fue resuelta"; sin huecos | ✅ integración test 2: uno gana, el otro lee "ya fue resuelta"/"cambió"; serie sin huecos (el mutex de proceso serializa; el lock de fila queda cubierto por el test de dos instancias). |
+| 7 | Adherente sin cuotas; exento sólo aportes con el acta; cesante sólo deuda | ✅ unit (guardas) + navegador: adherente sin cuotas, exento con aviso del acta. |
+| 8 | Una parte en fila fresca ≡ las filas de hoy | ✅ unit: una parte en fila fresca escribe exactamente las filas de `registerPayment`. |
+| 9 | Cinco partes contra MariaDB: 124 ms (< 5 s) | ✅ 124 ms para 5 partes (MariaDB local ociosa). |
+| 10 | Suite verde sin tocar aserciones de `treasury-service` ni `mp-apply-concurrency`; `tsc`, lint y build en verde | ✅ 4150 tests en la rama (4071 en `main`), `tsc`, lint (0 errores) y build en verde; `treasury-service` y `mp-apply-concurrency` sin aserciones tocadas. |
 
 ### Insumos que deja el Módulo 3 para el Módulo 4
 

@@ -171,7 +171,8 @@ Identidad única de la persona a través de todos los libros.
   (`writePaymentAndFees`). El **grupo** de un cobro = portador + partes; el
   reembolso lo revierte entero y la fila de la bandeja se decide por su suma
   (`split-group.ts`). Un cobro sin reparto es un portador sin partes.
-- `registerPayment` es el **único** camino que escribe pago + cuotas + recibo.
+- `registerPayment` y `registerSplitPayment` comparten el **único** núcleo que
+  escribe pago + cuotas + recibo.
   Efectivo, webhook, bandeja y vinculación lo llaman; no hay una segunda escritura.
   El reparto de la bandeja (`registerSplitPayment`, fase 4D) no es una segunda
   escritura: comparte el mismo núcleo partido en `preparePart` /

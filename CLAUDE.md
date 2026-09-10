@@ -181,7 +181,8 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 
 ## Patrones que estrenó el Módulo 4 (fase 4B)
 
-- **`registerPayment` es el ÚNICO camino que escribe pago + cuotas + recibo.**
+- **`registerPayment` y `registerSplitPayment` comparten el ÚNICO núcleo que
+  escribe pago + cuotas + recibo.**
   Efectivo, webhook de MP y vinculación de suscripciones lo llaman; desde la 4D la
   bandeja llama a `registerSplitPayment`, que comparte el núcleo partido
   (`preparePart` / `writePaymentAndFees` / `issueReceipt`) y no es una segunda

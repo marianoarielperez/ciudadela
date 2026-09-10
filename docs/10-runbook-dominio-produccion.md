@@ -1100,6 +1100,7 @@ Verificación post-deploy:
    a mano hasta que el total quede en cero sin asignar.
 3. Abrir cada recibo: leyenda "Parte de un pago de $ 18.000,00…" y medio
    "Mercado Pago". `/admin/salud` no cambia de veredicto.
+   `/admin/salud` cuenta ahora las filas Parciales como pendientes.
 4. Si algo sale mal a mitad del reparto, **no hay estado intermedio**: es una sola
    transacción. Revisar `pm2 logs sigev --lines 50 --nostream` por
    `[treasury]` y volver a intentar desde la misma fila.
