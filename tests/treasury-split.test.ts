@@ -278,3 +278,84 @@ describe("registerSplitPayment — carreras", () => {
     await expect(svc.registerSplitPayment({ rowId: 5, actorId: 9, parts: twoPlusOne })).rejects.toBeInstanceOf(TreasuryError);
   });
 });
+
+describe("anulación y reembolso por grupo (spec §5.3, §5.4)", () => {
+  async function splitted() {
+    const fake = splitFakeDb({ members: [hugo, monica], fees: FEES, rows: [row()] });
+    const svc = svcOn(fake);
+    const r = await svc.registerSplitPayment({ rowId: 5, actorId: 9, parts: twoPlusOne });
+    if (r.kind !== "registered") throw new Error(r.kind);
+    return { fake, svc, parts: r.parts };
+  }
+
+  it("anular UNA parte deja la fila partial, con el portador como puntero, y la otra parte intacta", async () => {
+    const { fake, svc, parts } = await splitted();
+    await svc.voidReceipt({ receiptId: parts[1].receiptId, actorId: 9, reason: "no era de Mónica" });
+    expect(fake.state.payments[1].status).toBe("voided");
+    expect(fake.state.payments[0].status).toBe("applied");
+    expect(fake.state.fees.filter((f) => f.memberId === 193)[0]).toMatchObject({ status: "pending", paymentId: null });
+    expect(fake.state.fees.filter((f) => f.memberId === 192).every((f) => f.status === "paid")).toBe(true);
+    expect(fake.state.rows[0]).toMatchObject({ status: "partial", paymentId: 1, resolvedById: 9 });
+    expect(fake.mocks.mpUnmatchedPayment.updateMany).toHaveBeenLastCalledWith({
+      where: { paymentId: 1, status: "matched" }, data: { status: "partial" },
+    });
+  });
+
+  it("anular el PORTADOR con una parte viva también deja partial (el puntero no cambia)", async () => {
+    const { fake, svc, parts } = await splitted();
+    await svc.voidReceipt({ receiptId: parts[0].receiptId, actorId: 9, reason: "error" });
+    expect(fake.state.rows[0]).toMatchObject({ status: "partial", paymentId: 1 });
+    expect(fake.state.payments[0]).toMatchObject({ status: "voided", mpPaymentId: "mp-18k" });
+  });
+
+  it("anular la última parte aplicada devuelve la fila a open, exactamente como hoy", async () => {
+    const { fake, svc, parts } = await splitted();
+    await svc.voidReceipt({ receiptId: parts[1].receiptId, actorId: 9, reason: "a" });
+    await svc.voidReceipt({ receiptId: parts[0].receiptId, actorId: 9, reason: "b" });
+    expect(fake.state.rows[0]).toMatchObject({ status: "open", paymentId: null, resolvedAt: null, resolvedById: null });
+    expect(fake.mocks.mpUnmatchedPayment.updateMany).toHaveBeenLastCalledWith({
+      where: { paymentId: 1 }, data: { status: "open", paymentId: null, resolvedAt: null, resolvedById: null },
+    });
+    // El portador anulado conserva el id de MP: la barrera contra el reenvío no se toca.
+    expect(fake.state.payments[0].mpPaymentId).toBe("mp-18k");
+  });
+
+  it("anular una parte y volver a asignar el resto cierra la fila otra vez", async () => {
+    const { fake, svc, parts } = await splitted();
+    await svc.voidReceipt({ receiptId: parts[1].receiptId, actorId: 9, reason: "no era" });
+    fake.state.fees.push({ id: 30, memberId: 200, period: "2026-08", status: "pending", origin: "import", paymentId: null });
+    (fake.mocks as { member: { findUnique: ReturnType<typeof vi.fn> } }).member.findUnique.mockImplementation(
+      async (a: { where: { id: number } }) => [hugo, monica, carlos].find((m) => m.id === a.where.id) ?? null,
+    );
+    const r = await svc.registerSplitPayment({ rowId: 5, actorId: 9, parts: [{ memberId: 200, concept: "fees", n: 1, amount: 6000 }] });
+    expect(r.kind).toBe("registered");
+    expect(fake.state.payments[2]).toMatchObject({ memberId: 200, splitOfPaymentId: 1, status: "applied" });
+    expect(fake.state.rows[0]).toMatchObject({ status: "matched", paymentId: 1 });
+    expect(fake.state.receipts.map((x) => x.number)).toEqual(["2026-00001", "2026-00002", "2026-00003"]);
+  });
+
+  it("reembolso de MP: revierte TODAS las partes aplicadas, suma los períodos, reabre la fila, y el reintento da already_reverted", async () => {
+    const { fake, svc } = await splitted();
+    const r = await svc.refundPayment({ mpPaymentId: "mp-18k", reason: "Reembolso en Mercado Pago" });
+    expect(r).toEqual({ kind: "refunded", paymentId: 1, number: "2026-00001", periodsReverted: 3, parts: 2 });
+    expect(fake.state.payments.map((p) => p.status)).toEqual(["refunded", "refunded"]);
+    expect(fake.state.receipts.every((x) => x.voidedAt instanceof Date && x.voidedById === null)).toBe(true);
+    expect(fake.state.fees.every((f) => f.status === "pending" && f.paymentId === null)).toBe(true);
+    expect(fake.state.rows[0]).toMatchObject({ status: "open", paymentId: null });
+    expect(await svc.refundPayment({ mpPaymentId: "mp-18k", reason: "x" })).toEqual({ kind: "already_reverted", status: "refunded" });
+  });
+
+  it("reembolso con el portador ya anulado desde el mostrador: revierte la parte que seguía viva", async () => {
+    const { fake, svc, parts } = await splitted();
+    await svc.voidReceipt({ receiptId: parts[0].receiptId, actorId: 9, reason: "error" });
+    const r = await svc.refundPayment({ mpPaymentId: "mp-18k", reason: "Reembolso en Mercado Pago" });
+    expect(r).toMatchObject({ kind: "refunded", paymentId: 1, number: "2026-00002", periodsReverted: 1, parts: 1 });
+    expect(fake.state.payments.map((p) => p.status)).toEqual(["voided", "refunded"]);
+    expect(fake.state.rows[0].status).toBe("open");
+  });
+
+  it("reembolso de un cobro desconocido: not_found", async () => {
+    const { svc } = await splitted();
+    expect(await svc.refundPayment({ mpPaymentId: "nope", reason: "x" })).toEqual({ kind: "not_found" });
+  });
+});

@@ -127,6 +127,20 @@ function fakeDb(opts: {
         state.payments.find((p) => (
           args.where.mpPaymentId ? p.mpPaymentId === args.where.mpPaymentId : p.id === args.where.id
         )) ?? null),
+      // Reparto (spec 2026-09-10): la reversión y el reembolso miran el GRUPO
+      // del cobro (portador + partes) para decidir si la fila vuelve a `open`
+      // o queda `partial`. Honra `OR` y `status`, como la base.
+      findMany: vi.fn(async (args: {
+        where: { OR?: Array<{ id?: number; splitOfPaymentId?: number }>; splitOfPaymentId?: number; status?: string };
+      }) =>
+        state.payments.filter((p) => {
+          if (args.where.OR && !args.where.OR.some((c) =>
+            (c.id !== undefined && p.id === c.id)
+            || (c.splitOfPaymentId !== undefined && p.splitOfPaymentId === c.splitOfPaymentId))) return false;
+          if (args.where.splitOfPaymentId !== undefined && p.splitOfPaymentId !== args.where.splitOfPaymentId) return false;
+          if (args.where.status !== undefined && p.status !== args.where.status) return false;
+          return true;
+        })),
       update: vi.fn(async (args: { where: { id: number }; data: Record<string, unknown> }) => {
         const p = state.payments.find((x) => x.id === args.where.id)!;
         Object.assign(p, args.data);
@@ -154,10 +168,10 @@ function fakeDb(opts: {
       // el `where` anidado como Prisma —del pago hacia el recibo— y devuelve la
       // misma forma que `findUnique`, así que trae `payment.status` vivo: sin eso
       // la idempotencia (un pago ya revertido) no sería asertable.
-      findFirst: vi.fn(async (args: { where: { payment: { mpPaymentId: string } } }) => {
-        const p = state.payments.find((x) => x.mpPaymentId === args.where.payment.mpPaymentId);
-        if (!p) return null;
-        const r = state.receipts.find((x) => x.paymentId === p.id);
+      findFirst: vi.fn(async (args: { where: { payment?: { mpPaymentId: string }; paymentId?: number } }) => {
+        const pid = args.where.paymentId
+          ?? state.payments.find((x) => x.mpPaymentId === args.where.payment?.mpPaymentId)?.id;
+        const r = pid === undefined ? undefined : state.receipts.find((x) => x.paymentId === pid);
         return r ? receiptWithPayment(r) : null;
       }),
       update: vi.fn(async (args: { where: { id: number }; data: Record<string, unknown> }) => {

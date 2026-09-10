@@ -621,7 +621,7 @@ export function makeWebhookProcessor(deps: Deps) {
         return "refund_ignored";
       }
       if (r.kind !== "refunded") return "refund_ignored";
-      await deps.audit({ action: "payment_refunded", entity: "payment", entityId: r.paymentId, detail: { paymentId: r.paymentId, mpPaymentId: p.id, status: p.status, periodsReverted: r.periodsReverted } });
+      await deps.audit({ action: "payment_refunded", entity: "payment", entityId: r.paymentId, detail: { paymentId: r.paymentId, mpPaymentId: p.id, status: p.status, periodsReverted: r.periodsReverted, parts: r.parts } });
       return "payment_refunded";
     }
     // Un rechazo se traza y se distingue del resto: no hay nada que aplicar,

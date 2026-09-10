@@ -597,16 +597,29 @@ export function makeTreasuryService(deps: Deps) {
           where: { id: r.id },
           data: { voidedAt: at, voidReason: input.reason, voidedById: input.actorId },
         });
-        // Regla de la bandeja (deuda anotada en 4A): una fila nunca apunta a un
-        // pago anulado. Vuelve a `open` para que el operador la resuelva de nuevo.
-        // Va DENTRO de la transacción: si la reversión se cae, la fila se queda
-        // como estaba, cerrada contra un pago que sigue asentado. Se acota por
-        // `paymentId` y no por `mpPaymentId` porque lo que dejó de valer es este
-        // pago: un efectivo de mostrador también puede haber cerrado una fila.
-        await tx.mpUnmatchedPayment.updateMany({
-          where: { paymentId: r.payment.id },
-          data: { status: "open", paymentId: null, resolvedAt: null, resolvedById: null },
+        // Regla de la bandeja, ahora por GRUPO (spec 2026-09-10 §5.3): la fila
+        // se decide por el cobro de MP entero —portador + partes—, no por este
+        // pago solo. Si no queda ninguna parte aplicada, vuelve a `open` con el
+        // MISMO statement de siempre (para un pago suelto, el portador es él
+        // mismo, y un efectivo de mostrador se comporta idéntico); si queda
+        // alguna, pasa a `partial` y el puntero sigue en el portador. Va DENTRO
+        // de la transacción: si la reversión se cae, la fila queda como estaba.
+        const holderId = r.payment.splitOfPaymentId ?? r.payment.id;
+        const stillApplied = await tx.payment.findMany({
+          where: { OR: [{ id: holderId }, { splitOfPaymentId: holderId }], status: "applied" },
+          select: { id: true },
         });
+        if (stillApplied.length === 0) {
+          await tx.mpUnmatchedPayment.updateMany({
+            where: { paymentId: holderId },
+            data: { status: "open", paymentId: null, resolvedAt: null, resolvedById: null },
+          });
+        } else {
+          await tx.mpUnmatchedPayment.updateMany({
+            where: { paymentId: holderId, status: "matched" },
+            data: { status: "partial" },
+          });
+        }
       });
       // El PDF se regenera con la marca ANULADO; si falla, se regenera al pedirlo.
       await writePdfBestEffort(r.id, r.pdfPath ?? receiptRelativePath(r.number));
@@ -749,23 +762,43 @@ export function makeTreasuryService(deps: Deps) {
     },
 
     /** Reembolso o contracargo en Mercado Pago. No hay operador detrás
-     *  (`voidedById` queda en null) y el recibo se busca por el id del cobro de
-     *  MP, que es lo único que trae el webhook. Idempotente: un pago ya
-     *  revertido —por reembolso o por anulación de mostrador— no se revierte de
-     *  nuevo, así el reintento de MP no vuelve a contar la deuda. */
+     *  (`voidedById` queda en null) y el cobro se busca por el id de MP, que es
+     *  lo único que trae el webhook. Por GRUPO (spec 2026-09-10 §5.4): revierte
+     *  el portador y todas las partes que sigan aplicadas, cada una con su mutex
+     *  y su transacción. Idempotente por parte: si falla a mitad, el reintento
+     *  de MP revierte lo que faltaba y devuelve `already_reverted` cuando ya no
+     *  queda nada. */
     async refundPayment(input: { mpPaymentId: string; reason: string }): Promise<
-      | { kind: "refunded"; paymentId: number; number: string; periodsReverted: number }
+      | { kind: "refunded"; paymentId: number; number: string; periodsReverted: number; parts: number }
       | { kind: "not_found" }
       | { kind: "already_reverted"; status: "refunded" | "voided" }
     > {
-      const r = await db.receipt.findFirst({
-        where: { payment: { mpPaymentId: input.mpPaymentId } },
-        select: { id: true, payment: { select: { status: true } } },
+      const holder = await db.payment.findUnique({
+        where: { mpPaymentId: input.mpPaymentId },
+        select: { id: true, status: true },
       });
-      if (!r) return { kind: "not_found" };
-      if (r.payment.status !== "applied") return { kind: "already_reverted", status: r.payment.status };
-      const done = await revertCore({ receiptId: r.id, status: "refunded", actorId: null, reason: input.reason });
-      return { kind: "refunded", ...done };
+      if (!holder) return { kind: "not_found" };
+      const applied = await db.payment.findMany({
+        where: { OR: [{ id: holder.id }, { splitOfPaymentId: holder.id }], status: "applied" },
+        select: { id: true },
+        orderBy: { id: "asc" },
+      });
+      if (applied.length === 0) {
+        return { kind: "already_reverted", status: holder.status === "voided" ? "voided" : "refunded" };
+      }
+      let periodsReverted = 0;
+      let number: string | null = null;
+      let reverted = 0;
+      for (const p of applied) {
+        const receipt = await db.receipt.findFirst({ where: { paymentId: p.id }, select: { id: true } });
+        if (!receipt) continue;
+        const done = await revertCore({ receiptId: receipt.id, status: "refunded", actorId: null, reason: input.reason });
+        periodsReverted += done.periodsReverted;
+        number ??= done.number;
+        reverted += 1;
+      }
+      if (number === null) return { kind: "not_found" };
+      return { kind: "refunded", paymentId: holder.id, number, periodsReverted, parts: reverted };
     },
 
     receiptPdfData: pdfDataFor,
