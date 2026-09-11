@@ -588,6 +588,25 @@ describe("reintento ante 429", () => {
     }
   });
 
+  // `ownAccountId` también es lectura, y es la PRIMERA del cron: sin reintento,
+  // un 429 a las 03:17 apaga el paso 1 entero (sin el id propio no hay contra
+  // qué comparar el `collector_id`).
+  it("ownAccountId: el 429 de /users/me se reintenta como cualquier lectura", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.fetch
+        .mockResolvedValueOnce(new Response("slow down", { status: 429 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1978062823 }), { status: 200 }));
+
+      const p = makeMpGateway().ownAccountId();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(p).resolves.toBe("1978062823");
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Una escritura reintentada puede cobrarle dos veces a un vecino o dejarle
   // dos suscripciones vivas: acá el 429 se propaga y lo resuelve una persona.
   it("createPreapproval NO se reintenta ante un 429", async () => {

@@ -96,7 +96,9 @@ export type MpGateway = {
    *  por proceso. El token DEFINE la identidad: no hay variable de entorno ni
    *  fila de configuración que pueda quedar desactualizada. Sólo se cachea un
    *  éxito; una respuesta no-2xx lanza con el `status` colgado, así el 429 se
-   *  reintenta como cualquier lectura. */
+   *  reintenta como cualquier lectura. Cache por INSTANCIA de gateway (el
+   *  singleton `mpGateway` lo hace por proceso): rotar el token exige el
+   *  restart de PM2, que además vacía el cache. */
   ownAccountId(): Promise<string>;
   /** Checkout Pro. La preferencia NO se persiste: el pago se reconoce por la referencia. */
   createPreference(input: {
