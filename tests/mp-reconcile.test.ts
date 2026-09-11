@@ -9,11 +9,16 @@ vi.mock("@/lib/mp/webhook-processor", async (importOriginal) => ({
 }));
 vi.mock("@/lib/treasury/fee-values", () => ({ feeValueReader: {} }));
 vi.mock("@/lib/config", () => ({ configReader: {}, CONFIG_KEYS: { mpPlanActiveId: "mp_plan_active_id", mpPlanSharedId: "mp_plan_shared_id" } }));
+// `auditStrict` viaja en el mismo doble porque el webhook-processor REAL (arriba
+// se reemplaza sólo su singleton) importa los dos de este módulo.
+vi.mock("@/lib/audit", () => ({ audit: vi.fn(), auditStrict: vi.fn() }));
 import { makeReconcile, RECONCILE_WINDOW_MS, SUBSCRIPTION_PACING_MS } from "@/lib/mp/reconcile";
 
 const NOW = new Date("2026-09-11T06:00:00Z");
 const pay = (id: string, over: Record<string, unknown> = {}) =>
-  ({ id, status: "approved", statusDetail: null, transactionAmount: 6000, externalReference: null, dateApproved: NOW, payerEmail: null, description: null, ...over });
+  ({ id, status: "approved", statusDetail: null, transactionAmount: 6000, externalReference: null, dateApproved: NOW, payerEmail: null, description: null,
+     // Un cobro nuestro por defecto: `collectorId` igual al id de la cuenta y sin suscripción.
+     subscriptionId: null, collectorId: "1978062823", ...over });
 
 type Sub = { preapprovalId: string; memberId: number | null; status: string; amount: string | null; externalReference: string | null; member: { category: string } | null };
 
@@ -43,9 +48,13 @@ function deps(over: Partial<{
       create: vi.fn(async () => ({})),
     },
     application: { findUnique: vi.fn(async ({ where }: { where: { id: number } }) => over.applications?.[where.id] ?? null) },
+    // El asiento `payment_foreign` se escribe UNA vez por pago: el cron pregunta
+    // antes si ya existe. Por defecto no existe; un test lo hace existir.
+    auditLog: { findFirst: vi.fn(async () => null as { id: bigint } | null) },
   };
   const gateway = {
     searchPayments: vi.fn(async () => over.payments ?? []),
+    ownAccountId: vi.fn(async () => "1978062823"),
     searchAuthorizedPayments: vi.fn(async () => over.authorized ?? []),
     getPayment: vi.fn(async (id: string) => pay(id)),
     getPreapproval: vi.fn(async (id: string) => ({ id, reason: null, nextPaymentDate: null, dateCreated: null, ...(over.remote?.[id] ?? { status: "authorized", amount: 6000, payerEmail: null, externalReference: null }) })),
@@ -65,8 +74,9 @@ function deps(over: Partial<{
   // La pausa entre suscripciones se INYECTA: los tests no duermen de verdad, y
   // así se puede verificar que el espaciado existe (ver el caso dedicado).
   const sleep = vi.fn<(ms: number) => Promise<void>>(async () => {});
-  const r = makeReconcile({ db: db as never, gateway: gateway as never, processor, feeValues: feeValues as never, config, now: () => NOW, sleep });
-  return { r, db, gateway, processor, feeValues, config, sleep };
+  const audit = vi.fn<(entry: { action: string; entity?: string; entityId?: string | number; detail?: unknown }) => Promise<void>>(async () => {});
+  const r = makeReconcile({ db: db as never, gateway: gateway as never, processor, feeValues: feeValues as never, config, now: () => NOW, sleep, audit });
+  return { r, db, gateway, processor, feeValues, config, sleep, audit };
 }
 
 const liveSub = (preapprovalId: string, memberId: number): Sub =>
@@ -366,6 +376,56 @@ describe("reconcile", () => {
     const s = await d.r.run();
     expect(s.errors).toHaveLength(50);
     expect(s.errorsOmitted).toBe(10);
+  });
+
+  // ── 11/09/2026: la búsqueda devuelve también lo que la cuenta PAGÓ ──────────
+
+  it("paso 1 saltea un pago cuyo collector_id no es el propio: lo cuenta en paymentsForeign, lo audita y no toca el procesador ni la bandeja", async () => {
+    const d = deps({ payments: [
+      pay("178354740076", { collectorId: null, transactionAmount: 94.88, description: "Facturas con cargos por operar", externalReference: "[5117560041]" }),
+      pay("1"),
+    ] });
+    const s = await d.r.run();
+    expect(d.gateway.ownAccountId).toHaveBeenCalledTimes(1);
+    expect(d.processor.applyPayment).toHaveBeenCalledTimes(1);
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), null, expect.anything());
+    // Ni `hasLocal` ni `inInbox` se preguntan por lo ajeno: la guarda va primero.
+    expect(d.db.payment.findUnique).not.toHaveBeenCalledWith({ where: { mpPaymentId: "178354740076" }, select: { id: true } });
+    expect(d.db.mpUnmatchedPayment.findUnique).not.toHaveBeenCalledWith({ where: { mpPaymentId: "178354740076" }, select: { id: true } });
+    expect(d.audit).toHaveBeenCalledWith({
+      action: "payment_foreign", entity: "mp_payment", entityId: "178354740076",
+      detail: { mpPaymentId: "178354740076", amount: 94.88, description: "Facturas con cargos por operar", externalReference: "[5117560041]" },
+    });
+    expect(s).toMatchObject({ paymentsForeign: 1, paymentsRecovered: 1, paymentsInbox: 0, paymentsSkipped: 0, errors: [] });
+  });
+
+  it("un pago ajeno ya auditado se cuenta igual pero no deja un segundo asiento (la ventana de 72 h lo ve tres noches)", async () => {
+    const d = deps({ payments: [pay("178354740076", { collectorId: null })] });
+    d.db.auditLog.findFirst.mockResolvedValueOnce({ id: BigInt(1) });
+    const s = await d.r.run();
+    expect(d.db.auditLog.findFirst).toHaveBeenCalledWith({
+      where: { action: "payment_foreign", entity: "mp_payment", entityId: "178354740076" },
+      select: { id: true },
+    });
+    expect(d.audit).not.toHaveBeenCalled();
+    expect(s.paymentsForeign).toBe(1);
+  });
+
+  it("si /users/me falla, el paso 1 no corre —ni búsqueda ni procesador— y queda payments.owner en errors; los otros pasos siguen", async () => {
+    const d = deps({ payments: [pay("1")], subs: [liveSub("pre-1", 14)] });
+    d.gateway.ownAccountId.mockRejectedValueOnce(Object.assign(new Error("boom"), { status: 500 }));
+    const s = await d.r.run();
+    expect(d.gateway.searchPayments).not.toHaveBeenCalled();
+    expect(d.processor.applyPayment).not.toHaveBeenCalled();
+    expect(s.errors).toEqual([expect.stringMatching(/^payments\.owner: /)]);
+    expect(s.paymentsForeign).toBe(0);
+    // El paso 3 corrió igual: la red se aísla por pasos.
+    expect(d.gateway.getPreapproval).toHaveBeenCalledWith("pre-1");
+    expect(s.subscriptionsSynced).toBe(1);
+  });
+
+  it("el resumen arranca con paymentsForeign en 0", async () => {
+    expect((await deps().r.run()).paymentsForeign).toBe(0);
   });
 });
 

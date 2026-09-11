@@ -6,10 +6,12 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { CONFIG_KEYS, configReader } from "@/lib/config";
 import { makeMailBudget, type MailBudget } from "@/lib/email/batch-cap";
 import { prisma } from "@/lib/prisma";
+import { audit, type AuditEntry } from "@/lib/audit";
 import { feeValueReader, type makeFeeValueReader } from "@/lib/treasury/fee-values";
 import { feeAmountFor } from "@/lib/treasury/rules";
 import { describeMpError, mpErrorLog } from "./error-log";
 import { mpGateway, type MpGateway, type MpPaymentDetails } from "./gateway";
+import { FOREIGN_PAYMENT_ACTION, isOwnCollection } from "./own-collection";
 import { parseApplicationReference } from "./references";
 import { CHARGEABLE_STATUSES, isKnownDead } from "./subscription-status";
 import { cents, WEBHOOK_RESULTS, webhookProcessor, type WebhookResult } from "./webhook-processor";
@@ -91,6 +93,12 @@ export type ReconcileSummary = {
   paymentsInbox: number;
   /** Pagos sueltos que el procesador no escribió (ya estaban, o no correspondía). */
   paymentsSkipped: number;
+  /** Filas de `payments/search` que NO son cobros de la cuenta: la cuenta fue
+   *  la pagadora (la factura mensual de MP por cargos de operar, medida el
+   *  11/09/2026). Se saltean sin tocar el procesador ni la bandeja. Cuenta POR
+   *  CORRIDA —la ventana de 72 h ve la misma factura hasta tres noches—; lo que
+   *  se escribe una sola vez es el asiento `payment_foreign`. */
+  paymentsForeign: number;
   /** Débitos de suscripción (paso 2) efectivamente asentados. */
   debitsRecovered: number;
   /** Débitos que terminaron en la bandeja. */
@@ -119,8 +127,8 @@ export type ReconcileSummary = {
 };
 
 type Deps = {
-  db: Pick<PrismaClient, "payment" | "mpUnmatchedPayment" | "mpSubscription" | "application">;
-  gateway: Pick<MpGateway, "searchPayments" | "searchAuthorizedPayments" | "getPayment" | "getPreapproval" | "searchPreapprovals" | "cancelPreapproval" | "getPlan">;
+  db: Pick<PrismaClient, "payment" | "mpUnmatchedPayment" | "mpSubscription" | "application" | "auditLog">;
+  gateway: Pick<MpGateway, "searchPayments" | "searchAuthorizedPayments" | "getPayment" | "getPreapproval" | "searchPreapprovals" | "cancelPreapproval" | "getPlan" | "ownAccountId">;
   processor: {
     applyPayment(
       payment: MpPaymentDetails,
@@ -130,6 +138,7 @@ type Deps = {
   };
   feeValues: Pick<ReturnType<typeof makeFeeValueReader>, "current">;
   config: { getString(key: string): Promise<string | null> };
+  audit: (entry: AuditEntry) => Promise<void>;
   now?: () => Date;
   /** Inyectable para que los tests no duerman de verdad. */
   sleep?: (ms: number) => Promise<void>;
@@ -143,7 +152,7 @@ export function makeReconcile(deps: Deps) {
     async run(): Promise<ReconcileSummary> {
       const t = now();
       const s: ReconcileSummary = {
-        paymentsRecovered: 0, paymentsInbox: 0, paymentsSkipped: 0,
+        paymentsRecovered: 0, paymentsInbox: 0, paymentsSkipped: 0, paymentsForeign: 0,
         debitsRecovered: 0, debitsInbox: 0, debitsSkipped: 0,
         subscriptionsSynced: 0, subscriptionsDrifted: 0,
         orphanCreated: 0, orphanCancelled: 0, orphanPreapprovals: 0,
@@ -187,6 +196,23 @@ export function makeReconcile(deps: Deps) {
       // volver a aplicar sería pisar.
       const inInbox = async (mpPaymentId: string) =>
         Boolean(await deps.db.mpUnmatchedPayment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
+      // Un pago ajeno deja UN asiento, no uno por corrida: la ventana de 72 h
+      // lo vuelve a ver hasta tres noches. Consulta por el índice
+      // `[entity, entityId]`. Si esta lectura falla, cae en el catch por pago
+      // y el ajeno igual no se aplicó, que es lo que importa.
+      const noteForeign = async (p: MpPaymentDetails) => {
+        const seen = await deps.db.auditLog.findFirst({
+          where: { action: FOREIGN_PAYMENT_ACTION, entity: "mp_payment", entityId: p.id },
+          select: { id: true },
+        });
+        if (seen) return;
+        await deps.audit({
+          action: FOREIGN_PAYMENT_ACTION, entity: "mp_payment", entityId: p.id,
+          // Sin datos personales: un pago ajeno no trae pagador, y descripción y
+          // referencia son texto de MP (el número de su factura).
+          detail: { mpPaymentId: p.id, amount: p.transactionAmount, description: p.description, externalReference: p.externalReference },
+        });
+      };
       // Paso 2: sólo frenan las RESUELTAS. La justificación de arriba vale para
       // `dismissed`/`matched`, no para `open`: acá el cron llega con algo que el
       // webhook no tenía —el `preapprovalId` de la suscripción vinculada—, que es
@@ -214,15 +240,35 @@ export function makeReconcile(deps: Deps) {
       };
 
       // ── 1. Pagos aprobados de las últimas 72 h sin rastro local ─────────────
+      //
+      // Primero, de quién es la cuenta. `payments/search` devuelve TAMBIÉN los
+      // pagos que la cuenta hizo como pagadora —la factura mensual de MP por
+      // cargos de operar— y en ésos `collector_id` viene AUSENTE (medido el
+      // 11/09/2026 sobre los 13 pagos productivos desde julio: 10 cobros con el
+      // id propio, 3 facturas sin la clave). Sin el id propio no hay contra qué
+      // comparar, así que si `/users/me` falla el paso 1 no corre: mejor no
+      // recuperar un día —queda en `errors[]`, 207, rojo en salud— que asentar
+      // como cobro plata que salió. La guarda vive acá y no en `applyPayment` a
+      // propósito: falla cerrada, y lo que apaga es la red, no el webhook.
+      let ownId: string | null = null;
       try {
-        const payments = await deps.gateway.searchPayments({ since: new Date(t.getTime() - RECONCILE_WINDOW_MS) });
-        for (const p of payments) {
-          try {
-            if ((await hasLocal(p.id)) || (await inInbox(p.id))) continue;
-            count(await deps.processor.applyPayment(p, null, { mailBudget }), "payments");
-          } catch (e) { fail("payments.apply", { mpPaymentId: p.id }, e); }
-        }
-      } catch (e) { fail("payments", {}, e); }
+        ownId = await deps.gateway.ownAccountId();
+      } catch (e) { fail("payments.owner", {}, e); }
+      if (ownId !== null) {
+        const own = ownId;
+        try {
+          const payments = await deps.gateway.searchPayments({ since: new Date(t.getTime() - RECONCILE_WINDOW_MS) });
+          for (const p of payments) {
+            try {
+              // "¿Es nuestro?" antes que "¿ya lo conocemos?": un ajeno no puede
+              // tener Payment local, y no tiene por qué preguntarse por la bandeja.
+              if (!isOwnCollection(p, own)) { s.paymentsForeign++; await noteForeign(p); continue; }
+              if ((await hasLocal(p.id)) || (await inInbox(p.id))) continue;
+              count(await deps.processor.applyPayment(p, null, { mailBudget }), "payments");
+            } catch (e) { fail("payments.apply", { mpPaymentId: p.id }, e); }
+          }
+        } catch (e) { fail("payments", {}, e); }
+      }
 
       // ── 2 y 3. Por cada suscripción viva: cobros perdidos + estado ──────────
       // "Viva" acá es `canStillCharge`: la pregunta es de dónde puede salir
@@ -367,5 +413,5 @@ export function makeReconcile(deps: Deps) {
 }
 
 export const reconcile = makeReconcile({
-  db: prisma, gateway: mpGateway, processor: webhookProcessor, feeValues: feeValueReader, config: configReader,
+  db: prisma, gateway: mpGateway, processor: webhookProcessor, feeValues: feeValueReader, config: configReader, audit,
 });
