@@ -677,7 +677,8 @@ ningún import y ningún dato que se toque. Lo que tiene de propio es lo de desp
 — y una fecha.
 
 > **La fecha dura: el cron de devengo tiene que estar arriba antes del
-> 01/10/2026.** Hasta esa fecha no hay ningún mes devengable (la foto de deuda
+> 01/10/2026.** (Cumplida: la línea está en el crontab, confirmada con `crontab -l`
+> el 11/09/2026.) Hasta esa fecha no hay ningún mes devengable (la foto de deuda
 > cubre hasta agosto y septiembre recién vence el 01/10), así que desplegar antes
 > **no crea nada** y es lo correcto. Desplegar **después** tampoco rompe nada: la
 > primera corrida backfillea sola desde el piso de cobertura, así que un deploy del

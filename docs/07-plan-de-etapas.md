@@ -1410,8 +1410,9 @@ otro barrio deshabilitada, spec 2026-09-02) → **actualizar la descripción del
 estatuto** en `/admin/documentos` (el PDF es el texto reformado) → convocar
 re-empadronamiento dentro de los 90 días.
 
-**El devengo no espera al lanzamiento.** Su línea del crontab tiene fecha dura
-—**antes del 01/10/2026**— y es independiente de todo lo demás de esta lista: no
+**El devengo no espera al lanzamiento.** Su línea del crontab tenía fecha dura
+—**antes del 01/10/2026**— y **ya está instalada** (confirmada con `crontab -l` el
+11/09/2026; corrida efectiva del 01/09). Es independiente de todo lo demás de esta lista: no
 manda correos, así que la `EMAIL_ALLOWLIST` no lo afecta. Procedimiento completo en
 `docs/10` §4.6.
 

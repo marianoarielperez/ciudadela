@@ -87,8 +87,9 @@ export type MpGateway = {
   getAuthorizedPayment(id: string): Promise<MpAuthorizedPayment>;
   /** `GET /preapproval/search`, paginado hasta agotar. */
   searchPreapprovals(input?: { status?: string }): Promise<MpPreapproval[]>;
-  /** `GET /authorized_payments/search?preapproval_id=`: la ÚNICA forma de hallar
-   *  los cobros de una suscripción (docs/11 §7). */
+  /** `GET /authorized_payments/search?preapproval_id=`: la forma de hallar los
+   *  cobros de una suscripción sin depender de la ventana de 72 h de
+   *  `searchPayments` (docs/11 §7). */
   searchAuthorizedPayments(preapprovalId: string): Promise<MpAuthorizedPayment[]>;
   /** `GET /v1/payments/search` aprobados por `date_approved` desde `since`. */
   searchPayments(input: { since: Date }): Promise<MpPaymentDetails[]>;
@@ -360,9 +361,10 @@ export function makeMpGateway(): MpGateway {
           // suscripción dependen ENTERAMENTE de la configuración de webhooks de
           // la aplicación en el panel de MP. Si esa config se borra, apunta a
           // otro lado o queda en el modo equivocado, los débitos dejan de
-          // avisar sin ninguna señal. La única red que queda es el paso 2 de la
-          // conciliación diaria (`searchAuthorizedPayments`), que por eso no
-          // puede volver a romperse en silencio como estuvo hasta la T14.
+          // avisar sin ninguna señal. La red que queda es la conciliación diaria:
+          // el paso 1 dentro de las 72 h y el paso 2 (`searchAuthorizedPayments`)
+          // después, que por eso no puede volver a romperse en silencio como
+          // estuvo hasta la T14.
           status: "pending",
         },
       });

@@ -217,7 +217,9 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **Un preapproval IGNORA `notification_url`** (medido contra la API): MP acepta el
   campo y lo descarta en silencio. Los avisos de suscripción dependen ENTERAMENTE de
   la config de webhooks del panel de MP; si se rompe, los débitos dejan de avisar
-  **sin ninguna señal** y la única red es el paso 2 del cron.
+  **sin ninguna señal** y la red es la conciliación diaria: el paso 1 dentro de
+  las 72 h (desde el 11/09/2026 resuelve por el preapproval del pago) y el paso 2
+  después.
 - **Links de pago `pago:{memberId}:{n}`: `n` es una CANTIDAD, no una lista de
   períodos.** Qué cuotas se imputan lo decide `allocate` al llegar el pago (las más
   viejas). **La preferencia NO se persiste** y **vence a las 72 h** (`expires` +

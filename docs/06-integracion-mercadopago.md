@@ -132,8 +132,8 @@ POST https://api.mercadopago.com/preapproval
 > **enteramente** de la configuración de webhooks de la aplicación en el panel de
 > MP (`docs/11` Parte D). Si esa configuración se borra, apunta a otro lado o queda
 > en la solapa equivocada, **los débitos dejan de avisar sin ninguna señal**: nada
-> falla, simplemente no llega nada. La única red es el paso 2 de la conciliación
-> diaria (§6). Las preferencias de Checkout Pro sí mandan la suya, así que los
+> falla, simplemente no llega nada. La red es la conciliación diaria (§6): el
+> paso 1 dentro de las 72 h y el paso 2 después. Las preferencias de Checkout Pro sí mandan la suya, así que los
 > pagos por link siguen llegando aunque el panel esté mal configurado — lo que
 > vuelve el síntoma todavía más difícil de ver.
 
