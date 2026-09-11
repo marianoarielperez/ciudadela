@@ -191,7 +191,7 @@ MP no tiene plan de referencia, y `""` como centinela queda prohibido.
 
 Toda la API de MP se consume detrás de `src/lib/mp/gateway.ts`
 (`makeMpGateway()`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno). El dominio
-ve una interfaz propia de **once** métodos y los tests mockean esa interfaz, nunca
+ve una interfaz propia de **doce** métodos y los tests mockean esa interfaz, nunca
 el SDK ni la red:
 
 | Método | Para qué |
@@ -206,11 +206,21 @@ el SDK ni la red:
 | `searchPreapprovals` | conciliación: suscripciones vivas y huérfanas; pantalla "Sin vincular" |
 | `searchAuthorizedPayments` | conciliación paso 2 y "cobros previos" de la vinculación |
 | `searchPayments` | conciliación paso 1: aprobados de las últimas 72 h |
+| `ownAccountId` | id de la cuenta propia (`GET /users/me`, cacheado por proceso): el paso 1 de la conciliación descarta lo que la cuenta PAGÓ |
 | `createPreference` | Checkout Pro (§3) |
 
 Dos trampas de paginación, medidas contra la API real (`docs/11` Parte J):
 `/authorized_payments/search` **rechaza `limit`** por encima de ~15 —hay que
 omitirlo—, mientras `/v1/payments/search` y `/preapproval/search` aceptan 100.
+
+Y una trampa de **universo**, medida el 11/09/2026 (`docs/11` J.7): `/v1/payments/search`
+devuelve **también los pagos que la cuenta hizo como pagadora** —la factura mensual de
+MP por cargos de operar, que llega aprobada— y en ésos la clave `collector_id` viene
+**ausente**. `mapPayment` la expone como `collectorId` (`null` si falta) y el paso 1 de
+la conciliación sólo procesa lo que tiene `collectorId` igual al propio
+(`isOwnCollection`, `src/lib/mp/own-collection.ts`). El JSDoc del SDK ("payments
+belonging to the authenticated collector") es falso. Existe un filtro de servidor
+`collector.id=` que funciona y no está documentado: no se usa.
 
 ### 3. Links de pago puntuales (Checkout Pro) — fase 4B
 
@@ -390,10 +400,18 @@ alguno — 207 no es "casi 200": es la única señal de que la red se rompió.
 Cinco pasos, aislados entre sí (un fallo en uno no frena a los demás, y un ítem que
 explota no frena al resto de su bucle):
 
-1. **`GET /v1/payments/search`** por `date_approved` de las últimas 72 h → todo
-   pago aprobado sin registro local se procesa **por el mismo camino que el
-   webhook** (`processor.applyPayment`), así que el resultado es idéntico al del
-   aviso perdido.
+1. **`GET /v1/payments/search`** por `date_approved` de las últimas 72 h. Antes de
+   buscar, `ownAccountId()`: si `/users/me` falla, el paso 1 **no corre**
+   (`payments.owner` en `errors[]`, 207): sin id propio no hay contra qué comparar,
+   y es mejor no recuperar un día que asentar como cobro plata que salió. Cada fila
+   con `collectorId` distinto del propio —o ausente, que es cómo llega la factura
+   mensual de MP— se saltea, suma `paymentsForeign` y deja **un** asiento
+   `payment_foreign` (id, monto, descripción, referencia); nunca entra a la bandeja,
+   que es plata que entró. Lo demás sin registro local se procesa **por el mismo
+   camino que el webhook** (`processor.applyPayment`, con el preapproval que el
+   propio pago trae en `point_of_interaction`, igual que la notificación `payment`),
+   así que el resultado es idéntico al del aviso perdido. La guarda vive acá y no en
+   `applyPayment`: si MP cambiara el payload, se apaga la red, no el webhook.
 2. **`GET /authorized_payments/search` por CADA suscripción viva** → es lo **único**
    que encuentra los débitos recurrentes: la búsqueda de pagos por
    `external_reference` no los indexa. Saltea las filas que el operador ya resolvió
@@ -414,11 +432,14 @@ explota no frena al resto de su bucle):
    que se corrige con el lote de §7—; (b) el plan de referencia contra ese mismo
    valor, que **sólo corre si los ids de plan están cargados** (§1).
 
-El resumen lleva `paymentsRecovered/Inbox/Skipped`, `debitsRecovered/Inbox/Skipped`,
-`subscriptionsSynced`, `subscriptionsDrifted`, `orphanCreated`, `orphanCancelled`,
-`orphanPreapprovals`, `amountDivergent`, `planDivergent` y `errors` (tope 50, con
-`errorsOmitted`). **La causa de cada error viaja entera** en `errors[]`: es el único
-canal por el que alguien se entera de que la red se rompió.
+El resumen lleva `paymentsRecovered/Inbox/Skipped/Foreign`,
+`debitsRecovered/Inbox/Skipped`, `subscriptionsSynced`, `subscriptionsDrifted`,
+`orphanCreated`, `orphanCancelled`, `orphanPreapprovals`, `amountDivergent`,
+`planDivergent` y `errors` (tope 50, con `errorsOmitted`). **La causa de cada error
+viaja entera** en `errors[]`: es el único canal por el que alguien se entera de que
+la red se rompió. `paymentsForeign` es por corrida (la ventana de 72 h ve la misma
+factura hasta tres noches) y un valor de 1 alrededor del día 10 de cada mes es lo
+normal, no una alarma.
 
 Desde la fase 4C el resultado se lee en **`/admin/salud`** (superadmin), que muestra
 la última corrida de cada cron con su resumen. La consulta SQL directa sigue

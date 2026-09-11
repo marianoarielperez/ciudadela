@@ -1105,6 +1105,29 @@ Verificación post-deploy:
    transacción. Revisar `pm2 logs sigev --lines 50 --nostream` por
    `[treasury]` y volver a intentar desde la misma fila.
 
+### 4.11 Específico del arreglo de pagos ajenos en la conciliación (11/09/2026)
+
+Sin migración ni variable de entorno: `git pull`, `npm run build`, `pm2 restart`
+según §4.1. Antes o después, en la bandeja, **descartar** la fila de $ 94,88 del
+10/09 con motivo "Factura mensual de Mercado Pago por cargos de operar (percepción
+de IVA); no es un cobro". El descarte no crea pago y deja la fila como barrera; el
+egreso va al libro de tesorería, fuera de SIGeV.
+
+Después del restart:
+
+1. Corrida manual del reconcile con el `curl` de `docs/11` Parte H → HTTP **200**,
+   `errors` vacío, y el resumen trae **`paymentsForeign`** (0 si la factura del
+   10/09 ya quedó fuera de la ventana de 72 h; 1 si no).
+2. `/admin/salud` → Tareas → Conciliación muestra `paymentsForeign` entre los
+   contadores.
+3. Si dio 1: un solo asiento `payment_foreign` en `audit_log` con `entity_id
+   178354740076`, y **ninguna fila nueva** en la bandeja.
+4. **La prueba real es la factura siguiente** (MP cierra el 7 y cobra alrededor
+   del 10): la corrida posterior muestra `paymentsForeign 1`, `paymentsInbox 0` y la
+   bandeja no gana filas.
+5. El primer débito de suscripción cuyo webhook no llegue entra como
+   `paymentsRecovered 1` en el paso 1, sin fila en Resueltos con hora 03:17.
+
 ## 5. Correo: nada que hacer
 
 El dominio autenticado en Brevo **es** `vecinalciudadela.ar`, el mismo del sitio,

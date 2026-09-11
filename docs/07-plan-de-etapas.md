@@ -461,6 +461,38 @@ $ 18.000 sin referencia del 08/09/2026 (dos cuotas de un socio y una de su espos
 | 9 | Cinco partes contra MariaDB: 124 ms (< 5 s) | ✅ 124 ms para 5 partes (MariaDB local ociosa). |
 | 10 | Suite verde sin tocar aserciones de `treasury-service` ni `mp-apply-concurrency`; `tsc`, lint y build en verde | ✅ 4150 tests en la rama (4071 en `main`), `tsc`, lint (0 errores) y build en verde; `treasury-service` y `mp-apply-concurrency` sin aserciones tocadas. |
 
+### Pagos ajenos en la conciliación — **CERRADO** (11/09/2026)
+
+**El incidente.** La corrida de las 03:17 del 11/09/2026 mandó a la bandeja Sin
+conciliar, como "Sin referencia", un pago de $ 94,88 (id 178354740076) que era la
+**factura mensual de Mercado Pago** por cargos de operar, pagada el 10/09 desde la
+cuenta de la vecinal. Plata que salió, mostrada como plata que entró. Spec:
+`docs/superpowers/specs/2026-09-11-foreign-payments-reconcile-design.md`.
+
+**Dos causas, medidas contra la API real** (`docs/11` J.7):
+
+1. `GET /v1/payments/search` con el token del vendedor devuelve **también lo que
+   la cuenta pagó**, con `collector_id` **ausente**. El gateway no leía el campo, el
+   sistema no conocía su propio id de cuenta y el resolutor sólo mira id,
+   preapproval y referencia. La verificación "sí indexa en producción" de la 4B
+   había medido que la búsqueda devuelve algo, no qué universo. Arreglo: el
+   gateway mapea `collectorId` y expone `ownAccountId()` (`072d0df`), el
+   predicado puro `isOwnCollection` (`e4d99d0`), y el paso 1 saltea, cuenta
+   (`paymentsForeign`) y audita una vez lo ajeno; sin id propio, el paso 1 no corre
+   (`1b22569`).
+2. El paso 1 pasaba `preapprovalId: null` aunque el pago trajera su suscripción, así
+   que un débito sin webhook hacía escala en la bandeja hasta el paso 2 (por eso la
+   corrida dijo `paymentsInbox 2, debitsRecovered 1` con una sola fila visible).
+   Arreglo: `applyPayment(p, p.subscriptionId)`, como el webhook desde la T14
+   (`ab589c9`).
+
+**Sin migración ni variable nueva.** Verificación post-deploy: `docs/10` §4.11.
+**Deuda anotada:** el sistema asienta el importe **bruto** de MP (3.000 entran
+netos 2.852,91), decisión nunca tomada; el webhook que no llegó para uno de los
+dos débitos del 10/09 (salud no muestra avisos con error: no llegó, no falló);
+la suscripción duplicada del socio 255; etiquetas legibles para los contadores del
+reconcile en `/admin/salud`; el filtro de servidor `collector.id` existe y no se usa.
+
 ### Insumos que deja el Módulo 3 para el Módulo 4
 
 Cosas que se encontraron construyendo el M3, que **no** entraban en su alcance y

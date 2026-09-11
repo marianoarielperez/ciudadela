@@ -27,6 +27,7 @@
 |---|---|---|
 | `src/lib/mp/gateway.ts` (modificar) | `collectorId` en `MpPaymentDetails`; `ownAccountId()` con cache; `retrying` | 1 |
 | `tests/mp-gateway.test.ts` (modificar) | 6 tests: mapeo de `collector_id` en búsqueda y por id; `/users/me`, cache, fallo, sin id | 1 |
+| `tests/mp-webhook-processor.test.ts` (modificar) | sólo el fixture: `collectorId: null` en el literal `MpPaymentDetails`, para que `tsc` siga en verde (desvío anotado en la Task 1) | 1 |
 | `src/lib/mp/own-collection.ts` (crear) | `isOwnCollection` + `FOREIGN_PAYMENT_ACTION`; puro | 2 |
 | `tests/mp-own-collection.test.ts` (crear) | 5 tests: tabla del predicado + la constante | 2 |
 | `src/lib/mp/reconcile.ts` (modificar) | paso 1: id propio, guarda, `paymentsForeign`, asiento único, fail-closed; después `p.subscriptionId` | 3, 4 |
@@ -432,7 +433,7 @@ Al final del `describe("reconcile", …)`, antes de su `});` de cierre, agregar:
 ```bash
 npx vitest run tests/mp-reconcile.test.ts 2>&1 | tail -40
 ```
-Expected: 4 tests en rojo (`paymentsForeign` es `undefined`; `applyPayment` llamado 2 veces en vez de 1; `audit` no llamado; `searchPayments` llamado aunque `ownAccountId` falle). Los 27 tests existentes siguen en verde: el doble extendido no cambia lo que ya se probaba.
+Expected: 4 tests en rojo (`paymentsForeign` es `undefined`; `applyPayment` llamado 2 veces en vez de 1; `audit` no llamado; `searchPayments` llamado aunque `ownAccountId` falle). Los 34 tests existentes siguen en verde: el doble extendido no cambia lo que ya se probaba.
 
 - [ ] **Step 4: Implementar en `src/lib/mp/reconcile.ts`**
 
@@ -521,7 +522,7 @@ Cableado por defecto (368-370): agregar `audit` al objeto: `db: prisma, gateway:
 npx vitest run tests/mp-reconcile.test.ts tests/mp-reconcile-route.test.ts 2>&1 | tail -8
 npx tsc --noEmit
 ```
-Expected: 31 tests en verde en `mp-reconcile` (27 + 4), los 5 del route sin cambio; `tsc` sin salida.
+Expected: 38 tests en verde en `mp-reconcile` (34 + 4), los 5 del route sin cambio; `tsc` sin salida.
 
 - [ ] **Step 6: Verificar las guardas por mutación (y restaurar)**
 
@@ -606,7 +607,7 @@ Reemplazar el comentario que precede a `inInbox` (el que empieza `// Paso 1: cua
 ```bash
 npx vitest run tests/mp-reconcile.test.ts 2>&1 | tail -6
 ```
-Expected: 32 tests en verde. El test existente `paso 1: pago aprobado sin registro local ni bandeja → applyPayment` sigue asertando `null` porque `pay("1")` no trae suscripción: no se toca.
+Expected: 39 tests en verde. El test existente `paso 1: pago aprobado sin registro local ni bandeja → applyPayment` sigue asertando `null` porque `pay("1")` no trae suscripción: no se toca.
 
 - [ ] **Step 5: Mutación y restauración**
 
@@ -897,7 +898,10 @@ src/lib/mp/reconcile.ts
 tests/mp-gateway.test.ts
 tests/mp-own-collection.test.ts
 tests/mp-reconcile.test.ts
+tests/mp-webhook-processor.test.ts
 ```
+
+(`tests/mp-webhook-processor.test.ts` se sumó en la Task 1: su fixture arma un `MpPaymentDetails` literal y `tsc` exigía el campo nuevo; sólo cambia el fixture, ninguna aserción.)
 
 Un archivo fuera de esta lista es un desvío del plan: justificarlo en el informe o revertirlo.
 

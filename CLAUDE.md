@@ -116,9 +116,10 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 
 - **Servicios externos detrás de una factory propia.** `makeMpGateway()`
   (`src/lib/mp/gateway.ts`, sin argumentos: lee `MP_ACCESS_TOKEN` del entorno). El
-  M3 la estrenó con siete métodos; hoy expone **once** —la fase 4B le sumó
+  M3 la estrenó con siete métodos; hoy expone **doce** —la fase 4B le sumó
   `searchPreapprovals`, `searchAuthorizedPayments`, `searchPayments` y
-  `createPreference`—. La lista viva, con qué hace cada uno y sus dos trampas de
+  `createPreference`—, y el arreglo de pagos ajenos del 11/09/2026 le sumó
+  `ownAccountId`. La lista viva, con qué hace cada uno y sus dos trampas de
   paginación, está en `docs/06` §2: no se duplica acá. El dominio **nunca** ve el
   SDK de Mercado Pago, y los tests mockean esa interfaz: ni SDK ni red.
   Mismo criterio para cualquier proveedor que venga después.
@@ -569,6 +570,31 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
 - **`link` se rotula "Mercado Pago".** La bandeja asienta con ese tipo también
   las transferencias; el gateway no lee `payment_type_id` y un tipo nuevo habría
   sido un dato que el operador tiene que adivinar.
+
+## Patrones que estrenó el arreglo de pagos ajenos (11/09/2026)
+
+- **`payments/search` devuelve también lo que la cuenta PAGÓ, y la señal es la
+  AUSENCIA de `collector_id`.** La factura mensual de MP por cargos de operar
+  llega aprobada, sin `collector_id` ni `payer`, y el cron la mandaba a la bandeja
+  como un cobro sin referencia. Medido sobre los 13 pagos productivos desde julio
+  (`docs/11` J.7): los 10 cobros reales traen el id propio como entero; las 3
+  facturas, nada. La regla es "propio o nada" (`isOwnCollection`), y falla cerrada.
+- **El id propio sale del token, no de configuración.** `ownAccountId()` en el
+  gateway (`GET /users/me`, cacheado por proceso): una variable de entorno o una
+  fila de `Configuration` pueden quedar desactualizadas; el token no.
+- **La guarda vive en el cron y no en el núcleo, a propósito.** Como la señal es
+  una ausencia, un cambio de payload de MP la dispararía para todo: en el paso 1
+  del reconcile eso apaga la red (207, rojo en salud); en `applyPayment` apagaría
+  el asiento de los cobros reales por webhook sin ninguna alerta. Un pago ajeno
+  no va a la bandeja —que es plata que entró— sino a `paymentsForeign` y a un
+  asiento `payment_foreign` **único por pago** (el contador es por corrida).
+- **El paso 1 le pasa al procesador lo mismo que el webhook.** `applyPayment(p,
+  p.subscriptionId)`: la búsqueda trae `point_of_interaction` aunque el tipo del
+  SDK lo omita. Antes iba `null` y un débito sin webhook hacía escala en la
+  bandeja hasta el paso 2 (`paymentsInbox 2, debitsRecovered 1` con una fila).
+- **"Sí indexa" no es "indexa lo correcto".** La primera corrida real midió que
+  la búsqueda devuelve resultados, no qué universo. Contra MP, la pregunta
+  siguiente después de "¿responde?" es "¿responde SÓLO lo nuestro?".
 
 ## Flujo de trabajo con el operador (Mariano)
 

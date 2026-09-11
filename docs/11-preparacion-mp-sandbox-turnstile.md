@@ -987,3 +987,31 @@ del operador). La pantalla post-cancelación dice "Ese débito ya está cancelad
   del webhook trabajando: las notificaciones duplicadas de
   `subscription_authorized_payment` respondieron `already_processed` sin tocar
   nada.
+
+### J.7 La búsqueda de pagos devuelve también lo que la cuenta PAGÓ (11/09/2026, producción)
+
+Medido con el token productivo, sin tocar nada (todo `GET`). Es la base de la spec
+`2026-09-11-foreign-payments-reconcile-design.md`.
+
+| Hecho | Medición |
+|---|---|
+| Id de la cuenta de la vecinal | `GET /users/me` → `id: 1978062823` (entero), `nickname: VECINALCIUDADELA`, `site_id: MLA` |
+| La búsqueda devuelve pagos del lado pagador | `payments/search` desde el 01/07 (`range=date_approved`, `status=approved`): 13 filas. 10 cobros reales con `collector_id: 1978062823` (clave presente): 3 `recurring_payment`, 4 `regular_payment` (links `pago:`, ingreso `solicitud:`, adhesión `socio:`), 3 `money_transfer`. **3 pagos ajenos** con la clave `collector_id` **ausente** y `payer` ausente, `operation_type: regular_payment`, `payment_type_id: account_money`: 27,11 el 14/07 (ref `MELIPAYMENTS-COLLECTIONATTEMPT-1978062823-…`), 27,11 el 13/08 y 94,88 el 10/09 ("Facturas con cargos por operar", ref `[5007340143]` y `[5117560041]`) |
+| Un pago ajeno se puede pedir por id | `GET /v1/payments/178354740076` → 200, `approved`, sin `collector_id`, sin `payer`, `point_of_interaction.type: CHECKOUT` |
+| `[5117560041]` no es un id de pago | `GET /v1/payments/5117560041` → 404. Es el número de la factura de MP, que viaja como `external_reference` |
+| La búsqueda trae el id de suscripción | Las filas de los débitos traen `point_of_interaction.transaction_data.subscription_id`, aunque el tipo del SDK para el resultado de búsqueda lo omita |
+| Filtro de servidor por cobrador | `payments/search?…&collector.id=1978062823` → total 4 → 3. Funciona, no está documentado, **no se usa** |
+| El JSDoc del SDK es falso | `payment/search/index.d.ts`: "payments belonging to the authenticated collector" |
+| MP factura cargos por operar todos los meses | Cierre el 7, cobro alrededor del 10: el pago ajeno es un evento mensual normal |
+
+Para inspeccionar a mano, desde la carpeta de la app en el VPS (no hay `jq`):
+
+```bash
+TOKEN=$(grep -E '^MP_ACCESS_TOKEN=' .env | cut -d= -f2- | tr -d '"' | tr -d "'")
+curl -s -H "Authorization: Bearer $TOKEN" https://api.mercadopago.com/users/me | python3 -c 'import sys,json; d=json.load(sys.stdin); print({k:d.get(k) for k in ("id","nickname","site_id")})'
+curl -s -H "Authorization: Bearer $TOKEN" "https://api.mercadopago.com/v1/payments/search?sort=date_approved&criteria=desc&range=date_approved&begin_date=2026-09-07T00:00:00.000Z&end_date=2026-09-12T00:00:00.000Z&status=approved&limit=100" | python3 -c '
+import sys,json
+for r in json.load(sys.stdin).get("results", []):
+    print(r.get("id"), "collector_id" in r, r.get("collector_id"), r.get("operation_type"), r.get("transaction_amount"), r.get("description"), r.get("external_reference"))
+'
+```
