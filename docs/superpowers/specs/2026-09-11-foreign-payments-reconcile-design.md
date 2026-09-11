@@ -136,8 +136,9 @@ FOREIGN_PAYMENT_ACTION, entity: "mp_payment", entityId: p.id, detail: {
 mpPaymentId, amount, description, externalReference } })`. Sin email ni datos
 personales: un pago ajeno no trae pagador, y `description` y
 `externalReference` son texto de MP (la factura). Si la lectura del asiento
-lanza, cae en el `catch` por pago → `fail("payments.apply", …)` y el bucle sigue
-con la fila siguiente; el pago ajeno no se aplicó, que es lo que importa.
+lanza, se registra `fail("payments.foreign", …)` —rótulo propio, porque acá nunca
+se aplicó nada— y el bucle sigue con la fila siguiente; el pago ajeno se contó
+igual y no se aplicó, que es lo que importa.
 
 Orden de la guarda **antes** de `hasLocal`/`inInbox`, a propósito: la pregunta
 "¿es nuestro?" va antes que "¿ya lo conocemos?", y un pago ajeno no puede tener
@@ -251,7 +252,7 @@ restaurarla; el informe de cierre lista cuál mutación puso en rojo a cuál tes
    es un cobro". El descarte no crea pago, deja la fila como barrera y pisa la
    descripción de MP, que ya está registrada en §3. El egreso se anota en el
    libro de tesorería: SIGeV no modela egresos (docs/01).
-2. **Deploy:** `git pull`, `npm run build`, `pm2 restart` según `docs/10` §4.5.
+2. **Deploy:** `git pull`, `npm run build`, `pm2 restart` según `docs/10` §4.1.
    Sin migración.
 3. **Verificación post-deploy (`docs/10` §4.11):**
    - Corrida manual del reconcile con el `curl` de `docs/11` Parte H → HTTP 200,

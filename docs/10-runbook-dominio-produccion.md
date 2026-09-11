@@ -1122,6 +1122,7 @@ Después del restart:
    contadores.
 3. Si dio 1: un solo asiento `payment_foreign` en `audit_log` con `entity_id
    178354740076`, y **ninguna fila nueva** en la bandeja.
+   `SELECT id, created_at, entity_id, detail FROM audit_log WHERE action = 'payment_foreign' ORDER BY id DESC LIMIT 5;`
 4. **La prueba real es la factura siguiente** (MP cierra el 7 y cobra alrededor
    del 10): la corrida posterior muestra `paymentsForeign 1`, `paymentsInbox 0` y la
    bandeja no gana filas.

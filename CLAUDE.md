@@ -209,7 +209,9 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   se perdería también la buena. Un POST sin `topic=` sigue dando 400 y sin auditar.
 - **`reconcile` (03:17) es la red, y tiene DOS fuentes**: `payments/search` por
   fecha para los pagos de Checkout Pro, y `authorized_payments/search` **por cada
-  suscripción viva**, que es lo único que encuentra los débitos recurrentes.
+  suscripción viva**, la red que no depende de la ventana de 72 h (desde el
+  11/09/2026 el paso 1 también resuelve los débitos que indexa, por el preapproval
+  del propio pago).
   Reutiliza `processor.applyPayment`: el resultado es idéntico al del aviso perdido.
   Estrena `cron_runs` y devuelve **207** —no 200— cuando corrió entera con errores.
 - **Un preapproval IGNORA `notification_url`** (medido contra la API): MP acepta el
@@ -584,7 +586,9 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   fila de `Configuration` pueden quedar desactualizadas; el token no.
 - **La guarda vive en el cron y no en el núcleo, a propósito.** Como la señal es
   una ausencia, un cambio de payload de MP la dispararía para todo: en el paso 1
-  del reconcile eso apaga la red (207, rojo en salud); en `applyPayment` apagaría
+  del reconcile eso apaga la red (salta `paymentsForeign` a todo y
+  `paymentsRecovered` a 0: se ve en salud, aunque no en rojo; el 207 queda para
+  cuando `/users/me` falla); en `applyPayment` apagaría
   el asiento de los cobros reales por webhook sin ninguna alerta. Un pago ajeno
   no va a la bandeja —que es plata que entró— sino a `paymentsForeign` y a un
   asiento `payment_foreign` **único por pago** (el contador es por corrida).
@@ -738,14 +742,11 @@ La **fase 4D (reparto de un cobro de la bandeja entre socios)** está en la rama
 verificación post-deploy es `docs/10` §4.10. Los $ 18.000 del 08/09 esperan ese
 despliegue para repartirse 2+1 desde la pantalla.
 
-**Pendiente de DESPLIEGUE, con fecha dura: el cron de devengo, antes del
-01/10/2026.** El código está hecho y testeado; lo que vence es la línea del crontab
-del VPS. Mientras no esté, no se crea ninguna fila: el padrón cubre a todos hasta
-agosto de 2026 y el import trajo sólo lo impago, así que desde octubre los socios al
-día se mostrarían "al día" debiendo septiembre. Desplegar tarde **no** rompe nada
-—la primera corrida backfillea sola desde el piso de cobertura—, pero no desplegar
-sí. Procedimiento: `docs/10` §4.5; crontab de seis líneas y las dos escotillas de
-re-disparo: `docs/11` Parte H.
+El **cron de devengo ya está en el crontab del VPS** (confirmado el 11/09/2026:
+`/admin/salud` muestra la corrida efectiva del 01/09/2026 a las 00:30 con
+`forced no`, y `crontab -l` tiene la línea `30 0 * * *` de `/api/cron/accrual`).
+La primera corrida que crea filas es la del 01/10/2026 (septiembre). Procedimiento
+y escotilla: `docs/10` §4.5 y `docs/11` Parte H.
 
 Verificación real pendiente de la 4B: el **débito del socio 14 del 10/09/2026** tiene
 que entrar solo. (`GET /v1/payments/search` **sí indexa en producción** — quedó

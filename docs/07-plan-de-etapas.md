@@ -479,7 +479,7 @@ cuenta de la vecinal. Plata que salió, mostrada como plata que entró. Spec:
    gateway mapea `collectorId` y expone `ownAccountId()` (`072d0df`), el
    predicado puro `isOwnCollection` (`e4d99d0`), y el paso 1 saltea, cuenta
    (`paymentsForeign`) y audita una vez lo ajeno; sin id propio, el paso 1 no corre
-   (`1b22569`).
+   (`1b22569`); el fallo del asiento se rotula `payments.foreign` (`54880b5`).
 2. El paso 1 pasaba `preapprovalId: null` aunque el pago trajera su suscripción, así
    que un débito sin webhook hacía escala en la bandeja hasta el paso 2 (por eso la
    corrida dijo `paymentsInbox 2, debitsRecovered 1` con una sola fila visible).
@@ -492,6 +492,15 @@ netos 2.852,91), decisión nunca tomada; el webhook que no llegó para uno de lo
 dos débitos del 10/09 (salud no muestra avisos con error: no llegó, no falló);
 la suscripción duplicada del socio 255; etiquetas legibles para los contadores del
 reconcile en `/admin/salud`; el filtro de servidor `collector.id` existe y no se usa.
+Cobertura menor: `collector_id` como texto o `""` y `users/me` con `id: ""` no
+tienen test propio (`idText` es una sola expresión, testeada por el camino
+numérico); las aserciones `not.toHaveBeenCalledWith` de la guarda dependen de la
+forma exacta del `select`; sólo `collectorId: null` pasa por `run()` (el "999" lo
+cubre la tabla pura). Y una alarma barata, si alguna vez hace falta: un aviso de
+nivel *review* en `health.ts` cuando la última conciliación tiene
+`paymentsForeign > 0` con
+`paymentsRecovered + paymentsInbox + paymentsSkipped === 0` — hoy ese caso queda
+en verde.
 
 ### Insumos que deja el Módulo 3 para el Módulo 4
 

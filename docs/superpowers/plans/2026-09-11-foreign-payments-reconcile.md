@@ -550,6 +550,8 @@ the webhook. One audit row per foreign payment; the counter is per run.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+> Fix wave (11/09): el fallo de `noteForeign` se rotula `payments.foreign` y tiene test propio; ver spec §4.3.
+
 ---
 
 ### Task 4: Reconcile paso 1 — `p.subscriptionId` al procesador, como el webhook

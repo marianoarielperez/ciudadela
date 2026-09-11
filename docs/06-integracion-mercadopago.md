@@ -213,14 +213,15 @@ Dos trampas de paginación, medidas contra la API real (`docs/11` Parte J):
 `/authorized_payments/search` **rechaza `limit`** por encima de ~15 —hay que
 omitirlo—, mientras `/v1/payments/search` y `/preapproval/search` aceptan 100.
 
-Y una trampa de **universo**, medida el 11/09/2026 (`docs/11` J.7): `/v1/payments/search`
-devuelve **también los pagos que la cuenta hizo como pagadora** —la factura mensual de
-MP por cargos de operar, que llega aprobada— y en ésos la clave `collector_id` viene
-**ausente**. `mapPayment` la expone como `collectorId` (`null` si falta) y el paso 1 de
-la conciliación sólo procesa lo que tiene `collectorId` igual al propio
-(`isOwnCollection`, `src/lib/mp/own-collection.ts`). El JSDoc del SDK ("payments
-belonging to the authenticated collector") es falso. Existe un filtro de servidor
-`collector.id=` que funciona y no está documentado: no se usa.
+Y una trampa de **universo**, medida el 11/09/2026 (`docs/11` J.7):
+`/v1/payments/search` devuelve **también los pagos que la cuenta hizo como
+pagadora** —la factura mensual de MP por cargos de operar, que llega aprobada— y
+en ésos la clave `collector_id` viene **ausente**. `mapPayment` la expone como
+`collectorId` (`null` si falta) y el paso 1 de la conciliación sólo procesa lo
+que tiene `collectorId` igual al propio (`isOwnCollection`,
+`src/lib/mp/own-collection.ts`). El JSDoc del SDK ("payments belonging to the
+authenticated collector") es falso. Existe un filtro de servidor `collector.id=`
+que funciona y no está documentado: no se usa.
 
 ### 3. Links de pago puntuales (Checkout Pro) — fase 4B
 
@@ -412,10 +413,12 @@ explota no frena al resto de su bucle):
    propio pago trae en `point_of_interaction`, igual que la notificación `payment`),
    así que el resultado es idéntico al del aviso perdido. La guarda vive acá y no en
    `applyPayment`: si MP cambiara el payload, se apaga la red, no el webhook.
-2. **`GET /authorized_payments/search` por CADA suscripción viva** → es lo **único**
-   que encuentra los débitos recurrentes: la búsqueda de pagos por
-   `external_reference` no los indexa. Saltea las filas que el operador ya resolvió
-   o descartó en la bandeja, para no re-imputar lo que alguien decidió a mano.
+2. **`GET /authorized_payments/search` por CADA suscripción viva** → es la red
+   que no depende de la ventana de 72 h ni del `point_of_interaction`: la
+   búsqueda del paso 1 también indexa los débitos (J.7 midió tres
+   `recurring_payment`), pero sólo los de los últimos tres días. Saltea las
+   filas que el operador ya resolvió o descartó en la bandeja, para no
+   re-imputar lo que alguien decidió a mano.
 3. **Estado de cada suscripción** contra MP → corrige el espejo local
    (`subscriptionsSynced`). `subscriptionsDrifted` cuenta las que **cambiaron** de
    estado hacia algo que no es `authorized`: un `pending` que sigue `pending` es un
@@ -439,7 +442,10 @@ El resumen lleva `paymentsRecovered/Inbox/Skipped/Foreign`,
 viaja entera** en `errors[]`: es el único canal por el que alguien se entera de que
 la red se rompió. `paymentsForeign` es por corrida (la ventana de 72 h ve la misma
 factura hasta tres noches) y un valor de 1 alrededor del día 10 de cada mes es lo
-normal, no una alarma.
+normal, no una alarma. Desde el mismo arreglo, un débito de suscripción cuyo
+webhook se perdió y que la búsqueda indexa se recupera en el paso 1 y cuenta en
+`paymentsRecovered`, no en `debitsRecovered`; `debitsRecovered` queda para lo que
+el paso 1 no vio.
 
 Desde la fase 4C el resultado se lee en **`/admin/salud`** (superadmin), que muestra
 la última corrida de cada cron con su resumen. La consulta SQL directa sigue
