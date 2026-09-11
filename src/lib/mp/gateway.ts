@@ -26,6 +26,15 @@ export type MpPaymentDetails = {
    *  —ni siquiera con la suscripción ya vinculada al socio— y el cobro cae en la
    *  bandeja a esperar que llegue la otra notificación. */
   subscriptionId: string | null;
+  /** Id de la cuenta que COBRÓ, como texto; `null` si MP no lo manda.
+   *
+   *  Medido el 11/09/2026 sobre los 13 pagos productivos desde julio:
+   *  `/v1/payments/search` devuelve TAMBIÉN los pagos que la cuenta hizo como
+   *  pagadora —la factura mensual de MP por cargos de operar— y en ésos la clave
+   *  `collector_id` viene AUSENTE (no nula). En todo cobro real es un entero
+   *  igual al id de `/users/me`. Quien decide con esto es el paso 1 de la
+   *  conciliación (`isOwnCollection`); el gateway sólo lo expone. */
+  collectorId: string | null;
 };
 
 export type MpAuthorizedPayment = {
@@ -83,6 +92,12 @@ export type MpGateway = {
   searchAuthorizedPayments(preapprovalId: string): Promise<MpAuthorizedPayment[]>;
   /** `GET /v1/payments/search` aprobados por `date_approved` desde `since`. */
   searchPayments(input: { since: Date }): Promise<MpPaymentDetails[]>;
+  /** El id de la cuenta dueña del token (`GET /users/me`), como texto, cacheado
+   *  por proceso. El token DEFINE la identidad: no hay variable de entorno ni
+   *  fila de configuración que pueda quedar desactualizada. Sólo se cachea un
+   *  éxito; una respuesta no-2xx lanza con el `status` colgado, así el 429 se
+   *  reintenta como cualquier lectura. */
+  ownAccountId(): Promise<string>;
   /** Checkout Pro. La preferencia NO se persiste: el pago se reconoce por la referencia. */
   createPreference(input: {
     title: string;
@@ -155,10 +170,16 @@ type RawPayment = {
   date_approved?: string | null;
   payer?: { email?: string | null } | null;
   description?: string | null;
+  collector_id?: number | string | null;
   point_of_interaction?: {
     transaction_data?: { subscription_id?: string | null } | null;
   } | null;
 };
+
+/** Un id numérico o de texto de MP, como texto; ausente, nulo o vacío → null. */
+function idText(v: unknown): string | null {
+  return typeof v === "number" || (typeof v === "string" && v !== "") ? String(v) : null;
+}
 
 function mapPayment(res: RawPayment, fallbackId: string): MpPaymentDetails {
   if (typeof res.transaction_amount !== "number") {
@@ -177,6 +198,7 @@ function mapPayment(res: RawPayment, fallbackId: string): MpPaymentDetails {
     // que no tener ninguno —resolvería contra una fila inexistente— y MP manda
     // el bloque entero sólo en los pagos que vienen de un preapproval.
     subscriptionId: res.point_of_interaction?.transaction_data?.subscription_id || null,
+    collectorId: idText(res.collector_id),
   };
 }
 
@@ -242,6 +264,10 @@ export function makeMpGateway(): MpGateway {
     return client;
   }
 
+  // El id de la cuenta propia se pide una vez por proceso. Sólo se guarda un
+  // éxito: un fallo deja `ownId` en null y la próxima llamada vuelve a pedir.
+  let ownId: string | null = null;
+
   // Búsquedas por fetch directo: el SDK no expone `/preapproval/search` ni
   // `/authorized_payments` y su `payments.search` no pagina por nosotros. Una
   // respuesta no-2xx lanza (es un fallo técnico, que el llamador convierte en
@@ -285,6 +311,16 @@ export function makeMpGateway(): MpGateway {
   }
 
   const api: MpGateway = {
+    async ownAccountId() {
+      if (ownId !== null) return ownId;
+      const res = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${accessToken()}` } });
+      if (!res.ok) throw httpFailure("users/me", res);
+      const me = (await res.json()) as { id?: number | string | null };
+      const id = idText(me.id);
+      if (id === null) throw new Error("MP no devolvió el id de la cuenta.");
+      ownId = id;
+      return id;
+    },
     async getPlan(planId) {
       const plan = await new PreApprovalPlan(mp()).get({ preApprovalPlanId: planId });
       const amount = plan.auto_recurring?.transaction_amount;
@@ -436,6 +472,8 @@ export function makeMpGateway(): MpGateway {
   //
   // Los métodos no usan `this` (todo sale de los closures `mp()` y
   // `searchAll`), así que envolverlos acá no cambia nada más que el reintento.
+  // `ownAccountId` es lectura y va con reintento: sin él, un 429 a las 03:17
+  // apagaría el paso 1 entero.
   return {
     ...api,
     getPlan: retrying(api.getPlan),
@@ -445,6 +483,7 @@ export function makeMpGateway(): MpGateway {
     searchPreapprovals: retrying(api.searchPreapprovals),
     searchAuthorizedPayments: retrying(api.searchAuthorizedPayments),
     searchPayments: retrying(api.searchPayments),
+    ownAccountId: retrying(api.ownAccountId),
   };
 }
 

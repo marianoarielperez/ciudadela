@@ -191,6 +191,11 @@ describe("getPayment (4B)", () => {
     });
     expect((await makeMpGateway().getPayment("9")).subscriptionId).toBeNull();
   });
+
+  it("mapea collector_id (entero en MP) a texto", async () => {
+    mocks.paymentGet.mockResolvedValue({ id: 5, status: "approved", transaction_amount: 3000, collector_id: 1978062823 });
+    expect((await makeMpGateway().getPayment("5")).collectorId).toBe("1978062823");
+  });
 });
 
 describe("getAuthorizedPayment (4B)", () => {
@@ -381,6 +386,30 @@ describe("searchPayments", () => {
     expect(url).toContain("range=date_approved");
     expect(url).toContain("status=approved");
     expect(decodeURIComponent(url)).toContain("begin_date=2026-09-07T11:00:00.000Z");
+  });
+
+  // Medido el 11/09/2026 sobre los 13 pagos productivos desde julio: los cobros
+  // traen `collector_id` como ENTERO igual al id de la cuenta; la factura mensual
+  // de MP por cargos de operar —que la cuenta PAGÓ— viene sin la clave.
+  it("mapea collector_id a texto; ausente o null → null", async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          paging: { total: 3, limit: 100, offset: 0 },
+          results: [
+            { id: 1, status: "approved", transaction_amount: 6000, collector_id: 1978062823 },
+            { id: 178354740076, status: "approved", transaction_amount: 94.88, description: "Facturas con cargos por operar", external_reference: "[5117560041]" },
+            { id: 3, status: "approved", transaction_amount: 1, collector_id: null },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const rows = await makeMpGateway().searchPayments({ since: new Date("2026-09-07T11:00:00Z") });
+    expect(rows.map((r) => r.collectorId)).toEqual(["1978062823", null, null]);
+    // Lo ajeno sigue saliendo del gateway: quién lo descarta es el cron, que
+    // además lo cuenta y lo audita. El gateway sólo expone el dato.
+    expect(rows).toHaveLength(3);
   });
 });
 
@@ -576,5 +605,43 @@ describe("reintento ante 429", () => {
     mocks.update.mockRejectedValue(rateLimited());
     await expect(makeMpGateway().cancelPreapproval("pre-1")).rejects.toMatchObject({ status: 429 });
     expect(mocks.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── 11/09/2026: el id de la cuenta propia. `payments/search` devuelve también lo
+// que la cuenta PAGÓ, y sin este id el cron no tiene contra qué comparar. ──────
+
+describe("ownAccountId", () => {
+  const me = () =>
+    new Response(JSON.stringify({ id: 1978062823, nickname: "VECINALCIUDADELA", site_id: "MLA" }), { status: 200 });
+
+  it("pide GET /users/me con el bearer y devuelve el id como texto", async () => {
+    mocks.fetch.mockResolvedValueOnce(me());
+    expect(await makeMpGateway().ownAccountId()).toBe("1978062823");
+    const [url, init] = mocks.fetch.mock.calls[0];
+    expect(String(url)).toBe("https://api.mercadopago.com/users/me");
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer TEST-token" });
+  });
+
+  it("cachea en el gateway: la segunda llamada no vuelve a pedir", async () => {
+    mocks.fetch.mockResolvedValueOnce(me());
+    const g = makeMpGateway();
+    await g.ownAccountId();
+    expect(await g.ownAccountId()).toBe("1978062823");
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("una respuesta no-2xx lanza con el status colgado y NO se cachea: la siguiente vuelve a pedir", async () => {
+    mocks.fetch.mockResolvedValueOnce(new Response("{}", { status: 500 }));
+    const g = makeMpGateway();
+    await expect(g.ownAccountId()).rejects.toMatchObject({ status: 500 });
+    mocks.fetch.mockResolvedValueOnce(me());
+    expect(await g.ownAccountId()).toBe("1978062823");
+    expect(mocks.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("una respuesta sin id lanza", async () => {
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ nickname: "x" }), { status: 200 }));
+    await expect(makeMpGateway().ownAccountId()).rejects.toThrow(/id de la cuenta/);
   });
 });
