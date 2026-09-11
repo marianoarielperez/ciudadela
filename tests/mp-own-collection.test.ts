@@ -10,6 +10,7 @@ describe("isOwnCollection", () => {
     ["otro id", "202123439", false],
     ["sin collector_id (la factura mensual de MP)", null, false],
     ["cadena vacía", "", false],
+    ["texto con espacios no se normaliza", " 1978062823 ", false],
   ])("%s → %s", (_label: string, collectorId: string | null, expected: boolean) => {
     expect(isOwnCollection({ collectorId }, "1978062823")).toBe(expected);
   });

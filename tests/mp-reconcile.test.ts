@@ -428,6 +428,18 @@ describe("reconcile", () => {
     expect((await deps().r.run()).paymentsForeign).toBe(0);
   });
 
+  it("si la lectura del asiento falla, el ajeno igual no se aplica, se cuenta, y el error lleva el rótulo payments.foreign; el propio siguiente se aplica", async () => {
+    const d = deps({ payments: [pay("178354740076", { collectorId: null }), pay("1")] });
+    d.db.auditLog.findFirst.mockRejectedValueOnce(new Error("db down"));
+    const s = await d.r.run();
+    expect(d.processor.applyPayment).toHaveBeenCalledTimes(1);
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), null, expect.anything());
+    expect(d.audit).not.toHaveBeenCalled();
+    expect(s.paymentsForeign).toBe(1);
+    expect(s.paymentsRecovered).toBe(1);
+    expect(s.errors).toEqual([expect.stringMatching(/^payments\.foreign: /)]);
+  });
+
   // Antes iba `null`, y un débito cuyo webhook no llegó hacía escala en la
   // bandeja como "sin referencia" hasta que el paso 2 lo levantaba (la corrida
   // del 11/09/2026: paymentsInbox 2, debitsRecovered 1, una sola fila visible).

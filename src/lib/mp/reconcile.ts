@@ -87,7 +87,11 @@ function outcomeOf(result: string): ApplyOutcome {
 }
 
 export type ReconcileSummary = {
-  /** Pagos sueltos (paso 1) que el procesador efectivamente asentó. */
+  /** Pagos sueltos (paso 1) que el procesador efectivamente asentó. Desde el
+   *  11/09/2026 incluye los débitos de suscripción que la búsqueda indexa: el
+   *  paso 1 los resuelve por el preapproval que trae el pago, y el paso 2 ya
+   *  los ve locales. `debitsRecovered` queda para lo que el paso 1 no vio
+   *  (fuera de la ventana de 72 h, o no indexado). */
   paymentsRecovered: number;
   /** Pagos sueltos que terminaron en la bandeja de sin conciliar. */
   paymentsInbox: number;
@@ -201,6 +205,8 @@ export function makeReconcile(deps: Deps) {
       // lo vuelve a ver hasta tres noches. Consulta por el índice
       // `[entity, entityId]`. Si esta lectura falla, cae en el catch por pago
       // y el ajeno igual no se aplicó, que es lo que importa.
+      // Dos corridas solapadas (cron + curl manual) pueden dejar dos filas —
+      // findFirst y luego insert, sin lock—; inofensivo, el contador es por corrida.
       const noteForeign = async (p: MpPaymentDetails) => {
         const seen = await deps.db.auditLog.findFirst({
           where: { action: FOREIGN_PAYMENT_ACTION, entity: "mp_payment", entityId: p.id },
@@ -209,8 +215,10 @@ export function makeReconcile(deps: Deps) {
         if (seen) return;
         await deps.audit({
           action: FOREIGN_PAYMENT_ACTION, entity: "mp_payment", entityId: p.id,
-          // Sin datos personales: un pago ajeno no trae pagador, y descripción y
-          // referencia son texto de MP (el número de su factura).
+          // Sin datos personales PARA LA FACTURA de MP (no trae pagador; la
+          // descripción y la referencia son texto de MP). Un egreso a una
+          // persona traería su nombre en `description`: aceptable porque
+          // `audit_log` no tiene pantalla, pero que quede dicho.
           detail: { mpPaymentId: p.id, amount: p.transactionAmount, description: p.description, externalReference: p.externalReference },
         });
       };
@@ -263,7 +271,13 @@ export function makeReconcile(deps: Deps) {
             try {
               // "¿Es nuestro?" antes que "¿ya lo conocemos?": un ajeno no puede
               // tener Payment local, y no tiene por qué preguntarse por la bandeja.
-              if (!isOwnCollection(p, own)) { s.paymentsForeign++; await noteForeign(p); continue; }
+              if (!isOwnCollection(p, own)) {
+                s.paymentsForeign++;
+                // Un ajeno se cuenta aunque el asiento falle: el rótulo dice
+                // `foreign`, no `apply`, porque acá nunca se aplicó nada.
+                try { await noteForeign(p); } catch (e) { fail("payments.foreign", { mpPaymentId: p.id }, e); }
+                continue;
+              }
               if ((await hasLocal(p.id)) || (await inInbox(p.id))) continue;
               count(await deps.processor.applyPayment(p, p.subscriptionId, { mailBudget }), "payments");
             } catch (e) { fail("payments.apply", { mpPaymentId: p.id }, e); }
