@@ -189,11 +189,12 @@ export function makeReconcile(deps: Deps) {
       };
       const hasLocal = async (mpPaymentId: string) =>
         Boolean(await deps.db.payment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
-      // Paso 1: cualquier fila de la bandeja frena. Ahí el cron no sabe nada que
-      // el webhook no supiera —le pasa el mismo `payment` y `preapprovalId: null`—,
-      // así que re-procesar una fila abierta sería ruido, y una que el operador
-      // descartó (`dismissed`) o resolvió (`matched`) es una decisión tomada que
-      // volver a aplicar sería pisar.
+      // Paso 1: cualquier fila de la bandeja frena. El cron le pasa al procesador
+      // exactamente lo que le pasa el webhook —el `payment` y el preapproval que
+      // el propio pago trae en `point_of_interaction` (la búsqueda también lo
+      // manda, medido el 11/09/2026)—, así que re-procesar una fila abierta
+      // sería ruido, y una que el operador descartó (`dismissed`) o resolvió
+      // (`matched`) es una decisión tomada que volver a aplicar sería pisar.
       const inInbox = async (mpPaymentId: string) =>
         Boolean(await deps.db.mpUnmatchedPayment.findUnique({ where: { mpPaymentId }, select: { id: true } }));
       // Un pago ajeno deja UN asiento, no uno por corrida: la ventana de 72 h
@@ -264,7 +265,7 @@ export function makeReconcile(deps: Deps) {
               // tener Payment local, y no tiene por qué preguntarse por la bandeja.
               if (!isOwnCollection(p, own)) { s.paymentsForeign++; await noteForeign(p); continue; }
               if ((await hasLocal(p.id)) || (await inInbox(p.id))) continue;
-              count(await deps.processor.applyPayment(p, null, { mailBudget }), "payments");
+              count(await deps.processor.applyPayment(p, p.subscriptionId, { mailBudget }), "payments");
             } catch (e) { fail("payments.apply", { mpPaymentId: p.id }, e); }
           }
         } catch (e) { fail("payments", {}, e); }

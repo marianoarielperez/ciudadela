@@ -427,6 +427,18 @@ describe("reconcile", () => {
   it("el resumen arranca con paymentsForeign en 0", async () => {
     expect((await deps().r.run()).paymentsForeign).toBe(0);
   });
+
+  // Antes iba `null`, y un débito cuyo webhook no llegó hacía escala en la
+  // bandeja como "sin referencia" hasta que el paso 2 lo levantaba (la corrida
+  // del 11/09/2026: paymentsInbox 2, debitsRecovered 1, una sola fila visible).
+  // El webhook ya pasa este id desde la T14; el cron quedó atrás.
+  it("paso 1 le pasa al procesador el preapproval que trae el pago, como el webhook", async () => {
+    const d = deps({ payments: [pay("177432666739", { subscriptionId: "4b3e9b33a2954b82b7dfc25d5dbccf01", externalReference: "socio:255" })] });
+    await d.r.run();
+    expect(d.processor.applyPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "177432666739" }), "4b3e9b33a2954b82b7dfc25d5dbccf01", expect.anything(),
+    );
+  });
 });
 
 // ── Espaciado entre suscripciones (hallazgo de producción, 24/08/2026) ───────
