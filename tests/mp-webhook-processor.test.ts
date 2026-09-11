@@ -13,7 +13,7 @@ import { makeMailBudget } from "@/lib/email/batch-cap";
 import { UNMATCHED_REASONS } from "@/lib/mp/unmatched";
 import { makeWebhookProcessor, rejectionSummaryPrefix, WEBHOOK_RESULTS } from "@/lib/mp/webhook-processor";
 
-type PaymentOver = Partial<{ status: string; statusDetail: string | null; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null; subscriptionId: string | null }>;
+type PaymentOver = Partial<{ status: string; statusDetail: string | null; externalReference: string | null; transactionAmount: number; dateApproved: Date | null; payerEmail: string | null; subscriptionId: string | null; collectorId?: string | null }>;
 
 function deps(over: {
   payment?: PaymentOver;
@@ -31,7 +31,9 @@ function deps(over: {
   const paidAt = new Date("2026-09-10T11:15:30Z");
   const payment = {
     id: "777", status: "approved", statusDetail: "accredited", transactionAmount: 6000,
-    externalReference: null as string | null, dateApproved: paidAt as Date | null, payerEmail: "v@x.com", description: "Cuota", subscriptionId: null as string | null, ...over.payment,
+    externalReference: null as string | null, dateApproved: paidAt as Date | null, payerEmail: "v@x.com", description: "Cuota", subscriptionId: null as string | null,
+    // Desde el 11/09/2026 el gateway expone el cobrador; el procesador no lo mira (la guarda vive en el cron).
+    collectorId: null as string | null, ...over.payment,
   };
   const application = {
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
