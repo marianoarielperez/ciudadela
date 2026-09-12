@@ -117,7 +117,17 @@ async function capture(ctx: BrowserContext, c: Capture): Promise<void> {
     await page.waitForTimeout(400); // transiciones
     const dir = join(OUT, c.manual);
     mkdirSync(dir, { recursive: true });
-    await page.screenshot({ path: join(dir, `${c.file}.png`), fullPage: c.fullPage ?? false });
+    // `animations: "disabled"` adelanta las animaciones finitas a su estado
+    // final y las congela. No es cosmética: la foto de página entera redimensiona
+    // el viewport a la altura del documento, y eso VUELVE A DISPARAR los
+    // `animate-in` de entrada. Medido en `/actividades`, cuya grilla entra con un
+    // fade escalonado: la captura salía con una sola tarjeta a medio aparecer y
+    // el resto de la semana en blanco, y la corrida decía `ok` igual.
+    await page.screenshot({
+      path: join(dir, `${c.file}.png`),
+      fullPage: c.fullPage ?? false,
+      animations: "disabled",
+    });
     console.log(`ok  ${c.manual}/${c.file}.png`);
   } finally {
     await page.close();
