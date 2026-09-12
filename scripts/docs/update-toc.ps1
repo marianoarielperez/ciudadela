@@ -1,6 +1,6 @@
 ﻿# Abre cada .docx con Word (COM), actualiza campos e índice, guarda y cierra.
 # Imprime "<archivo>: <páginas> páginas". Lo llama scripts/docs/build-docx.ts.
-param([Parameter(Mandatory = $true)][string[]]$Paths)
+param([Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)][string[]]$Paths)
 
 # Sin Word, New-Object -ComObject falla pero el script seguiría y terminaría con
 # código 0: con Stop el error corta acá y el build avisa que hay que apretar F9.

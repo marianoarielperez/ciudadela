@@ -426,7 +426,7 @@ async function buildOne(file: string): Promise<string> {
 }
 
 function defaultInputs(): string[] {
-  const dirs = [join(ROOT, "docs", "manuales", "tecnica"), join(ROOT, "docs", "manuales", "usuario")];
+  const dirs = ["tecnica", "usuario", "resumen"].map((d) => join(ROOT, "docs", "manuales", d));
   return dirs.flatMap((d) => (existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md") && !f.startsWith("_")).sort().map((f) => join(d, f)) : []));
 }
 
