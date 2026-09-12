@@ -700,7 +700,8 @@ fuente que fija que no vuelva.
 ## Documentación y manuales (`docs/manuales/`)
 
 Desde el 11/09/2026 existe una serie de siete documentos técnicos (T1-T7) y tres
-manuales de usuario (M1 operador, M2 socio, M3 vecino) en `docs/manuales/`: fuente
+manuales de usuario (M1 operador, M2 socio, M3 vecino), más dos resúmenes para revisión
+externa (R1 tablas del sistema, R2 resumen técnico) en `docs/manuales/`: fuente
 Markdown, capturas en `img/` y los Word generados en `word/` con `npm run docs:build`
 (`scripts/docs/`, ver el README de la carpeta). **Al cerrar un módulo que cambie una
 pantalla, una regla o un cron, se actualiza el Markdown correspondiente, se

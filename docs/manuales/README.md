@@ -7,7 +7,8 @@ nunca al revés.**
 |---|---|
 | `tecnica/` | Serie técnica T1-T7 (para el desarrollador que hereda el proyecto) |
 | `usuario/` | Manuales M1 (operador), M2 (socio), M3 (vecino) |
-| `img/` | Logo y capturas (`m1/`, `m2/`, `m3/`) |
+| `resumen/` | R1 (tablas del sistema) y R2 (resumen técnico), para una revisión externa |
+| `img/` | Logo, capturas (`m1/`, `m2/`, `m3/`), diagramas Mermaid y sus PNG (`r1/`), notas de siembra |
 | `word/` | Los `.docx` generados (se commitean) |
 
 ## Regenerar los Word

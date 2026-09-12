@@ -1,5 +1,5 @@
 // Markdown → .docx para docs/manuales/. Uso:
-//   npm run docs:build                      (compila tecnica/*.md y usuario/*.md)
+//   npm run docs:build                      (compila tecnica/*.md, usuario/*.md y resumen/*.md)
 //   npm run docs:build docs/manuales/tecnica/T1-vision-y-panorama.md
 // Subconjunto de Markdown admitido: ver docs/manuales/README.md. Cualquier otra
 // sintaxis corta el build con archivo y línea. Después de escribir cada Word,
