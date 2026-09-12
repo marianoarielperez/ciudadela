@@ -369,14 +369,13 @@ otra sintaxis hace fallar el build con un mensaje que dice archivo y línea.
   con `channel: "chrome"` (usa el Chrome instalado, no descarga navegadores), viewport
   1280×800 a escala 1, inicia sesión con los usuarios de prueba, recorre
   `capture-plan.ts` y guarda PNG en `docs/manuales/img/<manual>/NN-slug.png`. Lee
-  `DOCS_CAPTURE_BASE_URL` (default `http://localhost:3000`) y las contraseñas de
-  `DOCS_CAPTURE_ADMIN_PASSWORD` / `DOCS_CAPTURE_MEMBER_PASSWORD` /
-  `DOCS_CAPTURE_SUPERADMIN_PASSWORD` (variables locales, no van al `.env.example` como
-  obligatorias: se documentan como opcionales de desarrollo).
-- `scripts/docs/reset-test-passwords.ts`: setea bcrypt de una contraseña pasada por
-  argumento a `admin.prueba@sigev.local`, `socio.prueba@sigev.local` y
+  `DOCS_CAPTURE_BASE_URL` (default `http://localhost:3000`) y la contraseña de los
+  usuarios de prueba de `SEED_TEST_PASSWORD`, que ya existe en el `.env` local para el
+  seed: no se agrega ninguna variable ni ningún secreto nuevo.
+- `scripts/docs/reset-test-passwords.ts`: reaplica el bcrypt de `SEED_TEST_PASSWORD` a
+  `admin.prueba@sigev.local`, `socio.prueba@sigev.local` y
   `verificacion.m2@sigev.local` (y activa este último). Se niega a correr si
-  `DATABASE_URL` no apunta a `localhost` (misma guarda que `prisma/seed-guard.ts`).
+  `DATABASE_URL` no apunta a `localhost`.
 - Verificación de cada Word: `soffice --headless --convert-to pdf` y lectura visual del
   PDF (portada, índice, una tabla, una imagen, el pie), más `validate.py` del skill docx.
 
