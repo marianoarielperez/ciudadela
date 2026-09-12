@@ -293,8 +293,17 @@ legacy** (`?id=X&topic=payment`) y **dos** de `?id=Y&topic=merchant_order`. Las 
 últimas responden **200 `{"ignored":"legacy_ipn"}`** — recibido, **no** procesado:
 no se persiste ni se aplica nada. Son notificaciones legítimas en un formato que no
 implementamos, y un 4xx sostenido es algo que MP puede terminar deshabilitando, con
-lo que se perdería también la buena. Un POST **sin** `topic=` sigue dando 400 y sin
-auditar.
+lo que se perdería también la buena.
+
+**Medido en nginx del VPS el 11/09/2026: la IPN vieja llega CON cuerpo JSON**, no
+vacío, así que en la ruta no cae en la rama del cuerpo inválido sino en la del
+`data.id` malformado. Desde la 4B hasta el 11/09 esa segunda rama la reconocía y la
+auditaba pero respondía **400**, y MP reintentaba la IPN de pagos de **agosto** seis
+veces por día. Desde el 12/09/2026 las dos ramas comparten `ignoreLegacyIpn()`:
+asiento `webhook_legacy_ipn` con su `topic` en cada llegada, traiga o no cabeceras,
+y 200.
+
+Un POST **sin** `topic=` sigue dando 400 y sin auditar.
 
 Procesamiento (inline: la escala lo permite):
 

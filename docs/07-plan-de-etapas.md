@@ -502,6 +502,26 @@ nivel *review* en `health.ts` cuando la última conciliación tiene
 `paymentsRecovered + paymentsInbox + paymentsSkipped === 0` — hoy ese caso queda
 en verde.
 
+### La IPN vieja de MP responde 200 también con cuerpo JSON — **CERRADO** (12/09/2026)
+
+Salió de leer el `access.log` de Nginx mientras se cerraba el arreglo anterior:
+Mercado Pago seguía mandando la IPN vieja (`MercadoPago Feed v2.0`,
+`?id=…&topic=payment|merchant_order`) para pagos por link de **agosto** y sus
+órdenes, varias veces por día, y la ruta respondía **400** con 23 bytes
+(`{"error":"bad_data_id"}`). La 4B había decidido el 200 para lo que no atendemos
+—un 4xx sostenido puede hacer que MP deshabilite la URL— pero lo puso sólo en la
+rama del cuerpo vacío, suponiendo que la IPN vieja llega así; en producción llega
+con un JSON y caía en la rama del `data.id` malformado, que la reconocía, la
+auditaba sólo con cabeceras y devolvía 400 igual. El test existente fijaba ese 400.
+Arreglo (`e15af44`): helper `ignoreLegacyIpn()` compartido por las dos ramas
+—asiento `webhook_legacy_ipn` con `topic` en cada llegada, sin exigir cabeceras,
+y 200—; dos tests nuevos con la forma real (sin cabeceras, cuerpo JSON) y el
+existente pasa a 200. Spec:
+`docs/superpowers/specs/2026-09-12-webhook-legacy-ipn-200-design.md`. Sin
+migración. Verificación post-deploy: `grep -h "Feed v2.0"
+/var/log/nginx/access.log | tail -5` muestra 200, y a los días MP deja de
+reintentar las de agosto. Deuda: ninguna.
+
 ### Insumos que deja el Módulo 3 para el Módulo 4
 
 Cosas que se encontraron construyendo el M3, que **no** entraban en su alcance y

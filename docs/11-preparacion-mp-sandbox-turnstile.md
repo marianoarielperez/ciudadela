@@ -1015,3 +1015,31 @@ for r in json.load(sys.stdin).get("results", []):
     print(r.get("id"), "collector_id" in r, r.get("collector_id"), r.get("operation_type"), r.get("transaction_amount"), r.get("description"), r.get("external_reference"))
 '
 ```
+
+### J.8 La IPN vieja llega con cuerpo JSON (11/09/2026, producción)
+
+Del `access.log` de Nginx del VPS, mismo día que J.7. Formato de las líneas
+(IP de MP, hora argentina, request, status, bytes, referer, user-agent):
+
+    POST /api/webhooks/mp?id=175328938010&topic=payment HTTP/2.0  400 23  "MercadoPago Feed v2.0 payment"
+    POST /api/webhooks/mp?id=43857728681&topic=merchant_order HTTP/2.0  400 23  "MercadoPago Feed v2.0 merchant_order"
+    POST /api/webhooks/mp?data.id=174386387557&type=payment HTTP/2.0  200 30  "MercadoPago WebHook v1.0 payment"
+
+- **23 bytes = `{"error":"bad_data_id"}`** (la rama del `data.id` malformado);
+  `{"error":"bad_json"}` son 20. O sea: la IPN vieja NO llega con el cuerpo vacío
+  —`req.json()` no falla— sino con un JSON, y por eso el 200 de la 4B (puesto sólo
+  en `bad_json`) nunca se ejecutaba en producción.
+- Los pagos son los dos links `pago:` del 23/08/2026 (`174386387557`,
+  `175328938010`) y sus `merchant_order`: **MP reintentó IPN de agosto el 11/09**,
+  a las 03:25, 04:21, 04:22, 04:40, 05:15 y 11:21 hora argentina. Un 4xx sostenido
+  es exactamente lo que la 4B quería evitar.
+- La moderna (`WebHook v1.0`, `?data.id=&type=`) responde 200 y es la que se
+  procesa. Las cuatro requests por pago salen de la `notification_url` de la
+  preferencia de Checkout Pro (`createPreference`); no hay una configuración de
+  IPN aparte en el panel.
+- Cómo mirarlo (ruta por defecto de Nginx; ajustar si el server block usa otra):
+
+    grep -h "Feed v2.0" /var/log/nginx/access.log /var/log/nginx/access.log.1 | tail -20
+
+  Después del deploy del 12/09/2026 esas líneas tienen que decir **200 24**
+  (`{"ignored":"legacy_ipn"}` son 24 bytes).

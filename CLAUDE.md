@@ -207,6 +207,11 @@ sus propios mensajes ni su propio estado vacío**: usa estos componentes.
   `merchant_order` son legítimas en un formato que no implementamos: "recibido, no
   procesado". Un 4xx sostenido es algo que MP puede terminar deshabilitando, y ahí
   se perdería también la buena. Un POST sin `topic=` sigue dando 400 y sin auditar.
+  Medido en nginx el 11/09/2026: la IPN vieja llega **con cuerpo JSON**, así que
+  el 200 tiene que vivir también en la rama del `data.id` malformado —vivía sólo
+  en la del cuerpo vacío, y entre agosto y el 11/09 MP reintentó IPN de pagos de
+  agosto seis veces por día contra un 400—. Desde el 12/09 las dos ramas comparten
+  `ignoreLegacyIpn()`.
 - **`reconcile` (03:17) es la red, y tiene DOS fuentes**: `payments/search` por
   fecha para los pagos de Checkout Pro, y `authorized_payments/search` **por cada
   suscripción viva**, la red que no depende de la ventana de 72 h (desde el
