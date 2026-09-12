@@ -165,12 +165,30 @@ function table(tok: Tokens.Table, ctx: Ctx): Table {
   // Con más de 8 columnas el piso del 10 % pasa el ancho útil y la última columna
   // sale negativa; en A4 tampoco se leería.
   if (tok.header.length > 8) ctx.fail("una tabla no puede tener más de 8 columnas");
-  // Ancho proporcional al texto más largo de cada columna, con piso del 10 %.
+  // Ancho proporcional al texto más largo de cada columna, con piso del 10 %. El
+  // piso agranda a las angostas (una columna "N°" se queda sin lugar para el
+  // encabezado), así que lo que se le dio de más se le saca a las que NO tocaron el
+  // piso: si el sobrante se descontara al final de la última columna, ésa podía
+  // quedar en cero o negativa aun con seis columnas.
+  const cols = tok.header.length;
   const longest = tok.header.map((h, i) => Math.max(h.text.length, ...tok.rows.map((r) => r[i]?.text.length ?? 0), 4));
   const total = longest.reduce((a, b) => a + b, 0);
-  const widths = longest.map((l) => Math.max(Math.round((l / total) * TEXT_WIDTH), Math.round(TEXT_WIDTH * 0.1)));
-  const sum = widths.reduce((a, b) => a + b, 0);
-  widths[widths.length - 1] += TEXT_WIDTH - sum;
+  const floor = Math.round(TEXT_WIDTH * 0.1);
+  const share = longest.map((l) => (l / total) * TEXT_WIDTH);
+  const pinned = share.map((w) => w < floor);
+  const free = pinned.filter((p) => !p).length;
+  let widths: number[];
+  if (free === 0) {
+    widths = share.map(() => Math.round(TEXT_WIDTH / cols));
+  } else {
+    const budget = TEXT_WIDTH - floor * (cols - free);
+    const freeTotal = share.reduce((a, w, i) => a + (pinned[i] ? 0 : w), 0);
+    widths = share.map((w, i) => (pinned[i] ? floor : Math.round((w / freeTotal) * budget)));
+  }
+  // El redondeo deja unas pocas DXA sueltas: se las queda la columna más ancha.
+  const widest = widths.indexOf(Math.max(...widths));
+  widths[widest] += TEXT_WIDTH - widths.reduce((a, b) => a + b, 0);
+  if (widths.some((w) => w <= 0)) ctx.fail(`no se pudo repartir el ancho de la tabla entre ${cols} columnas`);
   const cell = (c: Tokens.TableCell, i: number, head: boolean) => new TableCell({
     width: { size: widths[i], type: WidthType.DXA },
     shading: head ? { type: ShadingType.CLEAR, fill: HEAD_FILL, color: "auto" } : undefined,
