@@ -1203,7 +1203,7 @@ git commit -m "docs(manuales): survey findings, folder README and the maintenanc
 
 - [ ] **Step 1: Build completo desde cero**
 
-Run: `rm -f docs/manuales/word/*.docx && npm run docs:build` → diez líneas `ok` y diez líneas `N páginas`. Anotar la tabla documento | páginas | tope y marcar los que se pasan (si alguno se pasa, volver al escritor de esa tarea).
+Run: `rm -f docs/manuales/word/*.docx && npm run docs:build` → doce líneas `ok` y doce líneas `N páginas`. Anotar la tabla documento | páginas | tope y marcar los que se pasan (si alguno se pasa, volver al escritor de esa tarea).
 
 - [ ] **Step 2: Cada Word abre**
 
@@ -1228,3 +1228,55 @@ Dispatch de un revisor (Fable) con la spec, el plan y `git diff main..HEAD --sta
 - [ ] **Step 7: Informe y commit**
 
 Escribir `verificacion-final.md` con cada punto y su resultado real (incluidos los que fallaron y cómo se resolvieron). Commit final si hubo correcciones: `docs(manuales): final review fixes`. Dejar el `git push` como comando copiable para el operador: `git push -u origin docs-manuales`.
+
+---
+
+### Task 15: R1 — Tablas del sistema (resumen para revisión externa)
+
+Agregada el 12/09/2026 a pedido del operador: una analista programadora externa va a
+revisar el sistema y pidió un documento breve sobre las tablas.
+
+**Files:**
+- Create: `docs/manuales/resumen/R1-tablas-del-sistema.md`; salida `docs/manuales/word/SIGeV-R1-Tablas-del-sistema.docx`. Tope: 8 páginas.
+- Create: `scripts/docs/render-mermaid.ts` (renderiza un `.mmd` a PNG con `playwright-core` sobre el Chrome instalado, cargando Mermaid desde cdnjs en una página en blanco) y `docs/manuales/img/r1/*.mmd` + `*.png` (un diagrama entidad-relación por dominio).
+- Modify: `package.json` (script `docs:mermaid`), `docs/manuales/README.md` (cómo regenerar los diagramas).
+
+**Fuentes:** `prisma/schema.prisma` (la verdad), `docs/manuales/tecnica/T4-modelo-de-datos.md` (ya revisado), `CLAUDE.md` §Datos incluidos para los volúmenes reales del padrón.
+
+**Índice:**
+1. Cómo está guardado el dato (MariaDB, Prisma, UTC, estados por columna, dinero en `Decimal`) — media página.
+2. Mapa de dominios: un diagrama de bloques y, por dominio, un diagrama entidad-relación (imagen) con las tablas del dominio y sus relaciones.
+3. Una tabla por dominio: tabla SQL | para qué sirve | claves e índices únicos | relaciones | volumen real (padrón: 278 fichas, 3117 cuotas, etc.; "—" si no hay dato).
+4. Los enums que hay que conocer para leer los datos (estado de socio, categoría, estado de cuota, de pago, de solicitud, de presentación, de reporte): valor → significado, en una tabla.
+5. Invariantes que la base NO sostiene y viven en código (lista corta, con puntero a T4 §5).
+6. Cómo mirar la base en local en dos comandos (Docker + `mariadb`), y dónde está el esquema y las migraciones.
+7. Documentos relacionados (T4, T5, T6).
+
+- [ ] Pasos comunes 1-6 del patrón (sin commit propio: commitea el controlador). Diagramas: escribir los `.mmd`, renderizar con `npm run docs:mermaid`, insertar los PNG con `"w=16"` o menor. Commit: `docs(manuales): R1 tables overview with rendered ER diagrams`.
+
+---
+
+### Task 16: R2 — Resumen técnico (≤ 20 páginas, con guía para quien revisa)
+
+Agregada el 12/09/2026 a pedido del operador.
+
+**Files:** Create `docs/manuales/resumen/R2-resumen-tecnico.md`; salida `docs/manuales/word/SIGeV-R2-Resumen-tecnico.docx`. Tope: 20 páginas.
+
+**Fuentes:** los siete técnicos ya revisados (`docs/manuales/tecnica/T1..T7`), `docs/manuales/HALLAZGOS-2026-09-11.md`, `CLAUDE.md`.
+
+**Índice (cada sección de 1-2 páginas y con "Más en: Tn §x"):**
+1. Qué es SIGeV en una página (asociación, cuatro procesos, tres públicos y roles, estado en producción al 12/09/2026).
+2. Stack y arquitectura en una página (un solo Next.js con tres zonas y la API; capas; las tres capas de autorización).
+3. Mapa de carpetas (árbol a dos niveles, una línea por carpeta).
+4. Datos en una página (los nueve dominios, las diez tablas centrales, dónde está el esquema) con el diagrama de bloques de R1.
+5. Cómo fluye la plata (cuota → devengo → cobro por seis caminos → recibo; Mercado Pago: webhook, resolve, conciliación; las cinco invariantes que no se rompen).
+6. Los otros módulos en diez líneas cada uno (solicitudes de alta, socios y libros, re-empadronamiento, reportes, actas y contenido).
+7. Seguridad y privacidad (sesión, tokens, cupos, CSP, archivos, Ley 25.326) en una página.
+8. Operación (VPS, deploy, crons, backups, salud) en una página.
+9. Cómo correrlo y probarlo en local (comandos exactos, usuarios de prueba, suites).
+10. Por dónde empezar a revisar: los puntos delicados (núcleo de cobro, webhook, cierre de libro, guardas de rol), los tests de fuente que fijan convenciones, y la deuda conocida (selección de HALLAZGOS: la CSP de dos PDF, enums sin escritor, `planId` muerto, docs desactualizados).
+11. Documentos relacionados (la serie completa y los manuales).
+
+- [ ] Pasos comunes 1-6 del patrón (sin commit propio). Commit: `docs(manuales): R2 technical summary with review guide`.
+
+Nota: la Tarea 14 (verificación final) corre DESPUÉS de las 15 y 16 y cubre los doce Word.
