@@ -248,6 +248,45 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
     });
   });
 
+  // Medido en nginx del VPS el 11/09/2026: la IPN vieja ("MercadoPago Feed v2.0")
+  // NO llega con el cuerpo vacío sino con un JSON, así que nunca moría en el
+  // `bad_json` de arriba: caía en la rama del data.id malformado, que la
+  // reconocía como legacy, la auditaba… y respondía 400 igual. MP reintentaba
+  // IPN de pagos de AGOSTO seis veces por día.
+  it("un IPN legacy real (Feed v2.0: sin cabeceras, con cuerpo JSON) se reconoce con 200 y se audita con su topic", async () => {
+    const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?id=175328938010&topic=payment", {
+      method: "POST",
+      headers: new Headers({ "x-real-ip": "35.245.20.104" }),
+      body: JSON.stringify({ resource: "/v1/payments/175328938010", topic: "payment" }),
+    }) as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ignored: "legacy_ipn" });
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_legacy_ipn",
+      detail: { reason: "legacy_ipn_shape", topic: "payment" },
+    });
+  });
+
+  it("una merchant_order con cuerpo JSON también se reconoce con 200", async () => {
+    const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?id=43887613192&topic=merchant_order", {
+      method: "POST",
+      headers: new Headers({ "x-real-ip": "35.245.91.34" }),
+      body: JSON.stringify({ resource: "/merchant_orders/43887613192", topic: "merchant_order" }),
+    }) as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ignored: "legacy_ipn" });
+    expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
+      action: "webhook_legacy_ipn",
+      detail: { reason: "legacy_ipn_shape", topic: "merchant_order" },
+    });
+  });
+
   // Un POST basura genérico (sin cabeceras, sin `topic=`) no es un IPN legacy:
   // sigue muriendo en el mismo `bad_json`, pero SIN auditar — si no, cualquier
   // escáner de internet infla `audit_log` a golpe de POST anónimo.
@@ -278,7 +317,9 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
   // La otra mitad de la misma rama: si además viene con forma de IPN legacy
   // (`?topic=` sin `data.id=`), el asiento va al action nuevo. Es la variante
-  // que llega CON cabeceras de firma, así que no muere en el `bad_json`.
+  // que llega CON cabeceras de firma, así que no muere en el `bad_json` — pero
+  // es IPN vieja igual, así que responde 200 `{ ignored: "legacy_ipn" }` como
+  // las otras: el 200 vive en las DOS ramas, no sólo en la del cuerpo vacío.
   it("un IPN legacy que llega con cabeceras de firma también asienta webhook_legacy_ipn", async () => {
     const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
       method: "POST",
@@ -292,7 +333,8 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
     const res = await POST(req);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ignored: "legacy_ipn" });
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
       action: "webhook_legacy_ipn",
       detail: { reason: "legacy_ipn_shape" },

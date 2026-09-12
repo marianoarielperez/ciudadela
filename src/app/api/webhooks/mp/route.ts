@@ -30,6 +30,45 @@ export const runtime = "nodejs";
 // que es lo que la nota buscaba proteger.
 const SAFE_DATA_ID = /^[a-z0-9-]{1,64}$/;
 
+/** La IPN vieja de MP (`?topic=…&id=…`, sin `data.id=`): se audita con su topic
+ *  y se responde 200. Un helper porque hay DOS ramas que la reconocen —el
+ *  cuerpo vacío (`bad_json`) y el cuerpo JSON sin `data.id` válido—: medido en
+ *  nginx el 11/09/2026, la "Feed v2.0" real llega CON cuerpo JSON, así que la
+ *  segunda rama es la que se ejecuta en producción, y devolvía 400 (MP
+ *  reintentaba IPN de pagos de agosto seis veces por día; un 4xx sostenido es
+ *  algo que MP puede terminar deshabilitando). Ver la spec del 12/09/2026. */
+async function ignoreLegacyIpn(topic: string, ip: string): Promise<Response> {
+  await audit({
+    // Action PROPIO, y no `webhook_rejected_signature`: acá no se rechazó
+    // ninguna firma. Los dos primeros días de `/admin/salud` en producción
+    // el panel dijo "51 avisos se rechazaron por firma inválida en las
+    // últimas 24 h" y 49 de esas 51 eran ESTO — el funcionamiento normal de
+    // MP, que manda cuatro requests por cada pago de Checkout Pro. Un
+    // cartel que se enciende solo, todos los días, sin que exista nada que
+    // hacer, es el defecto que la fase 4C ya corrigió tres veces: enseña al
+    // operador a ignorar el tablero entero, incluido el renglón que sí
+    // importa. El asiento se conserva igual: sigue siendo diagnosticable.
+    action: "webhook_legacy_ipn",
+    entity: "webhook",
+    // El `topic` va al asiento porque distingue los dos casos que caen acá
+    // y que se diagnostican distinto: `payment` es la IPN vieja del mismo
+    // cobro que ya entró por la moderna (redundante, ignorable), y
+    // `merchant_order` es un evento que no atendemos y nunca vamos a
+    // atender. Se recorta por las dudas: viene de la query string.
+    detail: { reason: "legacy_ipn_shape", topic: topic.slice(0, 32) },
+    ip,
+  });
+  // 200 y no 400: es una notificación LEGÍTIMA de MP en un formato que no
+  // implementamos, no un error. Verificado en la batería de la T14 contra
+  // el sandbox: por cada pago de Checkout Pro, MP manda CUATRO requests a
+  // `notification_url` —la moderna firmada (la que sirve), la IPN legacy y
+  // dos de `merchant_order`—, y las tres últimas caían en 4xx. MP las
+  // reintenta con backoff, y un endpoint que devuelve 4xx sostenido es algo
+  // que MP puede terminar deshabilitando: perderíamos también la buena.
+  // El asiento de auditoría se conserva, así que sigue siendo diagnosticable.
+  return Response.json({ ignored: "legacy_ipn" }, { status: 200 });
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.MP_WEBHOOK_SECRET;
   if (!secret) return Response.json({ error: "not_configured" }, { status: 500 });
@@ -38,11 +77,15 @@ export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-real-ip") ?? "unknown";
 
   // El IPN legacy de MP manda `?topic=payment&id=123` — `id=`, NO `data.id=` —
-  // y con el CUERPO VACÍO: eso muere en el catch de abajo (`bad_json`), antes
-  // de que exista ningún `body` que inspeccionar. Por eso la señal se calcula
-  // ACÁ, desde la query string sola, ANTES de intentar parsear el JSON — es la
-  // única forma de que la auditoría sea alcanzable para un IPN legacy real. No
-  // implementamos el formato legacy: sólo que quede diagnosticable.
+  // y el cuerpo puede llegar VACÍO o con un JSON. Medido en nginx el
+  // 11/09/2026, la "MercadoPago Feed v2.0" real trae JSON
+  // (`{"resource":"/v1/payments/…","topic":"payment"}`), así que NO muere en el
+  // catch de abajo (`bad_json`) sino en la rama del `data.id` malformado: las
+  // DOS ramas responden 200 por `ignoreLegacyIpn()`. Por eso la señal se
+  // calcula ACÁ, desde la query string sola, ANTES de intentar parsear el JSON
+  // — es la única forma de que sirva para las dos, incluida la del cuerpo
+  // vacío, donde no existe ningún `body` que inspeccionar. No implementamos el
+  // formato legacy: sólo que quede diagnosticable.
   const legacyIpn = url.searchParams.has("topic") && !url.searchParams.has("data.id");
   const legacyTopic = url.searchParams.get("topic") ?? "";
 
@@ -58,37 +101,7 @@ export async function POST(req: NextRequest) {
     // otra vez. `?topic=` sin `data.id=` no es ruido genérico de escáner, es
     // una notificación mal configurada, así que auditarla sin cabeceras no
     // reabre el canal de escritura anónimo que se cerró para el resto.
-    if (legacyIpn) {
-      await audit({
-        // Action PROPIO, y no `webhook_rejected_signature`: acá no se rechazó
-        // ninguna firma. Los dos primeros días de `/admin/salud` en producción
-        // el panel dijo "51 avisos se rechazaron por firma inválida en las
-        // últimas 24 h" y 49 de esas 51 eran ESTO — el funcionamiento normal de
-        // MP, que manda cuatro requests por cada pago de Checkout Pro. Un
-        // cartel que se enciende solo, todos los días, sin que exista nada que
-        // hacer, es el defecto que la fase 4C ya corrigió tres veces: enseña al
-        // operador a ignorar el tablero entero, incluido el renglón que sí
-        // importa. El asiento se conserva igual: sigue siendo diagnosticable.
-        action: "webhook_legacy_ipn",
-        entity: "webhook",
-        // El `topic` va al asiento porque distingue los dos casos que caen acá
-        // y que se diagnostican distinto: `payment` es la IPN vieja del mismo
-        // cobro que ya entró por la moderna (redundante, ignorable), y
-        // `merchant_order` es un evento que no atendemos y nunca vamos a
-        // atender. Se recorta por las dudas: viene de la query string.
-        detail: { reason: "legacy_ipn_shape", topic: legacyTopic.slice(0, 32) },
-        ip,
-      });
-      // 200 y no 400: es una notificación LEGÍTIMA de MP en un formato que no
-      // implementamos, no un error. Verificado en la batería de la T14 contra
-      // el sandbox: por cada pago de Checkout Pro, MP manda CUATRO requests a
-      // `notification_url` —la moderna firmada (la que sirve), la IPN legacy y
-      // dos de `merchant_order`—, y las tres últimas caían en 4xx. MP las
-      // reintenta con backoff, y un endpoint que devuelve 4xx sostenido es algo
-      // que MP puede terminar deshabilitando: perderíamos también la buena.
-      // El asiento de auditoría se conserva, así que sigue siendo diagnosticable.
-      return Response.json({ ignored: "legacy_ipn" }, { status: 200 });
-    }
+    if (legacyIpn) return ignoreLegacyIpn(legacyTopic, ip);
     return Response.json({ error: "bad_json" }, { status: 400 });
   }
 
@@ -109,17 +122,13 @@ export async function POST(req: NextRequest) {
   // helper delega la normalización al caller (ver su cabecera).
   const dataId = (url.searchParams.get("data.id") ?? String(body?.data?.id ?? "")).toLowerCase();
   if (!SAFE_DATA_ID.test(dataId)) {
+    // La IPN vieja con cuerpo JSON cae acá, no en `bad_json`: es la que MP
+    // manda de verdad (medida el 11/09/2026). Misma respuesta que arriba.
+    if (legacyIpn) return ignoreLegacyIpn(legacyTopic, ip);
     if (claimsSignature) {
-      // Misma distinción que arriba, en la rama que llega CON cabeceras (y por
-      // eso no muere en el `bad_json`): un IPN legacy es formato viejo, no
-      // firma inválida. Un `data.id` malformado sí queda en el contador de
-      // firma —la forma del id es lo que entra al manifiesto HMAC—.
-      await audit({
-        action: legacyIpn ? "webhook_legacy_ipn" : "webhook_rejected_signature",
-        entity: "webhook",
-        detail: { reason: legacyIpn ? "legacy_ipn_shape" : "malformed_data_id" },
-        ip,
-      });
+      // Un `data.id` malformado queda en el contador de firma —la forma del id
+      // es lo que entra al manifiesto HMAC—.
+      await audit({ action: "webhook_rejected_signature", entity: "webhook", detail: { reason: "malformed_data_id" }, ip });
     }
     return Response.json({ error: "bad_data_id" }, { status: 400 });
   }
