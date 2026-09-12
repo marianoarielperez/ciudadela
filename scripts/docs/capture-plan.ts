@@ -205,7 +205,7 @@ export const CAPTURES: Capture[] = [
   { manual: "m1", file: "20-tesoreria-sin-conciliar", role: "admin", url: "/admin/tesoreria/sin-conciliar", fullPage: true },
   { manual: "m1", file: "21-tesoreria-reparto", role: "admin", url: "/admin/tesoreria/sin-conciliar/62", fullPage: true },
   { manual: "m1", file: "22-tesoreria-suscripciones", role: "admin", url: "/admin/tesoreria/suscripciones", fullPage: true },
-  { manual: "m1", file: "23-tesoreria-otros-ingresos", role: "admin", url: "/admin/tesoreria/otros-ingresos", fullPage: true },
+  { manual: "m1", file: "23-tesoreria-otros-ingresos", role: "admin", url: "/admin/tesoreria/otros-ingresos", fullPage: false }, // viewport: la columna "Registró" con el nombre del operador queda fuera,
   { manual: "m1", file: "24-tesoreria-exenciones", role: "admin", url: "/admin/tesoreria/exenciones", fullPage: true },
   { manual: "m1", file: "25-actas", role: "admin", url: "/admin/actas", fullPage: true },
   { manual: "m1", file: "26-noticias", role: "admin", url: "/admin/noticias", fullPage: true },
