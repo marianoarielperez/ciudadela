@@ -22,7 +22,11 @@ const PS1 = join(ROOT, "scripts", "docs", "update-toc.ps1");
 // A4 = 11906 × 16838 DXA; márgenes 2,5 cm = 1417 DXA → ancho útil 9072 DXA (16 cm).
 const MARGIN = 1417;
 const TEXT_WIDTH = 11906 - 2 * MARGIN;
-const MAX_IMAGE_PX = 605; // 16 cm a 96 dpi
+const CM_PX = 96 / 2.54; // 1 cm a 96 dpi
+const MAX_IMAGE_PX = 605; // 16 cm: el ancho útil de la página
+// Alto útil de A4 con márgenes de 2,5 cm son 24,7 cm; se reservan ~2,7 cm para la
+// leyenda y el aire, así que una captura entra entera en su página.
+const MAX_IMAGE_H_PX = Math.round(22 * CM_PX); // 832
 const BRAND = "0079BC";
 const HEAD_FILL = "DCEBF7";
 const CODE_FILL = "F1F5F9";
@@ -134,6 +138,20 @@ function heading(depth: number, tokens: Token[], ctx: Ctx): Paragraph {
   return new Paragraph({ heading: levels[depth - 1], pageBreakBefore: depth === 1, children: inline(tokens, ctx) });
 }
 
+// El título de la imagen —![leyenda](ruta "w=8")— es la única forma de fijarle el
+// ancho: 8 cm. Sin título, la imagen ocupa el ancho útil (o su tamaño natural si es
+// más chica).
+function imageWidthPx(tok: Tokens.Image, ctx: Ctx, natural: number): number {
+  const title = tok.title?.trim();
+  if (!title) return Math.min(natural, MAX_IMAGE_PX);
+  const m = /^w=(\d+(?:[.,]\d+)?)$/.exec(title);
+  const cm = m ? Number(m[1].replace(",", ".")) : NaN;
+  if (!m || !(cm >= 4 && cm <= 16)) {
+    ctx.fail(`título de imagen no admitido ("${title}"): el único admitido es el ancho en cm, de 4 a 16 — ![leyenda](ruta "w=8")`);
+  }
+  return Math.round(cm * CM_PX);
+}
+
 function image(tok: Tokens.Image, ctx: Ctx): Paragraph[] {
   const path = resolve(ctx.dir, tok.href);
   if (!existsSync(path)) ctx.fail(`imagen no encontrada: ${tok.href}`);
@@ -141,7 +159,11 @@ function image(tok: Tokens.Image, ctx: Ctx): Paragraph[] {
   const size = pngSize(buf);
   if (!size) ctx.fail(`solo se admiten imágenes PNG: ${tok.href}`);
   const { width, height } = size;
-  const scale = Math.min(1, MAX_IMAGE_PX / width);
+  // Primero el ancho (el pedido o el útil) y después el tope de alto: una captura
+  // de pantalla completa es más alta que la página y escalarla sólo por ancho la
+  // parte en dos.
+  let scale = imageWidthPx(tok, ctx, width) / width;
+  if (height * scale > MAX_IMAGE_H_PX) scale = MAX_IMAGE_H_PX / height;
   ctx.figure += 1;
   return [
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 120, after: 60 }, keepNext: true, children: [new ImageRun({ type: "png", data: buf, transformation: { width: Math.round(width * scale), height: Math.round(height * scale) } })] }),

@@ -27,6 +27,10 @@ lenguaje, citas `>`, imágenes `![leyenda](../img/m1/01-x.png)` solas en su pár
 `title / subtitle / series / docx / version / date`. Otra sintaxis corta el build
 con archivo y línea.
 
+`![leyenda](../img/m1/01-x.png "w=8")` fija el ancho de la imagen en centímetros
+(de 4 a 16; sin título ocupa el ancho útil, 16 cm). Una captura más alta que la
+página se reduce sola para entrar entera en una, con su leyenda.
+
 No se admiten: el tachado `~~texto~~`, las casillas `- [ ]`, el HTML (ni en bloque
 ni inline), las definiciones de enlace `[x]: url`, un tercer nivel de lista ni
 títulos `#####`. Una lista ordenada **siempre arranca en 1**: el número que se
