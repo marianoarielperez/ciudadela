@@ -34,4 +34,25 @@ escriba (`3.`) se ignora.
 
 ## Capturas
 
-(Se completa en la Tarea 13.)
+Las capturas salen del dev server local con `scripts/docs/capture.ts`
+(`playwright-core` sobre el Chrome instalado; no descarga navegadores). Hace falta:
+
+1. el dev server corriendo (`npm run dev`, puerto 3000, o `DOCS_CAPTURE_BASE_URL`);
+2. los usuarios de prueba con la contraseña `SEED_TEST_PASSWORD` del `.env`
+   (`npx tsx scripts/docs/reset-test-passwords.ts` la reaplica; solo contra localhost);
+3. los estados sembrados que describe `docs/manuales/img/SIEMBRA.md`
+   (noticia, alta en cola, reporte, exención, re-empadronamiento convocado, bandeja).
+
+    npm run docs:capture            # todas
+    npm run docs:capture m1         # un manual
+    npm run docs:capture m1 -- --only 20   # una sola (por prefijo)
+
+La lista de capturas vive en `scripts/docs/capture-plan.ts`. Ninguna captura puede
+mostrar datos de un socio real: se usan los `*.prueba` y fichas inventadas.
+
+## Mantenimiento
+
+Al cerrar un módulo que cambie una pantalla o una regla: actualizar el Markdown del
+documento que la describe, re-capturar lo que cambió, `npm run docs:build`, y
+commitear el `.md`, los PNG y el `.docx` juntos. Subir `version` y `date` en el
+front matter.

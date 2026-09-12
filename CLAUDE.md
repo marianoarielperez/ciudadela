@@ -697,6 +697,17 @@ línea del motivo es el único aviso que recibe el vecino y se queda a contraste
 pleno — un `opacity` sobre la tarjeta entera la midió en 2,3:1, y hay un test de
 fuente que fija que no vuelva.
 
+## Documentación y manuales (`docs/manuales/`)
+
+Desde el 11/09/2026 existe una serie de siete documentos técnicos (T1-T7) y tres
+manuales de usuario (M1 operador, M2 socio, M3 vecino) en `docs/manuales/`: fuente
+Markdown, capturas en `img/` y los Word generados en `word/` con `npm run docs:build`
+(`scripts/docs/`, ver el README de la carpeta). **Al cerrar un módulo que cambie una
+pantalla, una regla o un cron, se actualiza el Markdown correspondiente, se
+re-captura lo que cambió y se regenera el Word en el mismo commit.** Lo que `docs/`
+y el código dicen distinto está en `docs/manuales/HALLAZGOS-2026-09-11.md`; la serie
+describe el código.
+
 ## Prioridad actual
 
 Módulos 0 a 5 cerrados y mergeados a `main`; los 0-3 además desplegados hace tiempo.
