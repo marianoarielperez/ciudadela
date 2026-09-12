@@ -640,12 +640,13 @@ cinco tareas programadas), **Infraestructura** (el backup y el estado de Mercado
 socios dados de baja) y **Correo** (avisos fallidos, recibos pendientes de envío y accesos
 trabados).
 
-## 8.1 Tres niveles, no dos
+## 8.1 Dos niveles de veredicto y una categoría aparte, historia
 
-Es la decisión de diseño que hace que la pantalla sirva. **Actuar** es algo roto **con una
-salida concreta que lo apaga**: es el único rojo, y lo único que cuenta para el punto rojo
-de cada pestaña. **Revisar** son ausencias, colas normales y cruces sanos. **Historia** son
-los contadores acumulativos —total histórico de la bandeja, de divergencias, de fallidos—,
+Es la decisión de diseño que hace que la pantalla sirva. El veredicto tiene **dos** niveles.
+**Actuar** es algo roto **con una salida concreta que lo apaga**: es el único rojo, y lo
+único que cuenta para el punto rojo de cada pestaña. **Revisar** son ausencias, colas
+normales y cruces sanos. Fuera del veredicto queda una tercera categoría, **historia**: los
+contadores acumulativos —total histórico de la bandeja, de divergencias, de fallidos—,
 redactados como contexto y **nunca como trabajo pendiente**: un contador sin ventana ni
 acción que lo baje enseña a ignorar el tablero, y el proyecto ya lo corrigió tres veces.
 
