@@ -194,11 +194,13 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
     expect(process_).toHaveBeenCalledWith(expect.objectContaining({ dataId: upper.toLowerCase() }));
   });
 
-  // El IPN legacy manda `?topic=payment&id=123` (`id=`, NO `data.id=`) con el
-  // CUERPO VACÍO y SIN cabeceras de firma (es anterior al esquema de firma):
-  // no llega nunca a `webhook_events`, muere en el `bad_json` de arriba. El
-  // asiento se escribe igual —sin depender de las cabeceras— para que el
-  // operador no salga a buscarlo a una tabla donde no está.
+  // El IPN legacy manda `?topic=payment&id=123` (`id=`, NO `data.id=`) y SIN
+  // cabeceras de firma (es anterior al esquema de firma). Puede llegar con el
+  // cuerpo vacío —esta variante, que muere en el `bad_json` de arriba— o con
+  // un JSON (la Feed v2.0 real, medida en nginx el 11/09/2026: ver más abajo);
+  // en ninguno de los dos casos llega a `webhook_events`. El asiento se escribe
+  // igual —sin depender de las cabeceras— para que el operador no salga a
+  // buscarlo a una tabla donde no está.
   //
   // Responde 200 y no 400 desde la batería de la T14: verificado contra el
   // sandbox, MP manda CUATRO requests por cada pago de Checkout Pro —la moderna
@@ -206,7 +208,7 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
   // fallan. Un 4xx sostenido es algo que MP puede terminar deshabilitando, y
   // ahí se perdería también la buena. No es un error: es una notificación
   // legítima en un formato que no implementamos.
-  it("un IPN legacy real (sin body, sin cabeceras de firma) se reconoce con 200 y se audita como webhook_legacy_ipn", async () => {
+  it("un IPN legacy con cuerpo vacío y sin cabeceras de firma se reconoce con 200 y se audita como webhook_legacy_ipn", async () => {
     const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
       method: "POST",
       headers: new Headers({ "x-real-ip": "10.0.0.9" }),
@@ -264,6 +266,9 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ignored: "legacy_ipn" });
+    // 200 es "recibido", NO "procesado": nada se persiste ni se aplica.
+    expect(create).not.toHaveBeenCalled();
+    expect(audit).toHaveBeenCalledTimes(1);
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
       action: "webhook_legacy_ipn",
       detail: { reason: "legacy_ipn_shape", topic: "payment" },
@@ -281,6 +286,8 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ignored: "legacy_ipn" });
+    expect(create).not.toHaveBeenCalled();
+    expect(audit).toHaveBeenCalledTimes(1);
     expect((audit as unknown as MockedFn).mock.calls[0][0]).toMatchObject({
       action: "webhook_legacy_ipn",
       detail: { reason: "legacy_ipn_shape", topic: "merchant_order" },
@@ -317,9 +324,10 @@ describe("POST /api/webhooks/mp — validación del data.id", () => {
 
   // La otra mitad de la misma rama: si además viene con forma de IPN legacy
   // (`?topic=` sin `data.id=`), el asiento va al action nuevo. Es la variante
-  // que llega CON cabeceras de firma, así que no muere en el `bad_json` — pero
-  // es IPN vieja igual, así que responde 200 `{ ignored: "legacy_ipn" }` como
-  // las otras: el 200 vive en las DOS ramas, no sólo en la del cuerpo vacío.
+  // con cuerpo JSON (y, acá, además con cabeceras de firma): no muere en el
+  // `bad_json` porque el cuerpo parsea, no por las cabeceras — pero es IPN
+  // vieja igual, así que responde 200 `{ ignored: "legacy_ipn" }` como las
+  // otras: el 200 vive en las DOS ramas, no sólo en la del cuerpo vacío.
   it("un IPN legacy que llega con cabeceras de firma también asienta webhook_legacy_ipn", async () => {
     const req = new Request("https://vecinalciudadela.ar/api/webhooks/mp?topic=payment&id=123", {
       method: "POST",
