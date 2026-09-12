@@ -28,6 +28,8 @@ const HEAD_FILL = "DCEBF7";
 const CODE_FILL = "F1F5F9";
 const FONT = "Calibri";
 const MONO = "Consolas";
+const ITEM_AFTER = 60;   // aire entre ítems de una lista
+const BLOCK_AFTER = 240; // aire después de una lista, cuando abajo sigue el texto
 
 type Meta = { title: string; subtitle: string; series: string; docx: string; version: string; date: string };
 
@@ -205,7 +207,10 @@ function table(tok: Tokens.Table, ctx: Ctx): Table {
   });
 }
 
-function list(tok: Tokens.List, ctx: Ctx, level: number, deco: Deco = {}): Block[] {
+// `tailAfter` es el aire que va DESPUÉS de la lista: se lo lleva el último párrafo
+// en vez de un párrafo vacío de separación, que al caer al principio de una página
+// dejaba la página anterior en blanco.
+function list(tok: Tokens.List, ctx: Ctx, level: number, deco: Deco = {}, tailAfter = ITEM_AFTER): Block[] {
   if (level > 1) ctx.fail("las listas admiten dos niveles como máximo");
   const reference = tok.ordered ? "numbers" : "bullets";
   const instance = tok.ordered && level === 0 ? ++ctx.numberingInstance : ctx.numberingInstance;
@@ -215,20 +220,21 @@ function list(tok: Tokens.List, ctx: Ctx, level: number, deco: Deco = {}): Block
   const out: Block[] = [];
   // La línea avanza ítem por ítem para que un error adentro de la lista no apunte
   // siempre a donde empieza; el llamador la restaura y suma el bloque entero.
-  for (const item of tok.items) {
+  for (const [i, item] of tok.items.entries()) {
     if (item.task) ctx.fail("las casillas - [ ] no están admitidas");
+    const lastItem = i === tok.items.length - 1;
+    const children = item.tokens.filter((c) => c.type !== "space");
     let first = true;
-    for (const child of item.tokens) {
+    for (const [j, child] of children.entries()) {
+      const last = lastItem && j === children.length - 1;
       if (child.type === "text" || child.type === "paragraph") {
         const runs = inline((child as Tokens.Text).tokens, ctx);
-        out.push(new Paragraph({ numbering: first ? { reference, level, instance } : undefined, indent: first ? undefined : { left: 720 * (level + 1) }, border, spacing: { after: 60 }, children: runs }));
+        out.push(new Paragraph({ numbering: first ? { reference, level, instance } : undefined, indent: first ? undefined : { left: 720 * (level + 1) }, border, spacing: { after: last ? tailAfter : ITEM_AFTER }, children: runs }));
         first = false;
       } else if (child.type === "list") {
         const sub = ctx.line;
-        out.push(...list(child as Tokens.List, ctx, level + 1, deco));
+        out.push(...list(child as Tokens.List, ctx, level + 1, deco, last ? tailAfter : ITEM_AFTER));
         ctx.line = sub;
-      } else if (child.type === "space") {
-        continue;
       } else {
         ctx.fail(`dentro de una lista solo va texto o una sublista (encontré ${child.type})`);
       }
@@ -238,9 +244,20 @@ function list(tok: Tokens.List, ctx: Ctx, level: number, deco: Deco = {}): Block
   return out;
 }
 
+// Un H1 abre página (pageBreakBefore) y un `---` ya es una separación: delante de
+// cualquiera de los dos —y al final del documento— el aire de separación sobra, y
+// un párrafo vacío ahí deja una página en blanco.
+const gap = () => new Paragraph({ spacing: { before: 0, after: 0 } });
+
+function opensItsOwnPage(t: Token | undefined): boolean {
+  return !t || t.type === "hr" || (t.type === "heading" && (t as Tokens.Heading).depth === 1);
+}
+
 function blocks(tokens: Token[], ctx: Ctx, deco: Deco = {}): Block[] {
   const out: Block[] = [];
-  for (const t of tokens) {
+  const nextBlock = (i: number): Token | undefined => tokens.slice(i + 1).find((n) => n.type !== "space");
+  for (const [i, t] of tokens.entries()) {
+    const separate = !opensItsOwnPage(nextBlock(i));
     switch (t.type) {
       case "space": break;
       case "heading": out.push(heading((t as Tokens.Heading).depth, (t as Tokens.Heading).tokens, ctx)); break;
@@ -251,16 +268,18 @@ function blocks(tokens: Token[], ctx: Ctx, deco: Deco = {}): Block[] {
         break;
       }
       case "text": out.push(new Paragraph({ ...deco, spacing: { after: 120 }, children: inline((t as Tokens.Text).tokens ?? [t], ctx) })); break;
-      case "code": out.push(codeBlock(t as Tokens.Code), new Paragraph({ spacing: { after: 120 } })); break;
-      case "table": out.push(table(t as Tokens.Table, ctx), new Paragraph({ spacing: { after: 120 } })); break;
+      // Un bloque de código y una tabla son tablas de Word: no hay último párrafo
+      // al que darle el aire, y además dos tablas pegadas se fusionan, así que el
+      // párrafo de separación queda — salvo cuando lo que sigue abre página.
+      case "code": out.push(codeBlock(t as Tokens.Code), ...(separate ? [gap()] : [])); break;
+      case "table": out.push(table(t as Tokens.Table, ctx), ...(separate ? [gap()] : [])); break;
       // Los dos bloques que recursan llevan su propia cuenta de líneas adentro: se
       // restaura la de entrada y el incremento de abajo suma el bloque entero una
       // sola vez.
       case "list": {
         const start = ctx.line;
-        out.push(...list(t as Tokens.List, ctx, 0, deco));
+        out.push(...list(t as Tokens.List, ctx, 0, deco, separate ? BLOCK_AFTER : ITEM_AFTER));
         ctx.line = start;
-        out.push(new Paragraph({ spacing: { after: 60 } }));
         break;
       }
       case "blockquote": {
@@ -269,7 +288,11 @@ function blocks(tokens: Token[], ctx: Ctx, deco: Deco = {}): Block[] {
         ctx.line = start;
         break;
       }
-      case "hr": out.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "999999", space: 1 } }, spacing: { after: 200 } })); break;
+      // Un `---` pegado a un H1 es la misma separación dos veces, y la raya quedaba
+      // sola en una página que el salto del capítulo dejaba vacía.
+      case "hr":
+        if (separate) out.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "999999", space: 1 } }, spacing: { after: 200 } }));
+        break;
       case "html": ctx.fail(`HTML no admitido: ${(t as Tokens.HTML).raw.trim().slice(0, 40)}`); break;
       case "def": ctx.fail("las definiciones de enlace [x]: url no se admiten; escribí el enlace inline"); break;
       default: ctx.fail(`sintaxis no admitida (${t.type})`);
