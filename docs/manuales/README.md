@@ -21,10 +21,16 @@ el campo sin calcular: abrir el `.docx`, clic en el índice y F9.
 ## Markdown admitido
 
 Títulos `#` a `####`, párrafos, **negrita**, *cursiva*, `código`, enlaces, listas
-`-` y `1.` de dos niveles, tablas GFM, bloques de código con lenguaje, citas `>`,
-imágenes `![leyenda](../img/m1/01-x.png)` solas en su párrafo (PNG), `---`, y el
-front matter `title / subtitle / series / docx / version / date`. Otra sintaxis
-corta el build con archivo y línea.
+`-` y `1.` de dos niveles, tablas GFM de hasta **8 columnas**, bloques de código con
+lenguaje, citas `>`, imágenes `![leyenda](../img/m1/01-x.png)` solas en su párrafo
+(PNG), `---`, y el front matter
+`title / subtitle / series / docx / version / date`. Otra sintaxis corta el build
+con archivo y línea.
+
+No se admiten: el tachado `~~texto~~`, las casillas `- [ ]`, el HTML (ni en bloque
+ni inline), las definiciones de enlace `[x]: url`, un tercer nivel de lista ni
+títulos `#####`. Una lista ordenada **siempre arranca en 1**: el número que se
+escriba (`3.`) se ignora.
 
 ## Capturas
 

@@ -2,6 +2,10 @@
 # Imprime "<archivo>: <páginas> páginas". Lo llama scripts/docs/build-docx.ts.
 param([Parameter(Mandatory = $true)][string[]]$Paths)
 
+# Sin Word, New-Object -ComObject falla pero el script seguiría y terminaría con
+# código 0: con Stop el error corta acá y el build avisa que hay que apretar F9.
+$ErrorActionPreference = 'Stop'
+
 # El build lee esta salida como UTF-8; sin esto "páginas" llega con acentos rotos.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 

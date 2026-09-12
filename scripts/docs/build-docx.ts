@@ -4,7 +4,7 @@
 // Subconjunto de Markdown admitido: ver docs/manuales/README.md. Cualquier otra
 // sintaxis corta el build con archivo y línea. Después de escribir cada Word,
 // en Windows intenta actualizar el índice con Word por COM (update-toc.ps1).
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Lexer, type Token, type Tokens } from "marked";
@@ -34,7 +34,8 @@ type Meta = { title: string; subtitle: string; series: string; docx: string; ver
 class BuildError extends Error {}
 
 // ---------- front matter ----------
-function parseFrontMatter(src: string, file: string): { meta: Meta; body: string; bodyLineOffset: number } {
+function parseFrontMatter(raw: string, file: string): { meta: Meta; body: string; bodyLineOffset: number } {
+  const src = raw.replace(/^﻿/, ""); // un BOM tapa el --- de apertura
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(src);
   if (!m) throw new BuildError(`${file}:1 falta el front matter (--- title: … ---)`);
   const meta: Record<string, string> = {};
@@ -53,9 +54,15 @@ function unescapeEntities(s: string): string {
   return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 
-function pngSize(buf: Buffer, file: string): { width: number; height: number } {
-  if (buf.length < 24 || buf.toString("ascii", 1, 4) !== "PNG") throw new BuildError(`${file}: solo se admiten imágenes PNG`);
+// null si el archivo no es un PNG: quien llama decide cómo avisar (con línea del
+// Markdown desde el cuerpo, sin línea desde la portada).
+function pngSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 24 || buf.toString("ascii", 1, 4) !== "PNG") return null;
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+function countLines(raw: string): number {
+  return (raw.match(/\n/g) ?? []).length;
 }
 
 // ---------- estado por documento ----------
@@ -78,7 +85,7 @@ const QUOTE: Deco = {
 
 // ---------- inline ----------
 type Inline = TextRun | ExternalHyperlink;
-type Style = { bold?: boolean; italics?: boolean };
+type Style = { bold?: boolean; italics?: boolean; style?: string };
 
 function inline(tokens: Token[] | undefined, ctx: Ctx, style: Style = {}): Inline[] {
   const out: Inline[] = [];
@@ -99,12 +106,15 @@ function inline(tokens: Token[] | undefined, ctx: Ctx, style: Style = {}): Inlin
       case "br": out.push(new TextRun({ break: 1 })); break;
       case "link": {
         const l = t as Tokens.Link;
-        const label = inline(l.tokens, ctx, style);
-        out.push(new ExternalHyperlink({ link: l.href, children: label.length ? label : [new TextRun({ text: l.href })] }));
-        if (l.text !== l.href) out.push(new TextRun({ text: ` (${l.href})`, ...style, size: 18, color: "555555" }));
+        const linked = { ...style, style: "Hyperlink" };
+        const label = inline(l.tokens, ctx, linked);
+        out.push(new ExternalHyperlink({ link: l.href, children: label.length ? label : [new TextRun({ text: l.href, ...linked })] }));
+        // El autolink de un correo llega como texto "x@y" y href "mailto:x@y": no
+        // hay que repetir la dirección entre paréntesis.
+        if (l.text !== l.href.replace(/^mailto:/, "")) out.push(new TextRun({ text: ` (${l.href})`, ...style, size: 18, color: "555555" }));
         break;
       }
-      case "del": out.push(...inline((t as Tokens.Del).tokens, ctx, style)); break;
+      case "del": ctx.fail("el tachado ~~texto~~ no está admitido"); break;
       case "html": ctx.fail(`HTML inline no admitido: ${(t as Tokens.HTML).raw.slice(0, 40)}`); break;
       case "image": ctx.fail("una imagen tiene que ir sola en su párrafo"); break;
       default: ctx.fail(`sintaxis inline no admitida (${t.type})`);
@@ -126,7 +136,9 @@ function image(tok: Tokens.Image, ctx: Ctx): Paragraph[] {
   const path = resolve(ctx.dir, tok.href);
   if (!existsSync(path)) ctx.fail(`imagen no encontrada: ${tok.href}`);
   const buf = readFileSync(path);
-  const { width, height } = pngSize(buf, tok.href);
+  const size = pngSize(buf);
+  if (!size) ctx.fail(`solo se admiten imágenes PNG: ${tok.href}`);
+  const { width, height } = size;
   const scale = Math.min(1, MAX_IMAGE_PX / width);
   ctx.figure += 1;
   return [
@@ -150,6 +162,9 @@ function codeBlock(tok: Tokens.Code): Table {
 }
 
 function table(tok: Tokens.Table, ctx: Ctx): Table {
+  // Con más de 8 columnas el piso del 10 % pasa el ancho útil y la última columna
+  // sale negativa; en A4 tampoco se leería.
+  if (tok.header.length > 8) ctx.fail("una tabla no puede tener más de 8 columnas");
   // Ancho proporcional al texto más largo de cada columna, con piso del 10 %.
   const longest = tok.header.map((h, i) => Math.max(h.text.length, ...tok.rows.map((r) => r[i]?.text.length ?? 0), 4));
   const total = longest.reduce((a, b) => a + b, 0);
@@ -180,7 +195,10 @@ function list(tok: Tokens.List, ctx: Ctx, level: number, deco: Deco = {}): Block
   // sólo se arrastra la barra de la izquierda.
   const border = deco.border;
   const out: Block[] = [];
+  // La línea avanza ítem por ítem para que un error adentro de la lista no apunte
+  // siempre a donde empieza; el llamador la restaura y suma el bloque entero.
   for (const item of tok.items) {
+    if (item.task) ctx.fail("las casillas - [ ] no están admitidas");
     let first = true;
     for (const child of item.tokens) {
       if (child.type === "text" || child.type === "paragraph") {
@@ -188,13 +206,16 @@ function list(tok: Tokens.List, ctx: Ctx, level: number, deco: Deco = {}): Block
         out.push(new Paragraph({ numbering: first ? { reference, level, instance } : undefined, indent: first ? undefined : { left: 720 * (level + 1) }, border, spacing: { after: 60 }, children: runs }));
         first = false;
       } else if (child.type === "list") {
+        const sub = ctx.line;
         out.push(...list(child as Tokens.List, ctx, level + 1, deco));
+        ctx.line = sub;
       } else if (child.type === "space") {
         continue;
       } else {
         ctx.fail(`dentro de una lista solo va texto o una sublista (encontré ${child.type})`);
       }
     }
+    ctx.line += countLines(item.raw);
   }
   return out;
 }
@@ -208,20 +229,34 @@ function blocks(tokens: Token[], ctx: Ctx, deco: Deco = {}): Block[] {
       case "paragraph": {
         const p = t as Tokens.Paragraph;
         if (p.tokens.length === 1 && p.tokens[0].type === "image") { out.push(...image(p.tokens[0] as Tokens.Image, ctx)); break; }
-        out.push(new Paragraph({ ...deco, spacing: { after: 120, line: 276 }, children: inline(p.tokens, ctx) }));
+        out.push(new Paragraph({ ...deco, spacing: { after: 120 }, children: inline(p.tokens, ctx) }));
         break;
       }
       case "text": out.push(new Paragraph({ ...deco, spacing: { after: 120 }, children: inline((t as Tokens.Text).tokens ?? [t], ctx) })); break;
       case "code": out.push(codeBlock(t as Tokens.Code), new Paragraph({ spacing: { after: 120 } })); break;
       case "table": out.push(table(t as Tokens.Table, ctx), new Paragraph({ spacing: { after: 120 } })); break;
-      case "list": out.push(...list(t as Tokens.List, ctx, 0, deco)); out.push(new Paragraph({ spacing: { after: 60 } })); break;
-      case "blockquote": out.push(...blocks((t as Tokens.Blockquote).tokens, ctx, QUOTE)); break;
+      // Los dos bloques que recursan llevan su propia cuenta de líneas adentro: se
+      // restaura la de entrada y el incremento de abajo suma el bloque entero una
+      // sola vez.
+      case "list": {
+        const start = ctx.line;
+        out.push(...list(t as Tokens.List, ctx, 0, deco));
+        ctx.line = start;
+        out.push(new Paragraph({ spacing: { after: 60 } }));
+        break;
+      }
+      case "blockquote": {
+        const start = ctx.line;
+        out.push(...blocks((t as Tokens.Blockquote).tokens, ctx, QUOTE));
+        ctx.line = start;
+        break;
+      }
       case "hr": out.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "999999", space: 1 } }, spacing: { after: 200 } })); break;
       case "html": ctx.fail(`HTML no admitido: ${(t as Tokens.HTML).raw.trim().slice(0, 40)}`); break;
       case "def": ctx.fail("las definiciones de enlace [x]: url no se admiten; escribí el enlace inline"); break;
       default: ctx.fail(`sintaxis no admitida (${t.type})`);
     }
-    ctx.line += (t.raw.match(/\n/g) ?? []).length;
+    ctx.line += countLines(t.raw);
   }
   return out;
 }
@@ -229,7 +264,9 @@ function blocks(tokens: Token[], ctx: Ctx, deco: Deco = {}): Block[] {
 // ---------- portada, índice, header/footer ----------
 function cover(meta: Meta): Paragraph[] {
   const logo = readFileSync(LOGO);
-  const { width, height } = pngSize(logo, LOGO);
+  const size = pngSize(logo);
+  if (!size) throw new BuildError(`${LOGO}: el logo de la portada tiene que ser PNG`);
+  const { width, height } = size;
   const w = 190; // ~5 cm
   const center = (text: string, opts: { size: number; bold?: boolean; color?: string; before?: number }) =>
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: opts.before ?? 0, after: 120 }, children: [new TextRun({ text, size: opts.size, bold: opts.bold, color: opts.color, font: FONT })] });
@@ -267,7 +304,8 @@ function buildDocument(meta: Meta, body: Block[]): Document {
   return new Document({
     creator: "SIGeV", title: meta.title, description: meta.subtitle,
     styles: {
-      default: { document: { run: { font: FONT, size: 22 } } },
+      // Interlineado 1,15 para todo el documento, no sólo para los párrafos sueltos.
+      default: { document: { run: { font: FONT, size: 22 }, paragraph: { spacing: { line: 276 } } } },
       paragraphStyles: [
         h("Heading1", "Heading 1", 36, { border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: BRAND, space: 4 } }, spacing: { before: 0, after: 240 } }),
         h("Heading2", "Heading 2", 28),
@@ -316,8 +354,6 @@ async function buildOne(file: string): Promise<string> {
   ctx.line = bodyLineOffset + 1;
   const tokens = new Lexer({ gfm: true }).lex(body);
   const content = blocks(tokens, ctx);
-  // El índice se rompe si el primer bloque ya trae salto de página: el H1 lo
-  // trae por pageBreakBefore, así que el índice queda solo en su página.
   const doc = buildDocument(meta, content);
   const out = join(OUT_DIR, `${meta.docx}.docx`);
   mkdirSync(OUT_DIR, { recursive: true });
@@ -331,16 +367,24 @@ function defaultInputs(): string[] {
   return dirs.flatMap((d) => (existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md") && !f.startsWith("_")).sort().map((f) => join(d, f)) : []));
 }
 
+const F9 = "Abrí el .docx en Word, clic en el índice y F9.";
+
+// Sin Word, PowerShell termina con código 0 y el error sólo en stderr, así que el
+// código de salida NO alcanza: también se miran stderr y que haya salido al menos
+// una línea "… páginas" (que es la prueba de que el índice se actualizó de verdad).
 function updateToc(paths: string[]): void {
   if (process.platform !== "win32" || process.env.DOCS_SKIP_TOC === "1") {
-    console.warn("aviso: el índice no se actualizó (hace falta Word en Windows). Abrí el Word y apretá F9 sobre el índice.");
+    console.warn(`aviso: el índice no se actualizó (hace falta Word en Windows). ${F9}`);
     return;
   }
-  try {
-    const out = execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PS1, ...paths], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    process.stdout.write(out);
-  } catch (err) {
-    console.warn(`aviso: falló la actualización del índice con Word: ${(err as Error).message.split("\n")[0]}. Abrí el Word y apretá F9.`);
+  const r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PS1, ...paths], { encoding: "utf8", timeout: 120_000 });
+  const stdout = r.stdout ?? "";
+  const stderr = (r.stderr ?? "").trim();
+  const updated = stdout.split(/\r?\n/).filter((l) => l.includes("páginas")).length;
+  process.stdout.write(stdout);
+  if (r.error || r.status !== 0 || stderr || updated < paths.length) {
+    const why = r.error?.message ?? (stderr || (r.status !== 0 ? `PowerShell terminó con código ${r.status}` : "Word no informó las páginas de cada documento"));
+    console.warn(`aviso: falló la actualización del índice con Word: ${why.split("\n")[0]}. ${F9}`);
   }
 }
 
