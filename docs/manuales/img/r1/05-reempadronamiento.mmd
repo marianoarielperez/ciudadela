@@ -1,0 +1,38 @@
+erDiagram
+    books ||--o{ reregistration_processes : "cierra"
+    minutes ||--o{ reregistration_processes : "convocatoria"
+    minutes |o--o{ reregistration_processes : "cierre"
+    reregistration_processes ||--o{ presentations : "convoca"
+    members ||--o{ presentations : "se presenta"
+    reregistration_processes ||--o{ board_notices : "publica"
+    reregistration_processes {
+        int id PK
+        int book_id FK
+        enum status
+        int call_minute_id FK
+        int close_minute_id FK
+    }
+    presentations {
+        int id PK
+        int process_id UK
+        int member_id UK
+        enum status
+        char resume_token_hash UK
+        int street_id FK
+    }
+    board_notices {
+        int id PK
+        int process_id FK
+        enum kind
+        datetime posted_at
+        datetime due_at
+    }
+    books {
+        int id PK
+    }
+    minutes {
+        int id PK
+    }
+    members {
+        int id PK
+    }

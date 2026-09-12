@@ -1,0 +1,23 @@
+flowchart TB
+    SOL["Solicitudes · 2 tablas"]
+    MP["Mercado Pago · 2 tablas"]
+    TES["Tesorería · 8 tablas"]
+    REE["Re-empadronamiento · 4 tablas"]
+    REP["Reportes · 3 tablas"]
+    PAD["Padrón · 6 tablas"]
+    AUTH["Usuarios y auth · 3 tablas"]
+    CON["Contenido · 3 tablas"]
+    SIS["Sistema · 6 tablas"]
+    SOL --> PAD
+    TES --> PAD
+    REE --> PAD
+    REP --> PAD
+    MP --> PAD
+    MP --> SOL
+    TES --> SOL
+    PAD --> AUTH
+    SIS -.-> PAD
+    SIS -.-> SOL
+    SIS -.-> REE
+    SIS -.-> REP
+    SIS -.-> AUTH

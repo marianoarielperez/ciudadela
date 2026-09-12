@@ -1,0 +1,44 @@
+erDiagram
+    members |o--o{ applications : "reingreso"
+    minutes |o--o{ applications : "acta del alta"
+    applications |o--o{ action_tokens : "enlaces"
+    members |o--o{ action_tokens : "invitación"
+    users |o--o{ action_tokens : "dueño del enlace"
+    applications ||..o{ documents : "owner_type = application"
+    members ||..o{ documents : "owner_type = member"
+    presentations ||..o{ documents : "owner_type = presentation"
+    applications {
+        int id PK
+        varchar dni
+        varchar preapproval_id UK
+        char resume_token_hash UK
+        int member_id FK
+        int minute_id FK
+    }
+    documents {
+        int id PK
+        enum owner_type
+        int owner_id
+        enum type
+        varchar path
+    }
+    action_tokens {
+        int id PK
+        char token_hash UK
+        enum purpose
+        int member_id FK
+        int application_id FK
+        int user_id FK
+    }
+    members {
+        int id PK
+    }
+    minutes {
+        int id PK
+    }
+    users {
+        int id PK
+    }
+    presentations {
+        int id PK
+    }

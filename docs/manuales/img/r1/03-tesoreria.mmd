@@ -1,0 +1,55 @@
+erDiagram
+    members ||--o{ fees : "debe"
+    payments |o--o{ fees : "imputa"
+    payments ||--o| receipts : "emite"
+    members |o--o{ payments : "paga"
+    applications |o--o{ payments : "cuota de ingreso"
+    payments |o--o{ payments : "reparto"
+    minutes |o--o{ fee_values : "respalda"
+    members ||--o{ fee_exemptions : "exime"
+    minutes ||--o{ fee_exemptions : "acta del asiento"
+    minutes |o--o{ fee_exemptions : "acta de anulación"
+    fee_values {
+        int id PK
+        decimal active_amount
+        decimal shared_amount
+        datetime valid_from
+        int minute_id FK
+    }
+    fees {
+        int id PK
+        int member_id FK
+        char period UK
+        enum status
+        int payment_id FK
+    }
+    payments {
+        int id PK
+        int member_id FK
+        int application_id FK
+        varchar mp_payment_id UK
+        int split_of_payment_id FK
+    }
+    receipts {
+        int id PK
+        char number UK
+        int year UK
+        int seq UK
+        int payment_id UK
+    }
+    fee_exemptions {
+        int id PK
+        int member_id FK
+        int minute_id FK
+        int revoke_minute_id FK
+        datetime revoked_at
+    }
+    members {
+        int id PK
+    }
+    minutes {
+        int id PK
+    }
+    applications {
+        int id PK
+    }

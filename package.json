@@ -9,6 +9,7 @@
     "lint": "eslint",
     "docs:build": "tsx scripts/docs/build-docx.ts",
     "docs:capture": "tsx scripts/docs/capture.ts",
+    "docs:mermaid": "tsx scripts/docs/render-mermaid.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.mts",

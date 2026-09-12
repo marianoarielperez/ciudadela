@@ -1,0 +1,29 @@
+erDiagram
+    members |o--o{ mp_subscriptions : "débito automático"
+    applications |o--o{ mp_subscriptions : "adhesión del alta web"
+    payments |o--o{ mp_unmatched_payments : "se resuelve en"
+    mp_subscriptions {
+        int id PK
+        varchar preapproval_id UK
+        int application_id FK
+        int member_id FK
+        varchar status
+    }
+    mp_unmatched_payments {
+        int id PK
+        varchar mp_payment_id UK
+        varchar external_reference
+        varchar preapproval_id
+        enum status
+        int payment_id FK
+    }
+    payments {
+        int id PK
+        varchar mp_payment_id UK
+    }
+    members {
+        int id PK
+    }
+    applications {
+        int id PK
+    }

@@ -1,0 +1,29 @@
+erDiagram
+    reports ||--o{ report_files : "fotos y DNI"
+    members |o--o{ reports : "reporta"
+    streets |o--o{ reports : "ubicación"
+    minutes |o--o{ reports : "acta de la iniciativa"
+    reports {
+        int id PK
+        int number UK
+        enum kind
+        enum status
+        int member_id FK
+        char claim_token_hash UK
+        int filed_minute_id FK
+    }
+    report_files {
+        int id PK
+        int report_id FK
+        enum kind
+        varchar path
+    }
+    members {
+        int id PK
+    }
+    streets {
+        int id PK
+    }
+    minutes {
+        int id PK
+    }

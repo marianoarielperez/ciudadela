@@ -157,7 +157,7 @@ hechos distintos, en dos tablas distintas, y ninguno implica el otro.
 | Modelo / tabla | Campos clave | Relaciones | Para qué sirve |
 |---|---|---|---|
 | `Member` / `members` | `dni` unique y nullable, `category`, `status`, `joinedAt`, `leftAt`, `withdrawalReason`, `emailStatus`, `autoDebit`, `reentryBlocked`, `userId` unique | una docena de listas inversas —`memberships`, `movements`, `fees`, `payments`, `presentations`, `reports` entre ellas— más `street` y `user` | La ficha del socio |
-| `Book` / `books` | `number` unique, `status`, `openedAt`, `closedAt` | actas de apertura y cierre; `memberships` | El libro de socios. Hoy: Libro 1 cerrado, Libro 2 abierto |
+| `Book` / `books` | `number` unique, `status`, `openedAt`, `closedAt` | actas de apertura y cierre; `memberships` | El libro de socios. En producción hay uno solo, el **Libro N° 1**, abierto; el Libro 2 existió únicamente en el simulacro local del Módulo 6 |
 | `Membership` / `memberships` | `memberNumber`, `statusAtClose`, `categoryAtClose` | FK a `member` y a `book` | El número de socio, que es **por libro** |
 | `Minute` / `minutes` | `type`, `number`, `date`, `description` | referenciada por siete tablas, con diez columnas | El acta: el respaldo institucional de casi todo |
 | `Movement` / `movements` | `type`, `date`, `previousCategory`, `newCategory`, `reason`, `detail` | FK a `member`, a `minute` y a `createdBy` | El historial de la ficha |

@@ -54,6 +54,19 @@ Las capturas salen del dev server local con `scripts/docs/capture.ts`
 La lista de capturas vive en `scripts/docs/capture-plan.ts`. Ninguna captura puede
 mostrar datos de un socio real: se usan los `*.prueba` y fichas inventadas.
 
+## Diagramas
+
+Los diagramas entidad-relación de `img/r1/` se escriben en Mermaid (`.mmd`) y se rinden a PNG
+con `scripts/docs/render-mermaid.ts`, que abre el Chrome instalado con `playwright-core` y
+carga Mermaid desde cdnjs (hace falta internet; la versión está fijada en el script).
+
+    npm run docs:mermaid                                  # todos los de img/r1
+    npm run docs:mermaid docs/manuales/img/r1/01-padron.mmd
+
+Cada PNG queda al lado de su `.mmd`, con el mismo nombre y al doble de escala. Un error de
+sintaxis corta la corrida diciendo el archivo y el mensaje de Mermaid. Al editar un `.mmd` hay
+que volver a rendirlo y commitear los dos archivos juntos.
+
 ## Mantenimiento
 
 Al cerrar un módulo que cambie una pantalla o una regla: actualizar el Markdown del

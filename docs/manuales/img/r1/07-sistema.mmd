@@ -1,0 +1,44 @@
+erDiagram
+    users |o--o{ audit_log : "actor"
+    members |o--o{ notifications : "destinatario"
+    applications |o--o{ notifications : "acuse del alta"
+    board_notices |o--o{ notifications : "cartelera"
+    reports |o--o{ notifications : "aviso"
+    streets |o--o{ members : "domicilio"
+    streets |o--o{ applications : "domicilio"
+    streets |o--o{ reports : "ubicación"
+    audit_log {
+        bigint id PK
+        int user_id FK
+        varchar action
+        varchar entity
+        varchar entity_id
+    }
+    notifications {
+        bigint id PK
+        int member_id FK
+        int application_id FK
+        int board_notice_id FK
+        int report_id FK
+        enum status
+    }
+    streets {
+        int id PK
+        int load_order
+        varchar normalized_name
+    }
+    users {
+        int id PK
+    }
+    members {
+        int id PK
+    }
+    applications {
+        int id PK
+    }
+    board_notices {
+        int id PK
+    }
+    reports {
+        int id PK
+    }

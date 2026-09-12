@@ -1,0 +1,57 @@
+erDiagram
+    users ||--o{ user_roles : "acumula"
+    roles ||--o{ user_roles : "se otorga en"
+    users |o--o| members : "cuenta del socio"
+    members ||--o{ memberships : "numerado en"
+    books ||--o{ memberships : "contiene"
+    members ||--o{ movements : "historial"
+    minutes |o--o{ movements : "asienta"
+    minutes |o--o{ books : "abre"
+    minutes |o--o{ books : "cierra"
+    members ||--o{ member_requests : "pide"
+    movements |o--o{ member_requests : "se resuelve en"
+    users {
+        int id PK
+        varchar email UK
+    }
+    roles {
+        int id PK
+        varchar name UK
+    }
+    user_roles {
+        int user_id PK
+        int role_id PK
+    }
+    members {
+        int id PK
+        varchar dni UK
+        int user_id UK
+        int street_id FK
+    }
+    books {
+        int id PK
+        int number UK
+        int opening_minute_id FK
+        int closing_minute_id FK
+    }
+    memberships {
+        int id PK
+        int member_id FK
+        int book_id FK
+        int member_number UK
+    }
+    minutes {
+        int id PK
+        enum type UK
+        int number UK
+    }
+    movements {
+        int id PK
+        int member_id FK
+        int minute_id FK
+    }
+    member_requests {
+        int id PK
+        int member_id FK
+        int movement_id FK
+    }
